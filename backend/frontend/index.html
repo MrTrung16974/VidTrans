@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VidTrans — Video Translator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#0a0a0a; --bg1:#111111; --bg2:#181818; --bg3:#222222;
+    --line:#2a2a2a; --muted:#555555; --mid:#888888;
+    --text:#e8e8e8; --white:#f5f5f5;
+    --danger:#ff4444; --success:#44ff88;
+    --font-head:'Syne',sans-serif; --font-mono:'JetBrains Mono',monospace;
+  }
+  html { scroll-behavior:smooth; }
+  body { background:var(--bg); color:var(--text); font-family:var(--font-mono); font-size:13px; min-height:100vh; line-height:1.6; overflow-x:hidden; }
+  body::before {
+    content:''; position:fixed; inset:0;
+    background-image: linear-gradient(var(--line) 1px,transparent 1px), linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:48px 48px; opacity:0.35; pointer-events:none; z-index:0;
+  }
+  .wrap { position:relative; z-index:1; max-width:760px; margin:0 auto; padding:0 24px; }
+
+  /* HEADER */
+  header { border-bottom:1px solid var(--line); padding:28px 0 24px; margin-bottom:48px; }
+  .header-inner { display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
+  .logo { font-family:var(--font-head); font-size:22px; font-weight:800; letter-spacing:-0.5px; color:var(--white); }
+  .logo span { color:var(--muted); font-weight:400; }
+  .badge { font-size:10px; color:var(--muted); border:1px solid var(--line); padding:2px 8px; letter-spacing:0.1em; text-transform:uppercase; }
+
+  /* SECTION LABEL */
+  .section-label { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:var(--muted); margin-bottom:16px; display:flex; align-items:center; gap:10px; }
+  .section-label::after { content:''; flex:1; height:1px; background:var(--line); }
+
+  /* CARD */
+  .card { background:var(--bg1); border:1px solid var(--line); padding:28px; margin-bottom:28px; }
+
+  /* DROP ZONES */
+  .drop-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }
+  .drop-zone { border:1px solid var(--line); background:var(--bg); padding:28px 20px; text-align:center; cursor:pointer; transition:border-color 0.15s,background 0.15s; position:relative; overflow:hidden; }
+  .drop-zone:hover,.drop-zone.dragover { border-color:var(--mid); background:var(--bg2); }
+  .drop-zone.filled { border-color:var(--white); }
+  .drop-zone.disabled { opacity:0.35; pointer-events:none; }
+  .drop-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+  .drop-icon { font-size:22px; margin-bottom:8px; color:var(--muted); font-family:var(--font-head); font-weight:700; }
+  .drop-label { font-size:11px; letter-spacing:0.12em; text-transform:uppercase; color:var(--mid); margin-bottom:4px; }
+  .drop-hint { font-size:11px; color:var(--muted); }
+  .drop-filename { font-size:11px; color:var(--white); margin-top:6px; word-break:break-all; display:none; }
+  .drop-zone.filled .drop-filename { display:block; }
+  .drop-zone.filled .drop-hint { display:none; }
+  .drop-zone.filled .drop-icon { color:var(--white); }
+
+  /* SETTINGS */
+  .settings-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .field { display:flex; flex-direction:column; gap:6px; }
+  .field label { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); }
+  .field select { background:var(--bg); border:1px solid var(--line); color:var(--text); font-family:var(--font-mono); font-size:12px; padding:8px 10px; outline:none; transition:border-color 0.15s; appearance:none; -webkit-appearance:none; width:100%; cursor:pointer; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23555'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 10px center; padding-right:28px; }
+  .field select:focus { border-color:var(--mid); }
+
+  /* RANGE */
+  .range-row { display:flex; align-items:center; gap:10px; }
+  .range-row input[type=range] { flex:1; padding:4px 0; cursor:pointer; accent-color:var(--white); }
+  .range-val { min-width:34px; text-align:right; color:var(--white); font-size:12px; }
+
+  /* TOGGLE */
+  .toggle-field { display:flex; align-items:center; justify-content:space-between; padding:8px 0; }
+  .toggle-field label { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); }
+  .toggle { width:36px; height:20px; background:var(--bg3); border:1px solid var(--line); position:relative; cursor:pointer; transition:background 0.2s; flex-shrink:0; }
+  .toggle.on { background:var(--white); }
+  .toggle::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; background:var(--muted); transition:transform 0.2s,background 0.2s; }
+  .toggle.on::after { transform:translateX(16px); background:var(--bg); }
+
+  /* BGM EXTRA — ẩn/hiện khi tắt BGM */
+  #bgm-extra { transition:opacity 0.2s; }
+  #bgm-extra.hidden { opacity:0.3; pointer-events:none; }
+
+  /* MODE SELECTOR */
+  .mode-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .mode-btn {
+    border:1px solid var(--line); background:var(--bg); color:var(--mid);
+    font-family:var(--font-mono); font-size:11px; padding:14px 12px;
+    cursor:pointer; text-align:left; transition:all 0.15s; line-height:1.5;
+    display:flex; flex-direction:column; gap:3px;
+  }
+  .mode-btn:hover { border-color:var(--mid); color:var(--text); }
+  .mode-btn.active { border-color:var(--white); background:var(--bg2); color:var(--white); }
+  .mode-btn .micon { font-size:18px; margin-bottom:4px; }
+  .mode-btn .mname { font-size:12px; font-weight:500; color:inherit; }
+  .mode-btn .mdesc { font-size:10px; color:var(--muted); line-height:1.4; }
+  .mode-btn.active .mdesc { color:var(--mid); }
+
+  /* BGM + TTS sections — ẩn khi sub-only mode */
+  #tts-section, #bgm-section { transition:opacity 0.2s; }
+  #tts-section.hidden, #bgm-section.hidden { display:none; }
+
+  /* VOICE SELECTOR */
+  .voice-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:4px; }
+  .voice-btn {
+    border:1px solid var(--line); background:var(--bg); color:var(--mid);
+    font-family:var(--font-mono); font-size:11px; padding:10px 12px;
+    cursor:pointer; text-align:left; transition:all 0.15s; line-height:1.4;
+  }
+  .voice-btn:hover { border-color:var(--mid); color:var(--text); }
+  .voice-btn.active { border-color:var(--white); color:var(--white); background:var(--bg2); }
+  .voice-btn .vname { display:block; font-size:12px; font-weight:500; color:inherit; }
+  .voice-btn .vdesc { display:block; font-size:10px; color:var(--muted); margin-top:2px; }
+  .voice-btn.active .vdesc { color:var(--mid); }
+
+  /* SUBMIT */
+  .submit-row { margin-top:24px; display:flex; align-items:center; gap:16px; }
+  .btn-convert { background:var(--white); color:var(--bg); border:none; font-family:var(--font-head); font-size:13px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; padding:12px 32px; cursor:pointer; transition:background 0.15s,color 0.15s; flex-shrink:0; }
+  .btn-convert:hover { background:var(--mid); }
+  .btn-convert:disabled { background:var(--bg3); color:var(--muted); cursor:not-allowed; }
+  .submit-hint { font-size:11px; color:var(--muted); }
+
+  /* PROGRESS */
+  #progress-section { display:none; margin-bottom:28px; }
+  .progress-card { background:var(--bg1); border:1px solid var(--line); padding:24px 28px; }
+  .progress-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+  .progress-status { font-size:12px; color:var(--text); }
+  .progress-pct { font-family:var(--font-head); font-size:28px; font-weight:800; color:var(--white); letter-spacing:-1px; line-height:1; }
+  .progress-bar-bg { height:2px; background:var(--bg3); margin-bottom:14px; position:relative; overflow:hidden; }
+  .progress-bar-fill { height:100%; background:var(--white); transition:width 0.4s ease; width:0%; }
+  .progress-bar-bg::after { content:''; position:absolute; top:0; left:-60px; width:60px; height:100%; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.4),transparent); animation:scan 1.5s linear infinite; }
+  @keyframes scan { to { left:110%; } }
+  .progress-step { font-size:11px; color:var(--muted); letter-spacing:0.05em; }
+  .progress-step::before { content:'> '; color:var(--mid); }
+
+  /* RESULT */
+  #result-section { display:none; margin-bottom:52px; }
+  .result-card { background:var(--bg1); border:1px solid var(--white); padding:24px 28px; display:flex; align-items:center; justify-content:space-between; gap:20px; }
+  .result-title { font-family:var(--font-head); font-size:16px; font-weight:700; color:var(--white); margin-bottom:4px; }
+  .result-sub { font-size:11px; color:var(--muted); }
+  .btn-download { background:transparent; color:var(--white); border:1px solid var(--white); font-family:var(--font-head); font-size:12px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; padding:10px 24px; cursor:pointer; text-decoration:none; display:inline-block; transition:background 0.15s,color 0.15s; white-space:nowrap; flex-shrink:0; }
+  .btn-download:hover { background:var(--white); color:var(--bg); }
+
+  /* ERROR */
+  #error-section { display:none; margin-bottom:28px; }
+  .error-card { border:1px solid var(--danger); background:var(--bg1); padding:16px 20px; color:var(--danger); font-size:12px; }
+  .error-card::before { content:'✕  '; }
+
+  /* FOOTER */
+  footer { border-top:1px solid var(--line); padding:20px 0; display:flex; justify-content:space-between; align-items:center; margin-top:20px; }
+  footer span { font-size:11px; color:var(--muted); }
+
+  @media(max-width:560px) {
+    .drop-row,.settings-grid,.voice-grid { grid-template-columns:1fr; }
+    .result-card { flex-direction:column; align-items:flex-start; }
+    .progress-pct { font-size:22px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="header-inner">
+      <div class="logo">VidTrans<span>.app</span></div>
+      <div class="badge">v2.0</div>
+    </div>
+  </header>
+
+  <!-- ERROR -->
+  <div id="error-section"><div class="error-card" id="error-msg"></div></div>
+
+  <!-- PROGRESS -->
+  <div id="progress-section">
+    <div class="section-label">Đang xử lý</div>
+    <div class="progress-card">
+      <div class="progress-top">
+        <div class="progress-status" id="prog-status">Đang chờ...</div>
+        <div class="progress-pct" id="prog-pct">0%</div>
+      </div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="prog-bar"></div></div>
+      <div class="progress-step" id="prog-step">Khởi tạo...</div>
+    </div>
+  </div>
+
+  <!-- RESULT -->
+  <div id="result-section">
+    <div class="section-label">Kết quả</div>
+    <div class="result-card">
+      <div class="result-info">
+        <div class="result-title">Dịch hoàn tất</div>
+        <div class="result-sub" id="result-filename">output.mp4</div>
+      </div>
+      <a id="result-download" href="#" class="btn-download">Tải xuống</a>
+    </div>
+  </div>
+
+  <!-- FORM -->
+  <div id="form-section">
+    <div class="section-label">Chế độ xuất</div>
+    <div class="card" style="padding:20px 28px;margin-bottom:16px;">
+      <div class="mode-grid">
+        <button class="mode-btn active" data-mode="full" onclick="selectMode(this)">
+          <span class="micon">🎙</span>
+          <span class="mname">Dịch + Lồng tiếng</span>
+          <span class="mdesc">Phụ đề VI + giọng đọc TTS</span>
+        </button>
+        <button class="mode-btn" data-mode="sub_vi" onclick="selectMode(this)">
+          <span class="micon">💬</span>
+          <span class="mname">Chỉ phụ đề VI</span>
+          <span class="mdesc">Dịch sang tiếng Việt, giữ tiếng gốc</span>
+        </button>
+        <button class="mode-btn" data-mode="sub_origin" onclick="selectMode(this)">
+          <span class="micon">📝</span>
+          <span class="mname">Phụ đề gốc</span>
+          <span class="mdesc">Không dịch, giữ nguyên ngôn ngữ gốc</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="section-label">Upload file</div>
+    <div class="card">
+
+      <!-- Drop zones -->
+      <div class="drop-row">
+        <div class="drop-zone" id="drop-video">
+          <input type="file" id="input-video" accept="video/*">
+          <div class="drop-icon">▶</div>
+          <div class="drop-label">Video</div>
+          <div class="drop-hint">.mp4 · .mov · .mkv</div>
+          <div class="drop-filename" id="name-video"></div>
+        </div>
+        <div class="drop-zone" id="drop-bgm">
+          <input type="file" id="input-bgm" accept="audio/*">
+          <div class="drop-icon">♪</div>
+          <div class="drop-label">Nhạc nền</div>
+          <div class="drop-hint">.mp3 · .wav · .aac</div>
+          <div class="drop-filename" id="name-bgm"></div>
+        </div>
+      </div>
+
+      <!-- BGM section -->
+      <div id="bgm-section">
+      <!-- Toggle bật/tắt nhạc nền -->
+      <div class="toggle-field" style="margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:16px;">
+        <label>Thêm nhạc nền</label>
+        <div class="toggle on" id="use-bgm-toggle" onclick="toggleBGM()"></div>
+      </div>
+
+      <!-- BGM controls (ẩn khi tắt) -->
+      <div id="bgm-extra">
+        <div class="settings-grid" style="margin-bottom:14px;">
+          <div class="field">
+            <label>Âm lượng nhạc nền</label>
+            <div class="range-row">
+              <input type="range" id="bgm-vol" min="0" max="100" value="15" oninput="syncRange('bgm-vol','bgm-vol-val','%')">
+              <span class="range-val" id="bgm-vol-val">15%</span>
+            </div>
+          </div>
+          <div class="toggle-field" style="padding:0;align-items:flex-end;">
+            <div>
+              <label style="display:block;margin-bottom:8px;">Loop nhạc nếu ngắn</label>
+              <div class="toggle on" id="bgm-loop" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div><!-- /bgm-section -->
+
+      <!-- TTS section -->
+      <div id="tts-section">
+      <div class="section-label">Giọng đọc tiếng Việt</div>
+
+      <!-- Voice selector -->
+      <div class="voice-grid" style="margin-bottom:16px;">
+        <button class="voice-btn active" data-voice="nu-hay" onclick="selectVoice(this)">
+          <span class="vname">Nữ — HoaiMy</span>
+          <span class="vdesc">Giọng nữ miền Nam · Tự nhiên nhất</span>
+        </button>
+        <button class="voice-btn" data-voice="nam-hay" onclick="selectVoice(this)">
+          <span class="vname">Nam — NamMinh</span>
+          <span class="vdesc">Giọng nam miền Nam · Trầm ấm</span>
+        </button>
+      </div>
+
+      <!-- Tốc độ đọc -->
+      <div class="settings-grid" style="margin-bottom:16px;">
+        <div class="field">
+          <label>Tốc độ đọc</label>
+          <select id="tts-rate">
+            <option value="-10%">Chậm hơn</option>
+            <option value="+0%" selected>Bình thường</option>
+            <option value="+15%">Nhanh hơn</option>
+            <option value="+30%">Nhanh nhiều</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Âm lượng TTS</label>
+          <div class="range-row">
+            <input type="range" id="tts-vol" min="0" max="100" value="100" oninput="syncRange('tts-vol','tts-vol-val','%')">
+            <span class="range-val" id="tts-vol-val">100%</span>
+          </div>
+        </div>
+      </div>
+
+      </div><!-- /tts-section -->
+
+      <div class="section-label">Cấu hình</div>
+
+      <div class="settings-grid">
+        <div class="field">
+          <label>Ngôn ngữ gốc</label>
+          <select id="source-lang">
+            <option value="zh">中文 — Tiếng Trung</option>
+            <option value="en">English — Tiếng Anh</option>
+            <option value="ja">日本語 — Tiếng Nhật</option>
+            <option value="ko">한국어 — Tiếng Hàn</option>
+            <option value="fr">Français — Tiếng Pháp</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Whisper model</label>
+          <select id="model-size">
+            <option value="tiny">tiny — nhanh nhất</option>
+            <option value="base" selected>base — cân bằng</option>
+            <option value="small">small — chính xác hơn</option>
+            <option value="medium">medium — chậm</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="submit-row">
+        <button class="btn-convert" id="btn-convert" onclick="startConvert()">Bắt đầu</button>
+        <span class="submit-hint" id="submit-hint">Upload video → tự động dịch & lồng tiếng</span>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <span>VidTrans — Whisper + Google Translate + edge-tts</span>
+    <span id="clock"></span>
+  </footer>
+</div>
+
+<script>
+  // Clock
+  function tick() {
+    document.getElementById('clock').textContent =
+      new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+  tick(); setInterval(tick, 1000);
+
+  // Range sync
+  function syncRange(id, valId, suffix='') {
+    document.getElementById(valId).textContent = document.getElementById(id).value + suffix;
+  }
+
+  // Mode selector
+  let selectedMode = 'full';
+  function selectMode(btn) {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedMode = btn.dataset.mode;
+    const isFull = selectedMode === 'full';
+    const isSubOrigin = selectedMode === 'sub_origin';
+    // Ẩn TTS + BGM khi chỉ phụ đề
+    document.getElementById('tts-section').classList.toggle('hidden', !isFull);
+    document.getElementById('bgm-section').classList.toggle('hidden', !isFull);
+    document.getElementById('drop-bgm').classList.toggle('disabled', !isFull);
+    // Ẩn drop zone BGM hoàn toàn khi sub-only
+    document.getElementById('drop-bgm').style.display = isFull ? '' : 'none';
+    // Hint
+    const hints = {
+      full: 'Upload video + nhạc → dịch & lồng tiếng',
+      sub_vi: 'Upload video → phụ đề tiếng Việt, giữ tiếng gốc',
+      sub_origin: 'Upload video → phụ đề ngôn ngữ gốc, không dịch',
+    };
+    document.getElementById('submit-hint').textContent = hints[selectedMode];
+  }
+
+  // Toggle BGM
+  let useBGM = true;
+  function toggleBGM() {
+    useBGM = !useBGM;
+    document.getElementById('use-bgm-toggle').classList.toggle('on', useBGM);
+    document.getElementById('bgm-extra').classList.toggle('hidden', !useBGM);
+    document.getElementById('drop-bgm').classList.toggle('disabled', !useBGM);
+    document.getElementById('submit-hint').textContent = useBGM
+      ? 'Upload video + nhạc → dịch & mix'
+      : 'Upload video → dịch & lồng tiếng (không nhạc)';
+  }
+
+  // Voice selector
+  let selectedVoice = 'nu-hay';
+  function selectVoice(btn) {
+    document.querySelectorAll('.voice-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedVoice = btn.dataset.voice;
+  }
+
+  // Drag & drop
+  function setupDrop(zoneId, inputId, nameId) {
+    const zone  = document.getElementById(zoneId);
+    const input = document.getElementById(inputId);
+    const nameEl = document.getElementById(nameId);
+    function setFile(file) {
+      if (!file) return;
+      nameEl.textContent = file.name;
+      zone.classList.add('filled');
+    }
+    input.addEventListener('change', () => setFile(input.files[0]));
+    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault(); zone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) { const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; setFile(file); }
+    });
+  }
+  setupDrop('drop-video', 'input-video', 'name-video');
+  setupDrop('drop-bgm',   'input-bgm',   'name-bgm');
+
+  // Convert
+  let pollTimer = null;
+
+  async function startConvert() {
+    const video = document.getElementById('input-video').files[0];
+    const bgm   = document.getElementById('input-bgm').files[0];
+
+    if (!video) return showError('Vui lòng chọn file video.');
+    if (selectedMode === 'full' && useBGM && !bgm) return showError('Vui lòng chọn file nhạc nền, hoặc tắt "Thêm nhạc nền".');
+
+    clearError();
+    showProgress();
+
+    const fd = new FormData();
+    fd.append('video', video);
+    if (selectedMode === 'full' && useBGM && bgm) fd.append('bgm', bgm);
+    fd.append('bgm_volume',  document.getElementById('bgm-vol').value / 100);
+    fd.append('tts_volume',  document.getElementById('tts-vol').value / 100);
+    fd.append('bgm_loop',    document.getElementById('bgm-loop').classList.contains('on'));
+    fd.append('source_lang', document.getElementById('source-lang').value);
+    fd.append('model_size',  document.getElementById('model-size').value);
+    fd.append('voice_key',   selectedVoice);
+    fd.append('tts_rate',    document.getElementById('tts-rate').value);
+    fd.append('output_mode', selectedMode);
+
+    try {
+      const res  = await fetch('/api/convert', { method:'POST', body:fd });
+      const data = await res.json();
+      if (!data.job_id) throw new Error(data.error || 'Không nhận được job_id');
+      pollStatus(data.job_id);
+    } catch(e) {
+      hideProgress();
+      showError('Lỗi kết nối backend: ' + e.message);
+    }
+  }
+
+  function pollStatus(jobId) {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const data = await fetch(`/api/status/${jobId}`).then(r => r.json());
+        document.getElementById('prog-pct').textContent  = (data.progress||0) + '%';
+        document.getElementById('prog-bar').style.width  = (data.progress||0) + '%';
+        document.getElementById('prog-step').textContent = data.step || '';
+        document.getElementById('prog-status').textContent =
+          data.status==='running'?'Đang xử lý':data.status==='queued'?'Đang chờ':data.status==='done'?'Hoàn thành':data.status;
+        if (data.status==='done') { clearInterval(pollTimer); hideProgress(); showResult(data.output_file); }
+        else if (data.status==='error') { clearInterval(pollTimer); hideProgress(); showError(data.step); }
+      } catch(e) {}
+    }, 1200);
+  }
+
+  function showProgress() {
+    document.getElementById('progress-section').style.display = 'block';
+    document.getElementById('btn-convert').disabled = true;
+    document.getElementById('result-section').style.display = 'none';
+    document.getElementById('prog-pct').textContent = '0%';
+    document.getElementById('prog-bar').style.width = '0%';
+  }
+  function hideProgress() {
+    document.getElementById('progress-section').style.display = 'none';
+    document.getElementById('btn-convert').disabled = false;
+  }
+  function showResult(filename) {
+    const sec = document.getElementById('result-section');
+    document.getElementById('result-filename').textContent = filename;
+    document.getElementById('result-download').href = `/api/download/${filename}`;
+    document.getElementById('result-download').download = filename;
+    sec.style.display = 'block';
+    sec.scrollIntoView({behavior:'smooth',block:'center'});
+  }
+  function showError(msg) {
+    document.getElementById('error-msg').textContent = msg;
+    document.getElementById('error-section').style.display = 'block';
+  }
+  function clearError() {
+    document.getElementById('error-section').style.display = 'none';
+  }
+</script>
+</body>
+</html>
