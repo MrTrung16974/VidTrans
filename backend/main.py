@@ -1,20 +1,87 @@
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+import json
+import logging
+import os
+import shutil
+import subprocess
+import textwrap
+import uuid
+from pathlib import Path
+from typing import Any, Optional
+
 import whisper
 from deep_translator import GoogleTranslator
-import subprocess
-import os
-import uuid
-import shutil
-import asyncio
-from pathlib import Path
-from typing import Optional
-import re
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from gtts import gTTS
 
-app = FastAPI()
+try:
+    import edge_tts
+except Exception:  # pragma: no cover
+    edge_tts = None
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).resolve().parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+UPLOAD_DIR = BASE_DIR / "uploads"
+OUTPUT_DIR = BASE_DIR / "outputs"
+WORK_DIR = BASE_DIR / "work"
+
+for path in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR):
+    path.mkdir(parents=True, exist_ok=True)
+
+HOMEBREW_BIN = "/opt/homebrew/bin"
+os.environ["PATH"] = f"{HOMEBREW_BIN}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
+def _resolve_binary(name: str) -> str:
+    candidates = [
+        shutil.which(name),
+        str((BASE_DIR.parent / "ffmpeg" / name).resolve()),
+        str((BASE_DIR.parent / "ffmpeg").resolve()),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return name
+
+
+FFMPEG = _resolve_binary("ffmpeg")
+FFPROBE = _resolve_binary("ffprobe")
+
+VOICE_OPTIONS = {
+    "female": "vi-VN-HoaiMyNeural",
+    "male": "vi-VN-NamMinhNeural",
+}
+TRANSLATE_MAX_CHARS = 2600
+TRANSLATE_OVERLAP = 1
+DEFAULT_SUB_STYLE = {
+    "font_name": "Arial",
+    "font_size": 22,
+    "primary_color": "&H00FFFFFF",
+    "outline_color": "&H00000000",
+    "back_color": "&H66000000",
+    "outline": 1,
+    "shadow": 0,
+    "alignment": 2,
+    "margin_v": 30,
+}
+FONT_CANDIDATES = [
+    "Arial",
+    "Helvetica",
+    "Arial Unicode MS",
+    "DejaVu Sans",
+]
+
+app = FastAPI(title="VidTrans", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,462 +89,830 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ========= PATHS =========
-# Ưu tiên ffmpeg ở PATH hiện tại. Có thể override bằng biến môi trường FFMPEG_BIN.
-HOMEBREW_BIN = "/opt/homebrew/bin"
-os.environ["PATH"] = HOMEBREW_BIN + os.pathsep + os.environ.get("PATH", "")
-FFMPEG = os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
-FFPROBE = os.environ.get("FFPROBE_BIN") or shutil.which("ffprobe") or FFMPEG.replace("ffmpeg", "ffprobe")
-
-UPLOAD_DIR = Path("uploads").resolve()
-OUTPUT_DIR = Path("outputs").resolve()
-UPLOAD_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
-
-jobs: dict = {}
-
-# ========= DRAWTEXT HELPERS =========
-FONT_FILE = "/System/Library/Fonts/Supplemental/Arial.ttf"
-# Có thể đổi sang font Unicode khác nếu cần.
-# FONT_FILE = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+jobs: dict[str, dict[str, Any]] = {}
+_whisper_models: dict[str, Any] = {}
 
 
-def ff_escape_text(text: str) -> str:
-    """Escape text cho FFmpeg drawtext."""
-    text = text.replace("\\", "\\\\")
-    text = text.replace(":", "\\:")
-    text = text.replace(",", "\\,")
-    text = text.replace("%", "\\%")
-    text = text.replace("'", "\\'")
-    text = text.replace("[", "\\[")
-    text = text.replace("]", "\\]")
-    text = text.replace("(", "\\(")
-    text = text.replace(")", "\\)")
-    text = text.replace("\n", "\\n")
-    return text
+def ff_escape_path(path: Path) -> str:
+    escaped = str(path).replace("\\", "/")
+    for src, dest in {
+        ":": "\\:",
+        "'": "\\'",
+        ",": "\\,",
+        "[": "\\[",
+        "]": "\\]",
+    }.items():
+        escaped = escaped.replace(src, dest)
+    return escaped
 
 
-def ff_escape_path(path: str) -> str:
-    """Escape path cho FFmpeg filter args."""
-    return path.replace("\\", "/").replace(":", "\\:")
+def ff_escape_text(value: str) -> str:
+    escaped = value.replace("\\", "\\\\")
+    for src, dest in {
+        ":": "\\:",
+        "'": "\\'",
+        ",": "\\,",
+        "[": "\\[",
+        "]": "\\]",
+    }.items():
+        escaped = escaped.replace(src, dest)
+    return escaped
 
 
-def _parse_srt_blocks(srt_text: str):
-    blocks = re.split(r"\n\n+", srt_text.strip())
-    time_re = re.compile(
-        r"(\d+):(\d+):(\d+)[,\.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,\.](\d+)"
+def run_ffmpeg(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    logger.info("Running ffmpeg command: %s", " ".join(args))
+    try:
+        return subprocess.run(args, check=check, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        logger.error("ffmpeg failed with stderr:\n%s", exc.stderr)
+        raise
+
+
+def run_cmd(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    logger.info("Running command: %s", " ".join(args))
+    return subprocess.run(args, check=check, capture_output=True, text=True)
+
+
+def format_time(seconds: float, for_ass: bool = False) -> str:
+    seconds = max(0.0, seconds)
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int(round((seconds - int(seconds)) * 1000))
+    if millis == 1000:
+        secs += 1
+        millis = 0
+    if for_ass:
+        centis = millis // 10
+        return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def wrap_text(text: str, width: int = 34) -> str:
+    lines = textwrap.wrap(" ".join(text.split()), width=width)
+    if not lines:
+        return ""
+    if len(lines) > 2:
+        merged = [" ".join(lines[:-1]), lines[-1]]
+        lines = []
+        for line in merged:
+            lines.extend(textwrap.wrap(line, width=width))
+        lines = lines[:2]
+    return "\n".join(lines[:2])
+
+
+def find_font_file(preferred_name: str) -> Optional[str]:
+    fc_match = shutil.which("fc-match")
+    if not fc_match:
+        return None
+    for candidate in [preferred_name, *FONT_CANDIDATES]:
+        try:
+            result = run_cmd([fc_match, "-f", "%{file}", candidate], check=False)
+            font_file = (result.stdout or "").strip()
+            if font_file and Path(font_file).exists():
+                return font_file
+        except Exception:
+            continue
+    return None
+
+
+def split_segments_for_translation(segments: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    total = 0
+    for segment in segments:
+        text = segment["text"].strip()
+        if not text:
+            continue
+        if current and total + len(text) + 1 > TRANSLATE_MAX_CHARS:
+            groups.append(current)
+            current = []
+            total = 0
+        current.append(segment)
+        total += len(text) + 1
+    if current:
+        groups.append(current)
+    return groups
+
+
+def translate_batch_safe(texts: list[str]) -> list[str]:
+    translator = GoogleTranslator(source="zh-CN", target="vi")
+    translated: list[str] = []
+    for text in texts:
+        clean = " ".join(text.split())
+        if not clean:
+            translated.append("")
+            continue
+        last_error = None
+        for _ in range(3):
+            try:
+                translated.append(translator.translate(clean) or clean)
+                break
+            except Exception as exc:  # pragma: no cover
+                last_error = exc
+                logger.warning("Translate retry due to error: %s", exc)
+        else:
+            logger.exception("Translate failed, falling back to source text")
+            translated.append(clean if last_error else clean)
+    return translated
+
+
+def translate_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    translated_segments: list[dict[str, Any]] = []
+    for batch in split_segments_for_translation(segments):
+        texts = [segment["text"].strip() for segment in batch]
+        vi_texts = translate_batch_safe(texts)
+        for segment, vi_text in zip(batch, vi_texts):
+            translated_segments.append(
+                {
+                    "start": float(segment["start"]),
+                    "end": float(segment["end"]),
+                    "source_text": segment["text"].strip(),
+                    "text": vi_text.strip() or segment["text"].strip(),
+                }
+            )
+    return translated_segments
+
+
+def write_srt(segments: list[dict[str, Any]], output_path: Path) -> None:
+    blocks = []
+    for index, segment in enumerate(segments, start=1):
+        text = wrap_text(segment["text"])
+        if not text:
+            continue
+        blocks.append(
+            "\n".join(
+                [
+                    str(index),
+                    f"{format_time(segment['start'])} --> {format_time(segment['end'])}",
+                    text,
+                ]
+            )
+        )
+    output_path.write_text("\n\n".join(blocks), encoding="utf-8")
+
+
+def write_ass(segments: list[dict[str, Any]], output_path: Path, style: dict[str, Any]) -> None:
+    style_line = (
+        "Style: Default,{font_name},{font_size},{primary_color},{primary_color},"
+        "{outline_color},{back_color},0,0,0,0,100,100,0,0,1,{outline},{shadow},"
+        "{alignment},10,10,{margin_v},1"
+    ).format(**style)
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 1280",
+        "PlayResY: 720",
+        "",
+        "[V4+ Styles]",
+        "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,"
+        "Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,"
+        "Alignment,MarginL,MarginR,MarginV,Encoding",
+        style_line,
+        "",
+        "[Events]",
+        "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
+    ]
+    for segment in segments:
+        text = wrap_text(segment["text"]).replace("\n", "\\N")
+        text = text.replace("{", "\\{").replace("}", "\\}")
+        lines.append(
+            "Dialogue: 0,{start},{end},Default,,0,0,0,,{text}".format(
+                start=format_time(segment["start"], for_ass=True),
+                end=format_time(segment["end"], for_ass=True),
+                text=text,
+            )
+        )
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def get_media_duration(path: Path) -> float:
+    result = run_cmd(
+        [
+            FFPROBE,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ]
+    )
+    return float((result.stdout or "0").strip() or 0)
+
+
+def get_video_fps(path: Path) -> float:
+    result = run_cmd(
+        [
+            FFPROBE,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ]
+    )
+    raw = (result.stdout or "").strip()
+    if "/" in raw:
+        num, denom = raw.split("/", 1)
+        if float(denom) != 0:
+            return float(num) / float(denom)
+    try:
+        return float(raw)
+    except Exception:
+        return 30.0
+
+
+def get_whisper_model(model_name: str) -> Any:
+    if model_name not in _whisper_models:
+        logger.info("Loading whisper model: %s", model_name)
+        _whisper_models[model_name] = whisper.load_model(model_name)
+    return _whisper_models[model_name]
+
+
+def update_job(job_id: str, **fields: Any) -> None:
+    job = jobs.setdefault(job_id, {})
+    job.update(fields)
+
+
+async def tts_edge_sync(text: str, output_path: Path, voice_name: str, rate: str) -> None:
+    if edge_tts is None:
+        raise RuntimeError("edge-tts is not available")
+    communicate = edge_tts.Communicate(text=text, voice=voice_name, rate=rate)
+    await communicate.save(str(output_path))
+
+
+def tts_gtts_sync(text: str, output_path: Path, slow: bool = False) -> None:
+    gTTS(text=text, lang="vi", slow=slow).save(str(output_path))
+
+
+def synthesize_tts_segments(
+    segments: list[dict[str, Any]],
+    work_dir: Path,
+    voice_type: str,
+    speech_rate: float,
+) -> list[Path]:
+    tts_dir = work_dir / "tts"
+    tts_dir.mkdir(parents=True, exist_ok=True)
+    voice_name = VOICE_OPTIONS.get(voice_type, VOICE_OPTIONS["female"])
+    rate_percent = int((speech_rate - 1.0) * 100)
+    rate_string = f"{rate_percent:+d}%"
+    paths: list[Path] = []
+    for index, segment in enumerate(segments):
+        text = " ".join(segment["text"].split())
+        if not text:
+            continue
+        output_path = tts_dir / f"{index:04d}.mp3"
+        try:
+            asyncio.run(tts_edge_sync(text, output_path, voice_name, rate_string))
+        except Exception as exc:
+            logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
+            tts_gtts_sync(text, output_path, slow=speech_rate < 0.95)
+        paths.append(output_path)
+        segment["tts_path"] = output_path
+    return paths
+
+
+def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_duration: float) -> Path:
+    voice_track = work_dir / "voice_track.wav"
+    input_args: list[str] = []
+    filter_parts = []
+    labels = []
+    for index, segment in enumerate(segments):
+        tts_path = segment.get("tts_path")
+        if not tts_path:
+            continue
+        delay_ms = max(0, int(segment["start"] * 1000))
+        input_args.extend(["-i", str(tts_path)])
+        filter_parts.append(f"[{index}:a]adelay={delay_ms}|{delay_ms},volume=1.4[a{index}]")
+        labels.append(f"[a{index}]")
+    if not labels:
+        raise RuntimeError("No TTS segments were generated")
+    filter_parts.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,alimiter=limit=0.95[out]")
+    run_ffmpeg(
+        [
+            FFMPEG,
+            "-y",
+            *input_args,
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "[out]",
+            "-t",
+            f"{video_duration:.3f}",
+            str(voice_track),
+        ]
+    )
+    return voice_track
+
+
+def extract_original_audio(video_path: Path, output_path: Path) -> Path:
+    run_ffmpeg(
+        [
+            FFMPEG,
+            "-y",
+            "-i",
+            str(video_path),
+            "-vn",
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
+def mix_audio(
+    *,
+    mode: int,
+    video_path: Path,
+    work_dir: Path,
+    voice_track: Optional[Path],
+    background_music: Optional[Path],
+    keep_original_audio: bool,
+    original_audio_volume: float,
+    music_volume: float,
+) -> Optional[Path]:
+    if mode == 1:
+        return None
+
+    output_audio = work_dir / "mixed_audio.wav"
+    input_args: list[str] = []
+    filter_parts: list[str] = []
+    labels: list[str] = []
+    input_index = 0
+
+    if voice_track:
+        input_args.extend(["-i", str(voice_track)])
+        filter_parts.append(f"[{input_index}:a]volume=1.0,alimiter=limit=0.95[v]")
+        labels.append("[v]")
+        input_index += 1
+
+    if keep_original_audio:
+        original_audio = extract_original_audio(video_path, work_dir / "original_audio.wav")
+        input_args.extend(["-i", str(original_audio)])
+        filter_parts.append(f"[{input_index}:a]volume={original_audio_volume:.2f}[o]")
+        labels.append("[o]")
+        input_index += 1
+
+    if background_music:
+        duration = get_media_duration(video_path)
+        looped_music = work_dir / "looped_music.wav"
+        run_ffmpeg(
+            [
+                FFMPEG,
+                "-y",
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(background_music),
+                "-t",
+                f"{duration:.3f}",
+                "-af",
+                f"volume={music_volume:.2f},afade=t=in:st=0:d=1.5,afade=t=out:st={max(duration - 2.0, 0):.3f}:d=2",
+                str(looped_music),
+            ]
+        )
+        input_args.extend(["-i", str(looped_music)])
+        filter_parts.append(f"[{input_index}:a]volume=1.0[m]")
+        labels.append("[m]")
+        input_index += 1
+
+    if not labels:
+        return None
+
+    filter_parts.append(
+        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,loudnorm=I=-16:LRA=11:TP=-1.5[out]"
+    )
+    run_ffmpeg(
+        [
+            FFMPEG,
+            "-y",
+            *input_args,
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "[out]",
+            str(output_audio),
+        ]
+    )
+    return output_audio
+
+
+def build_drawtext_filter(segments: list[dict[str, Any]], subtitle_style: dict[str, Any]) -> str:
+    font_file = find_font_file(subtitle_style.get("font_name", "Arial"))
+    font_size = subtitle_style.get("font_size", 22)
+    margin_v = subtitle_style.get("margin_v", 30)
+    filters = []
+    for segment in segments:
+        text = wrap_text(segment["text"])
+        if not text:
+            continue
+        escaped_text = ff_escape_text(text).replace("\n", "\\n")
+        parts = [
+            f"text='{escaped_text}'",
+            f"fontsize={font_size}",
+            "fontcolor=white",
+            "line_spacing=6",
+            "x=(w-text_w)/2",
+            f"y=h-text_h-{margin_v}",
+            "box=1",
+            "boxcolor=black@0.45",
+            "boxborderw=12",
+            f"enable='between(t,{segment['start']:.3f},{segment['end']:.3f})'",
+        ]
+        if font_file:
+            parts.insert(0, f"fontfile='{ff_escape_path(Path(font_file))}'")
+        filters.append(f"drawtext={':'.join(parts)}")
+    return ",".join(filters)
+
+
+def _load_pillow():
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "Pillow is required for subtitle rendering fallback. Please run `pip install -r requirements.txt`."
+        ) from exc
+    return Image, ImageDraw, ImageFont
+
+
+def burn_subtitles_with_pillow(
+    video_path: Path,
+    output_path: Path,
+    audio_path: Optional[Path],
+    segments: list[dict[str, Any]],
+    subtitle_style: dict[str, Any],
+    work_dir: Path,
+) -> None:
+    Image, ImageDraw, ImageFont = _load_pillow()
+    frames_dir = work_dir / "frames"
+    rendered_dir = work_dir / "rendered_frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    rendered_dir.mkdir(parents=True, exist_ok=True)
+
+    fps = get_video_fps(video_path)
+    run_ffmpeg(
+        [
+            FFMPEG,
+            "-y",
+            "-i",
+            str(video_path),
+            "-vsync",
+            "0",
+            str(frames_dir / "frame_%06d.png"),
+        ]
     )
 
-    def ts(*g):
-        return int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2]) + int(g[3]) / 1000
+    font_size = int(subtitle_style.get("font_size", 22))
+    margin_v = int(subtitle_style.get("margin_v", 30))
+    font_path = find_font_file(subtitle_style.get("font_name", "Arial"))
+    font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
+    frame_paths = sorted(frames_dir.glob("frame_*.png"))
 
-    entries = []
-    for blk in blocks:
-        lines = blk.strip().splitlines()
-        if len(lines) < 2:
+    for index, frame_path in enumerate(frame_paths):
+        timestamp = index / fps
+        active = next((seg for seg in segments if seg["start"] <= timestamp <= seg["end"]), None)
+        output_frame = rendered_dir / frame_path.name
+        if not active:
+            shutil.copy2(frame_path, output_frame)
             continue
-        m = None
-        for line in lines:
-            m = time_re.match(line.strip())
-            if m:
-                break
-        if not m:
-            continue
-        start = ts(m.group(1), m.group(2), m.group(3), m.group(4))
-        end = ts(m.group(5), m.group(6), m.group(7), m.group(8))
-        txt_lines = [l for l in lines if not time_re.match(l.strip()) and not l.strip().isdigit()]
-        text = " ".join(re.sub(r"\{[^}]*\}", "", l).strip() for l in txt_lines if l.strip())
-        if text:
-            entries.append((start, end, text))
-    return entries
 
-
-# ========= SUBTITLE BURN HELPER =========
-def burn_subtitles(ffmpeg_bin: str, video_in: str, srt_path: str, video_out: str, extra_args: list = None):
-    """
-    Burn subtitles bằng drawtext בלבד.
-    Yêu cầu FFmpeg build có filter drawtext.
-    extra_args: ví dụ ["-an"] hoặc ["-map", "0:v", "-map", "0:a", "-c:a", "copy"]
-    """
-    if extra_args is None:
-        extra_args = []
-
-    abs_srt = str(Path(srt_path).resolve())
-    srt_text = open(abs_srt, encoding="utf-8").read()
-    entries = _parse_srt_blocks(srt_text)
-
-    if not entries:
-        raise RuntimeError("burn_subtitles: không parse được SRT")
-
-    if not Path(FONT_FILE).exists():
-        raise RuntimeError(f"Không tìm thấy font: {FONT_FILE}")
-
-    base_encode = ["-c:v", "libx264", "-crf", "23", "-preset", "fast"]
-
-    filters = []
-    for start, end, text in entries:
-        ft = ff_escape_text(text)
-        filters.append(
-            f"drawtext=fontfile={ff_escape_path(FONT_FILE)}:"
-            f"text={ft}:"
-            f"fontcolor=white:fontsize=24:borderw=2:bordercolor=black:"
-            f"x=(w-text_w)/2:y=h-text_h-30:"
-            f"enable=between(t\\,{start}\\,{end})"
+        image = Image.open(frame_path).convert("RGBA")
+        overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        text = wrap_text(active["text"])
+        bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=6, align="center")
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        x = (image.width - text_w) / 2
+        y = image.height - text_h - margin_v
+        pad_x = 20
+        pad_y = 12
+        draw.rounded_rectangle(
+            (x - pad_x, y - pad_y, x + text_w + pad_x, y + text_h + pad_y),
+            radius=18,
+            fill=(0, 0, 0, 140),
         )
+        draw.multiline_text((x, y), text, font=font, fill=(255, 255, 255, 255), spacing=6, align="center")
+        combined = Image.alpha_composite(image, overlay).convert("RGB")
+        combined.save(output_frame)
 
-    vf = ",".join(filters)
+    rendered_video = work_dir / "rendered_video.mp4"
+    run_ffmpeg(
+        [
+            FFMPEG,
+            "-y",
+            "-framerate",
+            f"{fps:.6f}",
+            "-i",
+            str(rendered_dir / "frame_%06d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            str(rendered_video),
+        ]
+    )
+
+    mux_source = audio_path or video_path
+    run_ffmpeg(
+        [
+            FFMPEG,
+            "-y",
+            "-i",
+            str(rendered_video),
+            "-i",
+            str(mux_source),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0?",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(output_path),
+        ]
+    )
+
+
+def burn_subtitles(
+    video_path: Path,
+    subtitle_path: Path,
+    output_path: Path,
+    audio_path: Optional[Path],
+    segments: list[dict[str, Any]],
+    subtitle_style: dict[str, Any],
+    work_dir: Path,
+) -> None:
+    subtitle_filter = f"subtitles=filename='{ff_escape_path(subtitle_path)}'"
     cmd = [
-        ffmpeg_bin,
+        FFMPEG,
         "-y",
         "-i",
-        video_in,
-        "-vf",
-        vf,
-    ] + base_encode + extra_args + [video_out]
-
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if r.returncode != 0:
-        raise RuntimeError(f"FFmpeg drawtext failed:\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}")
-
-
-# ========= GIỌNG ĐỌC TIẾNG VIỆT =========
-VOICE_OPTIONS = {
-    "nu-hay": "vi-VN-HoaiMyNeural",
-    "nam-hay": "vi-VN-NamMinhNeural",
-}
-
-# ========= HELPERS =========
-def format_time(seconds):
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int((seconds - int(seconds)) * 1000)
-    return f"{h:02}:{m:02}:{s:02},{ms:03}"
-
-
-def split_text(text, max_len=4000):
-    return [text[i:i + max_len] for i in range(0, len(text), max_len)]
-
-
-def translate_long(text, translator):
-    return " ".join([translator.translate(p) for p in split_text(text)])
-
-
-def wrap_text(text, max_chars=22):
-    words, lines, current = text.split(), [], ""
-    for word in words:
-        if len(current) + len(word) + (1 if current else 0) <= max_chars:
-            current += (" " if current else "") + word
-        else:
-            if current:
-                lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    return "\n".join(lines)
-
-
-def get_font_size(text, base_size=14, min_size=10, max_chars=22):
-    ml = max((len(l) for l in text.split("\n")), default=1)
-    return base_size if ml <= max_chars else max(int(base_size * max_chars / ml), min_size)
-
-
-def upd(job_id, **kw):
-    jobs[job_id].update(kw)
-
-
-# ========= edge-tts =========
-def tts_edge_sync(text: str, voice: str, output_mp3: str, rate: str = "+0%"):
-    import edge_tts
-
-    text = text.strip()
-    if not text:
-        text = "."
-
-    if rate and not rate.startswith(("+", "-")):
-        rate = "+" + rate
-
-    async def _run():
-        for attempt in range(3):
-            try:
-                communicate = edge_tts.Communicate(text, voice, rate=rate)
-                await communicate.save(output_mp3)
-                if os.path.exists(output_mp3) and os.path.getsize(output_mp3) > 0:
-                    return
-            except Exception as e:
-                if attempt == 2:
-                    raise e
-                await asyncio.sleep(1)
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+        str(video_path),
+    ]
+    if audio_path:
+        cmd.extend(["-i", str(audio_path)])
+    cmd.extend(
+        [
+            "-vf",
+            subtitle_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+        ]
+    )
+    if audio_path:
+        cmd.extend(["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-shortest"])
+    else:
+        cmd.extend(["-c:a", "copy"])
+    cmd.append(str(output_path))
     try:
-        loop.run_until_complete(_run())
-    except Exception:
-        loop.close()
+        run_ffmpeg(cmd)
+    except subprocess.CalledProcessError as exc:
+        if "No such filter: 'subtitles'" not in (exc.stderr or ""):
+            raise
+        logger.warning("ffmpeg subtitles filter is unavailable, falling back to drawtext rendering")
+        fallback_filter = build_drawtext_filter(segments, subtitle_style)
+        fallback_cmd = [
+            FFMPEG,
+            "-y",
+            "-i",
+            str(video_path),
+        ]
+        if audio_path:
+            fallback_cmd.extend(["-i", str(audio_path)])
+        fallback_cmd.extend(
+            [
+                "-vf",
+                fallback_filter,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "23",
+            ]
+        )
+        if audio_path:
+            fallback_cmd.extend(["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-shortest"])
+        else:
+            fallback_cmd.extend(["-c:a", "copy"])
+        fallback_cmd.append(str(output_path))
         try:
-            from gtts import gTTS
-            gTTS(text=text, lang="vi").save(output_mp3)
-        except Exception as e2:
-            raise RuntimeError(f"edge-tts và gTTS đều thất bại: {e2}")
-        return
-    finally:
-        if not loop.is_closed():
-            loop.close()
+            run_ffmpeg(fallback_cmd)
+        except subprocess.CalledProcessError as fallback_exc:
+            if "No such filter: 'drawtext'" not in (fallback_exc.stderr or ""):
+                raise
+            logger.warning("ffmpeg drawtext filter is unavailable, falling back to Pillow frame rendering")
+            burn_subtitles_with_pillow(video_path, output_path, audio_path, segments, subtitle_style, work_dir)
 
 
-# ========= CORE =========
-# output_mode:
-#   "full"       — dịch tiếng Việt + lồng tiếng TTS + phụ đề VI
-#   "sub_vi"     — chỉ phụ đề tiếng Việt, giữ audio gốc
-#   "sub_origin" — chỉ phụ đề ngôn ngữ gốc (không dịch), giữ audio gốc
+def normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = []
+    for segment in raw_segments:
+        text = " ".join((segment.get("text") or "").split())
+        if not text:
+            continue
+        start = max(0.0, float(segment.get("start", 0)))
+        end = max(start + 0.1, float(segment.get("end", start + 0.1)))
+        normalized.append({"start": start, "end": end, "text": text})
+    return normalized
+
 
 def process_video(
+    *,
     job_id: str,
-    video_path: str,
-    bgm_path,
-    bgm_volume: float,
-    tts_volume: float,
-    bgm_loop: bool,
-    source_lang: str,
-    model_size: str,
-    voice_key: str,
-    tts_rate: str,
-    output_mode: str,
-):
-    workdir = UPLOAD_DIR / job_id
-    workdir.mkdir(exist_ok=True)
-    output_srt = str(workdir / "output.srt")
-    mixed_audio = str(workdir / "mixed_audio.aac")
-    output_video = str(OUTPUT_DIR / f"output_{job_id[:8]}.mp4")
-    voice = VOICE_OPTIONS.get(voice_key, VOICE_OPTIONS["nu-hay"])
-    use_bgm = bgm_path is not None and output_mode == "full"
-
-    encode_args = ["-c:v", "libx264", "-crf", "23", "-preset", "fast"]
+    video_path: Path,
+    mode: int,
+    whisper_model: str,
+    voice_type: str,
+    speech_rate: float,
+    background_music_path: Optional[Path],
+    keep_original_audio: bool,
+    original_audio_volume: float,
+    music_volume: float,
+    subtitle_style: Optional[dict[str, Any]],
+) -> None:
+    work_dir = WORK_DIR / job_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
     try:
-        t = subprocess.run(
-            [FFMPEG, "-f", "lavfi", "-i", "nullsrc", "-t", "0.1",
-             "-c:v", "h264_videotoolbox", "-f", "null", "-"],
-            capture_output=True, timeout=5
+        update_job(job_id, status="processing", step="transcribing", progress=0.1)
+        model = get_whisper_model(whisper_model)
+        result = model.transcribe(str(video_path), language="zh", task="transcribe", verbose=False)
+        segments = normalize_segments(result.get("segments", []))
+        if not segments:
+            logger.warning("No transcript segments with forced zh, retrying with auto language detection")
+            result = model.transcribe(str(video_path), task="transcribe", verbose=False)
+            segments = normalize_segments(result.get("segments", []))
+        if not segments:
+            raise RuntimeError(
+                "Whisper did not detect any speech segments in the video. "
+                "Please verify the source has audible dialogue and try a larger Whisper model if needed."
+            )
+
+        transcript_path = work_dir / "transcript.json"
+        transcript_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        update_job(job_id, step="translating", progress=0.35)
+        translated_segments = translate_segments(segments)
+
+        srt_path = OUTPUT_DIR / f"{job_id}.srt"
+        ass_path = work_dir / f"{job_id}.ass"
+        write_srt(translated_segments, srt_path)
+        write_ass(translated_segments, ass_path, subtitle_style)
+
+        audio_path = None
+        video_duration = get_media_duration(video_path)
+        if mode in (2, 3):
+            update_job(job_id, step="tts", progress=0.55)
+            synthesize_tts_segments(translated_segments, work_dir, voice_type, speech_rate)
+            voice_track = build_voice_track(translated_segments, work_dir, video_duration)
+
+            update_job(job_id, step="mixing-audio", progress=0.75)
+            audio_path = mix_audio(
+                mode=mode,
+                video_path=video_path,
+                work_dir=work_dir,
+                voice_track=voice_track,
+                background_music=background_music_path if mode == 3 else None,
+                keep_original_audio=keep_original_audio,
+                original_audio_volume=original_audio_volume,
+                music_volume=music_volume,
+            )
+
+        output_video = OUTPUT_DIR / f"output_{job_id}.mp4"
+        update_job(job_id, step="rendering", progress=0.9)
+        burn_subtitles(video_path, ass_path, output_video, audio_path, translated_segments, subtitle_style, work_dir)
+
+        update_job(
+            job_id,
+            status="completed",
+            step="completed",
+            progress=1.0,
+            output_video=str(output_video.name),
+            subtitle_file=str(srt_path.name),
+            transcript_file=str(transcript_path.relative_to(BASE_DIR)),
         )
-        if t.returncode == 0:
-            encode_args = ["-c:v", "h264_videotoolbox", "-q:v", "50"]
-    except Exception:
-        pass
-
-    try:
-        upd(job_id, status="running", step="Đang load Whisper model...", progress=5)
-        model = whisper.load_model(model_size)
-
-        upd(job_id, step="Đang nhận diện giọng nói...", progress=15)
-        result = model.transcribe(video_path, language=source_lang)
-        segments = result["segments"]
-        upd(job_id, step=f"Nhận diện xong {len(segments)} đoạn", progress=35)
-
-        if output_mode in ("full", "sub_vi"):
-            upd(job_id, step="Đang dịch sang tiếng Việt...", progress=38)
-            src_map = {"zh": "zh-CN", "en": "en", "ja": "ja", "ko": "ko", "fr": "fr"}
-            translator = GoogleTranslator(source=src_map.get(source_lang, source_lang), target="vi")
-            final_segments = []
-            for seg in segments:
-                text = seg["text"].strip()
-                try:
-                    vi = translate_long(text, translator)
-                except Exception:
-                    vi = text
-                final_segments.append({"start": seg["start"], "end": seg["end"], "text": vi})
-        else:
-            final_segments = [
-                {"start": s["start"], "end": s["end"], "text": s["text"].strip()}
-                for s in segments
-            ]
-
-        upd(job_id, step="Đang tạo phụ đề...", progress=50)
-        with open(output_srt, "w", encoding="utf-8") as f:
-            for i, seg in enumerate(final_segments, 1):
-                wrapped = wrap_text(seg["text"])
-                font_size = get_font_size(wrapped)
-                tagged = f"{{\\fs{font_size}}}{wrapped}"
-                f.write(f"{i}\n{format_time(seg['start'])} --> {format_time(seg['end'])}\n{tagged}\n\n")
-
-        if output_mode in ("sub_vi", "sub_origin"):
-            upd(job_id, step="Đang ghép phụ đề vào video...", progress=75)
-            burn_subtitles(
-                FFMPEG,
-                video_path,
-                output_srt,
-                output_video,
-                extra_args=["-an"],
-            )
-            shutil.rmtree(workdir, ignore_errors=True)
-            upd(job_id, status="done", step="Hoàn thành!", progress=100, output_file=f"output_{job_id[:8]}.mp4")
-            return
-
-        upd(job_id, step="Đang tạo giọng đọc tiếng Việt...", progress=55)
-        segment_files = []
-
-        for i, seg in enumerate(final_segments):
-            text = seg["text"].strip()
-            if not text:
-                continue
-            mp3 = str(workdir / f"seg_{i}.mp3")
-            wav = str(workdir / f"seg_{i}.wav")
-
-            tts_edge_sync(text, voice, mp3, rate=tts_rate)
-            subprocess.run(
-                [FFMPEG, "-y", "-i", mp3, "-ar", "44100", "-ac", "2", wav],
-                check=True, capture_output=True
-            )
-            os.remove(mp3)
-            segment_files.append((wav, seg["start"]))
-
-            prog = 55 + int((len(segment_files) / max(len(final_segments), 1)) * 20)
-            upd(job_id, step=f"TTS {len(segment_files)}/{len(final_segments)}...", progress=prog)
-
-        upd(job_id, step="Đang mix audio...", progress=78)
-
-        probe = subprocess.run(
-            [FFPROBE, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-            capture_output=True, text=True
-        )
-        total_dur = float(probe.stdout.strip())
-
-        BATCH = 50
-        tts_track = str(workdir / "tts_track.wav")
-
-        subprocess.run([
-            FFMPEG, "-y",
-            "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo",
-            "-t", str(total_dur),
-            "-ar", "44100", "-ac", "2",
-            tts_track,
-        ], check=True, capture_output=True)
-
-        for batch_start in range(0, len(segment_files), BATCH):
-            batch = segment_files[batch_start:batch_start + BATCH]
-            b_inputs = ["-i", tts_track]
-            b_filter = []
-            prev = "[0]"
-            for j, (wav, start_sec) in enumerate(batch):
-                idx = j + 1
-                delay_ms = int(start_sec * 1000)
-                b_filter.append(f"[{idx}]volume={tts_volume},adelay={delay_ms}|{delay_ms}[s{j}]")
-                b_filter.append(f"{prev}[s{j}]amix=inputs=2:duration=first:normalize=0[m{j}]")
-                prev = f"[m{j}]"
-                b_inputs += ["-i", wav]
-
-            fcomplex = ";".join(b_filter) + f";{prev}acopy[out]"
-            tmp_out = str(workdir / "tts_track_tmp.wav")
-            subprocess.run(
-                [FFMPEG, "-y"] + b_inputs + [
-                    "-filter_complex", fcomplex,
-                    "-map", "[out]", "-ar", "44100", "-ac", "2", tmp_out,
-                ], check=True, capture_output=True
-            )
-            os.replace(tmp_out, tts_track)
-
-            prog = 78 + int(((batch_start + len(batch)) / max(len(segment_files), 1)) * 8)
-            upd(job_id, step=f"Mix TTS {batch_start + len(batch)}/{len(segment_files)}...", progress=prog)
-
-        if use_bgm:
-            upd(job_id, step="Đang mix nhạc nền...", progress=87)
-            bgm_args = ["-stream_loop", "-1", "-i", bgm_path] if bgm_loop else ["-i", bgm_path]
-            subprocess.run(
-                [FFMPEG, "-y"] + bgm_args + ["-i", tts_track] + [
-                    "-filter_complex",
-                    f"[0]volume={bgm_volume}[bg];[bg][1]amix=inputs=2:duration=second:normalize=0[out]",
-                    "-map", "[out]", "-ar", "44100", "-ac", "2", mixed_audio,
-                ], check=True,
-            )
-        else:
-            shutil.copy(tts_track, mixed_audio)
-
-        upd(job_id, step="Đang burn phụ đề...", progress=88)
-        video_subbed = str(workdir / "video_subbed.mp4")
-        burn_subtitles(FFMPEG, video_path, output_srt, video_subbed, extra_args=["-an"])
-
-        upd(job_id, step="Đang ghép audio...", progress=94)
-        subprocess.run([
-            FFMPEG, "-y",
-            "-i", video_subbed,
-            "-i", mixed_audio,
-            "-map", "0:v", "-map", "1:a",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            output_video,
-        ], check=True)
-
-        shutil.rmtree(workdir, ignore_errors=True)
-        upd(job_id, status="done", step="Hoàn thành!", progress=100, output_file=f"output_{job_id[:8]}.mp4")
-
-    except Exception as e:
-        upd(job_id, status="error", step=f"Lỗi: {e}", progress=0)
-        shutil.rmtree(workdir, ignore_errors=True)
+    except Exception as exc:
+        logger.exception("Video processing failed for job %s", job_id)
+        update_job(job_id, status="failed", step="failed", error=str(exc))
+    finally:
+        if video_path.exists():
+            video_path.unlink(missing_ok=True)
+        if background_music_path and background_music_path.exists():
+            background_music_path.unlink(missing_ok=True)
 
 
-# ========= API =========
-@app.post("/api/convert")
-async def convert(
+@app.post("/process-video")
+@app.post("/convert")
+async def process_video_endpoint(
     background_tasks: BackgroundTasks,
-    video: UploadFile = File(...),
-    bgm: Optional[UploadFile] = File(None),
-    bgm_volume: float = Form(0.15),
-    tts_volume: float = Form(1.0),
-    bgm_loop: bool = Form(True),
-    source_lang: str = Form("zh"),
-    model_size: str = Form("base"),
-    voice_key: str = Form("nu-hay"),
-    tts_rate: str = Form("+0%"),
-    output_mode: str = Form("full"),
-):
-    job_id = uuid.uuid4().hex
-    workdir = UPLOAD_DIR / job_id
-    workdir.mkdir(exist_ok=True)
+    file: UploadFile = File(...),
+    mode: int = Form(...),
+    voice_type: str = Form("female"),
+    speech_rate: float = Form(1.0),
+    background_music: UploadFile | None = File(default=None),
+    whisper_model: str = Form("base"),
+    keep_original_audio: bool = Form(True),
+    original_audio_volume: float = Form(0.18),
+    music_volume: float = Form(0.28),
+    subtitle_style: str | None = Form(default=None),
+) -> JSONResponse:
+    if mode not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="mode must be 1, 2, or 3")
+    if mode == 3 and background_music is None:
+        raise HTTPException(status_code=400, detail="background_music is required for mode 3")
 
-    video_path = str(workdir / video.filename)
-    with open(video_path, "wb") as f:
-        shutil.copyfileobj(video.file, f)
+    job_id = uuid.uuid4().hex[:8]
+    video_ext = Path(file.filename or "video.mp4").suffix or ".mp4"
+    video_path = UPLOAD_DIR / f"{job_id}{video_ext}"
+    with video_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
-    bgm_path = None
-    if bgm and bgm.filename:
-        bgm_path = str(workdir / bgm.filename)
-        with open(bgm_path, "wb") as f:
-            shutil.copyfileobj(bgm.file, f)
+    background_music_path = None
+    if background_music is not None:
+        music_ext = Path(background_music.filename or "music.mp3").suffix or ".mp3"
+        background_music_path = UPLOAD_DIR / f"{job_id}_bgm{music_ext}"
+        with background_music_path.open("wb") as buffer:
+            shutil.copyfileobj(background_music.file, buffer)
 
-    jobs[job_id] = {"status": "queued", "step": "Đang chờ xử lý...", "progress": 0}
+    style_payload = None
+    if subtitle_style:
+        style_payload = json.loads(subtitle_style)
+
+    jobs[job_id] = {
+        "status": "queued",
+        "step": "queued",
+        "progress": 0.0,
+        "mode": mode,
+        "filename": file.filename,
+    }
     background_tasks.add_task(
         process_video,
-        job_id,
-        video_path,
-        bgm_path,
-        bgm_volume,
-        tts_volume,
-        bgm_loop,
-        source_lang,
-        model_size,
-        voice_key,
-        tts_rate,
-        output_mode,
+        job_id=job_id,
+        video_path=video_path,
+        mode=mode,
+        whisper_model=whisper_model,
+        voice_type=voice_type,
+        speech_rate=speech_rate,
+        background_music_path=background_music_path,
+        keep_original_audio=keep_original_audio,
+        original_audio_volume=original_audio_volume,
+        music_volume=music_volume,
+        subtitle_style=style_payload,
     )
-    return {"job_id": job_id}
+
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "processing_status": "queued",
+            "status_url": f"/status/{job_id}",
+            "video_url": None,
+            "subtitle_url": None,
+        }
+    )
 
 
-@app.get("/api/status/{job_id}")
-def get_status(job_id: str):
+@app.get("/status/{job_id}")
+def get_status(job_id: str) -> JSONResponse:
     job = jobs.get(job_id)
     if not job:
-        return JSONResponse({"error": "Not found"}, status_code=404)
-    return job
+        raise HTTPException(status_code=404, detail="job not found")
+    response = dict(job)
+    if job.get("status") == "completed":
+        if job.get("output_video"):
+            response["video_url"] = f"/download/{job['output_video']}"
+        if job.get("subtitle_file"):
+            response["subtitle_url"] = f"/download/{job['subtitle_file']}"
+    return JSONResponse(response)
 
 
-@app.get("/api/download/{filename}")
-def download(filename: str):
-    path = OUTPUT_DIR / filename
-    if not path.exists():
-        return JSONResponse({"error": "File not found"}, status_code=404)
-    return FileResponse(str(path), media_type="video/mp4", filename=filename)
+@app.get("/download/{filename}")
+def download(filename: str) -> FileResponse:
+    target = OUTPUT_DIR / filename
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(target)
 
 
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

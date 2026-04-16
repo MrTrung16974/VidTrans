@@ -5,3 +5,4 @@ openai-whisper
 deep-translator
 gTTS
 edge-tts
+Pillow
