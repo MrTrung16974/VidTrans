@@ -61,18 +61,19 @@ VOICE_OPTIONS = {
     "female": "vi-VN-HoaiMyNeural",
     "male": "vi-VN-NamMinhNeural",
 }
-TRANSLATE_MAX_CHARS = 2600
-TRANSLATE_OVERLAP = 1
+SOURCE_LANG = "zh-CN"
+TARGET_LANG = "vi"
+TRANSLATE_MAX_CHARS = 4000
 DEFAULT_SUB_STYLE = {
     "font_name": "Arial",
-    "font_size": 22,
+    "font_size": 36,
     "primary_color": "&H00FFFFFF",
     "outline_color": "&H00000000",
     "back_color": "&H66000000",
-    "outline": 1,
+    "outline": 3,
     "shadow": 0,
     "alignment": 2,
-    "margin_v": 30,
+    "margin_v": 210,
 }
 FONT_CANDIDATES = [
     "Arial",
@@ -149,16 +150,20 @@ def format_time(seconds: float, for_ass: bool = False) -> str:
 
 
 def wrap_text(text: str, width: int = 34) -> str:
-    lines = textwrap.wrap(" ".join(text.split()), width=width)
-    if not lines:
-        return ""
-    if len(lines) > 2:
-        merged = [" ".join(lines[:-1]), lines[-1]]
-        lines = []
-        for line in merged:
-            lines.extend(textwrap.wrap(line, width=width))
-        lines = lines[:2]
-    return "\n".join(lines[:2])
+    words = " ".join(text.split()).split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        extra = len(word) + (1 if current else 0)
+        if len(current) + extra <= width:
+            current += (" " if current else "") + word
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return "\n".join(lines[:2] if len(lines) > 2 else lines)
 
 
 def find_font_file(preferred_name: str) -> Optional[str]:
@@ -176,61 +181,49 @@ def find_font_file(preferred_name: str) -> Optional[str]:
     return None
 
 
-def split_segments_for_translation(segments: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    groups: list[list[dict[str, Any]]] = []
-    current: list[dict[str, Any]] = []
-    total = 0
-    for segment in segments:
-        text = segment["text"].strip()
-        if not text:
-            continue
-        if current and total + len(text) + 1 > TRANSLATE_MAX_CHARS:
-            groups.append(current)
-            current = []
-            total = 0
-        current.append(segment)
-        total += len(text) + 1
-    if current:
-        groups.append(current)
-    return groups
+def split_text(text: str, max_len: int = TRANSLATE_MAX_CHARS) -> list[str]:
+    return [text[i : i + max_len] for i in range(0, len(text), max_len)] or [text]
 
 
-def translate_batch_safe(texts: list[str]) -> list[str]:
-    translator = GoogleTranslator(source="zh-CN", target="vi")
-    translated: list[str] = []
-    for text in texts:
-        clean = " ".join(text.split())
+def translate_long(text: str, translator: GoogleTranslator) -> str:
+    translated_parts = []
+    for part in split_text(text):
+        clean = " ".join(part.split())
         if not clean:
-            translated.append("")
             continue
         last_error = None
         for _ in range(3):
             try:
-                translated.append(translator.translate(clean) or clean)
+                translated_parts.append(translator.translate(clean) or clean)
                 break
             except Exception as exc:  # pragma: no cover
                 last_error = exc
                 logger.warning("Translate retry due to error: %s", exc)
         else:
             logger.exception("Translate failed, falling back to source text")
-            translated.append(clean if last_error else clean)
-    return translated
+            translated_parts.append(clean if last_error else clean)
+    return " ".join(translated_parts).strip()
 
 
 def translate_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     translated_segments: list[dict[str, Any]] = []
-    for batch in split_segments_for_translation(segments):
-        texts = [segment["text"].strip() for segment in batch]
-        vi_texts = translate_batch_safe(texts)
-        for segment, vi_text in zip(batch, vi_texts):
-            translated_segments.append(
-                {
-                    "start": float(segment["start"]),
-                    "end": float(segment["end"]),
-                    "source_text": segment["text"].strip(),
-                    "text": vi_text.strip() or segment["text"].strip(),
-                }
-            )
+    translator = GoogleTranslator(source=SOURCE_LANG, target=TARGET_LANG)
+    for segment in segments:
+        source_text = segment["text"].strip()
+        if not source_text:
+            continue
+        try:
+            vi_text = translate_long(source_text, translator)
+        except Exception:
+            vi_text = source_text
+        translated_segments.append(
+            {
+                "start": float(segment["start"]),
+                "end": float(segment["end"]),
+                "source_text": source_text,
+                "text": vi_text.strip() or source_text,
+            }
+        )
     return translated_segments
 
 
@@ -335,6 +328,41 @@ def get_whisper_model(model_name: str) -> Any:
     return _whisper_models[model_name]
 
 
+def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any]]:
+    result = model.transcribe(
+        str(video_path),
+        language="zh",
+        fp16=False,
+        temperature=0,
+        best_of=5,
+        beam_size=5,
+        condition_on_previous_text=True,
+        verbose=False,
+    )
+    segments = normalize_segments(result.get("segments", []))
+    if segments:
+        return segments
+
+    logger.warning("No transcript segments with forced zh, retrying with simpler whisper settings")
+    result = model.transcribe(
+        str(video_path),
+        language="zh",
+        fp16=False,
+        verbose=False,
+    )
+    segments = normalize_segments(result.get("segments", []))
+    if segments:
+        return segments
+
+    logger.warning("No transcript segments with forced zh, retrying with auto language detection")
+    result = model.transcribe(
+        str(video_path),
+        fp16=False,
+        verbose=False,
+    )
+    return normalize_segments(result.get("segments", []))
+
+
 def update_job(job_id: str, **fields: Any) -> None:
     job = jobs.setdefault(job_id, {})
     job.update(fields)
@@ -369,10 +397,10 @@ def synthesize_tts_segments(
             continue
         output_path = tts_dir / f"{index:04d}.mp3"
         try:
-            asyncio.run(tts_edge_sync(text, output_path, voice_name, rate_string))
-        except Exception as exc:
-            logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
             tts_gtts_sync(text, output_path, slow=speech_rate < 0.95)
+        except Exception as exc:
+            logger.warning("gTTS failed, fallback to edge-tts: %s", exc)
+            asyncio.run(tts_edge_sync(text, output_path, voice_name, rate_string))
         paths.append(output_path)
         segment["tts_path"] = output_path
     return paths
@@ -757,12 +785,7 @@ def process_video(
     try:
         update_job(job_id, status="processing", step="transcribing", progress=0.1)
         model = get_whisper_model(whisper_model)
-        result = model.transcribe(str(video_path), language="zh", task="transcribe", verbose=False)
-        segments = normalize_segments(result.get("segments", []))
-        if not segments:
-            logger.warning("No transcript segments with forced zh, retrying with auto language detection")
-            result = model.transcribe(str(video_path), task="transcribe", verbose=False)
-            segments = normalize_segments(result.get("segments", []))
+        segments = transcribe_chinese_video(model, video_path)
         if not segments:
             raise RuntimeError(
                 "Whisper did not detect any speech segments in the video. "

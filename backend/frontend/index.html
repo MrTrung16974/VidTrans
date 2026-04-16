@@ -148,7 +148,7 @@
       .progress-meta {
         display: flex;
         justify-content: space-between;
-        align-items: baseline;
+        align-items: flex-start;
         gap: 12px;
         margin-bottom: 10px;
       }
@@ -156,12 +156,18 @@
       .progress-title {
         font-weight: 700;
         color: var(--ink);
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
 
       .progress-percent {
         font-size: 1.4rem;
         font-weight: 800;
         color: var(--accent);
+        flex: 0 0 auto;
+        white-space: nowrap;
       }
 
       .progress-track {
@@ -227,6 +233,10 @@
           align-items: flex-start;
           flex-direction: column;
         }
+
+        .progress-percent {
+          font-size: 1.2rem;
+        }
       }
 
       @media (max-width: 640px) {
@@ -245,6 +255,19 @@
 
         .subtitle {
           font-size: 0.98rem;
+        }
+
+        .progress-card {
+          padding: 14px;
+        }
+
+        .progress-title {
+          font-size: 0.95rem;
+          line-height: 1.35;
+        }
+
+        .progress-step {
+          font-size: 0.9rem;
         }
       }
     </style>
