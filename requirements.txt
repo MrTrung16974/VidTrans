@@ -6,3 +6,5 @@ deep-translator
 gTTS
 edge-tts
 Pillow
+paddleocr==3.7.0
+paddlepaddle==3.3.1

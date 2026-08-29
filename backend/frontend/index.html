@@ -302,11 +302,34 @@
               </label>
 
               <label>
+                Nguồn phụ đề Trung
+                <select name="subtitle_source">
+                  <option value="auto">Tự động: OCR trước, giọng nói dự phòng</option>
+                  <option value="burned">Chữ có sẵn trên video (OCR)</option>
+                  <option value="speech">Giọng nói (Whisper)</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="grid">
+              <label>
                 Giọng đọc
                 <select name="voice_type">
                   <option value="female">Nữ</option>
                   <option value="male">Nam</option>
                 </select>
+              </label>
+
+              <label>
+                Tốc độ lấy mẫu OCR (frame/giây)
+                <input
+                  type="number"
+                  name="ocr_sample_fps"
+                  min="1"
+                  max="15"
+                  step="0.5"
+                  value="5"
+                />
               </label>
             </div>
 
@@ -331,6 +354,32 @@
                   <option value="small">small</option>
                   <option value="medium">medium</option>
                 </select>
+              </label>
+            </div>
+
+            <div class="grid">
+              <label>
+                Mép trên vùng OCR (0–1)
+                <input
+                  type="number"
+                  name="ocr_roi_top"
+                  min="0"
+                  max="0.95"
+                  step="0.01"
+                  value="0.68"
+                />
+              </label>
+
+              <label>
+                Mép dưới vùng OCR (0–1)
+                <input
+                  type="number"
+                  name="ocr_roi_bottom"
+                  min="0.05"
+                  max="1"
+                  step="0.01"
+                  value="0.96"
+                />
               </label>
             </div>
 
@@ -386,6 +435,7 @@
             <li>Mode 1: giữ nguyên tiếng Trung, burn phụ đề tiếng Việt.</li>
             <li>Mode 2: thêm voice tiếng Việt và có thể giữ tiếng gốc ở mức nhỏ.</li>
             <li>Mode 3: như mode 2, đồng thời loop và mix nhạc nền có fade.</li>
+            <li>Nguồn tự động ưu tiên đọc phụ đề Trung có sẵn trên hình, sau đó dùng Whisper để đối chiếu.</li>
           </ul>
 
           <div class="progress-card">
@@ -454,6 +504,7 @@
         const progress = Math.max(0, Math.min(100, Math.round((data.progress || 0) * 100)));
         const stepLabels = {
           queued: "Đang xếp hàng xử lý",
+          "extracting-subtitles": "Đang đọc phụ đề tiếng Trung có sẵn trên khung hình",
           transcribing: "Đang nhận diện giọng nói tiếng Trung",
           translating: "Đang dịch sang tiếng Việt",
           tts: "Đang tạo giọng đọc tiếng Việt",
@@ -481,7 +532,7 @@
         progressTitleEl.textContent = data.filename
           ? `Đang xử lý: ${data.filename}`
           : "Đang xử lý video";
-        progressStepEl.textContent = stepLabels[data.step] || data.step || "Đang cập nhật tiến trình...";
+        progressStepEl.textContent = data.step_detail || stepLabels[data.step] || data.step || "Đang cập nhật tiến trình...";
       }
 
       async function pollStatus(jobId) {
@@ -493,6 +544,7 @@
           resultEl.innerHTML = `
             ${data.video_url ? `<a href="${data.video_url}" target="_blank">Tải video</a>` : ""}
             ${data.subtitle_url ? `<a href="${data.subtitle_url}" target="_blank">Tải subtitle</a>` : ""}
+            ${data.translation_url ? `<a href="${data.translation_url}" target="_blank">Tải bản đối chiếu OCR/ASR</a>` : ""}
           `;
           clearInterval(pollTimer);
           pollTimer = null;

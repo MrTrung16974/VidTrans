@@ -1,3 +1,6 @@
 /backend/work/
 /backend/uploads/
 /backend/outputs/
+__pycache__/
+*.py[cod]
+.venv/

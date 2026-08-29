@@ -11,7 +11,9 @@ services:
       - ./backend/uploads:/app/backend/uploads
       - ./backend/work:/app/backend/work
       - whisper-models:/root/.cache/whisper
+      - paddle-models:/root/.paddlex
     restart: unless-stopped
 
 volumes:
   whisper-models:
+  paddle-models:

@@ -17,6 +17,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
 
+from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
+
 try:
     import edge_tts
 except Exception:  # pragma: no cover
@@ -218,6 +220,7 @@ def translate_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             vi_text = source_text
         translated_segments.append(
             {
+                **segment,
                 "start": float(segment["start"]),
                 "end": float(segment["end"]),
                 "source_text": source_text,
@@ -337,6 +340,8 @@ def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any
         best_of=5,
         beam_size=5,
         condition_on_previous_text=True,
+        word_timestamps=True,
+        hallucination_silence_threshold=1.0,
         verbose=False,
     )
     segments = normalize_segments(result.get("segments", []))
@@ -348,6 +353,7 @@ def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any
         str(video_path),
         language="zh",
         fp16=False,
+        word_timestamps=True,
         verbose=False,
     )
     segments = normalize_segments(result.get("segments", []))
@@ -358,6 +364,7 @@ def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any
     result = model.transcribe(
         str(video_path),
         fp16=False,
+        word_timestamps=True,
         verbose=False,
     )
     return normalize_segments(result.get("segments", []))
@@ -761,7 +768,34 @@ def normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any
             continue
         start = max(0.0, float(segment.get("start", 0)))
         end = max(start + 0.1, float(segment.get("end", start + 0.1)))
-        normalized.append({"start": start, "end": end, "text": text})
+        words = []
+        for word in segment.get("words") or []:
+            word_text = (word.get("word") or "").strip()
+            if not word_text:
+                continue
+            word_start = max(start, float(word.get("start") if word.get("start") is not None else start))
+            word_end = max(
+                word_start,
+                min(end, float(word.get("end") if word.get("end") is not None else end)),
+            )
+            words.append(
+                {
+                    "word": word_text,
+                    "start": word_start,
+                    "end": word_end,
+                    "probability": float(word.get("probability") or 0.0),
+                }
+            )
+        normalized.append(
+            {
+                "start": start,
+                "end": end,
+                "text": text,
+                "words": words,
+                "avg_logprob": float(segment.get("avg_logprob") or 0.0),
+                "source_method": "speech",
+            }
+        )
     return normalized
 
 
@@ -778,30 +812,82 @@ def process_video(
     original_audio_volume: float,
     music_volume: float,
     subtitle_style: Optional[dict[str, Any]],
+    subtitle_source: str,
+    ocr_sample_fps: float,
+    ocr_roi_top: float,
+    ocr_roi_bottom: float,
 ) -> None:
     work_dir = WORK_DIR / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
     subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
     try:
-        update_job(job_id, status="processing", step="transcribing", progress=0.1)
+        ocr_segments: list[dict[str, Any]] = []
+        if subtitle_source in {"auto", "burned"}:
+            update_job(job_id, status="processing", step="extracting-subtitles", progress=0.05)
+            try:
+                ocr_segments = extract_burned_subtitle_segments(
+                    video_path,
+                    work_dir,
+                    ffmpeg=FFMPEG,
+                    config=OCRConfig(
+                        sample_fps=ocr_sample_fps,
+                        roi_top=ocr_roi_top,
+                        roi_bottom=ocr_roi_bottom,
+                    ),
+                    progress_callback=lambda completed, total: update_job(
+                        job_id,
+                        progress=0.05 + (0.13 * completed / max(total, 1)),
+                        step_detail=f"OCR {completed}/{total} frames",
+                    ),
+                )
+            except Exception:
+                if subtitle_source == "burned":
+                    raise
+                logger.warning("OCR subtitle extraction failed; using speech transcription", exc_info=True)
+
+        update_job(job_id, status="processing", step="transcribing", step_detail=None, progress=0.2)
         model = get_whisper_model(whisper_model)
-        segments = transcribe_chinese_video(model, video_path)
+        asr_segments = transcribe_chinese_video(model, video_path)
+        if ocr_segments:
+            segments = annotate_ocr_segments_with_asr(ocr_segments, asr_segments)
+        else:
+            segments = asr_segments
         if not segments:
             raise RuntimeError(
-                "Whisper did not detect any speech segments in the video. "
-                "Please verify the source has audible dialogue and try a larger Whisper model if needed."
+                "No burned-in Chinese subtitles or audible Chinese speech could be detected. "
+                "Check the OCR subtitle region or try a larger Whisper model."
             )
 
         transcript_path = work_dir / "transcript.json"
         transcript_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        update_job(job_id, step="translating", progress=0.35)
+        update_job(
+            job_id,
+            step="translating",
+            progress=0.4,
+            subtitle_source_used="ocr" if ocr_segments else "speech",
+            review_cues=sum(1 for segment in segments if segment.get("needs_review")),
+        )
         translated_segments = translate_segments(segments)
 
         srt_path = OUTPUT_DIR / f"{job_id}.srt"
+        translation_path = OUTPUT_DIR / f"{job_id}.translation.json"
         ass_path = work_dir / f"{job_id}.ass"
         write_srt(translated_segments, srt_path)
         write_ass(translated_segments, ass_path, subtitle_style)
+        translation_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "source_method": "ocr" if ocr_segments else "speech",
+                    "review_cues": sum(1 for segment in translated_segments if segment.get("needs_review")),
+                    "segments": translated_segments,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         audio_path = None
         video_duration = get_media_duration(video_path)
@@ -833,6 +919,7 @@ def process_video(
             progress=1.0,
             output_video=str(output_video.name),
             subtitle_file=str(srt_path.name),
+            translation_file=str(translation_path.name),
             transcript_file=str(transcript_path.relative_to(BASE_DIR)),
         )
     except Exception as exc:
@@ -859,11 +946,25 @@ async def process_video_endpoint(
     original_audio_volume: float = Form(0.18),
     music_volume: float = Form(0.28),
     subtitle_style: str | None = Form(default=None),
+    subtitle_source: str = Form("auto"),
+    ocr_sample_fps: float = Form(5.0),
+    ocr_roi_top: float = Form(0.68),
+    ocr_roi_bottom: float = Form(0.96),
 ) -> JSONResponse:
     if mode not in (1, 2, 3):
         raise HTTPException(status_code=400, detail="mode must be 1, 2, or 3")
     if mode == 3 and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
+    if subtitle_source not in {"auto", "burned", "speech"}:
+        raise HTTPException(status_code=400, detail="subtitle_source must be auto, burned, or speech")
+    try:
+        OCRConfig(
+            sample_fps=ocr_sample_fps,
+            roi_top=ocr_roi_top,
+            roi_bottom=ocr_roi_bottom,
+        ).validate()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     job_id = uuid.uuid4().hex[:8]
     video_ext = Path(file.filename or "video.mp4").suffix or ".mp4"
@@ -888,6 +989,12 @@ async def process_video_endpoint(
         "progress": 0.0,
         "mode": mode,
         "filename": file.filename,
+        "subtitle_source": subtitle_source,
+        "ocr_config": {
+            "sample_fps": ocr_sample_fps,
+            "roi_top": ocr_roi_top,
+            "roi_bottom": ocr_roi_bottom,
+        },
     }
     background_tasks.add_task(
         process_video,
@@ -902,6 +1009,10 @@ async def process_video_endpoint(
         original_audio_volume=original_audio_volume,
         music_volume=music_volume,
         subtitle_style=style_payload,
+        subtitle_source=subtitle_source,
+        ocr_sample_fps=ocr_sample_fps,
+        ocr_roi_top=ocr_roi_top,
+        ocr_roi_bottom=ocr_roi_bottom,
     )
 
     return JSONResponse(
@@ -926,6 +1037,8 @@ def get_status(job_id: str) -> JSONResponse:
             response["video_url"] = f"/download/{job['output_video']}"
         if job.get("subtitle_file"):
             response["subtitle_url"] = f"/download/{job['subtitle_file']}"
+        if job.get("translation_file"):
+            response["translation_url"] = f"/download/{job['translation_file']}"
     return JSONResponse(response)
 
 

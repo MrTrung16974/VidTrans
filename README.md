@@ -35,9 +35,18 @@ Mở trình duyệt: **http://localhost:8000**
 
 1. Upload file **video** (mp4, mov, mkv...)
 2. Upload file **nhạc nền** (mp3, wav, aac... — ví dụ: `Chill.wav`)
-3. Chỉnh các thông số (âm lượng nhạc, model Whisper, ngôn ngữ gốc)
-4. Bấm **Bắt đầu** → theo dõi tiến trình
-5. Tải về file kết quả
+3. Chọn nguồn phụ đề Trung:
+   - `Tự động`: ưu tiên OCR dòng chữ đã có trên video, dùng Whisper làm dự phòng
+   - `OCR`: bắt buộc đọc phụ đề Trung đóng cứng trên hình
+   - `Whisper`: nhận diện hoàn toàn từ giọng nói
+4. Nếu dùng OCR, chỉnh vùng đọc theo tỉ lệ chiều cao video khi phụ đề không nằm gần đáy
+5. Bấm **Bắt đầu** → theo dõi tiến trình
+6. Tải về file kết quả
+
+Lần OCR đầu tiên sẽ tải model nhận diện chữ Trung và có thể mất nhiều thời gian hơn các lần sau.
+Docker Compose lưu model này trong volume `paddle-models`.
+Mỗi job còn xuất file `*.translation.json` chứa chữ Trung, bản dịch Việt, confidence OCR,
+kết quả đối chiếu ASR và cờ `needs_review` để kiểm tra các cue chưa chắc chắn.
 
 ## Thư mục tự tạo
 
