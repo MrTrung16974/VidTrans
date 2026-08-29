@@ -1,0 +1,17 @@
+services:
+  vidtrans:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vidtrans
+    ports:
+      - "5200:8000"
+    volumes:
+      - ./backend/outputs:/app/backend/outputs
+      - ./backend/uploads:/app/backend/uploads
+      - ./backend/work:/app/backend/work
+      - whisper-models:/root/.cache/whisper
+    restart: unless-stopped
+
+volumes:
+  whisper-models:
