@@ -18,6 +18,12 @@ upload -> preprocess -> OCR + ASR -> reconcile -> translate
 ```text
 backend/
 ├── main.py                    # FastAPI compatibility entry point
+├── app/
+│   └── config.py              # Runtime paths and FFmpeg resolution
+├── application/
+│   └── job_service.py         # Job lifecycle application boundary
+├── domain/
+│   └── models.py              # Processing-mode and request contracts
 ├── infrastructure/
 │   └── job_store.py           # Persistent SQLite job repository
 ├── pipeline/
@@ -26,8 +32,9 @@ backend/
 ```
 
 `main.py` remains the compatibility entry point while responsibilities are
-extracted incrementally. New infrastructure or provider logic must not be
-added directly to API route functions.
+extracted incrementally. Configuration and job persistence now enter through
+`app.config` and `application.job_service`; new infrastructure or provider
+logic must not be added directly to API route functions.
 
 ## Job state
 
@@ -40,11 +47,12 @@ Properties:
 - atomic read/merge/write updates with `BEGIN IMMEDIATE`;
 - WAL mode for readers while a background task updates progress;
 - JSON payload keeps the current `/status/{job_id}` response compatible;
-- unfinished in-process jobs can be marked `interrupted` after restart.
+- unfinished in-process jobs are requeued and restarted from their persisted request after restart.
 
 `VIDTRANS_RECOVER_INTERRUPTED_JOBS=1` is correct for the current single-process
-deployment. It must be disabled when multiple API/worker processes are added;
-at that point, recovery belongs to the queue coordinator and job leases.
+deployment. It restarts a persisted job from the beginning when its source upload
+is still available. It must be disabled when multiple API/worker processes are
+added; at that point, recovery belongs to the queue coordinator and job leases.
 
 ## Module boundaries to preserve
 
@@ -58,13 +66,14 @@ at that point, recovery belongs to the queue coordinator and job leases.
 ## Planned extraction order
 
 1. Persistent job repository and restart behavior. **Implemented.**
-2. Typed `Job`, `SubtitleCue`, `Artifact` and `StageResult` models.
-3. Media/FFmpeg adapter extracted from `main.py`.
-4. Translation and TTS provider interfaces.
-5. Pipeline orchestrator with stage artifacts, cache keys and resume.
-6. Redis-backed workers when deployment can run more than one process.
-7. Review API and subtitle editor.
+2. Application configuration, job service and typed processing-request model.
+   **Implemented.**
+3. Typed `Job`, `SubtitleCue`, `Artifact` and `StageResult` models.
+4. Media/FFmpeg adapter extracted from `main.py`.
+5. Translation and TTS provider interfaces.
+6. Pipeline orchestrator with stage artifacts, cache keys and resume.
+7. Redis-backed workers when deployment can run more than one process.
+8. Review API and subtitle editor.
 
 Every extraction must keep existing endpoints and the three processing modes
 working until a versioned replacement API is ready.
-

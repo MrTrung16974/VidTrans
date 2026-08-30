@@ -1,0 +1,14 @@
+.git
+.gitignore
+.idea
+.DS_Store
+**/.DS_Store
+**/__pycache__
+**/*.py[cod]
+backend/uploads
+backend/outputs
+backend/work
+ffmpeg
+ffmpeg.zip
+venv
+.venv

@@ -304,22 +304,32 @@
               <label>
                 Nguồn phụ đề Trung
                 <select name="subtitle_source">
+                  <option value="speech" selected>Giọng nói (Whisper) — khuyến nghị</option>
                   <option value="auto">Tự động: OCR trước, giọng nói dự phòng</option>
                   <option value="burned">Chữ có sẵn trên video (OCR)</option>
-                  <option value="speech">Giọng nói (Whisper)</option>
                 </select>
               </label>
             </div>
 
             <div class="grid">
               <label>
-                Giọng đọc
-                <select name="voice_type">
+                Chế độ giọng đọc
+                <select name="voice_mode" id="voiceMode">
+                  <option value="auto">Tự động theo cao độ giọng gốc</option>
+                  <option value="manual">Chọn thủ công cho toàn video</option>
+                </select>
+              </label>
+
+              <label id="voiceTypeLabel">
+                <span id="voiceTypeLabelText">Giọng dự phòng</span>
+                <select name="voice_type" id="voiceType">
                   <option value="female">Nữ</option>
                   <option value="male">Nam</option>
                 </select>
               </label>
+            </div>
 
+            <div class="grid">
               <label>
                 Tốc độ lấy mẫu OCR (frame/giây)
                 <input
@@ -436,6 +446,8 @@
             <li>Mode 2: thêm voice tiếng Việt và có thể giữ tiếng gốc ở mức nhỏ.</li>
             <li>Mode 3: như mode 2, đồng thời loop và mix nhạc nền có fade.</li>
             <li>Nguồn tự động ưu tiên đọc phụ đề Trung có sẵn trên hình, sau đó dùng Whisper để đối chiếu.</li>
+            <li>Trên Docker Apple Silicon, Whisper là nguồn mặc định vì PaddleOCR hiện không ổn định trên Linux ARM64.</li>
+            <li>Giọng tự động chọn chất giọng TTS theo cao độ lời gốc; câu không chắc chắn sẽ dùng giọng dự phòng.</li>
           </ul>
 
           <div class="progress-card">
@@ -470,7 +482,17 @@
       const progressPercentEl = document.getElementById("progressPercent");
       const progressFillEl = document.getElementById("progressFill");
       const progressStepEl = document.getElementById("progressStep");
+      const voiceModeEl = document.getElementById("voiceMode");
+      const voiceTypeLabelText = document.getElementById("voiceTypeLabelText");
       let pollTimer = null;
+
+      function syncVoiceModeHint() {
+        const isAuto = voiceModeEl.value === "auto";
+        voiceTypeLabelText.textContent = isAuto ? "Giọng dự phòng" : "Giọng đọc";
+      }
+
+      voiceModeEl.addEventListener("change", syncVoiceModeHint);
+      syncVoiceModeHint();
 
       function setStatus(text) {
         statusEl.textContent = text;
@@ -507,6 +529,7 @@
           "extracting-subtitles": "Đang đọc phụ đề tiếng Trung có sẵn trên khung hình",
           transcribing: "Đang nhận diện giọng nói tiếng Trung",
           translating: "Đang dịch sang tiếng Việt",
+          "routing-voices": "Đang chọn giọng TTS theo cao độ lời gốc",
           tts: "Đang tạo giọng đọc tiếng Việt",
           "mixing-audio": "Đang trộn voice, tiếng gốc và nhạc nền",
           rendering: "Đang render video đầu ra",

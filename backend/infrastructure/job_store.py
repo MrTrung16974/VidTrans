@@ -190,3 +190,40 @@ class SQLiteJobStore:
                 )
                 recovered += 1
         return recovered
+
+    def requeue_interrupted(self) -> list[tuple[str, dict[str, Any]]]:
+        """Atomically return unfinished jobs to the queue after a process restart.
+
+        The caller owns actual task scheduling.  Keeping this operation in the
+        store prevents a concurrent status request from observing a half-updated
+        job payload.
+        """
+
+        now = _utc_now()
+        requeued: list[tuple[str, dict[str, Any]]] = []
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT job_id, payload_json FROM jobs WHERE status IN ('queued', 'processing')"
+            ).fetchall()
+            for row in rows:
+                payload = self._decode(row["payload_json"])
+                payload.update(
+                    {
+                        "status": "queued",
+                        "step": "queued",
+                        "progress": 0.0,
+                        "step_detail": "Server restarted; restarting the job from the beginning",
+                        "restart_count": int(payload.get("restart_count", 0)) + 1,
+                    }
+                )
+                connection.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'queued', payload_json = ?, updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (self._encode(payload), now, row["job_id"]),
+                )
+                requeued.append((str(row["job_id"]), payload))
+        return requeued

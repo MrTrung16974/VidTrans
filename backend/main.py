@@ -17,8 +17,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
 
+from app.config import AppSettings
+from application.job_service import JobService
+from domain.models import ProcessingMode, ProcessingRequest
 from infrastructure.job_store import SQLiteJobStore
 from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
+from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
 
 try:
     import edge_tts
@@ -32,33 +36,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BASE_DIR = Path(__file__).resolve().parent
-FRONTEND_DIR = BASE_DIR / "frontend"
-UPLOAD_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR = BASE_DIR / "outputs"
-WORK_DIR = BASE_DIR / "work"
-
-for path in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR):
-    path.mkdir(parents=True, exist_ok=True)
-
-HOMEBREW_BIN = "/opt/homebrew/bin"
-os.environ["PATH"] = f"{HOMEBREW_BIN}{os.pathsep}{os.environ.get('PATH', '')}"
-
-
-def _resolve_binary(name: str) -> str:
-    candidates = [
-        shutil.which(name),
-        str((BASE_DIR.parent / "ffmpeg" / name).resolve()),
-        str((BASE_DIR.parent / "ffmpeg").resolve()),
-    ]
-    for candidate in candidates:
-        if candidate and Path(candidate).exists():
-            return candidate
-    return name
-
-
-FFMPEG = _resolve_binary("ffmpeg")
-FFPROBE = _resolve_binary("ffprobe")
+SETTINGS = AppSettings.load(Path(__file__).resolve().parent)
+BASE_DIR = SETTINGS.base_dir
+FRONTEND_DIR = SETTINGS.frontend_dir
+UPLOAD_DIR = SETTINGS.upload_dir
+OUTPUT_DIR = SETTINGS.output_dir
+WORK_DIR = SETTINGS.work_dir
+FFMPEG = SETTINGS.ffmpeg
+FFPROBE = SETTINGS.ffprobe
 
 VOICE_OPTIONS = {
     "female": "vi-VN-HoaiMyNeural",
@@ -93,12 +78,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-JOB_STORE = SQLiteJobStore(WORK_DIR / "jobs.sqlite3")
-if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() in {"1", "true", "yes"}:
-    recovered_jobs = JOB_STORE.recover_interrupted()
-    if recovered_jobs:
-        logger.warning("Marked %d interrupted jobs as failed after startup", recovered_jobs)
+JOB_SERVICE = JobService(SQLiteJobStore(WORK_DIR / "jobs.sqlite3"))
 _whisper_models: dict[str, Any] = {}
+_resumed_tasks: set[asyncio.Task[Any]] = set()
 
 
 def ff_escape_path(path: Path) -> str:
@@ -376,7 +358,7 @@ def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any
 
 
 def update_job(job_id: str, **fields: Any) -> None:
-    JOB_STORE.update(job_id, **fields)
+    JOB_SERVICE.update(job_id, **fields)
 
 
 def make_ocr_progress_callback(job_id: str) -> Callable[[int, int], None]:
@@ -418,7 +400,6 @@ def synthesize_tts_segments(
 ) -> list[Path]:
     tts_dir = work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
-    voice_name = VOICE_OPTIONS.get(voice_type, VOICE_OPTIONS["female"])
     rate_percent = int((speech_rate - 1.0) * 100)
     rate_string = f"{rate_percent:+d}%"
     paths: list[Path] = []
@@ -427,11 +408,13 @@ def synthesize_tts_segments(
         if not text:
             continue
         output_path = tts_dir / f"{index:04d}.mp3"
+        selected_voice_type = str(segment.get("voice_type", voice_type))
+        voice_name = VOICE_OPTIONS.get(selected_voice_type, VOICE_OPTIONS["female"])
         try:
-            tts_gtts_sync(text, output_path, slow=speech_rate < 0.95)
-        except Exception as exc:
-            logger.warning("gTTS failed, fallback to edge-tts: %s", exc)
             asyncio.run(tts_edge_sync(text, output_path, voice_name, rate_string))
+        except Exception as exc:
+            logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
+            tts_gtts_sync(text, output_path, slow=speech_rate < 0.95)
         paths.append(output_path)
         segment["tts_path"] = output_path
     return paths
@@ -482,6 +465,27 @@ def extract_original_audio(video_path: Path, output_path: Path) -> Path:
             "2",
             "-ar",
             "44100",
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
+def extract_voice_analysis_audio(video_path: Path, output_path: Path) -> Path:
+    """Create the compact mono PCM input used by the local pitch router."""
+    run_ffmpeg(
+        [
+            FFMPEG,
+            "-y",
+            "-i",
+            str(video_path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
             str(output_path),
         ]
     )
@@ -830,6 +834,7 @@ def process_video(
     mode: int,
     whisper_model: str,
     voice_type: str,
+    voice_mode: str,
     speech_rate: float,
     background_music_path: Optional[Path],
     keep_original_audio: bool,
@@ -846,7 +851,16 @@ def process_video(
     subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
     try:
         ocr_segments: list[dict[str, Any]] = []
-        if subtitle_source in {"auto", "burned"}:
+        if subtitle_source in {"auto", "burned"} and not SETTINGS.paddle_ocr_enabled:
+            message = "OCR is disabled on this Linux ARM64 runtime; using Whisper speech recognition"
+            if subtitle_source == "burned":
+                raise RuntimeError(
+                    "Burned-subtitle OCR is disabled on this runtime because PaddleOCR crashes the server. "
+                    "Choose Whisper or Auto, or set VIDTRANS_ENABLE_PADDLE_OCR=1 only after validating PaddleOCR."
+                )
+            logger.warning(message)
+            update_job(job_id, status="processing", step="transcribing", step_detail=message, progress=0.1)
+        elif subtitle_source in {"auto", "burned"}:
             update_job(job_id, status="processing", step="extracting-subtitles", progress=0.05)
             try:
                 ocr_segments = extract_burned_subtitle_segments(
@@ -895,12 +909,42 @@ def process_video(
         ass_path = work_dir / f"{job_id}.ass"
         write_srt(translated_segments, srt_path)
         write_ass(translated_segments, ass_path, subtitle_style)
+
+        video_duration = get_media_duration(video_path)
+        voice_summary: dict[str, int] | None = None
+        if mode in (2, 3):
+            if voice_mode == "auto":
+                update_job(job_id, step="routing-voices", progress=0.5)
+                try:
+                    analysis_audio = extract_voice_analysis_audio(
+                        video_path,
+                        work_dir / "voice_analysis.wav",
+                    )
+                    voice_summary = route_segments_by_pitch(
+                        translated_segments,
+                        analysis_audio,
+                        fallback_voice=voice_type,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Automatic voice routing failed; using the selected fallback voice",
+                        exc_info=True,
+                    )
+                    voice_summary = route_segments_manually(translated_segments, voice_type)
+            else:
+                voice_summary = route_segments_manually(translated_segments, voice_type)
+
         translation_path.write_text(
             json.dumps(
                 {
                     "version": 1,
                     "source_method": "ocr" if ocr_segments else "speech",
                     "review_cues": sum(1 for segment in translated_segments if segment.get("needs_review")),
+                    "voice_routing": {
+                        "mode": voice_mode,
+                        "fallback_voice": voice_type,
+                        "summary": voice_summary,
+                    },
                     "segments": translated_segments,
                 },
                 ensure_ascii=False,
@@ -910,7 +954,6 @@ def process_video(
         )
 
         audio_path = None
-        video_duration = get_media_duration(video_path)
         if mode in (2, 3):
             update_job(job_id, step="tts", progress=0.55)
             synthesize_tts_segments(translated_segments, work_dir, voice_type, speech_rate)
@@ -952,6 +995,66 @@ def process_video(
             background_music_path.unlink(missing_ok=True)
 
 
+def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
+    """Run a persisted job request after the API process has restarted."""
+    try:
+        video_path = Path(str(resume_request["video_path"]))
+        background_music_value = resume_request.get("background_music_path")
+        background_music_path = Path(str(background_music_value)) if background_music_value else None
+        if not video_path.is_file():
+            raise FileNotFoundError("The uploaded source video is no longer available for restart recovery")
+        if int(resume_request["mode"]) == 3 and (
+            background_music_path is None or not background_music_path.is_file()
+        ):
+            raise FileNotFoundError("The uploaded background music is no longer available for restart recovery")
+
+        subtitle_style = resume_request.get("subtitle_style")
+        if subtitle_style is not None and not isinstance(subtitle_style, dict):
+            raise ValueError("Stored subtitle style is invalid")
+        process_video(
+            job_id=job_id,
+            video_path=video_path,
+            mode=int(resume_request["mode"]),
+            whisper_model=str(resume_request["whisper_model"]),
+            voice_type=str(resume_request["voice_type"]),
+            voice_mode=str(resume_request["voice_mode"]),
+            speech_rate=float(resume_request["speech_rate"]),
+            background_music_path=background_music_path,
+            keep_original_audio=bool(resume_request["keep_original_audio"]),
+            original_audio_volume=float(resume_request["original_audio_volume"]),
+            music_volume=float(resume_request["music_volume"]),
+            subtitle_style=subtitle_style,
+            subtitle_source=str(resume_request["subtitle_source"]),
+            ocr_sample_fps=float(resume_request["ocr_sample_fps"]),
+            ocr_roi_top=float(resume_request["ocr_roi_top"]),
+            ocr_roi_bottom=float(resume_request["ocr_roi_bottom"]),
+        )
+    except (KeyError, TypeError, ValueError, FileNotFoundError) as exc:
+        logger.warning("Unable to resume job %s: %s", job_id, exc)
+        update_job(job_id, status="failed", step="failed", error=str(exc))
+
+
+@app.on_event("startup")
+async def resume_interrupted_jobs() -> None:
+    if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() not in {"1", "true", "yes"}:
+        return
+
+    for job_id, job in JOB_SERVICE.requeue_interrupted():
+        resume_request = job.get("resume_request")
+        if not isinstance(resume_request, dict):
+            update_job(
+                job_id,
+                status="failed",
+                step="failed",
+                error="This job was created before restart recovery was enabled. Upload the video again.",
+            )
+            continue
+        task = asyncio.create_task(asyncio.to_thread(resume_process_video, job_id, resume_request))
+        _resumed_tasks.add(task)
+        task.add_done_callback(_resumed_tasks.discard)
+        logger.info("Requeued interrupted job %s after server restart", job_id)
+
+
 @app.post("/process-video")
 @app.post("/convert")
 async def process_video_endpoint(
@@ -959,6 +1062,7 @@ async def process_video_endpoint(
     file: UploadFile = File(...),
     mode: int = Form(...),
     voice_type: str = Form("female"),
+    voice_mode: str = Form("auto"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -966,25 +1070,30 @@ async def process_video_endpoint(
     original_audio_volume: float = Form(0.18),
     music_volume: float = Form(0.28),
     subtitle_style: str | None = Form(default=None),
-    subtitle_source: str = Form("auto"),
+    subtitle_source: str = Form("speech"),
     ocr_sample_fps: float = Form(5.0),
     ocr_roi_top: float = Form(0.68),
     ocr_roi_bottom: float = Form(0.96),
 ) -> JSONResponse:
-    if mode not in (1, 2, 3):
-        raise HTTPException(status_code=400, detail="mode must be 1, 2, or 3")
-    if mode == 3 and background_music is None:
-        raise HTTPException(status_code=400, detail="background_music is required for mode 3")
-    if subtitle_source not in {"auto", "burned", "speech"}:
-        raise HTTPException(status_code=400, detail="subtitle_source must be auto, burned, or speech")
     try:
+        request = ProcessingRequest.from_form(
+            mode=mode,
+            subtitle_source=subtitle_source,
+            ocr_sample_fps=ocr_sample_fps,
+            ocr_roi_top=ocr_roi_top,
+            ocr_roi_bottom=ocr_roi_bottom,
+            voice_mode=voice_mode,
+            voice_type=voice_type,
+        )
         OCRConfig(
-            sample_fps=ocr_sample_fps,
-            roi_top=ocr_roi_top,
-            roi_bottom=ocr_roi_bottom,
+            sample_fps=request.ocr.sample_fps,
+            roi_top=request.ocr.roi_top,
+            roi_bottom=request.ocr.roi_bottom,
         ).validate()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
+        raise HTTPException(status_code=400, detail="background_music is required for mode 3")
 
     job_id = uuid.uuid4().hex[:8]
     video_ext = Path(file.filename or "video.mp4").suffix or ".mp4"
@@ -1003,36 +1112,60 @@ async def process_video_endpoint(
     if subtitle_style:
         style_payload = json.loads(subtitle_style)
 
-    JOB_STORE.create(job_id, {
+    resume_request = {
+        "video_path": str(video_path),
+        "mode": int(request.mode),
+        "whisper_model": whisper_model,
+        "voice_type": request.fallback_voice.value,
+        "voice_mode": request.voice_mode.value,
+        "speech_rate": speech_rate,
+        "background_music_path": str(background_music_path) if background_music_path else None,
+        "keep_original_audio": keep_original_audio,
+        "original_audio_volume": original_audio_volume,
+        "music_volume": music_volume,
+        "subtitle_style": style_payload,
+        "subtitle_source": request.subtitle_source.value,
+        "ocr_sample_fps": request.ocr.sample_fps,
+        "ocr_roi_top": request.ocr.roi_top,
+        "ocr_roi_bottom": request.ocr.roi_bottom,
+    }
+
+    JOB_SERVICE.create(job_id, {
         "status": "queued",
         "step": "queued",
         "progress": 0.0,
-        "mode": mode,
+        "mode": int(request.mode),
         "filename": file.filename,
-        "subtitle_source": subtitle_source,
+        "subtitle_source": request.subtitle_source.value,
+        "voice_routing": {
+            "mode": request.voice_mode.value,
+            "fallback_voice": request.fallback_voice.value,
+        },
+        "resume_request": resume_request,
         "ocr_config": {
-            "sample_fps": ocr_sample_fps,
-            "roi_top": ocr_roi_top,
-            "roi_bottom": ocr_roi_bottom,
+            "sample_fps": request.ocr.sample_fps,
+            "roi_top": request.ocr.roi_top,
+            "roi_bottom": request.ocr.roi_bottom,
         },
     })
     background_tasks.add_task(
         process_video,
         job_id=job_id,
         video_path=video_path,
-        mode=mode,
+        mode=int(request.mode),
         whisper_model=whisper_model,
-        voice_type=voice_type,
+        voice_type=request.fallback_voice.value,
+        voice_mode=request.voice_mode.value,
         speech_rate=speech_rate,
         background_music_path=background_music_path,
         keep_original_audio=keep_original_audio,
         original_audio_volume=original_audio_volume,
         music_volume=music_volume,
         subtitle_style=style_payload,
-        subtitle_source=subtitle_source,
-        ocr_sample_fps=ocr_sample_fps,
-        ocr_roi_top=ocr_roi_top,
-        ocr_roi_bottom=ocr_roi_bottom,
+        subtitle_source=request.subtitle_source.value,
+        ocr_sample_fps=request.ocr.sample_fps,
+        ocr_roi_top=request.ocr.roi_top,
+        ocr_roi_bottom=request.ocr.roi_bottom,
     )
 
     return JSONResponse(
@@ -1048,7 +1181,7 @@ async def process_video_endpoint(
 
 @app.get("/status/{job_id}")
 def get_status(job_id: str) -> JSONResponse:
-    job = JOB_STORE.get(job_id)
+    job = JOB_SERVICE.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     response = dict(job)

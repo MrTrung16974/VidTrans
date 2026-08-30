@@ -73,6 +73,19 @@ class SQLiteJobStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get("running")["error"], "test restart")
         self.assertEqual(self.store.get("done")["status"], "completed")
 
+    def test_requeue_returns_unfinished_jobs_to_queue(self) -> None:
+        self.store.create("queued", {"status": "queued", "progress": 0.0})
+        self.store.create("running", {"status": "processing", "progress": 0.5})
+        self.store.create("done", {"status": "completed", "progress": 1.0})
+
+        requeued = self.store.requeue_interrupted()
+
+        self.assertEqual({job_id for job_id, _ in requeued}, {"queued", "running"})
+        self.assertEqual(self.store.get("queued")["status"], "queued")
+        self.assertEqual(self.store.get("running")["step"], "queued")
+        self.assertEqual(self.store.get("running")["restart_count"], 1)
+        self.assertEqual(self.store.get("done")["status"], "completed")
+
     def test_concurrent_updates_do_not_lose_fields(self) -> None:
         self.store.create("concurrent", {"status": "processing"})
 
