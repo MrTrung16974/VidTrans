@@ -48,6 +48,10 @@ Docker Compose lưu model này trong volume `paddle-models`.
 Mỗi job còn xuất file `*.translation.json` chứa chữ Trung, bản dịch Việt, confidence OCR,
 kết quả đối chiếu ASR và cờ `needs_review` để kiểm tra các cue chưa chắc chắn.
 
+Trạng thái job được lưu bền vững tại `backend/work/jobs.sqlite3`; restart server không làm
+mất lịch sử job. Job đang chạy dở sẽ được đánh dấu `interrupted` trong cấu hình một worker
+hiện tại. Xem [ARCHITECTURE.md](ARCHITECTURE.md) để biết ranh giới module và lộ trình tách hệ thống.
+
 ## Thư mục tự tạo
 
 - `uploads/` — file tạm trong quá trình xử lý (tự xóa sau khi xong)

@@ -7,7 +7,7 @@ import subprocess
 import textwrap
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import whisper
 from deep_translator import GoogleTranslator
@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
 
+from infrastructure.job_store import SQLiteJobStore
 from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
 
 try:
@@ -92,7 +93,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-jobs: dict[str, dict[str, Any]] = {}
+JOB_STORE = SQLiteJobStore(WORK_DIR / "jobs.sqlite3")
+if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() in {"1", "true", "yes"}:
+    recovered_jobs = JOB_STORE.recover_interrupted()
+    if recovered_jobs:
+        logger.warning("Marked %d interrupted jobs as failed after startup", recovered_jobs)
 _whisper_models: dict[str, Any] = {}
 
 
@@ -371,8 +376,27 @@ def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any
 
 
 def update_job(job_id: str, **fields: Any) -> None:
-    job = jobs.setdefault(job_id, {})
-    job.update(fields)
+    JOB_STORE.update(job_id, **fields)
+
+
+def make_ocr_progress_callback(job_id: str) -> Callable[[int, int], None]:
+    """Persist at most about 100 OCR progress updates for one job."""
+
+    last_reported = 0
+
+    def report(completed: int, total: int) -> None:
+        nonlocal last_reported
+        report_interval = max(1, total // 100)
+        if completed != total and completed - last_reported < report_interval:
+            return
+        last_reported = completed
+        update_job(
+            job_id,
+            progress=0.05 + (0.13 * completed / max(total, 1)),
+            step_detail=f"OCR {completed}/{total} frames",
+        )
+
+    return report
 
 
 async def tts_edge_sync(text: str, output_path: Path, voice_name: str, rate: str) -> None:
@@ -834,11 +858,7 @@ def process_video(
                         roi_top=ocr_roi_top,
                         roi_bottom=ocr_roi_bottom,
                     ),
-                    progress_callback=lambda completed, total: update_job(
-                        job_id,
-                        progress=0.05 + (0.13 * completed / max(total, 1)),
-                        step_detail=f"OCR {completed}/{total} frames",
-                    ),
+                    progress_callback=make_ocr_progress_callback(job_id),
                 )
             except Exception:
                 if subtitle_source == "burned":
@@ -983,7 +1003,7 @@ async def process_video_endpoint(
     if subtitle_style:
         style_payload = json.loads(subtitle_style)
 
-    jobs[job_id] = {
+    JOB_STORE.create(job_id, {
         "status": "queued",
         "step": "queued",
         "progress": 0.0,
@@ -995,7 +1015,7 @@ async def process_video_endpoint(
             "roi_top": ocr_roi_top,
             "roi_bottom": ocr_roi_bottom,
         },
-    }
+    })
     background_tasks.add_task(
         process_video,
         job_id=job_id,
@@ -1028,7 +1048,7 @@ async def process_video_endpoint(
 
 @app.get("/status/{job_id}")
 def get_status(job_id: str) -> JSONResponse:
-    job = jobs.get(job_id)
+    job = JOB_STORE.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     response = dict(job)

@@ -6,6 +6,8 @@ services:
     container_name: vidtrans
     ports:
       - "5200:8000"
+    environment:
+      VIDTRANS_RECOVER_INTERRUPTED_JOBS: "1"
     volumes:
       - ./backend/outputs:/app/backend/outputs
       - ./backend/uploads:/app/backend/uploads
