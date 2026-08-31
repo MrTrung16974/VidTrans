@@ -79,6 +79,39 @@ class SQLiteJobStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_jobs_status_updated ON jobs(status, updated_at)"
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+            }
+            for name, definition in {
+                "batch_id": "TEXT",
+                "priority": "INTEGER NOT NULL DEFAULT 0",
+                "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+                "worker_id": "TEXT",
+            }.items():
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, priority DESC, created_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_batch_updated ON jobs(batch_id, updated_at DESC)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS batches (
+                    batch_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_batches_updated ON batches(updated_at DESC)"
+            )
 
     @staticmethod
     def _encode(payload: Mapping[str, Any]) -> str:
@@ -122,6 +155,36 @@ class SQLiteJobStore:
             raise JobAlreadyExistsError(f"Job already exists: {job_id}") from exc
         return dict(normalized)
 
+    def create_batch(
+        self,
+        batch_id: str,
+        *,
+        name: str,
+        config: Mapping[str, Any],
+        status: str = "queued",
+    ) -> dict[str, Any]:
+        now = _utc_now()
+        payload = dict(config)
+        try:
+            with self._connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO batches(batch_id, name, status, config_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (batch_id, name, status, self._encode(payload), now, now),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise JobAlreadyExistsError(f"Batch already exists: {batch_id}") from exc
+        return {
+            "batch_id": batch_id,
+            "name": name,
+            "status": status,
+            "config": payload,
+            "created_at": now,
+            "updated_at": now,
+        }
+
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(
@@ -131,6 +194,93 @@ class SQLiteJobStore:
         if row is None:
             return None
         return self._decode(row["payload_json"])
+
+    def get_batch(self, batch_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM batches WHERE batch_id = ?",
+                (batch_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._batch_row(row)
+
+    def list_jobs(
+        self,
+        *,
+        status: str | None = None,
+        batch_id: str | None = None,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            values.append(status)
+        if batch_id:
+            clauses.append("batch_id = ?")
+            values.append(batch_id)
+        if search:
+            clauses.append("payload_json LIKE ?")
+            values.append(f"%{search}%")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connection() as connection:
+            total = int(
+                connection.execute(f"SELECT COUNT(*) FROM jobs{where}", values).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"SELECT * FROM jobs{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                [*values, max(1, min(limit, 200)), max(0, offset)],
+            ).fetchall()
+        return [self._job_row(row) for row in rows], total
+
+    def list_batches(self, *, limit: int = 50, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+        with self._connection() as connection:
+            total = int(connection.execute("SELECT COUNT(*) FROM batches").fetchone()[0])
+            rows = connection.execute(
+                "SELECT * FROM batches ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (max(1, min(limit, 200)), max(0, offset)),
+            ).fetchall()
+            batches = [self._batch_row(row) for row in rows]
+            for batch in batches:
+                counts = connection.execute(
+                    "SELECT status, COUNT(*) count FROM jobs WHERE batch_id = ? GROUP BY status",
+                    (batch["batch_id"],),
+                ).fetchall()
+                batch["counts"] = {str(row["status"]): int(row["count"]) for row in counts}
+                batch["total_jobs"] = sum(batch["counts"].values())
+                active = sum(batch["counts"].get(status, 0) for status in ("queued", "processing", "cancelling"))
+                if active:
+                    batch["status"] = "processing"
+                elif batch["total_jobs"] and batch["counts"].get("completed", 0) == batch["total_jobs"]:
+                    batch["status"] = "completed"
+                elif batch["total_jobs"]:
+                    batch["status"] = "completed_with_errors"
+        return batches, total
+
+    @staticmethod
+    def _batch_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "batch_id": str(row["batch_id"]),
+            "name": str(row["name"]),
+            "status": str(row["status"]),
+            "config": SQLiteJobStore._decode(str(row["config_json"])),
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    @staticmethod
+    def _job_row(row: sqlite3.Row) -> dict[str, Any]:
+        payload = SQLiteJobStore._decode(str(row["payload_json"]))
+        return {
+            "job_id": str(row["job_id"]),
+            "batch_id": row["batch_id"],
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+            **payload,
+        }
 
     def update(self, job_id: str, **fields: Any) -> dict[str, Any]:
         now = _utc_now()
@@ -154,6 +304,136 @@ class SQLiteJobStore:
                 """,
                 (status, self._encode(payload), now, job_id),
             )
+        return payload
+
+    def attach_to_batch(self, job_id: str, batch_id: str, *, priority: int = 0) -> None:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload_json FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(f"Job not found: {job_id}")
+            payload = self._decode(row["payload_json"])
+            payload["batch_id"] = batch_id
+            connection.execute(
+                "UPDATE jobs SET batch_id = ?, priority = ?, payload_json = ? WHERE job_id = ?",
+                (batch_id, priority, self._encode(payload), job_id),
+            )
+
+    def claim_next(self, worker_id: str) -> tuple[str, dict[str, Any]] | None:
+        """Atomically claim the oldest highest-priority queued job."""
+
+        now = _utc_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT job_id, payload_json
+                FROM jobs
+                WHERE status = 'queued' AND cancel_requested = 0
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                return None
+            payload = self._decode(row["payload_json"])
+            payload.update(
+                {
+                    "status": "processing",
+                    "step": payload.get("step") if payload.get("step") != "queued" else "starting",
+                    "worker_id": worker_id,
+                    "started_at": payload.get("started_at") or now,
+                    "cancel_requested": False,
+                }
+            )
+            connection.execute(
+                """
+                UPDATE jobs
+                SET status = 'processing', payload_json = ?, worker_id = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (self._encode(payload), worker_id, now, row["job_id"]),
+            )
+        return str(row["job_id"]), payload
+
+    def request_cancel(self, job_id: str) -> dict[str, Any]:
+        now = _utc_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, payload_json FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(f"Job not found: {job_id}")
+            payload = self._decode(row["payload_json"])
+            status = str(row["status"])
+            if status in {"completed", "failed", "cancelled"}:
+                return payload
+            if status in {"queued", "ready"}:
+                payload.update(
+                    {
+                        "status": "cancelled",
+                        "step": "cancelled",
+                        "cancel_requested": True,
+                        "finished_at": now,
+                    }
+                )
+                next_status = "cancelled"
+            else:
+                payload.update(
+                    {
+                        "status": "cancelling",
+                        "step_detail": "Đang dừng an toàn sau công đoạn hiện tại",
+                        "cancel_requested": True,
+                    }
+                )
+                next_status = "cancelling"
+            connection.execute(
+                """
+                UPDATE jobs
+                SET status = ?, cancel_requested = 1, payload_json = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (next_status, self._encode(payload), now, job_id),
+            )
+        return payload
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT cancel_requested FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            raise JobNotFoundError(f"Job not found: {job_id}")
+        return bool(row["cancel_requested"])
+
+    def queue_positions(self) -> dict[str, int]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT job_id FROM jobs
+                WHERE status = 'queued' AND cancel_requested = 0
+                ORDER BY priority DESC, created_at ASC
+                """
+            ).fetchall()
+        return {str(row["job_id"]): index for index, row in enumerate(rows, start=1)}
+
+    def delete(self, job_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload_json FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(f"Job not found: {job_id}")
+            payload = self._decode(row["payload_json"])
+            connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
         return payload
 
     def recover_interrupted(self, reason: str = "Server restarted while the job was running") -> int:

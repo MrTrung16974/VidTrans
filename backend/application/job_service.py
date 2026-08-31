@@ -25,6 +25,43 @@ class JobService:
     def update(self, job_id: str, **fields: Any) -> dict[str, Any]:
         return self._store.update(job_id, **fields)
 
+    def create_batch(
+        self,
+        batch_id: str,
+        *,
+        name: str,
+        config: Mapping[str, Any],
+        status: str = "queued",
+    ) -> dict[str, Any]:
+        return self._store.create_batch(batch_id, name=name, config=config, status=status)
+
+    def get_batch(self, batch_id: str) -> dict[str, Any] | None:
+        return self._store.get_batch(batch_id)
+
+    def list_jobs(self, **filters: Any) -> tuple[list[dict[str, Any]], int]:
+        return self._store.list_jobs(**filters)
+
+    def list_batches(self, **filters: Any) -> tuple[list[dict[str, Any]], int]:
+        return self._store.list_batches(**filters)
+
+    def attach_to_batch(self, job_id: str, batch_id: str, *, priority: int = 0) -> None:
+        self._store.attach_to_batch(job_id, batch_id, priority=priority)
+
+    def claim_next(self, worker_id: str) -> tuple[str, dict[str, Any]] | None:
+        return self._store.claim_next(worker_id)
+
+    def request_cancel(self, job_id: str) -> dict[str, Any]:
+        return self._store.request_cancel(job_id)
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        return self._store.is_cancel_requested(job_id)
+
+    def queue_positions(self) -> dict[str, int]:
+        return self._store.queue_positions()
+
+    def delete(self, job_id: str) -> dict[str, Any]:
+        return self._store.delete(job_id)
+
     def recover_interrupted(self) -> int:
         return self._store.recover_interrupted()
 

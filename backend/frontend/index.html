@@ -3,613 +3,182 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VidTrans</title>
-    <style>
-      :root {
-        --bg: #f5efe6;
-        --card: rgba(255, 252, 246, 0.92);
-        --ink: #1d2433;
-        --muted: #5b6475;
-        --accent: #c45c2d;
-        --accent-2: #21545f;
-        --line: rgba(29, 36, 51, 0.12);
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        margin: 0;
-        font-family: "Avenir Next", "Segoe UI", sans-serif;
-        color: var(--ink);
-        background:
-          radial-gradient(circle at top left, rgba(196, 92, 45, 0.18), transparent 28%),
-          radial-gradient(circle at bottom right, rgba(33, 84, 95, 0.22), transparent 24%),
-          linear-gradient(135deg, #f8f1e7 0%, #e9f0f0 100%);
-        min-height: 100vh;
-        padding: 32px 16px;
-      }
-
-      .shell {
-        max-width: 1180px;
-        margin: 0 auto;
-      }
-
-      .hero {
-        display: grid;
-        gap: 18px;
-        margin-bottom: 24px;
-      }
-
-      h1 {
-        margin: 0;
-        font-size: clamp(2rem, 4vw, 3.8rem);
-        line-height: 0.98;
-        letter-spacing: -0.04em;
-      }
-
-      .subtitle {
-        max-width: 720px;
-        color: var(--muted);
-        font-size: 1.05rem;
-        line-height: 1.6;
-      }
-
-      .layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
-        gap: 20px;
-        align-items: start;
-      }
-
-      .panel {
-        min-width: 0;
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 24px;
-        padding: 22px;
-        backdrop-filter: blur(14px);
-        box-shadow: 0 18px 45px rgba(29, 36, 51, 0.08);
-      }
-
-      .layout > * {
-        min-width: 0;
-      }
-
-      form {
-        display: grid;
-        gap: 16px;
-      }
-
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
-      }
-
-      label {
-        display: grid;
-        gap: 8px;
-        font-weight: 600;
-      }
-
-      input,
-      select,
-      textarea,
-      button {
-        font: inherit;
-      }
-
-      input,
-      select,
-      textarea {
-        width: 100%;
-        border: 1px solid rgba(29, 36, 51, 0.14);
-        background: rgba(255, 255, 255, 0.74);
-        border-radius: 14px;
-        padding: 12px 14px;
-        color: var(--ink);
-      }
-
-      button {
-        border: 0;
-        background: linear-gradient(135deg, var(--accent), #d98c4e);
-        color: white;
-        padding: 14px 18px;
-        border-radius: 999px;
-        font-weight: 700;
-        cursor: pointer;
-      }
-
-      .note,
-      .status,
-      .modes li {
-        color: var(--muted);
-        line-height: 1.55;
-      }
-
-      .status {
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        max-height: 360px;
-        overflow: auto;
-      }
-
-      .progress-card {
-        margin: 18px 0 14px;
-        padding: 16px;
-        border-radius: 18px;
-        background: rgba(29, 36, 51, 0.04);
-        border: 1px solid rgba(29, 36, 51, 0.08);
-      }
-
-      .progress-meta {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 12px;
-        margin-bottom: 10px;
-      }
-
-      .progress-title {
-        font-weight: 700;
-        color: var(--ink);
-        flex: 1 1 auto;
-        min-width: 0;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-      }
-
-      .progress-percent {
-        font-size: 1.4rem;
-        font-weight: 800;
-        color: var(--accent);
-        flex: 0 0 auto;
-        white-space: nowrap;
-      }
-
-      .progress-track {
-        position: relative;
-        height: 14px;
-        background: rgba(29, 36, 51, 0.08);
-        border-radius: 999px;
-        overflow: hidden;
-      }
-
-      .progress-fill {
-        width: 0%;
-        height: 100%;
-        border-radius: inherit;
-        background: linear-gradient(90deg, var(--accent), #e8a667, var(--accent-2));
-        transition: width 0.45s ease;
-      }
-
-      .progress-step {
-        margin-top: 10px;
-        font-size: 0.95rem;
-        color: var(--muted);
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        max-height: 240px;
-        overflow: auto;
-      }
-
-      .result a {
-        display: inline-block;
-        margin-right: 12px;
-        margin-bottom: 10px;
-        color: var(--accent-2);
-        font-weight: 700;
-      }
-
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 12px;
-        border-radius: 999px;
-        background: rgba(33, 84, 95, 0.08);
-        color: var(--accent-2);
-        font-size: 0.92rem;
-        font-weight: 700;
-      }
-
-      @media (max-width: 1100px) {
-        .layout {
-          grid-template-columns: 1fr;
-        }
-      }
-
-      @media (max-width: 820px) {
-        .layout,
-        .grid {
-          grid-template-columns: 1fr;
-        }
-
-        .progress-meta {
-          align-items: flex-start;
-          flex-direction: column;
-        }
-
-        .progress-percent {
-          font-size: 1.2rem;
-        }
-      }
-
-      @media (max-width: 640px) {
-        body {
-          padding: 18px 12px;
-        }
-
-        .panel {
-          border-radius: 20px;
-          padding: 16px;
-        }
-
-        h1 {
-          font-size: clamp(1.7rem, 9vw, 2.6rem);
-        }
-
-        .subtitle {
-          font-size: 0.98rem;
-        }
-
-        .progress-card {
-          padding: 14px;
-        }
-
-        .progress-title {
-          font-size: 0.95rem;
-          line-height: 1.35;
-        }
-
-        .progress-step {
-          font-size: 0.9rem;
-        }
-      }
-    </style>
+    <meta name="description" content="VidTrans Studio — xử lý hàng loạt video Trung sang Việt." />
+    <title>VidTrans Studio</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260831-8" />
   </head>
   <body>
-    <div class="shell">
-      <section class="hero">
-        <span class="pill">VidTrans • Trung → Việt</span>
-        <h1>Dịch video tiếng Trung, tạo vietsub và lồng tiếng tiếng Việt</h1>
-        <div class="subtitle">
-          Upload video, chọn chế độ xử lý và theo dõi tiến trình ngay trên trình duyệt.
-          Backend sẽ nhận diện giọng nói, dịch, render phụ đề và tạo audio tiếng Việt theo yêu cầu.
-        </div>
-      </section>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#create" aria-label="VidTrans Studio">
+          <span class="brand-mark">V</span>
+          <span><strong>VidTrans</strong><small>Creator Studio</small></span>
+        </a>
+        <nav class="nav-tabs" aria-label="Điều hướng chính">
+          <a href="#create" data-view-link="create">Tạo quy trình</a>
+          <a href="#jobs" data-view-link="jobs">Tiến trình <span id="runningBadge" class="nav-badge">0</span></a>
+        </nav>
+        <div id="systemState" class="system-state"><span></span> Hệ thống sẵn sàng</div>
+      </header>
 
-      <div class="layout">
-        <section class="panel">
-          <form id="form">
-            <label>
-              Video nguồn
-              <input type="file" name="file" accept="video/*" required />
-            </label>
+      <main>
+        <section id="createView" class="view">
+          <div class="page-heading">
+            <div>
+              <span class="eyebrow">Batch processing</span>
+              <h1>Dịch nhiều video trong một quy trình</h1>
+              <p>Chọn video, cấu hình một lần rồi để hàng đợi xử lý dưới nền.</p>
+            </div>
+            <a class="button secondary" href="#jobs">Xem tiến trình</a>
+          </div>
 
-            <div class="grid">
-              <label>
-                Chế độ
-                <select name="mode" id="mode">
-                  <option value="1">1 - Chỉ vietsub</option>
-                  <option value="2">2 - Vietsub + lồng tiếng</option>
-                  <option value="3">3 - Vietsub + lồng tiếng + nhạc nền</option>
-                </select>
-              </label>
+          <form id="batchForm" class="workflow-grid">
+            <div class="workflow-main">
+              <section class="card step-card">
+                <div class="step-heading"><span>1</span><div><h2>Thêm video nguồn</h2><p>Tải file lên hoặc dán link TikTok/Douyin, tối đa tổng cộng 50 video.</p></div></div>
+                <label id="dropZone" class="drop-zone">
+                  <input id="files" type="file" name="files" accept="video/*" multiple />
+                  <span class="drop-icon">＋</span>
+                  <strong>Kéo video vào đây hoặc bấm để chọn</strong>
+                  <small>MP4, MOV, MKV và các định dạng FFmpeg hỗ trợ</small>
+                </label>
+                <div class="source-divider"><span>hoặc tải trực tiếp từ mạng xã hội</span></div>
+                <label class="link-source-field" for="sourceLinks">
+                  <span class="link-source-icon">↗</span>
+                  <span class="link-source-copy"><strong>Link TikTok / Douyin</strong><small>Dán URL hoặc nguyên đoạn chia sẻ; hệ thống tự tách link và tải dưới nền.</small></span>
+                  <textarea id="sourceLinks" name="source_links" rows="4" maxlength="12000" placeholder="Ví dụ: 7.17 Ymq:/ ... https://v.douyin.com/GXgZS-F73fI/ 复制此链接..."></textarea>
+                </label>
+                <div class="douyin-auth-card">
+                  <span class="douyin-auth-icon">DY</span>
+                  <span class="douyin-auth-copy"><strong>Đăng nhập Douyin</strong><small id="douyinAuthStatus">Đang kiểm tra phiên đăng nhập…</small></span>
+                  <div class="douyin-auth-actions">
+                    <button id="douyinQrButton" class="button qr-button" type="button">▦ Đăng nhập bằng QR</button>
+                    <button id="douyinLogoutButton" class="button secondary is-hidden" type="button">Đăng xuất</button>
+                  </div>
+                </div>
+                <label class="cookie-source-field">
+                  <span><strong>Hoặc dùng Cookies.txt</strong><small>Phương án dự phòng nếu không đăng nhập bằng QR.</small></span>
+                  <input type="file" name="source_cookies" accept=".txt,text/plain" />
+                </label>
+                <div id="linkList" class="file-list link-list" aria-live="polite"></div>
+                <div id="fileList" class="file-list" aria-live="polite"></div>
+              </section>
 
-              <label>
-                Nguồn phụ đề Trung
-                <select name="subtitle_source">
-                  <option value="speech" selected>Giọng nói (Whisper) — khuyến nghị</option>
-                  <option value="auto">Tự động: OCR trước, giọng nói dự phòng</option>
-                  <option value="burned">Chữ có sẵn trên video (OCR)</option>
-                </select>
-              </label>
+              <section class="card step-card">
+                <div class="step-heading"><span>2</span><div><h2>Cấu hình xử lý</h2><p>Áp dụng chung cho các video trong batch.</p></div></div>
+                <div class="field-grid">
+                  <label class="field wide"><span>Tên batch</span><input name="batch_name" value="Batch video mới" maxlength="120" /></label>
+                  <label class="field"><span>Chế độ</span><select id="mode" name="mode"><option value="1">Chỉ Vietsub — giữ âm thanh gốc</option><option value="2">Vietsub + lồng tiếng Việt</option><option value="3">Vietsub + lồng tiếng + nhạc nền</option></select></label>
+                  <label class="field"><span>Nguồn phụ đề Trung</span><select name="subtitle_source"><option value="speech">Whisper — khuyến nghị</option><option value="auto">OCR trước, Whisper dự phòng</option><option value="burned">Chữ có sẵn trên video</option></select></label>
+                  <label class="field"><span>Whisper model</span><select name="whisper_model"><option value="base">Base — nhanh</option><option value="small">Small — cân bằng</option><option value="medium">Medium — chính xác</option></select></label>
+                  <label id="voiceModeField" class="field"><span>Chọn giọng</span><select name="voice_mode"><option value="auto">Tự động theo cao độ</option><option value="manual">Thủ công</option></select></label>
+                  <label id="voiceTypeField" class="field"><span>Giọng dự phòng</span><select name="voice_type"><option value="female">Nữ</option><option value="male">Nam</option></select></label>
+                  <label id="speechRateField" class="field"><span>Tốc độ đọc</span><input type="number" name="speech_rate" min="0.75" max="1.5" step="0.01" value="1" /></label>
+                  <label id="originalVolumeField" class="field"><span>Âm lượng tiếng gốc</span><input type="number" name="original_audio_volume" min="0" max="1" step="0.01" value="0.18" /></label>
+                  <label id="musicVolumeField" class="field"><span>Âm lượng nhạc nền</span><input type="number" name="music_volume" min="0" max="1" step="0.01" value="0.20" /></label>
+                  <label id="originalAudioField" class="field checkbox-field"><input type="checkbox" name="keep_original_audio" value="true" checked /><span>Giữ tiếng gốc ở mức nhỏ</span></label>
+                  <label id="musicField" class="field wide is-hidden"><span>Nhạc nền dùng chung</span><input type="file" name="background_music" accept="audio/*" /></label>
+                  <p id="modeHint" class="mode-hint wide"></p>
+                </div>
+                <details class="advanced">
+                  <summary>Thiết lập OCR nâng cao</summary>
+                  <div class="field-grid details-body">
+                    <label class="field"><span>Frame OCR mỗi giây</span><input type="number" name="ocr_sample_fps" min="1" max="15" step="0.5" value="5" /></label>
+                    <label class="field"><span>Mép trên vùng OCR</span><input type="number" name="ocr_roi_top" min="0" max="0.95" step="0.01" value="0.68" /></label>
+                    <label class="field"><span>Mép dưới vùng OCR</span><input type="number" name="ocr_roi_bottom" min="0.05" max="1" step="0.01" value="0.96" /></label>
+                  </div>
+                </details>
+              </section>
+
+              <section class="card step-card">
+                <div class="step-heading"><span>3</span><div><h2>Vị trí và cỡ phụ đề</h2><p>Tự bám chữ Trung nếu OCR phát hiện được.</p></div></div>
+                <div class="subtitle-editor">
+                  <div class="field-grid">
+                    <label class="field"><span>Cách đặt phụ đề</span><select id="placementMode"><option value="replace_original">Thay đúng vị trí chữ Trung</option><option value="above_original">Đặt ngay trên chữ Trung</option><option value="bottom_safe">Vùng an toàn phía dưới</option></select></label>
+                    <label class="field checkbox-field"><input id="matchSourceSize" type="checkbox" checked /><span>Khớp cỡ chữ trên video</span></label>
+                    <label class="field"><span>Cỡ chữ nhỏ nhất</span><input id="minFontSize" type="number" min="8" max="100" value="22" /></label>
+                    <label class="field"><span>Cỡ chữ lớn nhất</span><input id="maxFontSize" type="number" min="12" max="200" value="72" /></label>
+                    <label class="field"><span>Khoảng cách phía trên</span><input id="positionGap" type="number" min="0" max="300" value="14" /></label>
+                    <label class="field checkbox-field"><input id="maskOriginal" type="checkbox" checked /><span>Che chữ Trung khi thay thế</span></label>
+                  </div>
+                  <div class="subtitle-preview" aria-label="Minh họa vị trí phụ đề">
+                    <div class="preview-glow"></div><div class="preview-person"></div>
+                    <div id="previewVietnamese" class="preview-vietnamese">Tôi muốn trở thành phiên bản tốt nhất</div>
+                    <div id="previewChinese" class="preview-chinese">我愿意把自己变成什么样子</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card step-card">
+                <div class="step-heading"><span>4</span><div><h2>Nội dung và đăng TikTok</h2><p>Tạo tiêu đề rồi dùng chính tiêu đề đó để tự động đăng video đã dựng.</p></div></div>
+                <div class="tiktok-auth-card">
+                  <span class="tiktok-auth-icon">♪</span>
+                  <span class="tiktok-auth-copy"><strong>Tài khoản TikTok Việt Nam</strong><small id="tiktokAuthStatus">Đang kiểm tra kết nối…</small></span>
+                  <div class="tiktok-auth-actions">
+                    <button id="tiktokConnectButton" class="button tiktok-button" type="button">Kết nối TikTok</button>
+                    <button id="tiktokDisconnectButton" class="button secondary is-hidden" type="button">Ngắt kết nối</button>
+                  </div>
+                </div>
+                <div class="field-grid">
+                  <label class="field"><span>Tự động tạo</span><select id="generateTikTokPost" name="generate_tiktok_post"><option value="true">Có</option><option value="false">Không</option></select></label>
+                  <label class="field"><span>Độ dài tóm tắt tối đa</span><input type="number" name="tiktok_max_summary_chars" min="80" max="1500" step="10" value="350" /></label>
+                  <label class="field"><span>Số hashtag tối đa</span><input type="number" name="tiktok_hashtag_count" min="0" max="12" value="6" /></label>
+                  <label class="field"><span>Tự động đăng sau khi gen video</span><select id="autoPublishTikTok" name="auto_publish_tiktok"><option value="false">Không — chỉ tạo file</option><option value="true">Có — đăng bằng tài khoản đã kết nối</option></select></label>
+                  <label class="field"><span>Quyền riêng tư khi đăng</span><select id="tiktokPrivacyLevel" name="tiktok_privacy_level"><option value="PUBLIC_TO_EVERYONE">Công khai</option><option value="MUTUAL_FOLLOW_FRIENDS">Bạn bè</option><option value="FOLLOWER_OF_CREATOR">Người theo dõi</option><option value="SELF_ONLY">Chỉ mình tôi</option></select></label>
+                  <p class="tiktok-consent wide">Khi chọn “Có”, bạn đồng ý để VidTrans đăng video đầu ra lên tài khoản TikTok đã kết nối. TikTok có thể giới hạn mức hiển thị theo trạng thái tài khoản và trạng thái kiểm duyệt ứng dụng.</p>
+                </div>
+              </section>
             </div>
 
-            <div class="grid">
-              <label>
-                Chế độ giọng đọc
-                <select name="voice_mode" id="voiceMode">
-                  <option value="auto">Tự động theo cao độ giọng gốc</option>
-                  <option value="manual">Chọn thủ công cho toàn video</option>
-                </select>
-              </label>
-
-              <label id="voiceTypeLabel">
-                <span id="voiceTypeLabelText">Giọng dự phòng</span>
-                <select name="voice_type" id="voiceType">
-                  <option value="female">Nữ</option>
-                  <option value="male">Nam</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="grid">
-              <label>
-                Tốc độ lấy mẫu OCR (frame/giây)
-                <input
-                  type="number"
-                  name="ocr_sample_fps"
-                  min="1"
-                  max="15"
-                  step="0.5"
-                  value="5"
-                />
-              </label>
-            </div>
-
-            <div class="grid">
-              <label>
-                Tốc độ đọc
-                <input
-                  type="number"
-                  name="speech_rate"
-                  min="0.75"
-                  max="1.5"
-                  step="0.01"
-                  value="1.0"
-                  placeholder="Mặc định 1.0"
-                />
-              </label>
-
-              <label>
-                Whisper model
-                <select name="whisper_model">
-                  <option value="base">base</option>
-                  <option value="small">small</option>
-                  <option value="medium">medium</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="grid">
-              <label>
-                Mép trên vùng OCR (0–1)
-                <input
-                  type="number"
-                  name="ocr_roi_top"
-                  min="0"
-                  max="0.95"
-                  step="0.01"
-                  value="0.68"
-                />
-              </label>
-
-              <label>
-                Mép dưới vùng OCR (0–1)
-                <input
-                  type="number"
-                  name="ocr_roi_bottom"
-                  min="0.05"
-                  max="1"
-                  step="0.01"
-                  value="0.96"
-                />
-              </label>
-            </div>
-
-            <div class="grid">
-              <label>
-                Âm lượng tiếng gốc
-                <input
-                  type="number"
-                  name="original_audio_volume"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value="0.18"
-                  placeholder="Mặc định 0.18"
-                />
-              </label>
-
-              <label>
-                Âm lượng nhạc nền
-                <input
-                  type="number"
-                  name="music_volume"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value="0.28"
-                  placeholder="Mặc định 0.28"
-                />
-              </label>
-            </div>
-
-            <label>
-              Nhạc nền (chỉ cần khi mode 3)
-              <input type="file" name="background_music" accept="audio/*" />
-            </label>
-
-            <label>
-              Style subtitle JSON (optional)
-              <textarea
-                name="subtitle_style"
-                rows="4"
-                placeholder='{"font_name":"Arial","font_size":24,"margin_v":36}'
-              ></textarea>
-            </label>
-
-            <button type="submit">Bắt đầu xử lý</button>
+            <aside class="workflow-sidebar">
+              <section class="card sticky-card">
+                <span class="eyebrow">Tổng quan</span><h2>Sẵn sàng tạo batch</h2>
+                <dl class="summary-list"><div><dt>Số video</dt><dd id="fileCount">0</dd></div><div><dt>Chế độ</dt><dd id="modeSummary">Vietsub</dd></div><div><dt>Vị trí sub</dt><dd id="placementSummary">Thay chữ gốc</dd></div></dl>
+                <input id="subtitleStyle" type="hidden" name="subtitle_style" />
+                <button id="submitButton" class="button primary full" type="submit">Bắt đầu xử lý</button>
+                <div id="uploadProgress" class="upload-progress is-hidden"><div><span>Đang tải batch</span><strong id="uploadPercent">0%</strong></div><div class="progress-track"><span id="uploadFill"></span></div></div>
+                <p class="fine-print">Video tiếp tục chạy dưới nền khi bạn chuyển trang hoặc đóng trình duyệt.</p>
+              </section>
+            </aside>
           </form>
         </section>
 
-        <aside class="panel">
-          <h2>Các mode hỗ trợ</h2>
-          <ul class="modes">
-            <li>Mode 1: giữ nguyên tiếng Trung, burn phụ đề tiếng Việt.</li>
-            <li>Mode 2: thêm voice tiếng Việt và có thể giữ tiếng gốc ở mức nhỏ.</li>
-            <li>Mode 3: như mode 2, đồng thời loop và mix nhạc nền có fade.</li>
-            <li>Nguồn tự động ưu tiên đọc phụ đề Trung có sẵn trên hình, sau đó dùng Whisper để đối chiếu.</li>
-            <li>Trên Docker Apple Silicon, Whisper là nguồn mặc định vì PaddleOCR hiện không ổn định trên Linux ARM64.</li>
-            <li>Giọng tự động chọn chất giọng TTS theo cao độ lời gốc; câu không chắc chắn sẽ dùng giọng dự phòng.</li>
-          </ul>
-
-          <div class="progress-card">
-            <div class="progress-meta">
-              <div id="progressTitle" class="progress-title">Chưa có job nào chạy</div>
-              <div id="progressPercent" class="progress-percent">0%</div>
+        <section id="jobsView" class="view is-hidden">
+          <div class="page-heading"><div><span class="eyebrow">Background jobs</span><h1>Quản lý tiến trình</h1><p>Theo dõi, hủy, chạy lại và tải kết quả của mọi video.</p></div><a class="button primary" href="#create">＋ Batch mới</a></div>
+          <div class="metric-grid"><article><span>Đang chờ</span><strong id="queuedMetric">0</strong></article><article><span>Đang chạy</span><strong id="processingMetric">0</strong></article><article><span>Hoàn tất</span><strong id="completedMetric">0</strong></article><article><span>Cần chú ý</span><strong id="failedMetric">0</strong></article></div>
+          <section class="card jobs-panel">
+            <div class="jobs-toolbar"><div class="search-box"><span>⌕</span><input id="jobSearch" type="search" placeholder="Tìm theo tên video..." /></div><select id="statusFilter" aria-label="Lọc trạng thái"><option value="">Tất cả trạng thái</option><option value="queued">Đang chờ</option><option value="processing">Đang chạy</option><option value="cancelling">Đang hủy</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã hủy</option></select><button id="refreshJobs" class="icon-button" type="button" title="Làm mới">↻</button></div>
+            <div class="bulk-actions">
+              <label class="select-all"><input id="selectAllJobs" type="checkbox" /><span>Chọn tất cả</span></label>
+              <strong id="selectedJobsCount">Chưa chọn job</strong>
+              <div class="bulk-buttons">
+                <button id="bulkCancel" data-bulk-action="cancel" type="button" disabled>Hủy</button>
+                <button id="bulkRetry" data-bulk-action="retry" type="button" disabled>Chạy lại</button>
+                <button id="bulkDelete" data-bulk-action="delete" class="danger" type="button" disabled>Xóa</button>
+              </div>
             </div>
-            <div class="progress-track">
-              <div id="progressFill" class="progress-fill"></div>
-            </div>
-            <div id="progressStep" class="progress-step">Hệ thống sẽ cập nhật tiến độ dịch tại đây.</div>
-          </div>
-
-          <div id="status" class="status">Chưa có job nào chạy.</div>
-          <div id="result" class="result"></div>
-          <p class="note">
-            API tương ứng: <code>POST /process-video</code>, <code>GET /status/{job_id}</code>,
-            <code>GET /download/{filename}</code>.
-          </p>
-          <p class="note">
-            Nếu để trống các ô tuỳ chọn, hệ thống sẽ tự dùng giá trị mặc định.
-          </p>
-        </aside>
-      </div>
+            <div id="jobsList" class="jobs-list"><div class="empty-state"><strong>Đang tải tiến trình…</strong></div></div>
+          </section>
+        </section>
+      </main>
     </div>
 
-    <script>
-      const form = document.getElementById("form");
-      const statusEl = document.getElementById("status");
-      const resultEl = document.getElementById("result");
-      const progressTitleEl = document.getElementById("progressTitle");
-      const progressPercentEl = document.getElementById("progressPercent");
-      const progressFillEl = document.getElementById("progressFill");
-      const progressStepEl = document.getElementById("progressStep");
-      const voiceModeEl = document.getElementById("voiceMode");
-      const voiceTypeLabelText = document.getElementById("voiceTypeLabelText");
-      let pollTimer = null;
+    <div id="douyinQrModal" class="modal-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="douyinQrTitle">
+      <section class="qr-modal card">
+        <button id="douyinQrClose" class="modal-close" type="button" aria-label="Đóng">×</button>
+        <span class="eyebrow">Douyin secure login</span>
+        <h2 id="douyinQrTitle">Quét mã QR để đăng nhập</h2>
+        <p>Mở ứng dụng Douyin trên điện thoại, chọn biểu tượng quét ở góc trên bên trái rồi xác nhận đăng nhập.</p>
+        <div class="qr-frame">
+          <div id="douyinQrLoading" class="qr-loading">Đang tạo mã QR an toàn…</div>
+          <img id="douyinQrImage" class="is-hidden" alt="Mã QR đăng nhập Douyin" />
+        </div>
+        <div id="douyinQrMessage" class="qr-message" aria-live="polite">Đang khởi tạo phiên…</div>
+        <button id="douyinQrRetry" class="button primary full is-hidden" type="button">Tạo mã QR mới</button>
+      </section>
+    </div>
 
-      function syncVoiceModeHint() {
-        const isAuto = voiceModeEl.value === "auto";
-        voiceTypeLabelText.textContent = isAuto ? "Giọng dự phòng" : "Giọng đọc";
-      }
-
-      voiceModeEl.addEventListener("change", syncVoiceModeHint);
-      syncVoiceModeHint();
-
-      function setStatus(text) {
-        statusEl.textContent = text;
-      }
-
-      function removeEmptyOptionalFields(formData) {
-        const optionalFields = [
-          "speech_rate",
-          "original_audio_volume",
-          "music_volume",
-          "subtitle_style",
-          "background_music",
-        ];
-
-        for (const field of optionalFields) {
-          const value = formData.get(field);
-          if (value === null) continue;
-          if (value instanceof File) {
-            if (!value.name) {
-              formData.delete(field);
-            }
-            continue;
-          }
-          if (String(value).trim() === "") {
-            formData.delete(field);
-          }
-        }
-      }
-
-      function updateProgress(data) {
-        const progress = Math.max(0, Math.min(100, Math.round((data.progress || 0) * 100)));
-        const stepLabels = {
-          queued: "Đang xếp hàng xử lý",
-          "extracting-subtitles": "Đang đọc phụ đề tiếng Trung có sẵn trên khung hình",
-          transcribing: "Đang nhận diện giọng nói tiếng Trung",
-          translating: "Đang dịch sang tiếng Việt",
-          "routing-voices": "Đang chọn giọng TTS theo cao độ lời gốc",
-          tts: "Đang tạo giọng đọc tiếng Việt",
-          "mixing-audio": "Đang trộn voice, tiếng gốc và nhạc nền",
-          rendering: "Đang render video đầu ra",
-          completed: "Đã hoàn tất",
-          failed: "Xử lý thất bại",
-        };
-
-        progressPercentEl.textContent = `${progress}%`;
-        progressFillEl.style.width = `${progress}%`;
-
-        if (data.status === "completed") {
-          progressTitleEl.textContent = "Dịch xong file";
-          progressStepEl.textContent = "Video và phụ đề đã sẵn sàng để tải xuống.";
-          return;
-        }
-
-        if (data.status === "failed") {
-          progressTitleEl.textContent = "Không thể hoàn tất";
-          progressStepEl.textContent = data.error || "Có lỗi trong lúc xử lý video.";
-          return;
-        }
-
-        progressTitleEl.textContent = data.filename
-          ? `Đang xử lý: ${data.filename}`
-          : "Đang xử lý video";
-        progressStepEl.textContent = data.step_detail || stepLabels[data.step] || data.step || "Đang cập nhật tiến trình...";
-      }
-
-      async function pollStatus(jobId) {
-        const res = await fetch(`/status/${jobId}`);
-        const data = await res.json();
-        updateProgress(data);
-        setStatus(JSON.stringify(data, null, 2));
-        if (data.status === "completed") {
-          resultEl.innerHTML = `
-            ${data.video_url ? `<a href="${data.video_url}" target="_blank">Tải video</a>` : ""}
-            ${data.subtitle_url ? `<a href="${data.subtitle_url}" target="_blank">Tải subtitle</a>` : ""}
-            ${data.translation_url ? `<a href="${data.translation_url}" target="_blank">Tải bản đối chiếu OCR/ASR</a>` : ""}
-          `;
-          clearInterval(pollTimer);
-          pollTimer = null;
-        } else if (data.status === "failed") {
-          clearInterval(pollTimer);
-          pollTimer = null;
-        }
-      }
-
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        resultEl.innerHTML = "";
-        progressTitleEl.textContent = "Đang tải file lên";
-        progressPercentEl.textContent = "0%";
-        progressFillEl.style.width = "0%";
-        progressStepEl.textContent = "Video đang được gửi lên server, sau đó hệ thống sẽ bắt đầu dịch.";
-        const formData = new FormData(form);
-        removeEmptyOptionalFields(formData);
-
-        const response = await fetch("/process-video", {
-          method: "POST",
-          body: formData,
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          updateProgress({ status: "failed", error: data.detail || "Không thể tạo job xử lý." });
-          setStatus(JSON.stringify(data, null, 2));
-          return;
-        }
-
-        updateProgress({
-          status: "queued",
-          progress: 0,
-          step: "queued",
-          filename: formData.get("file")?.name || "",
-        });
-        setStatus(JSON.stringify(data, null, 2));
-        if (pollTimer) {
-          clearInterval(pollTimer);
-        }
-        pollTimer = setInterval(() => pollStatus(data.job_id), 2500);
-      });
-    </script>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/js/app.js?v=20260831-8"></script>
   </body>
 </html>

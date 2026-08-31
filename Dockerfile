@@ -26,7 +26,20 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Install the CPU wheel first. Otherwise the unconstrained Whisper dependency may
+# pull several gigabytes of CUDA libraries into a Docker Desktop CPU image.
+RUN pip install --upgrade pip \
+    && pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 \
+    && pip install -r requirements.txt
+
+COPY requirements-downloader.txt ./
+RUN pip install -r requirements-downloader.txt
+
+# Chromium is isolated in its own late layer so adding QR login does not
+# invalidate the expensive Torch/Paddle dependency installation above.
+RUN apt-get update -o Acquire::Retries=3 \
+    && apt-get install -y --no-install-recommends -o Acquire::Retries=3 chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY backend ./backend
 RUN mkdir -p /app/backend/uploads /app/backend/outputs /app/backend/work

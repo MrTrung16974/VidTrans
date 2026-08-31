@@ -1,0 +1,4 @@
+# Kept separate so adding/updating the lightweight URL downloader does not
+# invalidate the expensive Torch/Paddle dependency layer in Docker.
+yt-dlp>=2026.6.9
+playwright>=1.49,<2

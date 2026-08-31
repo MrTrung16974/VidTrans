@@ -1,0 +1,14 @@
+# One-time incremental dependency upgrade for integrated Douyin QR login.
+# It deliberately extends the existing local dependency image so Torch,
+# Whisper and Paddle are never installed again.
+FROM vidtrans-deps:local
+
+COPY requirements-downloader.txt /tmp/vidtrans-requirements-downloader.txt
+RUN pip install -r /tmp/vidtrans-requirements-downloader.txt \
+    && rm -f /tmp/vidtrans-requirements-downloader.txt
+
+RUN apt-get update -o Acquire::Retries=3 \
+    && apt-get install -y --no-install-recommends -o Acquire::Retries=3 chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/backend

@@ -1,0 +1,13 @@
+# Fast local rebuild image. docker-rebuild.sh creates/refreshes this base only
+# during a full dependency build, so ordinary code changes never run pip/apt.
+ARG BASE_IMAGE=vidtrans-deps:local
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+RUN rm -rf /app/backend
+COPY backend ./backend
+RUN mkdir -p /app/backend/uploads /app/backend/outputs /app/backend/work
+
+EXPOSE 8000
+WORKDIR /app/backend
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

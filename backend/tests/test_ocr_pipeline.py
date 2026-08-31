@@ -10,6 +10,7 @@ from pipeline.ocr import (
     normalize_zh_text,
     observations_to_cues,
     select_subtitle_text,
+    select_subtitle_geometry,
     text_similarity,
 )
 
@@ -65,6 +66,20 @@ class OCRTextTests(unittest.TestCase):
         lines = reader.read(None)
         self.assertEqual(lines, [OCRLine("我愿意把自己变成什么样子", 0.97, (10, 20, 200, 50))])
 
+    def test_normalizes_union_bbox_for_selected_chinese_lines(self) -> None:
+        text, confidence, bbox = select_subtitle_geometry(
+            [
+                OCRLine("第一行", 0.95, (100, 40, 500, 80)),
+                OCRLine("第二行", 0.93, (140, 90, 480, 130)),
+            ],
+            0.55,
+            frame_width=1000,
+            frame_height=200,
+        )
+        self.assertEqual(text, "第一行\n第二行")
+        self.assertGreater(confidence, 0.93)
+        self.assertEqual(bbox, (0.1, 0.2, 0.5, 0.65))
+
     def test_asr_evidence_flags_low_agreement_without_overwriting_ocr(self) -> None:
         ocr = [{
             "start": 1.0,
@@ -104,6 +119,17 @@ class TemporalConsensusTests(unittest.TestCase):
         self.assertEqual(cues[0].samples, 4)
         self.assertAlmostEqual(cues[0].start, 0.0)
         self.assertAlmostEqual(cues[0].end, 0.7)
+
+    def test_preserves_stable_median_bbox_in_video_coordinates(self) -> None:
+        observations = [
+            FrameObservation(0.0, "字幕", 0.96, (0.2, 0.4, 0.8, 0.6)),
+            FrameObservation(0.2, "字幕", 0.95, (0.21, 0.41, 0.79, 0.61)),
+        ]
+        cues = observations_to_cues(observations, self.config)
+        segment = cues[0].as_segment()
+        self.assertEqual(segment["position_source"], "ocr")
+        self.assertAlmostEqual(segment["source_bbox"]["x"], 0.205)
+        self.assertAlmostEqual(segment["source_bbox"]["y"], 0.68 + 0.405 * 0.28)
 
     def test_tolerates_one_blank_frame_but_splits_on_text_change(self) -> None:
         observations = [

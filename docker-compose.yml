@@ -1,5 +1,6 @@
 services:
   vidtrans:
+    image: vidtrans-vidtrans
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,6 +10,13 @@ services:
     environment:
       VIDTRANS_RECOVER_INTERRUPTED_JOBS: "1"
       VIDTRANS_ENABLE_PADDLE_OCR: "0"
+      VIDTRANS_WORKER_CONCURRENCY: "2"
+      VIDTRANS_WHISPER_CONCURRENCY: "1"
+      VIDTRANS_OCR_CONCURRENCY: "1"
+      VIDTRANS_TIKTOK_CLIENT_KEY: "${VIDTRANS_TIKTOK_CLIENT_KEY:-}"
+      VIDTRANS_TIKTOK_CLIENT_SECRET: "${VIDTRANS_TIKTOK_CLIENT_SECRET:-}"
+      VIDTRANS_TIKTOK_REDIRECT_URI: "${VIDTRANS_TIKTOK_REDIRECT_URI:-}"
+      VIDTRANS_TIKTOK_SCOPES: "${VIDTRANS_TIKTOK_SCOPES:-video.publish}"
     volumes:
       - ./backend/outputs:/app/backend/outputs
       - ./backend/uploads:/app/backend/uploads

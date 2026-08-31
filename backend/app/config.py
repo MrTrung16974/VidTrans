@@ -19,6 +19,9 @@ class AppSettings:
     ffmpeg: str
     ffprobe: str
     paddle_ocr_enabled: bool
+    worker_concurrency: int
+    whisper_concurrency: int
+    ocr_concurrency: int
 
     @classmethod
     def load(cls, base_dir: Path) -> "AppSettings":
@@ -37,6 +40,9 @@ class AppSettings:
             ffmpeg=cls._resolve_binary(base_dir, "ffmpeg"),
             ffprobe=cls._resolve_binary(base_dir, "ffprobe"),
             paddle_ocr_enabled=cls._paddle_ocr_enabled(),
+            worker_concurrency=cls._positive_int("VIDTRANS_WORKER_CONCURRENCY", 2),
+            whisper_concurrency=cls._positive_int("VIDTRANS_WHISPER_CONCURRENCY", 1),
+            ocr_concurrency=cls._positive_int("VIDTRANS_OCR_CONCURRENCY", 1),
         )
         settings.ensure_directories()
         return settings
@@ -64,6 +70,17 @@ class AppSettings:
         if configured is not None:
             return configured.lower() in {"1", "true", "yes"}
         return not (platform.system() == "Linux" and platform.machine().lower() in {"arm64", "aarch64"})
+
+    @staticmethod
+    def _positive_int(name: str, default: int) -> int:
+        raw_value = os.environ.get(name, str(default))
+        try:
+            value = int(raw_value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an integer") from exc
+        if value < 1:
+            raise ValueError(f"{name} must be at least 1")
+        return value
 
     def ensure_directories(self) -> None:
         for path in (self.upload_dir, self.output_dir, self.work_dir):

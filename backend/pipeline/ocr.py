@@ -11,6 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
+from statistics import median
 from typing import Any, Callable, Protocol, Sequence
 
 
@@ -62,6 +63,7 @@ class FrameObservation:
     timestamp: float
     text: str
     confidence: float
+    bbox: tuple[float, float, float, float] | None = None
 
 
 @dataclass
@@ -72,9 +74,11 @@ class SubtitleCue:
     confidence: float
     samples: int
     variants: dict[str, int] = field(default_factory=dict)
+    bbox: tuple[float, float, float, float] | None = None
+    position_confidence: float = 0.0
 
     def as_segment(self) -> dict[str, Any]:
-        return {
+        segment: dict[str, Any] = {
             "start": round(self.start, 3),
             "end": round(self.end, 3),
             "text": self.text,
@@ -83,6 +87,22 @@ class SubtitleCue:
             "ocr_variants": dict(self.variants),
             "source_method": "ocr",
         }
+        if self.bbox is not None:
+            x1, y1, x2, y2 = self.bbox
+            segment.update(
+                {
+                    "source_bbox": {
+                        "x": round(x1, 6),
+                        "y": round(y1, 6),
+                        "width": round(x2 - x1, 6),
+                        "height": round(y2 - y1, 6),
+                    },
+                    "source_font_height": round((y2 - y1) / max(self.text.count("\n") + 1, 1), 6),
+                    "position_confidence": round(self.position_confidence, 4),
+                    "position_source": "ocr",
+                }
+            )
+        return segment
 
 
 class OCRReader(Protocol):
@@ -164,6 +184,31 @@ def select_subtitle_text(lines: Sequence[OCRLine], min_confidence: float) -> tup
     return "\n".join(texts), confidence
 
 
+def select_subtitle_geometry(
+    lines: Sequence[OCRLine],
+    min_confidence: float,
+    *,
+    frame_width: int,
+    frame_height: int,
+) -> tuple[str, float, tuple[float, float, float, float] | None]:
+    """Return text plus a normalized union bbox for the accepted Chinese lines."""
+
+    candidates = [
+        line
+        for line in lines
+        if line.confidence >= min_confidence and contains_cjk(line.text)
+    ]
+    text, confidence = select_subtitle_text(candidates, min_confidence)
+    boxes = [line.bbox for line in candidates if line.bbox is not None]
+    if not text or not boxes or frame_width <= 0 or frame_height <= 0:
+        return text, confidence, None
+    x1 = max(0.0, min(box[0] for box in boxes) / frame_width)
+    y1 = max(0.0, min(box[1] for box in boxes) / frame_height)
+    x2 = min(1.0, max(box[2] for box in boxes) / frame_width)
+    y2 = min(1.0, max(box[3] for box in boxes) / frame_height)
+    return text, confidence, (x1, y1, x2, y2)
+
+
 def _choose_consensus(observations: Sequence[FrameObservation]) -> tuple[str, float, dict[str, int]]:
     grouped: dict[str, list[FrameObservation]] = defaultdict(list)
     display_text: dict[str, str] = {}
@@ -215,6 +260,25 @@ def observations_to_cues(
             return
         text, confidence, variants = _choose_consensus(active)
         if text:
+            matching_boxes = [
+                item.bbox
+                for item in active
+                if item.bbox is not None and text_similarity(item.text, text) >= config.text_similarity
+            ]
+            normalized_box = None
+            if matching_boxes:
+                crop_box = tuple(
+                    median(box[index] for box in matching_boxes)
+                    for index in range(4)
+                )
+                x1, y1, x2, y2 = crop_box
+                roi_height = config.roi_bottom - config.roi_top
+                normalized_box = (
+                    x1,
+                    config.roi_top + y1 * roi_height,
+                    x2,
+                    config.roi_top + y2 * roi_height,
+                )
             cues.append(
                 SubtitleCue(
                     start=max(0.0, active[0].timestamp - frame_duration / 2),
@@ -223,6 +287,8 @@ def observations_to_cues(
                     confidence=confidence,
                     samples=len(active),
                     variants=variants,
+                    bbox=normalized_box,
+                    position_confidence=confidence if normalized_box else 0.0,
                 )
             )
         active = []
@@ -467,12 +533,25 @@ def scan_subtitle_frames(
     total = len(frame_paths)
     for index, frame_path in enumerate(frame_paths):
         lines = reader.read(frame_path)
-        text, confidence = select_subtitle_text(lines, config.min_confidence)
+        try:
+            from PIL import Image
+
+            with Image.open(frame_path) as image:
+                frame_width, frame_height = image.size
+        except Exception:
+            frame_width, frame_height = 0, 0
+        text, confidence, bbox = select_subtitle_geometry(
+            lines,
+            config.min_confidence,
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
         observations.append(
             FrameObservation(
                 timestamp=index / config.sample_fps,
                 text=text,
                 confidence=confidence,
+                bbox=bbox,
             )
         )
         if progress_callback:
