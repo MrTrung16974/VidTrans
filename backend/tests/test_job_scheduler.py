@@ -49,6 +49,34 @@ class JobSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.updated[0][0], "bad-job")
         self.assertEqual(service.updated[0][1]["status"], "failed")
 
+    async def test_scheduled_publish_uses_publish_request(self) -> None:
+        service = _FakeService()
+        service.jobs = [
+            (
+                "scheduled-job",
+                {
+                    "job_action": "publish_tiktok",
+                    "publish_request": {"video_path": "output.mp4", "title": "Xin chào"},
+                    "resume_request": {"value": "must-not-run"},
+                },
+            )
+        ]
+        completed = asyncio.Event()
+        completed_loop = asyncio.get_running_loop()
+
+        def runner(job_id, request):
+            self.assertEqual(job_id, "scheduled-job")
+            self.assertEqual(request["_job_action"], "publish_tiktok")
+            self.assertEqual(request["title"], "Xin chào")
+            completed_loop.call_soon_threadsafe(completed.set)
+
+        scheduler = JobScheduler(service, runner, concurrency=1, poll_interval=0.01)
+        await scheduler.start()
+        await asyncio.wait_for(completed.wait(), timeout=1)
+        await scheduler.stop()
+
+        self.assertEqual(service.updated, [])
+
 
 if __name__ == "__main__":
     unittest.main()

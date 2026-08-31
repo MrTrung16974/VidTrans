@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from infrastructure.job_store import (
@@ -163,6 +164,38 @@ class SQLiteJobStoreTests(unittest.TestCase):
         self.assertEqual(statuses, {"cancelled", "cancelling"})
         self.assertTrue(self.store.is_cancel_requested("queued-cancel"))
         self.assertTrue(self.store.is_cancel_requested("running-cancel"))
+
+    def test_claims_due_schedule_before_regular_queue(self) -> None:
+        self.store.create("regular", {"status": "queued"})
+        self.store.create("due", {"status": "queued"})
+        due_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        self.store.update(
+            "due",
+            status="scheduled",
+            tiktok_publish_at=due_at,
+            job_action="publish_tiktok",
+            publish_request={"video_path": "output.mp4", "title": "Title"},
+        )
+
+        claimed = self.store.claim_next("worker")
+
+        self.assertEqual(claimed[0], "due")
+        self.assertEqual(claimed[1]["step"], "publishing-tiktok")
+
+    def test_future_schedule_is_not_claimed_and_can_be_cancelled(self) -> None:
+        self.store.create("future", {"status": "queued"})
+        future_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        self.store.update(
+            "future",
+            status="scheduled",
+            tiktok_publish_at=future_at,
+            job_action="publish_tiktok",
+            publish_request={"video_path": "output.mp4", "title": "Title"},
+        )
+
+        self.assertIsNone(self.store.claim_next("worker"))
+        cancelled = self.store.request_cancel("future")
+        self.assertEqual(cancelled["status"], "cancelled")
 
 
 if __name__ == "__main__":

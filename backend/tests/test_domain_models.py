@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from domain.models import (
     ProcessingMode,
@@ -78,4 +79,38 @@ class ProcessingRequestTests(unittest.TestCase):
                 voice_type="female",
                 generate_tiktok_post=False,
                 auto_publish_tiktok=True,
+            )
+
+    def test_normalizes_future_tiktok_schedule_to_utc(self) -> None:
+        publish_at = datetime.now(timezone.utc) + timedelta(hours=2)
+        request = ProcessingRequest.from_form(
+            mode=1,
+            subtitle_source="speech",
+            ocr_sample_fps=5.0,
+            ocr_roi_top=0.68,
+            ocr_roi_bottom=0.96,
+            voice_mode="manual",
+            voice_type="female",
+            auto_publish_tiktok=True,
+            tiktok_publish_at=publish_at.isoformat(),
+        )
+
+        self.assertIsNotNone(request.tiktok.publish_at)
+        self.assertEqual(
+            datetime.fromisoformat(request.tiktok.publish_at),
+            publish_at,
+        )
+
+    def test_rejects_past_tiktok_schedule(self) -> None:
+        with self.assertRaisesRegex(ValueError, "30 seconds"):
+            ProcessingRequest.from_form(
+                mode=1,
+                subtitle_source="speech",
+                ocr_sample_fps=5.0,
+                ocr_roi_top=0.68,
+                ocr_roi_bottom=0.96,
+                voice_mode="manual",
+                voice_type="female",
+                auto_publish_tiktok=True,
+                tiktok_publish_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
             )

@@ -1120,6 +1120,7 @@ def process_video(
     tiktok_hashtag_count: int = 6,
     auto_publish_tiktok: bool = False,
     tiktok_privacy_level: str = "SELF_ONLY",
+    tiktok_publish_at: str | None = None,
 ) -> None:
     _job_context.job_id = job_id
     work_dir = WORK_DIR / job_id
@@ -1322,6 +1323,44 @@ def process_video(
         burn_subtitles(video_path, ass_path, output_video, audio_path, translated_segments, subtitle_style, work_dir)
         ensure_job_active(job_id)
 
+        artifact_fields: dict[str, Any] = {
+            "output_video": str(output_video.name),
+            "subtitle_file": str(srt_path.name),
+            "translation_file": str(translation_path.name),
+            "transcript_file": str(transcript_path.relative_to(BASE_DIR)),
+        }
+        if tiktok_json_path and tiktok_text_path:
+            artifact_fields.update(
+                {
+                    "tiktok_json_file": str(tiktok_json_path.name),
+                    "tiktok_text_file": str(tiktok_text_path.name),
+                }
+            )
+
+        if auto_publish_tiktok and tiktok_publish_at and tiktok_post is not None:
+            publish_at = datetime.fromisoformat(tiktok_publish_at.replace("Z", "+00:00"))
+            if publish_at > datetime.now(timezone.utc):
+                update_job(
+                    job_id,
+                    status="scheduled",
+                    step="waiting-tiktok-publish",
+                    progress=0.99,
+                    step_detail="Video đã sẵn sàng và đang chờ đến lịch đăng TikTok",
+                    processing_finished_at=utc_now(),
+                    tiktok_publish_at=publish_at.astimezone(timezone.utc).isoformat(),
+                    tiktok_publish_status="SCHEDULED",
+                    tiktok_publish_title=tiktok_post.title,
+                    tiktok_publish_privacy_level=tiktok_privacy_level,
+                    job_action="publish_tiktok",
+                    publish_request={
+                        "video_path": str(output_video),
+                        "title": tiktok_post.title,
+                        "privacy_level": tiktok_privacy_level,
+                    },
+                    **artifact_fields,
+                )
+                return
+
         tiktok_publish_fields: dict[str, Any] = {}
         if auto_publish_tiktok:
             update_job(
@@ -1359,20 +1398,12 @@ def process_video(
             "status": "completed",
             "step": "completed",
             "progress": 1.0,
-            "output_video": str(output_video.name),
-            "subtitle_file": str(srt_path.name),
-            "translation_file": str(translation_path.name),
-            "transcript_file": str(transcript_path.relative_to(BASE_DIR)),
             "finished_at": utc_now(),
+            "job_action": None,
+            "publish_request": None,
+            **artifact_fields,
             **tiktok_publish_fields,
         }
-        if tiktok_json_path and tiktok_text_path:
-            completion_fields.update(
-                {
-                    "tiktok_json_file": str(tiktok_json_path.name),
-                    "tiktok_text_file": str(tiktok_text_path.name),
-                }
-            )
         update_job(job_id, **completion_fields)
     except JobCancelled:
         logger.info("Video processing cancelled for job %s", job_id)
@@ -1393,6 +1424,75 @@ def process_video(
             step="failed",
             error=public_error_message(exc),
             finished_at=utc_now(),
+        )
+    finally:
+        if hasattr(_job_context, "job_id"):
+            del _job_context.job_id
+
+
+def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> None:
+    """Publish an already-rendered video claimed from the durable schedule."""
+
+    _job_context.job_id = job_id
+    try:
+        ensure_job_active(job_id)
+        video_path = Path(str(publish_request["video_path"]))
+        title = str(publish_request["title"])
+        privacy_level = str(publish_request.get("privacy_level") or "SELF_ONLY")
+        update_job(
+            job_id,
+            status="processing",
+            step="publishing-tiktok",
+            progress=0.99,
+            step_detail="Đã đến lịch, đang tải video lên TikTok",
+            tiktok_publish_status="UPLOADING",
+            tiktok_publish_error=None,
+        )
+        publish_result = TIKTOK_PUBLISHER.publish(
+            video_path,
+            title,
+            privacy_level=privacy_level,
+        )
+        update_job(
+            job_id,
+            status="completed",
+            step="completed",
+            progress=1.0,
+            step_detail="Đã gửi video lên TikTok theo lịch",
+            finished_at=utc_now(),
+            job_action=None,
+            publish_request=None,
+            tiktok_publish_id=publish_result["publish_id"],
+            tiktok_publish_title=publish_result["title"],
+            tiktok_publish_privacy_level=publish_result["privacy_level"],
+            tiktok_publish_status=publish_result["status"],
+            tiktok_publish_detail=publish_result.get("status_payload"),
+        )
+    except JobCancelled:
+        current = JOB_SERVICE.get(job_id) or {}
+        update_job(
+            job_id,
+            status="cancelled",
+            step="cancelled",
+            progress=float(current.get("progress", 0.99)),
+            step_detail="Đã hủy lịch đăng TikTok",
+            finished_at=utc_now(),
+            job_action=None,
+            publish_request=None,
+        )
+    except Exception as exc:
+        logger.warning("Scheduled TikTok publish failed for job %s", job_id, exc_info=True)
+        update_job(
+            job_id,
+            status="completed",
+            step="completed",
+            progress=1.0,
+            step_detail="Video đã xử lý xong nhưng đăng TikTok theo lịch thất bại",
+            finished_at=utc_now(),
+            job_action=None,
+            publish_request=None,
+            tiktok_publish_status="FAILED",
+            tiktok_publish_error=str(exc),
         )
     finally:
         if hasattr(_job_context, "job_id"):
@@ -1502,6 +1602,12 @@ def prepare_job_source_video(job_id: str, resume_request: dict[str, Any]) -> Pat
 def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
     """Run a persisted job request after the API process has restarted."""
     try:
+        job_action = str(resume_request.pop("_job_action", "process_video"))
+        if job_action == "publish_tiktok":
+            publish_scheduled_tiktok(job_id, resume_request)
+            return
+        if job_action != "process_video":
+            raise ValueError("Stored background action is invalid")
         video_path = prepare_job_source_video(job_id, resume_request)
         background_music_value = resume_request.get("background_music_path")
         background_music_path = Path(str(background_music_value)) if background_music_value else None
@@ -1535,6 +1641,11 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             tiktok_hashtag_count=int(resume_request.get("tiktok_hashtag_count", 6)),
             auto_publish_tiktok=bool(resume_request.get("auto_publish_tiktok", False)),
             tiktok_privacy_level=str(resume_request.get("tiktok_privacy_level", "SELF_ONLY")),
+            tiktok_publish_at=(
+                str(resume_request["tiktok_publish_at"])
+                if resume_request.get("tiktok_publish_at")
+                else None
+            ),
         )
     except (JobCancelled, SocialVideoDownloadCancelled) as exc:
         logger.info("Source download cancelled for job %s", job_id)
@@ -1806,6 +1917,7 @@ async def process_video_endpoint(
     tiktok_hashtag_count: int = Form(6),
     auto_publish_tiktok: bool = Form(False),
     tiktok_privacy_level: str = Form("SELF_ONLY"),
+    tiktok_publish_at: str | None = Form(default=None),
 ) -> JSONResponse:
     video_ext = Path(file.filename or "video.mp4").suffix.lower() or ".mp4"
     if video_ext not in SUPPORTED_VIDEO_EXTENSIONS:
@@ -1824,6 +1936,7 @@ async def process_video_endpoint(
             tiktok_hashtag_count=tiktok_hashtag_count,
             auto_publish_tiktok=auto_publish_tiktok,
             tiktok_privacy_level=tiktok_privacy_level,
+            tiktok_publish_at=tiktok_publish_at,
         )
         OCRConfig(
             sample_fps=request.ocr.sample_fps,
@@ -1884,6 +1997,7 @@ async def process_video_endpoint(
         "tiktok_hashtag_count": request.tiktok.hashtag_count,
         "auto_publish_tiktok": request.tiktok.auto_publish,
         "tiktok_privacy_level": request.tiktok.privacy_level,
+        "tiktok_publish_at": request.tiktok.publish_at,
     }
 
     JOB_SERVICE.create(job_id, {
@@ -1903,6 +2017,7 @@ async def process_video_endpoint(
             "hashtag_count": request.tiktok.hashtag_count,
             "auto_publish": request.tiktok.auto_publish,
             "privacy_level": request.tiktok.privacy_level,
+            "publish_at": request.tiktok.publish_at,
         },
         "resume_request": resume_request,
         "ocr_config": {
@@ -1949,6 +2064,7 @@ async def create_batch_endpoint(
     tiktok_hashtag_count: int = Form(6),
     auto_publish_tiktok: bool = Form(False),
     tiktok_privacy_level: str = Form("SELF_ONLY"),
+    tiktok_publish_at: str | None = Form(default=None),
 ) -> JSONResponse:
     # Browsers serialize an untouched <input type="file"> as an empty UploadFile.
     # Ignore only that unnamed placeholder; named zero-byte uploads are still
@@ -2004,6 +2120,7 @@ async def create_batch_endpoint(
             tiktok_hashtag_count=tiktok_hashtag_count,
             auto_publish_tiktok=auto_publish_tiktok,
             tiktok_privacy_level=tiktok_privacy_level,
+            tiktok_publish_at=tiktok_publish_at,
         )
         OCRConfig(
             sample_fps=request.ocr.sample_fps,
@@ -2048,6 +2165,7 @@ async def create_batch_endpoint(
         "tiktok_hashtag_count": request.tiktok.hashtag_count,
         "auto_publish_tiktok": request.tiktok.auto_publish,
         "tiktok_privacy_level": request.tiktok.privacy_level,
+        "tiktok_publish_at": request.tiktok.publish_at,
         "background_music_path": str(background_music_path) if background_music_path else None,
     }
     prepared_uploads: list[tuple[str, UploadFile, Path]] = []
@@ -2096,6 +2214,7 @@ async def create_batch_endpoint(
                     "hashtag_count": request.tiktok.hashtag_count,
                     "auto_publish": request.tiktok.auto_publish,
                     "privacy_level": request.tiktok.privacy_level,
+                    "publish_at": request.tiktok.publish_at,
                 },
                 "resume_request": resume_request,
                 "ocr_config": {
@@ -2149,6 +2268,7 @@ async def create_batch_endpoint(
                     "hashtag_count": request.tiktok.hashtag_count,
                     "auto_publish": request.tiktok.auto_publish,
                     "privacy_level": request.tiktok.privacy_level,
+                    "publish_at": request.tiktok.publish_at,
                 },
                 "resume_request": resume_request,
                 "ocr_config": {
@@ -2310,7 +2430,7 @@ def get_batch_endpoint(batch_id: str) -> JSONResponse:
     batch["jobs"] = [job_response(str(job["job_id"]), job, positions) for job in jobs]
     batch["total_jobs"] = total
     statuses = {str(job.get("status")) for job in jobs}
-    if statuses & {"queued", "processing", "cancelling"}:
+    if statuses & {"queued", "processing", "scheduled", "cancelling"}:
         batch["status"] = "processing"
     elif statuses == {"completed"}:
         batch["status"] = "completed"
@@ -2389,7 +2509,7 @@ def delete_job_endpoint(job_id: str) -> JSONResponse:
     job = JOB_SERVICE.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.get("status") in {"queued", "processing", "cancelling"}:
+    if job.get("status") in {"queued", "processing", "scheduled", "cancelling"}:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa")
     for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
         filename = job.get(key)
