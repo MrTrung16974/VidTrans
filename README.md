@@ -70,6 +70,12 @@ hạn upload 2 GB, tắt request buffering cho video lớn, redirect HTTP sang H
 header cho portal. Cấu hình production nằm trong `docker-compose.production.yml`; cấu hình local
 vẫn chạy tại `http://localhost:5200` và có thể ép bằng `bash docker-rebuild.sh --local`.
 
+Nếu log Nginx báo `GET /nginx-health 404` kèm `server: localhost`, container đang chạy cấu hình
+mặc định thay vì template VidTrans. Cập nhật source rồi chạy lại `bash docker-rebuild.sh
+--production`. Image `vidtrans-nginx` giữ nguyên entrypoint chính thức để render template trước khi
+Nginx chạy; setup bị ngắt giữa chừng sẽ tự tái sử dụng password hash/JWT secret đã tạo thay vì hỏi
+mật khẩu mới.
+
 ## Sử dụng
 
 1. Kéo một hoặc nhiều **video** vào vùng upload, hoặc dán URL/nguyên đoạn chia sẻ TikTok và

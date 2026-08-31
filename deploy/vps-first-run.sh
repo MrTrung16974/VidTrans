@@ -41,6 +41,19 @@ if ! docker image inspect vidtrans-vidtrans >/dev/null 2>&1; then
     exit 1
 fi
 
+read_env_value() {
+    local file="$1"
+    local key="$2"
+    local value=""
+    if [[ -f "$file" ]]; then
+        value="$(awk -v key="$key" 'index($0, key "=") == 1 { print substr($0, index($0, "=") + 1); exit }' "$file")"
+        if [[ "$value" == \'*\' || "$value" == \"*\" ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+    fi
+    printf '%s' "$value"
+}
+
 prompt_required() {
     local variable_name="$1"
     local prompt="$2"
@@ -55,19 +68,33 @@ prompt_required() {
     printf -v "$variable_name" '%s' "$current_value"
 }
 
-public_host="${VIDTRANS_SETUP_DOMAIN:-}"
-letsencrypt_email="${VIDTRANS_SETUP_EMAIL:-}"
-admin_username="${VIDTRANS_SETUP_ADMIN_USERNAME:-admin}"
+existing_public_host="$(read_env_value "$PRODUCTION_ENV" VIDTRANS_PUBLIC_HOST)"
+existing_email="$(read_env_value "$PRODUCTION_ENV" VIDTRANS_LETSENCRYPT_EMAIL)"
+existing_username="$(read_env_value "$APP_ENV" VIDTRANS_AUTH_USERNAME)"
+existing_password_hash="$(read_env_value "$APP_ENV" VIDTRANS_AUTH_PASSWORD_HASH)"
+existing_jwt_secret="$(read_env_value "$APP_ENV" VIDTRANS_JWT_SECRET)"
+existing_auth_enabled="$(read_env_value "$APP_ENV" VIDTRANS_AUTH_ENABLED)"
+
+public_host="${VIDTRANS_SETUP_DOMAIN:-$existing_public_host}"
+letsencrypt_email="${VIDTRANS_SETUP_EMAIL:-$existing_email}"
+admin_username="${VIDTRANS_SETUP_ADMIN_USERNAME:-${existing_username:-admin}}"
 admin_password="${VIDTRANS_SETUP_ADMIN_PASSWORD:-}"
 unset VIDTRANS_SETUP_ADMIN_PASSWORD
+reuse_existing_auth=0
+if [[ "$FORCE_SETUP" -eq 0 && -z "$admin_password" && "$existing_auth_enabled" == "1" \
+    && "$existing_password_hash" == pbkdf2_sha256\$* && ${#existing_jwt_secret} -ge 32 ]]; then
+    reuse_existing_auth=1
+fi
 
 prompt_required public_host "Public domain or IPv4 of this VPS (example: video.example.com): "
 prompt_required letsencrypt_email "Email for Let's Encrypt expiry notices: "
-if [[ -t 0 ]]; then
+if [[ -t 0 && "$reuse_existing_auth" -eq 0 ]]; then
     read -r -p "VidTrans admin username [$admin_username]: " entered_username
     admin_username="${entered_username:-$admin_username}"
 fi
-if [[ -z "$admin_password" ]]; then
+if [[ "$reuse_existing_auth" -eq 1 ]]; then
+    printf '%s\n' "Reusing the existing admin password hash and JWT secret from the interrupted setup."
+elif [[ -z "$admin_password" ]]; then
     if [[ ! -t 0 ]]; then
         printf '%s\n' "Missing VIDTRANS_SETUP_ADMIN_PASSWORD in a non-interactive setup." >&2
         exit 1
@@ -105,7 +132,7 @@ if [[ ! "$admin_username" =~ ^[A-Za-z0-9_.-]{3,64}$ ]]; then
     printf '%s\n' "The admin username must contain 3-64 letters, digits, dot, underscore, or dash." >&2
     exit 1
 fi
-if (( ${#admin_password} < 12 )); then
+if [[ "$reuse_existing_auth" -eq 0 ]] && (( ${#admin_password} < 12 )); then
     printf '%s\n' "The admin password must contain at least 12 characters." >&2
     exit 1
 fi
@@ -132,8 +159,13 @@ update_env_line() {
 
 touch "$APP_ENV"
 chmod 600 "$APP_ENV"
-password_hash="$(printf '%s' "$admin_password" | docker run --rm -i --entrypoint python vidtrans-vidtrans -c 'import sys; from infrastructure.auth import hash_password; print(hash_password(sys.stdin.read()))')"
-jwt_secret="$(docker run --rm --entrypoint python vidtrans-vidtrans -c 'import secrets; print(secrets.token_urlsafe(48))')"
+if [[ "$reuse_existing_auth" -eq 1 ]]; then
+    password_hash="$existing_password_hash"
+    jwt_secret="$existing_jwt_secret"
+else
+    password_hash="$(printf '%s' "$admin_password" | docker run --rm -i --entrypoint python vidtrans-vidtrans -c 'import sys; from infrastructure.auth import hash_password; print(hash_password(sys.stdin.read()))')"
+    jwt_secret="$(docker run --rm --entrypoint python vidtrans-vidtrans -c 'import secrets; print(secrets.token_urlsafe(48))')"
+fi
 unset admin_password password_confirmation
 
 update_env_line "$APP_ENV" VIDTRANS_AUTH_ENABLED "VIDTRANS_AUTH_ENABLED=1"
@@ -160,7 +192,7 @@ compose=(
 )
 
 printf '%s\n' "Starting the private app and HTTP-only ACME bootstrap..."
-"${compose[@]}" up -d --force-recreate vidtrans nginx
+"${compose[@]}" up -d --build --force-recreate vidtrans nginx
 
 nginx_ready=0
 for attempt in {1..30}; do

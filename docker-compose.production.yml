@@ -5,7 +5,10 @@ services:
       VIDTRANS_TRUST_PROXY_HEADERS: "1"
 
   nginx:
-    image: nginx:stable-alpine
+    image: vidtrans-nginx
+    build:
+      context: ./deploy/nginx
+      dockerfile: Dockerfile
     container_name: vidtrans-nginx
     depends_on:
       vidtrans:
@@ -20,12 +23,6 @@ services:
       - ./deploy/nginx/runtime/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - certbot-conf:/etc/letsencrypt:ro
       - certbot-www:/var/www/certbot:ro
-    command:
-      - /bin/sh
-      - -c
-      - |
-        (while :; do sleep 21600; nginx -s reload || true; done) &
-        exec nginx -g 'daemon off;'
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/nginx-health || exit 1"]
       interval: 30s

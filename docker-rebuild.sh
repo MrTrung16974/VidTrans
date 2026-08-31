@@ -64,6 +64,7 @@ if [[ "$PRODUCTION" -eq 1 ]]; then
         -f docker-compose.production.yml
     )
     public_host="$(awk -F= '$1 == "VIDTRANS_PUBLIC_HOST" { print substr($0, index($0, "=") + 1); exit }' .env.production)"
+    "${compose[@]}" build nginx
     printf 'Applying the new image behind Nginx at https://%s...\n' "$public_host"
     "${compose[@]}" up -d --force-recreate --remove-orphans vidtrans nginx certbot
     "${compose[@]}" ps vidtrans nginx certbot
