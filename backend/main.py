@@ -1695,6 +1695,33 @@ def get_douyin_qr_login(session_id: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail="Phiên đăng nhập QR không còn tồn tại") from exc
 
 
+@app.post("/api/v1/douyin-auth/qr/{session_id}/phone")
+def submit_douyin_phone(
+    session_id: str,
+    country_code: str = Form("+86"),
+    phone: str = Form(...),
+) -> JSONResponse:
+    try:
+        return JSONResponse(DOUYIN_QR_AUTH.submit_phone(session_id, country_code, phone))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Phiên đăng nhập Douyin không còn tồn tại") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/douyin-auth/qr/{session_id}/otp")
+def submit_douyin_otp(
+    session_id: str,
+    otp: str = Form(...),
+) -> JSONResponse:
+    try:
+        return JSONResponse(DOUYIN_QR_AUTH.submit_otp(session_id, otp))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Phiên đăng nhập Douyin không còn tồn tại") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/v1/douyin-auth/qr/{session_id}/image")
 def get_douyin_qr_image(session_id: str) -> FileResponse:
     try:

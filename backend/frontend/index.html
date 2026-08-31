@@ -2,10 +2,11 @@
 <html lang="vi">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4f6f8" />
     <meta name="description" content="VidTrans Studio — xử lý hàng loạt video Trung sang Việt." />
     <title>VidTrans Studio</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20260831-9" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260831-12" />
   </head>
   <body>
     <div class="app-shell">
@@ -191,11 +192,36 @@
       <section class="qr-modal card">
         <button id="douyinQrClose" class="modal-close" type="button" aria-label="Đóng">×</button>
         <span class="eyebrow">Douyin secure login</span>
-        <h2 id="douyinQrTitle">Quét mã QR để đăng nhập</h2>
-        <p>Mở ứng dụng Douyin trên điện thoại, chọn biểu tượng quét ở góc trên bên trái rồi xác nhận đăng nhập.</p>
-        <div class="qr-frame">
-          <div id="douyinQrLoading" class="qr-loading">Đang tạo mã QR an toàn…</div>
-          <img id="douyinQrImage" class="is-hidden" alt="Mã QR đăng nhập Douyin" />
+        <h2 id="douyinQrTitle">Đăng nhập Douyin</h2>
+        <p>Quét QR bằng ứng dụng Douyin hoặc nhận OTP qua số điện thoại đã đăng ký.</p>
+        <div class="douyin-login-grid">
+          <div class="qr-frame">
+            <div id="douyinQrLoading" class="qr-loading">Đang mở trang đăng nhập an toàn…</div>
+            <img id="douyinQrImage" class="is-hidden" alt="Trang đăng nhập Douyin" />
+          </div>
+          <div class="douyin-otp-panel">
+            <strong>Đăng nhập bằng OTP</strong>
+            <small>Với tài khoản Trung Quốc, giữ mã vùng +86.</small>
+            <form id="douyinPhoneForm" class="douyin-phone-form">
+              <label>
+                <span>Mã vùng</span>
+                <input id="douyinCountryCode" type="text" inputmode="tel" value="+86" maxlength="5" required />
+              </label>
+              <label class="phone-number-field">
+                <span>Số điện thoại</span>
+                <input id="douyinPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="13800138000" maxlength="20" required />
+              </label>
+              <button id="douyinSendOtp" class="button secondary full" type="submit">Gửi mã OTP</button>
+            </form>
+            <form id="douyinOtpForm" class="douyin-otp-form is-hidden">
+              <label>
+                <span>Mã OTP</span>
+                <input id="douyinOtp" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 chữ số" maxlength="8" required />
+              </label>
+              <button id="douyinSubmitOtp" class="button primary full" type="submit">Xác nhận OTP</button>
+            </form>
+            <small class="otp-privacy">OTP chỉ được chuyển vào Chromium đang chạy và không được lưu hoặc ghi log.</small>
+          </div>
         </div>
         <div id="douyinQrMessage" class="qr-message" aria-live="polite">Đang khởi tạo phiên…</div>
         <button id="douyinQrRetry" class="button primary full is-hidden" type="button">Tạo mã QR mới</button>
@@ -203,6 +229,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20260831-9"></script>
+    <script type="module" src="/js/app.js?v=20260831-12"></script>
   </body>
 </html>

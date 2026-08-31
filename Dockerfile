@@ -42,7 +42,10 @@ RUN apt-get update -o Acquire::Retries=3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend ./backend
-RUN mkdir -p /app/backend/uploads /app/backend/outputs /app/backend/work
+RUN mkdir -p /usr/local/share/fonts/vidtrans \
+    && cp /app/backend/assets/fonts/NotoSansCJKsc-Regular.otf /usr/local/share/fonts/vidtrans/ \
+    && fc-cache -f \
+    && mkdir -p /app/backend/uploads /app/backend/outputs /app/backend/work
 
 EXPOSE 8000
 WORKDIR /app/backend

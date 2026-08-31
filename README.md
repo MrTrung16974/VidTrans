@@ -163,11 +163,13 @@ job. Xem [ARCHITECTURE.md](ARCHITECTURE.md) để biết ranh giới module.
 Video từ TikTok/Douyin được tải bằng `yt-dlp` bên trong worker, vì vậy API tạo batch trả kết quả
 ngay và dashboard hiển thị riêng tiến độ tải nguồn. Hệ thống chỉ chấp nhận domain TikTok/Douyin,
 không tải playlist, giới hạn mặc định 2 GB và 120 phút cho mỗi video, đồng thời xóa file `.part`
-khi tải lỗi hoặc bị hủy. Douyin thường yêu cầu cookie mới kể cả với video công khai: xuất
-`cookies.txt` dạng Netscape từ trình duyệt đang mở được Douyin rồi chọn file trong ô tùy chọn.
-Mỗi job nhận một bản cookie riêng với quyền file hạn chế; bản này tự xóa ngay khi tải thành công
-và không xuất hiện trong API hoặc gói kết quả. Có thể cấu hình một cookie dùng chung bằng cách
-mount file vào container rồi đặt `VIDTRANS_YTDLP_COOKIE_FILE` trỏ tới đường dẫn đó.
+khi tải lỗi hoặc bị hủy. Douyin thường yêu cầu phiên đăng nhập mới kể cả với video công khai.
+Web hỗ trợ quét QR hoặc nhập số điện thoại để nhận OTP ngay trong một phiên Chromium ngắn hạn;
+OTP chỉ nằm trong bộ nhớ đến khi được chuyển vào Chromium, không được lưu hoặc trả lại qua API.
+`cookies.txt` dạng Netscape vẫn là phương án dự phòng. Mỗi job nhận một bản cookie riêng với
+quyền file hạn chế; bản này tự xóa ngay khi tải thành công và không xuất hiện trong API hoặc gói
+kết quả. Có thể cấu hình một cookie dùng chung bằng cách mount file vào container rồi đặt
+`VIDTRANS_YTDLP_COOKIE_FILE` trỏ tới đường dẫn đó.
 
 `requirements-downloader.txt` được đặt ở Docker layer riêng. Khi thêm/cập nhật `yt-dlp`, Docker
 vẫn tái sử dụng layer Torch/Paddle lớn nếu `requirements.txt` không đổi.
@@ -205,6 +207,10 @@ nên giữ Whisper/OCR ở một slot.
 - `GET /api/v1/auth/status` — trạng thái bật/cấu hình/đăng nhập, không trả secret
 - `POST /api/v1/auth/token` — OAuth2 password token endpoint; trả Bearer JWT và đặt cookie HttpOnly
 - `DELETE /api/v1/auth/session` — đăng xuất phiên web hiện tại
+- `GET /api/v1/douyin-auth` — trạng thái cookie đăng nhập Douyin, không trả nội dung cookie
+- `POST /api/v1/douyin-auth/qr` — mở phiên Chromium đăng nhập Douyin bằng QR hoặc OTP
+- `POST /api/v1/douyin-auth/qr/{session_id}/phone` — yêu cầu Douyin gửi OTP đến số đã nhập
+- `POST /api/v1/douyin-auth/qr/{session_id}/otp` — chuyển OTP vào phiên Chromium để xác minh
 - `POST /api/v1/batches` — tạo batch từ nhiều file và/hoặc trường `source_links` chứa link TikTok/Douyin
 - `GET /api/v1/batches` — danh sách batch
 - `GET /api/v1/batches/{batch_id}` — chi tiết batch và các job

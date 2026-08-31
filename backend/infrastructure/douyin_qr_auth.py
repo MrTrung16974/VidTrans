@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import os
+import queue
 import re
 import threading
 import time
@@ -12,6 +14,13 @@ from typing import Any
 
 
 AUTH_COOKIE_NAMES = {"sessionid", "sessionid_ss", "sid_guard", "uid_tt", "uid_tt_ss"}
+ACTIVE_LOGIN_STATUSES = {
+    "starting",
+    "waiting_scan",
+    "sending_code",
+    "waiting_otp",
+    "verifying_otp",
+}
 
 
 def _utc_now() -> str:
@@ -56,6 +65,33 @@ def has_authenticated_cookie(cookies: list[dict[str, Any]]) -> bool:
     )
 
 
+def normalize_phone(country_code: str, phone: str) -> tuple[str, str]:
+    normalized_country = re.sub(r"[\s()-]", "", str(country_code or ""))
+    normalized_phone = re.sub(r"[\s().-]", "", str(phone or ""))
+    if not normalized_country.startswith("+"):
+        normalized_country = "+" + normalized_country
+    if not re.fullmatch(r"\+[1-9]\d{0,3}", normalized_country):
+        raise ValueError("Mã vùng điện thoại không hợp lệ")
+    if not re.fullmatch(r"\d{6,15}", normalized_phone):
+        raise ValueError("Số điện thoại phải gồm 6-15 chữ số")
+    if normalized_country == "+86" and not re.fullmatch(r"1[3-9]\d{9}", normalized_phone):
+        raise ValueError("Số Douyin Trung Quốc phải gồm 11 số và bắt đầu bằng 1")
+    return normalized_country, normalized_phone
+
+
+def normalize_otp(otp: str) -> str:
+    normalized = re.sub(r"\s", "", str(otp or ""))
+    if not re.fullmatch(r"\d{4,8}", normalized):
+        raise ValueError("OTP phải gồm 4-8 chữ số")
+    return normalized
+
+
+def mask_phone(country_code: str, phone: str) -> str:
+    visible_tail = phone[-4:]
+    hidden = "•" * max(2, len(phone) - len(visible_tail))
+    return f"{country_code} {hidden}{visible_tail}"
+
+
 @dataclass
 class QRLoginSession:
     session_id: str
@@ -65,6 +101,14 @@ class QRLoginSession:
     created_at: str = field(default_factory=_utc_now)
     updated_at: str = field(default_factory=_utc_now)
     authenticated_at: str | None = None
+    phone_masked: str | None = None
+    last_sms_request_monotonic: float | None = field(default=None, repr=False)
+    verification_started_monotonic: float | None = field(default=None, repr=False)
+    otp_attempts: int = field(default=0, repr=False)
+    commands: queue.Queue[tuple[str, dict[str, str]]] = field(
+        default_factory=queue.Queue,
+        repr=False,
+    )
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
 
 
@@ -75,7 +119,7 @@ class DouyinQRAuthManager:
         self,
         work_dir: Path,
         *,
-        timeout_seconds: int = 180,
+        timeout_seconds: int = 300,
         chromium_executable: str | None = None,
     ) -> None:
         self.work_dir = Path(work_dir)
@@ -124,6 +168,12 @@ class DouyinQRAuthManager:
             if session is None or session.session_id != session_id:
                 raise KeyError("QR login session not found")
             image_ready = session.image_path.is_file()
+            sms_retry_after = 0
+            if session.last_sms_request_monotonic is not None:
+                sms_retry_after = max(
+                    0,
+                    math.ceil(60 - (time.monotonic() - session.last_sms_request_monotonic)),
+                )
             return {
                 "session_id": session.session_id,
                 "status": session.status,
@@ -131,12 +181,62 @@ class DouyinQRAuthManager:
                 "created_at": session.created_at,
                 "updated_at": session.updated_at,
                 "authenticated_at": session.authenticated_at,
+                "phone_masked": session.phone_masked,
+                "phone_login_available": session.status in ACTIVE_LOGIN_STATUSES,
+                "can_submit_phone": session.status in ACTIVE_LOGIN_STATUSES and sms_retry_after == 0,
+                "otp_required": session.status in {"waiting_otp", "verifying_otp"},
+                "can_submit_otp": session.status == "waiting_otp" and session.otp_attempts < 5,
+                "sms_retry_after": sms_retry_after,
                 "qr_image_url": (
                     f"/api/v1/douyin-auth/qr/{session.session_id}/image?v={session.image_path.stat().st_mtime_ns}"
                     if image_ready
                     else None
                 ),
             }
+
+    def submit_phone(self, session_id: str, country_code: str, phone: str) -> dict[str, Any]:
+        normalized_country, normalized_phone = normalize_phone(country_code, phone)
+        with self._lock:
+            session = self._session
+            if session is None or session.session_id != session_id:
+                raise KeyError("QR login session not found")
+            if session.status not in ACTIVE_LOGIN_STATUSES:
+                raise ValueError("Phiên đăng nhập Douyin không còn hoạt động")
+            now = time.monotonic()
+            if (
+                session.last_sms_request_monotonic is not None
+                and now - session.last_sms_request_monotonic < 60
+            ):
+                remaining = max(1, int(60 - (now - session.last_sms_request_monotonic)))
+                raise ValueError(f"Hãy chờ {remaining} giây trước khi gửi lại OTP")
+            session.last_sms_request_monotonic = now
+            session.phone_masked = mask_phone(normalized_country, normalized_phone)
+            session.otp_attempts = 0
+            session.verification_started_monotonic = None
+            session.status = "sending_code"
+            session.message = f"Đang yêu cầu Douyin gửi OTP tới {session.phone_masked}…"
+            session.updated_at = _utc_now()
+            session.commands.put(
+                ("phone", {"country_code": normalized_country, "phone": normalized_phone})
+            )
+        return self.snapshot(session_id)
+
+    def submit_otp(self, session_id: str, otp: str) -> dict[str, Any]:
+        normalized_otp = normalize_otp(otp)
+        with self._lock:
+            session = self._session
+            if session is None or session.session_id != session_id:
+                raise KeyError("QR login session not found")
+            if session.status != "waiting_otp":
+                raise ValueError("Hãy gửi mã OTP trước")
+            if session.otp_attempts >= 5:
+                raise ValueError("Đã nhập OTP quá nhiều lần. Hãy tạo phiên đăng nhập mới")
+            session.otp_attempts += 1
+            session.status = "verifying_otp"
+            session.message = "Đang xác minh OTP với Douyin…"
+            session.updated_at = _utc_now()
+            session.commands.put(("otp", {"otp": normalized_otp}))
+        return self.snapshot(session_id)
 
     def image_path(self, session_id: str) -> Path:
         with self._lock:
@@ -170,6 +270,101 @@ class DouyinQRAuthManager:
                 return
             session.status = status
             session.message = message
+            session.updated_at = _utc_now()
+
+    @staticmethod
+    def _click_visible(locator: Any, *, prefer_last: bool = False) -> None:
+        indices = range(locator.count() - 1, -1, -1) if prefer_last else range(locator.count())
+        for index in indices:
+            candidate = locator.nth(index)
+            if candidate.is_visible():
+                candidate.click(timeout=5_000)
+                return
+        raise RuntimeError("Không tìm thấy nút đăng nhập Douyin đang hiển thị")
+
+    def _send_sms_code(
+        self,
+        page: Any,
+        session: QRLoginSession,
+        *,
+        country_code: str,
+        phone: str,
+    ) -> None:
+        phone_tab = page.get_by_text("验证码登录", exact=True)
+        if phone_tab.count():
+            try:
+                self._click_visible(phone_tab, prefer_last=True)
+                page.wait_for_timeout(400)
+            except RuntimeError:
+                # The phone form can already be active while Douyin keeps a
+                # hidden copy of the tab in the page DOM.
+                pass
+
+        area_input = page.locator('input[name="web-login-area-code-input"]')
+        phone_input = page.locator('input[name="normal-input"]')
+        if not area_input.count() or not phone_input.count():
+            raise RuntimeError("Douyin chưa hiển thị form đăng nhập OTP")
+        area_input.last.fill(country_code)
+        area_input.last.press("Enter")
+        phone_input.last.fill(phone)
+        send_code = page.get_by_text("获取验证码", exact=True)
+        self._click_visible(send_code, prefer_last=True)
+        page.wait_for_timeout(1_200)
+        self._update(
+            session,
+            status="waiting_otp",
+            message=f"OTP đã được yêu cầu cho {session.phone_masked}. Nhập mã nhận được để đăng nhập.",
+        )
+
+    def _submit_login_otp(self, page: Any, session: QRLoginSession, *, otp: str) -> None:
+        otp_input = page.locator('input[name="button-input"]')
+        if not otp_input.count():
+            raise RuntimeError("Douyin chưa hiển thị ô nhập OTP")
+        otp_input.last.fill(otp)
+        login_buttons = page.locator("button").filter(has_text=re.compile(r"^\s*登录\s*$"))
+        self._click_visible(login_buttons, prefer_last=True)
+        with self._lock:
+            session.verification_started_monotonic = time.monotonic()
+        page.wait_for_timeout(1_800)
+        # Do not leave a one-time code visible in subsequent status images.
+        try:
+            otp_input.last.fill("")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _login_panel_clip(page: Any) -> dict[str, float]:
+        anchor = page.locator('input[name="normal-input"]:visible')
+        if not anchor.count():
+            anchor = page.get_by_text("扫码登录", exact=True)
+        if anchor.count():
+            clip = anchor.last.evaluate(
+                """element => {
+                    const matches = [];
+                    for (let node = element; node; node = node.parentElement) {
+                        const rect = node.getBoundingClientRect();
+                        if (rect.width >= 280 && rect.width <= 900 && rect.height >= 280 && rect.height <= 650) {
+                            matches.push({x: rect.x, y: rect.y, width: rect.width, height: rect.height});
+                        }
+                    }
+                    return matches.sort((a, b) => (b.width * b.height) - (a.width * a.height))[0] || null;
+                }"""
+            )
+            if clip:
+                viewport = page.viewport_size or {"width": 1280, "height": 720}
+                x = max(0.0, float(clip["x"]) - 8)
+                y = max(0.0, float(clip["y"]) - 8)
+                width = min(float(clip["width"]) + 16, float(viewport["width"]) - x)
+                height = min(float(clip["height"]) + 16, float(viewport["height"]) - y)
+                if width > 0 and height > 0:
+                    return {"x": x, "y": y, "width": width, "height": height}
+        return {"x": 240, "y": 90, "width": 800, "height": 580}
+
+    def _capture_login_panel(self, page: Any, session: QRLoginSession) -> None:
+        temporary = session.image_path.with_suffix(".tmp.png")
+        page.screenshot(path=str(temporary), clip=self._login_panel_clip(page))
+        os.replace(temporary, session.image_path)
+        with self._lock:
             session.updated_at = _utc_now()
 
     def _run(self, session: QRLoginSession) -> None:
@@ -215,14 +410,33 @@ class DouyinQRAuthManager:
                 )
                 started = time.monotonic()
                 while not session.stop_event.is_set():
-                    # The login card is centered in the fixed 1280x720 viewport.
-                    # Crop its QR pane so the web UI can show a large, scannable
-                    # code instead of shrinking the entire Douyin homepage.
-                    page.screenshot(
-                        path=str(session.image_path),
-                        clip={"x": 320, "y": 190, "width": 300, "height": 370},
-                    )
-                    session.updated_at = _utc_now()
+                    command_kind = ""
+                    command_payload: dict[str, str] = {}
+                    try:
+                        command_kind, command_payload = session.commands.get_nowait()
+                        if command_kind == "phone":
+                            self._send_sms_code(page, session, **command_payload)
+                        elif command_kind == "otp":
+                            self._submit_login_otp(page, session, **command_payload)
+                    except queue.Empty:
+                        pass
+                    except Exception:
+                        if command_kind == "otp":
+                            self._update(
+                                session,
+                                status="waiting_otp",
+                                message="Douyin chưa chấp nhận OTP. Kiểm tra mã hoặc thử lại.",
+                            )
+                        else:
+                            self._update(
+                                session,
+                                status="waiting_scan",
+                                message="Không gửi được OTP. Kiểm tra mã vùng, số điện thoại hoặc thử lại sau.",
+                            )
+                    finally:
+                        command_payload.clear()
+
+                    self._capture_login_panel(page, session)
                     cookies = context.cookies()
                     if has_authenticated_cookie(cookies):
                         write_netscape_cookies(cookies, self.cookie_path)
@@ -233,6 +447,15 @@ class DouyinQRAuthManager:
                             message="Đăng nhập Douyin thành công. Phiên đã sẵn sàng tải video.",
                         )
                         return
+                    with self._lock:
+                        verification_started = session.verification_started_monotonic
+                        verifying = session.status == "verifying_otp"
+                    if verifying and verification_started and time.monotonic() - verification_started >= 5:
+                        self._update(
+                            session,
+                            status="waiting_otp",
+                            message="Chưa đăng nhập được. Nhập lại OTP hoặc hoàn tất bước xác minh trong ảnh.",
+                        )
                     if time.monotonic() - started >= self.timeout_seconds:
                         self._update(
                             session,
