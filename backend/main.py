@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -14,9 +15,11 @@ from typing import Any, Callable, Optional
 from urllib.parse import quote_plus
 
 import whisper
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
 
@@ -25,6 +28,12 @@ from application.job_scheduler import JobScheduler
 from application.job_service import JobService
 from domain.models import ProcessingMode, ProcessingRequest
 from infrastructure.douyin_qr_auth import DouyinQRAuthManager
+from infrastructure.auth import (
+    AuthConfigurationError,
+    AuthManager,
+    InvalidTokenError,
+    LoginRateLimitError,
+)
 from infrastructure.job_store import SQLiteJobStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.social_video_downloader import (
@@ -112,6 +121,7 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
 )
 DOUYIN_QR_AUTH = DouyinQRAuthManager(WORK_DIR / "douyin-auth")
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
+AUTH_MANAGER = AuthManager()
 _whisper_models: dict[str, Any] = {}
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
@@ -120,6 +130,88 @@ _job_context = threading.local()
 
 class JobCancelled(RuntimeError):
     pass
+
+
+PUBLIC_AUTH_PATHS = {
+    "/api/v1/auth/status",
+    "/api/v1/auth/token",
+    "/api/v1/tiktok-auth/callback",
+}
+SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def is_protected_path(path: str) -> bool:
+    return (
+        path.startswith("/api/")
+        or path.startswith("/process-video")
+        or path.startswith("/convert")
+        or path.startswith("/status/")
+        or path.startswith("/download/")
+        or path in {"/docs", "/redoc", "/openapi.json"}
+    ) and path not in PUBLIC_AUTH_PATHS
+
+
+def request_access_token(request: Request) -> tuple[str | None, bool, bool]:
+    authorization = request.headers.get("authorization", "").strip()
+    if authorization:
+        scheme, separator, token = authorization.partition(" ")
+        if not separator or scheme.lower() != "bearer" or not token.strip():
+            return None, False, True
+        return token.strip(), False, False
+    cookie_token = request.cookies.get(AUTH_MANAGER.config.cookie_name)
+    return cookie_token, bool(cookie_token), False
+
+
+def auth_client_id(request: Request) -> str:
+    if os.environ.get("VIDTRANS_TRUST_PROXY_HEADERS", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        forwarded = request.headers.get("x-real-ip", "").strip()
+        try:
+            return str(ipaddress.ip_address(forwarded))
+        except ValueError:
+            pass
+    return request.client.host if request.client else "unknown"
+
+
+def unauthorized_response(detail: str = "Phiên đăng nhập không hợp lệ hoặc đã hết hạn") -> JSONResponse:
+    return JSONResponse(
+        {"detail": detail},
+        status_code=401,
+        headers={"WWW-Authenticate": 'Bearer scope="admin"', "Cache-Control": "no-store"},
+    )
+
+
+@app.middleware("http")
+async def authenticate_request(request: Request, call_next: Callable[..., Any]):
+    if not AUTH_MANAGER.config.enabled or not is_protected_path(request.url.path):
+        return await call_next(request)
+    if not AUTH_MANAGER.config.configured:
+        return JSONResponse(
+            {"detail": "Xác thực đã bật nhưng cấu hình máy chủ chưa hợp lệ"},
+            status_code=503,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    token, from_cookie, malformed_header = request_access_token(request)
+    if malformed_header or not token:
+        return unauthorized_response()
+    try:
+        request.state.auth_claims = AUTH_MANAGER.verify_token(token)
+    except (AuthConfigurationError, InvalidTokenError):
+        return unauthorized_response()
+    if (
+        from_cookie
+        and request.method.upper() not in SAFE_HTTP_METHODS
+        and request.headers.get("x-vidtrans-request") != "1"
+    ):
+        return JSONResponse(
+            {"detail": "Thiếu tiêu đề chống CSRF"},
+            status_code=403,
+            headers={"Cache-Control": "no-store"},
+        )
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    return response
 
 
 def utc_now() -> str:
@@ -1512,6 +1604,79 @@ def validate_tiktok_auto_publish(request: ProcessingRequest) -> None:
         )
 
 
+@app.get("/api/v1/auth/status")
+def get_auth_status(request: Request) -> JSONResponse:
+    payload = AUTH_MANAGER.status()
+    payload["authenticated"] = False
+    payload["username"] = None
+    if AUTH_MANAGER.config.configured:
+        token, _, malformed_header = request_access_token(request)
+        if token and not malformed_header:
+            try:
+                claims = AUTH_MANAGER.verify_token(token)
+                payload["authenticated"] = True
+                payload["username"] = claims["sub"]
+            except (AuthConfigurationError, InvalidTokenError):
+                pass
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/v1/auth/token")
+def create_auth_token(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+) -> JSONResponse:
+    client_id = auth_client_id(request)
+    try:
+        authenticated = AUTH_MANAGER.authenticate(form_data.username, form_data.password, client_id)
+    except AuthConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LoginRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "300"}) from exc
+    if not authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Tên đăng nhập hoặc mật khẩu không đúng",
+            headers={"WWW-Authenticate": 'Bearer scope="admin"'},
+        )
+    token, expires_in = AUTH_MANAGER.issue_token(form_data.username)
+    response = JSONResponse(
+        {
+            "access_token": token,
+            "token_type": "bearer",
+            "expires_in": expires_in,
+            "scope": "admin",
+        },
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+    response.set_cookie(
+        key=AUTH_MANAGER.config.cookie_name,
+        value=token,
+        max_age=expires_in,
+        httponly=True,
+        secure=AUTH_MANAGER.config.cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+    return response
+
+
+@app.delete("/api/v1/auth/session")
+def delete_auth_session() -> JSONResponse:
+    response = JSONResponse(
+        {"authenticated": False, "message": "Đã đăng xuất VidTrans"},
+        headers={"Cache-Control": "no-store"},
+    )
+    response.delete_cookie(
+        key=AUTH_MANAGER.config.cookie_name,
+        path="/",
+        secure=AUTH_MANAGER.config.cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
+
+
 @app.get("/api/v1/douyin-auth")
 def get_douyin_auth_status() -> JSONResponse:
     return JSONResponse(DOUYIN_QR_AUTH.auth_status())
@@ -2236,6 +2401,33 @@ def download(filename: str) -> FileResponse:
     if target.parent != OUTPUT_DIR.resolve() or not target.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     return FileResponse(target)
+
+
+def custom_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    security_schemes = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    security_schemes["OAuth2PasswordBearer"] = {
+        "type": "oauth2",
+        "flows": {
+            "password": {
+                "tokenUrl": "/api/v1/auth/token",
+                "scopes": {"admin": "Quản trị toàn bộ pipeline VidTrans"},
+            }
+        },
+    }
+    for path, path_item in schema.get("paths", {}).items():
+        if not is_protected_path(path):
+            continue
+        for method, operation in path_item.items():
+            if method.lower() in {"get", "post", "put", "patch", "delete", "options", "head"}:
+                operation["security"] = [{"OAuth2PasswordBearer": ["admin"]}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
 
 
 if FRONTEND_DIR.exists():

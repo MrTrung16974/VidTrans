@@ -1,0 +1,59 @@
+services:
+  vidtrans:
+    environment:
+      VIDTRANS_AUTH_COOKIE_SECURE: "1"
+      VIDTRANS_TRUST_PROXY_HEADERS: "1"
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: vidtrans-nginx
+    depends_on:
+      vidtrans:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      VIDTRANS_PUBLIC_HOST: "${VIDTRANS_PUBLIC_HOST:?VIDTRANS_PUBLIC_HOST is required}"
+      NGINX_ENVSUBST_FILTER: "^VIDTRANS_PUBLIC_HOST$"
+    volumes:
+      - ./deploy/nginx/runtime/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        (while :; do sleep 21600; nginx -s reload || true; done) &
+        exec nginx -g 'daemon off;'
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/nginx-health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:v5.7.0
+    container_name: vidtrans-certbot
+    depends_on:
+      nginx:
+        condition: service_started
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        trap 'exit 0' TERM INT
+        while :; do
+          certbot renew --webroot --webroot-path /var/www/certbot --quiet
+          sleep 43200 & wait
+        done
+    restart: unless-stopped
+
+volumes:
+  certbot-conf:
+  certbot-www:

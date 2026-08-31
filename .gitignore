@@ -7,3 +7,5 @@ __pycache__/
 .env
 .env.*
 !.env.example
+/deploy/.vps-configured
+/deploy/nginx/runtime/

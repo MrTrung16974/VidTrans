@@ -6,7 +6,8 @@ services:
       dockerfile: Dockerfile
     container_name: vidtrans
     ports:
-      - "5200:8000"
+      # Keep the FastAPI port private to the VPS. Production traffic must enter via Nginx.
+      - "127.0.0.1:5200:8000"
     environment:
       VIDTRANS_RECOVER_INTERRUPTED_JOBS: "1"
       VIDTRANS_ENABLE_PADDLE_OCR: "0"
@@ -17,6 +18,16 @@ services:
       VIDTRANS_TIKTOK_CLIENT_SECRET: "${VIDTRANS_TIKTOK_CLIENT_SECRET:-}"
       VIDTRANS_TIKTOK_REDIRECT_URI: "${VIDTRANS_TIKTOK_REDIRECT_URI:-}"
       VIDTRANS_TIKTOK_SCOPES: "${VIDTRANS_TIKTOK_SCOPES:-video.publish}"
+      VIDTRANS_AUTH_ENABLED: "${VIDTRANS_AUTH_ENABLED:-0}"
+      VIDTRANS_AUTH_USERNAME: "${VIDTRANS_AUTH_USERNAME:-}"
+      VIDTRANS_AUTH_PASSWORD_HASH: "${VIDTRANS_AUTH_PASSWORD_HASH:-}"
+      VIDTRANS_JWT_SECRET: "${VIDTRANS_JWT_SECRET:-}"
+      VIDTRANS_JWT_ISSUER: "${VIDTRANS_JWT_ISSUER:-vidtrans}"
+      VIDTRANS_JWT_AUDIENCE: "${VIDTRANS_JWT_AUDIENCE:-vidtrans-api}"
+      VIDTRANS_JWT_TTL_MINUTES: "${VIDTRANS_JWT_TTL_MINUTES:-480}"
+      VIDTRANS_AUTH_COOKIE_NAME: "${VIDTRANS_AUTH_COOKIE_NAME:-vidtrans_access_token}"
+      VIDTRANS_AUTH_COOKIE_SECURE: "${VIDTRANS_AUTH_COOKIE_SECURE:-0}"
+      VIDTRANS_TRUST_PROXY_HEADERS: "${VIDTRANS_TRUST_PROXY_HEADERS:-0}"
     volumes:
       - ./backend/outputs:/app/backend/outputs
       - ./backend/uploads:/app/backend/uploads

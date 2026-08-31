@@ -31,6 +31,45 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 Mở trình duyệt: **http://localhost:8000**
 
+## Public portal trên VPS bằng Nginx
+
+Trên VPS Linux (Contabo hoặc nhà cung cấp khác), nên trỏ bản ghi DNS `A` của domain về IPv4 của
+VPS trước khi chạy. Nếu có bản ghi `AAAA`, bản ghi đó cũng phải trỏ đúng IPv6 của VPS. Nếu chưa
+có domain, trình cài đặt cũng nhận trực tiếp IPv4 public và dùng chứng chỉ IP ngắn hạn. Trong
+firewall của nhà cung cấp/VPS, chỉ cần mở TCP `22`, `80` và `443`; không mở cổng `5200` ra
+Internet vì FastAPI đã được bind vào `127.0.0.1` và lưu lượng public phải đi qua Nginx.
+
+Sau khi cài Docker Engine cùng Docker Compose plugin, chạy đúng một lần:
+
+```bash
+bash docker-rebuild.sh --production
+```
+
+Trình cài đặt sẽ hỏi domain/IPv4, email Let's Encrypt, tài khoản và mật khẩu quản trị. Nó tự động:
+
+1. Sinh password hash và JWT secret, không ghi mật khẩu thô xuống đĩa.
+2. Tạo `.env` và `.env.production` với quyền chỉ owner đọc được, đồng thời giữ nguyên cấu hình
+   TikTok đã có trong `.env`.
+3. Khởi động Nginx HTTP chỉ để hoàn thành ACME challenge.
+4. Xin chứng chỉ Let's Encrypt, chuyển sang HTTPS và bật portal tại domain đã nhập.
+5. Khởi động Certbot renew mỗi 12 giờ; Nginx reload chứng chỉ định kỳ.
+
+Sau lần đầu, marker `deploy/.vps-configured` khiến lệnh bình thường luôn giữ Nginx/Certbot chạy:
+
+```bash
+# Chỉ build lại source code, không tải lại apt/pip/model
+bash docker-rebuild.sh
+
+# Chỉ dùng khi dependencies thay đổi
+bash docker-rebuild.sh --full
+```
+
+Để đổi domain hoặc sinh lại tài khoản/secret, chạy `bash deploy/vps-first-run.sh --force` trên VPS.
+Không commit hoặc sao chép `.env`, `.env.production`, `deploy/.vps-configured` lên Git. Nginx giới
+hạn upload 2 GB, tắt request buffering cho video lớn, redirect HTTP sang HTTPS và thêm các security
+header cho portal. Cấu hình production nằm trong `docker-compose.production.yml`; cấu hình local
+vẫn chạy tại `http://localhost:5200` và có thể ép bằng `bash docker-rebuild.sh --local`.
+
 ## Sử dụng
 
 1. Kéo một hoặc nhiều **video** vào vùng upload, hoặc dán URL/nguyên đoạn chia sẻ TikTok và
@@ -76,6 +115,27 @@ caption và hashtag. File `*.tiktok.json` chứa cùng dữ liệu ở dạng c�
 với lịch đăng bài hoặc một nhà cung cấp AI khác. Các câu trùng được loại bỏ và câu có cờ
 `needs_review` bị hạ ưu tiên để hạn chế đưa bản dịch chưa chắc chắn vào hook.
 
+### Xác thực OAuth2 + JWT
+
+Xác thực quản trị mặc định **tắt** để không khóa phiên bản cài đặt cũ. Để bật, tạo `.env` từ
+`.env.example`, sau đó sinh mật khẩu băm và JWT secret ngay trên máy (không gửi hai giá trị này
+qua chat hoặc commit vào Git):
+
+```bash
+docker compose run --rm vidtrans python -m infrastructure.auth
+```
+
+Sao chép hai dòng được tạo vào `.env`, đặt `VIDTRANS_AUTH_ENABLED=1` và
+`VIDTRANS_AUTH_USERNAME=admin`, rồi chạy lại `bash docker-rebuild.sh`. Giao diện sẽ hiện màn hình
+đăng nhập; API nhận `Authorization: Bearer <jwt>`. Trình duyệt dùng cùng JWT trong cookie
+`HttpOnly`, `SameSite=Strict`; mọi request thay đổi dữ liệu từ cookie còn phải có header chống
+CSRF. Khi chạy sau reverse proxy HTTPS, bắt buộc đặt `VIDTRANS_AUTH_COOKIE_SECURE=1`.
+
+JWT dùng thuật toán cố định HS256, có `iss`, `aud`, `sub`, `scope`, `iat`, `nbf`, `exp` và `jti`.
+Mật khẩu chỉ lưu dạng PBKDF2-HMAC-SHA256; hệ thống giới hạn đăng nhập sai liên tiếp theo client.
+Đăng xuất xóa cookie hiện tại, nhưng JWT Bearer đã cấp không có cơ chế thu hồi riêng; để vô hiệu
+hóa toàn bộ token ngay lập tức, đổi `VIDTRANS_JWT_SECRET` rồi restart dịch vụ.
+
 ### Tự động đăng TikTok
 
 VidTrans dùng Login Kit và Content Posting API chính thức. Tạo TikTok Developer App, bật quyền
@@ -118,6 +178,15 @@ VIDTRANS_TIKTOK_CLIENT_KEY=...
 VIDTRANS_TIKTOK_CLIENT_SECRET=...
 VIDTRANS_TIKTOK_REDIRECT_URI=https://your-domain.example/api/v1/tiktok-auth/callback
 VIDTRANS_TIKTOK_SCOPES=video.publish
+# OAuth2/JWT quản trị (sinh password hash và secret bằng lệnh ở trên):
+VIDTRANS_AUTH_ENABLED=1
+VIDTRANS_AUTH_USERNAME=admin
+VIDTRANS_AUTH_PASSWORD_HASH=pbkdf2_sha256$...
+VIDTRANS_JWT_SECRET=...
+VIDTRANS_JWT_ISSUER=vidtrans
+VIDTRANS_JWT_AUDIENCE=vidtrans-api
+VIDTRANS_JWT_TTL_MINUTES=480
+VIDTRANS_AUTH_COOKIE_SECURE=1
 # Tùy chọn, chỉ cần cho video yêu cầu đăng nhập/giới hạn vùng:
 VIDTRANS_YTDLP_COOKIE_FILE=/app/secrets/yt-dlp-cookies.txt
 ```
@@ -127,6 +196,9 @@ nên giữ Whisper/OCR ở một slot.
 
 ## API quản lý
 
+- `GET /api/v1/auth/status` — trạng thái bật/cấu hình/đăng nhập, không trả secret
+- `POST /api/v1/auth/token` — OAuth2 password token endpoint; trả Bearer JWT và đặt cookie HttpOnly
+- `DELETE /api/v1/auth/session` — đăng xuất phiên web hiện tại
 - `POST /api/v1/batches` — tạo batch từ nhiều file và/hoặc trường `source_links` chứa link TikTok/Douyin
 - `GET /api/v1/batches` — danh sách batch
 - `GET /api/v1/batches/{batch_id}` — chi tiết batch và các job

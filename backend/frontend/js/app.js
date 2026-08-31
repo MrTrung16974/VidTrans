@@ -1,7 +1,11 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-const state = { files: [], links: [], jobs: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null, qrSessionId: null, qrStatus: null, qrPollTimer: null, tiktokAuth: null };
+const state = {
+  files: [], links: [], jobs: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
+  qrSessionId: null, qrStatus: null, qrPollTimer: null, tiktokAuth: null, appStarted: false,
+  auth: { enabled: false, configured: false, authenticated: false, username: null },
+};
 const stepLabels = {
   queued: "Đang xếp hàng", starting: "Đang khởi động", "downloading-source": "Đang tải video nguồn",
   "source-ready": "Nguồn đã sẵn sàng",
@@ -26,11 +30,73 @@ function toast(message, isError = false) {
   toast.timer = setTimeout(() => element.classList.remove("show"), 3500);
 }
 
-async function requestJson(url, options) {
-  const response = await fetch(url, options);
+function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("X-VidTrans-Request", "1");
+  return fetch(url, { ...options, headers, credentials: "same-origin" });
+}
+
+function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", isError = true) {
+  clearInterval(state.pollTimer);
+  state.pollTimer = null;
+  state.appStarted = false;
+  state.auth.authenticated = false;
+  $("#appLogoutButton").classList.add("is-hidden");
+  $("#authGate").classList.remove("is-hidden");
+  const authMessage = $("#authMessage");
+  authMessage.textContent = message;
+  authMessage.classList.toggle("error", isError);
+  setTimeout(() => $("#authUsername").focus(), 0);
+}
+
+async function requestJson(url, options = {}) {
+  const response = await apiFetch(url, options);
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 401 && !url.startsWith("/api/v1/auth/")) lockApplication();
   if (!response.ok) throw new Error(payload.detail || "Yêu cầu thất bại");
   return payload;
+}
+
+async function refreshApplicationAuth() {
+  const status = await requestJson("/api/v1/auth/status");
+  state.auth = status;
+  if (!status.enabled) {
+    $("#authGate").classList.add("is-hidden");
+    $("#appLogoutButton").classList.add("is-hidden");
+    return true;
+  }
+  if (!status.configured) {
+    const detail = (status.configuration_errors || []).join(" · ") || status.message;
+    lockApplication(detail);
+    $("#authSubmit").disabled = true;
+    return false;
+  }
+  $("#authSubmit").disabled = false;
+  if (!status.authenticated) {
+    lockApplication("Nhập tài khoản quản trị để tiếp tục.", false);
+    return false;
+  }
+  $("#authGate").classList.add("is-hidden");
+  const logout = $("#appLogoutButton");
+  logout.textContent = `${status.username} · Đăng xuất`;
+  logout.classList.remove("is-hidden");
+  return true;
+}
+
+async function startProtectedApplication() {
+  if (state.appStarted) return;
+  state.appStarted = true;
+  await Promise.all([loadJobs(), refreshDouyinAuthStatus(), refreshTikTokAuthStatus()]);
+  clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(loadJobs, 2500);
+}
+
+async function bootstrapApplication() {
+  try {
+    if (await refreshApplicationAuth()) await startProtectedApplication();
+  } catch (error) {
+    lockApplication(`Không kiểm tra được cấu hình xác thực: ${error.message}`);
+  }
 }
 
 async function refreshDouyinAuthStatus() {
@@ -128,7 +194,7 @@ async function startDouyinQrLogin() {
 async function closeDouyinQrModal() {
   stopQrPolling();
   if (state.qrSessionId && ["starting", "waiting_scan"].includes(state.qrStatus)) {
-    fetch(`/api/v1/douyin-auth/qr/${state.qrSessionId}`, { method: "DELETE" }).catch(() => {});
+    apiFetch(`/api/v1/douyin-auth/qr/${state.qrSessionId}`, { method: "DELETE" }).catch(() => {});
   }
   $("#douyinQrModal").classList.add("is-hidden");
 }
@@ -251,13 +317,15 @@ function showView() {
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
-  if (view === "jobs") loadJobs();
+  if (view === "jobs" && state.appStarted) loadJobs();
 }
 
 function uploadBatch(formData) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", "/api/v1/batches");
+    request.withCredentials = true;
+    request.setRequestHeader("X-VidTrans-Request", "1");
     request.responseType = "json";
     request.upload.addEventListener("progress", event => {
       if (!event.lengthComputable) return;
@@ -268,7 +336,10 @@ function uploadBatch(formData) {
     request.addEventListener("load", () => {
       const payload = request.response || {};
       if (request.status >= 200 && request.status < 300) resolve(payload);
-      else reject(new Error(payload.detail || "Không thể tạo batch"));
+      else {
+        if (request.status === 401) lockApplication();
+        reject(new Error(payload.detail || "Không thể tạo batch"));
+      }
     });
     request.addEventListener("error", () => reject(new Error("Mất kết nối khi tải video")));
     request.send(formData);
@@ -384,13 +455,15 @@ function renderJobs(jobs) {
 }
 
 async function loadJobs() {
+  if (!state.appStarted) return;
   const params = new URLSearchParams({ limit: "100" });
   const status = $("#statusFilter").value;
   const search = $("#jobSearch").value.trim();
   if (status) params.set("status", status);
   if (search) params.set("search", search);
   try {
-    const response = await fetch(`/api/v1/jobs?${params}`);
+    const response = await apiFetch(`/api/v1/jobs?${params}`);
+    if (response.status === 401) lockApplication();
     if (!response.ok) throw new Error("Không tải được danh sách job");
     const data = await response.json();
     state.jobs = data.items;
@@ -414,7 +487,8 @@ async function jobAction(action, jobId) {
   const method = action === "delete" ? "DELETE" : "POST";
   const endpoint = action === "delete" ? `/api/v1/jobs/${jobId}` : action === "tiktok-status" ? `/api/v1/jobs/${jobId}/refresh-tiktok-status` : `/api/v1/jobs/${jobId}/${action}`;
   try {
-    const response = await fetch(endpoint, { method });
+    const response = await apiFetch(endpoint, { method });
+    if (response.status === 401) lockApplication();
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || `Không thể ${action} job`);
     toast(action === "retry" ? `Đã tạo job chạy lại ${data.job_id}` : action === "cancel" ? "Đã gửi yêu cầu hủy" : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
@@ -431,7 +505,8 @@ async function bulkJobAction(action) {
     const method = action === "delete" ? "DELETE" : "POST";
     const endpoint = action === "delete" ? `/api/v1/jobs/${job.job_id}` : `/api/v1/jobs/${job.job_id}/${action}`;
     try {
-      const response = await fetch(endpoint, { method });
+      const response = await apiFetch(endpoint, { method });
+      if (response.status === 401) lockApplication();
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.detail || "Thao tác thất bại");
       return { ok: true, jobId: job.job_id };
@@ -445,6 +520,48 @@ async function bulkJobAction(action) {
   toast(`Đã ${verbs[action]} ${succeeded.length} job${failed ? `; ${failed} job lỗi` : ""}`, failed > 0);
   await loadJobs();
 }
+
+$("#authLoginForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = $("#authSubmit");
+  const message = $("#authMessage");
+  const body = new URLSearchParams({
+    grant_type: "password",
+    username: $("#authUsername").value.trim(),
+    password: $("#authPassword").value,
+    scope: "admin",
+  });
+  button.disabled = true;
+  message.textContent = "Đang xác thực…";
+  message.classList.remove("error");
+  try {
+    await requestJson("/api/v1/auth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    $("#authPassword").value = "";
+    if (await refreshApplicationAuth()) {
+      await startProtectedApplication();
+      toast("Đăng nhập VidTrans thành công");
+    }
+  } catch (error) {
+    message.textContent = error.message;
+    message.classList.add("error");
+  } finally {
+    button.disabled = !state.auth.configured;
+  }
+});
+
+$("#appLogoutButton").addEventListener("click", async () => {
+  try {
+    await requestJson("/api/v1/auth/session", { method: "DELETE" });
+    $("#authPassword").value = "";
+    lockApplication("Đã đăng xuất. Nhập tài khoản quản trị để tiếp tục.", false);
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
 
 $("#files").addEventListener("change", event => addFiles(event.target.files));
 $("#sourceLinks").addEventListener("input", renderSourceLinks);
@@ -509,13 +626,10 @@ window.addEventListener("hashchange", showView);
 updateFormSummary();
 renderFiles();
 showView();
-loadJobs();
-refreshDouyinAuthStatus();
-refreshTikTokAuthStatus();
 const oauthParams = new URLSearchParams(location.search);
 if (oauthParams.get("tiktok") === "connected") toast("Đã kết nối tài khoản TikTok thành công");
 if (oauthParams.get("tiktok_error")) toast(oauthParams.get("tiktok_error"), true);
 if (oauthParams.has("tiktok") || oauthParams.has("tiktok_error")) {
   history.replaceState(null, "", `${location.pathname}${location.hash || "#create"}`);
 }
-state.pollTimer = setInterval(loadJobs, 2500);
+bootstrapApplication();

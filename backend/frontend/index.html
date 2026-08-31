@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="VidTrans Studio — xử lý hàng loạt video Trung sang Việt." />
     <title>VidTrans Studio</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20260831-8" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260831-9" />
   </head>
   <body>
     <div class="app-shell">
@@ -18,7 +18,10 @@
           <a href="#create" data-view-link="create">Tạo quy trình</a>
           <a href="#jobs" data-view-link="jobs">Tiến trình <span id="runningBadge" class="nav-badge">0</span></a>
         </nav>
-        <div id="systemState" class="system-state"><span></span> Hệ thống sẵn sàng</div>
+        <div class="topbar-actions">
+          <div id="systemState" class="system-state"><span></span> Hệ thống sẵn sàng</div>
+          <button id="appLogoutButton" class="auth-logout is-hidden" type="button">Đăng xuất</button>
+        </div>
       </header>
 
       <main>
@@ -163,6 +166,27 @@
       </main>
     </div>
 
+    <div id="authGate" class="auth-gate is-hidden" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+      <section class="auth-card">
+        <div class="auth-brand-mark">V</div>
+        <span class="eyebrow">Secure workspace</span>
+        <h1 id="authTitle">Đăng nhập VidTrans</h1>
+        <p>Đăng nhập tài khoản quản trị để truy cập pipeline, tiến trình và file video.</p>
+        <form id="authLoginForm" class="auth-form">
+          <label>
+            <span>Tên đăng nhập</span>
+            <input id="authUsername" name="username" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            <span>Mật khẩu</span>
+            <input id="authPassword" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button id="authSubmit" class="button primary full" type="submit">Đăng nhập</button>
+        </form>
+        <div id="authMessage" class="auth-message" aria-live="polite">OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly</div>
+      </section>
+    </div>
+
     <div id="douyinQrModal" class="modal-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="douyinQrTitle">
       <section class="qr-modal card">
         <button id="douyinQrClose" class="modal-close" type="button" aria-label="Đóng">×</button>
@@ -179,6 +203,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20260831-8"></script>
+    <script type="module" src="/js/app.js?v=20260831-9"></script>
   </body>
 </html>

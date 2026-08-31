@@ -1,0 +1,25 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${VIDTRANS_PUBLIC_HOST};
+
+    client_max_body_size 2048m;
+    client_body_timeout 3600s;
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        default_type text/plain;
+        return 503 "VidTrans is completing the first HTTPS setup.\n";
+    }
+}
