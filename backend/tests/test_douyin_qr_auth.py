@@ -17,6 +17,52 @@ from infrastructure.douyin_qr_auth import (
 
 
 class DouyinQRAuthTests(unittest.TestCase):
+    def test_otp_submit_uses_visible_text_control_when_not_a_native_button(self) -> None:
+        class Candidate:
+            def __init__(self, visible: bool, clicks: list[str]) -> None:
+                self.visible = visible
+                self.clicks = clicks
+
+            def is_visible(self) -> bool:
+                return self.visible
+
+            def click(self, **_kwargs: object) -> None:
+                self.clicks.append("clicked")
+
+        class Locator:
+            def __init__(self, candidates: list[Candidate]) -> None:
+                self.candidates = candidates
+
+            def count(self) -> int:
+                return len(self.candidates)
+
+            def nth(self, index: int) -> Candidate:
+                return self.candidates[index]
+
+            def filter(self, **_kwargs: object) -> "Locator":
+                return self
+
+        class Page:
+            def __init__(self, text_control: Locator) -> None:
+                self.text_control = text_control
+
+            def get_by_role(self, *_args: object, **_kwargs: object) -> Locator:
+                return Locator([])
+
+            def get_by_text(self, *_args: object, **_kwargs: object) -> Locator:
+                return self.text_control
+
+            def locator(self, *_args: object, **_kwargs: object) -> Locator:
+                return Locator([])
+
+        class OtpInput:
+            def press(self, _key: str) -> None:
+                raise AssertionError("Enter fallback should not be needed")
+
+        clicks: list[str] = []
+        DouyinQRAuthManager._submit_otp_form(Page(Locator([Candidate(True, clicks)])), OtpInput())
+        self.assertEqual(clicks, ["clicked"])
+
     def test_detects_authenticated_browser_cookie(self) -> None:
         self.assertTrue(has_authenticated_cookie([{"name": "sessionid", "value": "abc"}]))
         self.assertFalse(has_authenticated_cookie([{"name": "ttwid", "value": "abc"}]))

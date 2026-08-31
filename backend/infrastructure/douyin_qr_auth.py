@@ -372,19 +372,57 @@ class DouyinQRAuthManager:
         otp_input = self._otp_input(page)
         if otp_input is None:
             raise RuntimeError("Douyin chưa hiển thị ô nhập OTP")
-        otp_input.fill(otp)
-        login_buttons = page.locator("button").filter(
-            has_text=re.compile(r"^\s*(?:登录|验证|确认)\s*$")
-        )
-        self._click_visible(login_buttons, prefer_last=True)
-        with self._lock:
-            session.verification_started_monotonic = time.monotonic()
-        page.wait_for_timeout(1_800)
-        # Do not leave a one-time code visible in subsequent status images.
         try:
-            otp_input.fill("")
-        except Exception:
-            pass
+            otp_input.fill(otp)
+            self._submit_otp_form(page, otp_input)
+            with self._lock:
+                session.verification_started_monotonic = time.monotonic()
+            page.wait_for_timeout(1_800)
+        finally:
+            # Do not leave a one-time code visible in subsequent status images,
+            # including when Douyin has changed the markup of its submit control.
+            try:
+                otp_input.fill("")
+            except Exception:
+                pass
+
+    @classmethod
+    def _submit_otp_form(cls, page: Any, otp_input: Any) -> None:
+        """Click Douyin's OTP submit control across its changing login markup.
+
+        Douyin has used both native ``button`` elements and clickable ``div`` /
+        ``span`` controls for the same Chinese labels.  Restricting this to a
+        ``button`` leaves the OTP in the field but never submits the form.
+        """
+
+        submit_label = re.compile(r"^\s*(?:登录|验证|确认|提交)\s*$")
+        candidates = (
+            page.get_by_role("button", name=submit_label),
+            page.get_by_text(submit_label),
+            page.locator('[role="button"]').filter(has_text=submit_label),
+            page.locator('input[type="submit"], input[type="button"]').filter(
+                has_text=submit_label
+            ),
+        )
+        click_errors: list[str] = []
+        for candidate in candidates:
+            try:
+                cls._click_visible(candidate, prefer_last=True)
+                return
+            except Exception as exc:
+                click_errors.append(str(exc))
+
+        # Some versions submit the SMS form only through its Enter handler.
+        # Keep this as the final fallback so a visible explicit submit control
+        # always takes priority.
+        try:
+            otp_input.press("Enter")
+            return
+        except Exception as exc:
+            click_errors.append(str(exc))
+
+        detail = next((error for error in click_errors if error), "unknown control")
+        raise RuntimeError(f"Không tìm thấy nút xác nhận OTP đang hiển thị: {detail[:120]}")
 
     @staticmethod
     def _login_panel_clip(page: Any) -> dict[str, float]:
