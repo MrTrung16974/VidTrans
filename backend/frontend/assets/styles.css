@@ -28,7 +28,8 @@ a { color: inherit; text-decoration: none; }
 .app-shell { max-width: 1440px; margin: 0 auto; padding: 0 28px 60px; }
 .topbar { height: 78px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; border-bottom: 1px solid rgba(205, 213, 223, .75); }
 .brand { display: inline-flex; align-items: center; gap: 11px; width: fit-content; }
-.brand-mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; color: #fff; font-weight: 900; background: linear-gradient(145deg, var(--brand), #f8a05e); box-shadow: 0 8px 18px rgba(239,107,58,.28); }
+.brand-mark { width: 38px; height: 38px; display: block; flex: 0 0 38px; filter: drop-shadow(0 8px 9px rgba(239,107,58,.22)); }
+.brand-mark img { display: block; width: 100%; height: 100%; }
 .brand strong, .brand small { display: block; }
 .brand strong { font-size: 1rem; letter-spacing: -.02em; }
 .brand small { margin-top: 1px; color: var(--muted); font-size: .72rem; }
@@ -96,6 +97,10 @@ a { color: inherit; text-decoration: none; }
 .tiktok-auth-copy small.authenticated { color: var(--green); font-weight: 750; }
 .tiktok-auth-actions { display: flex; gap: 7px; }
 .tiktok-button { min-height: 38px; color: #fff; background: #151820; padding: 8px 13px; font-size: .78rem; }
+.tiktok-schedule-field { padding: 14px; border: 1px solid #bde4e1; border-radius: 13px; background: linear-gradient(135deg,#f1fbfa,#fff); }
+.tiktok-schedule-controls { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; }
+.tiktok-schedule-controls > span { min-height: 43px; display: inline-flex; align-items: center; border-radius: 10px; padding: 8px 12px; color: var(--teal); background: #e5f6f4; font-size: .75rem; font-weight: 800; white-space: nowrap; }
+.tiktok-schedule-field > small { color: var(--muted); font-size: .72rem; font-weight: 550; line-height: 1.45; }
 .tiktok-consent { grid-column: 1 / -1; margin: -2px 0 0; padding: 11px 13px; border-left: 3px solid #25bdb7; border-radius: 8px; color: var(--muted); background: #f3faf9; font-size: .75rem; font-weight: 550; line-height: 1.5; }
 .link-list:empty { display: none; }
 .link-item .file-item-icon { color: #fff; background: var(--ink); }
@@ -173,6 +178,9 @@ a { color: inherit; text-decoration: none; }
 .jobs-list { min-height: 240px; }
 .job-row { display: grid; grid-template-columns: 20px minmax(220px,1.5fr) 125px minmax(180px,1fr) 120px auto; gap: 16px; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); transition: background .15s; }
 .job-row.selected { background: #fff7f2; }
+.upload-row { background: linear-gradient(90deg,#fff8f3,#fff); }
+.upload-row .job-file-icon { color: var(--brand-dark); background: #fff0e6; }
+.upload-indicator { color: var(--brand); font-size: 1rem; font-weight: 900; }
 .job-select { display: grid; place-items: center; }
 .job-row:last-child { border-bottom: 0; }
 .job-file { min-width: 0; display: flex; align-items: center; gap: 11px; }
@@ -181,7 +189,7 @@ a { color: inherit; text-decoration: none; }
 .job-file strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .87rem; }
 .job-file small, .job-step small { color: var(--muted); font-size: .73rem; }
 .status-pill { width: fit-content; padding: 5px 9px; border-radius: 999px; font-size: .71rem; font-weight: 850; }
-.status-queued { color: var(--amber); background: #fff3da; }.status-processing { color: var(--blue); background: #eaf0ff; }.status-completed { color: var(--green); background: #e8f7f0; }.status-failed,.status-cancelled { color: var(--red); background: #ffedf0; }.status-cancelling { color: var(--amber); background: #fff3da; }
+.status-queued { color: var(--amber); background: #fff3da; }.status-scheduled { color: var(--teal); background: #e4f7f5; }.status-processing { color: var(--blue); background: #eaf0ff; }.status-completed { color: var(--green); background: #e8f7f0; }.status-failed,.status-cancelled { color: var(--red); background: #ffedf0; }.status-cancelling { color: var(--amber); background: #fff3da; }
 .job-progress { display: grid; grid-template-columns: 1fr 35px; align-items: center; gap: 8px; }
 .job-progress .progress-track { height: 7px; }.job-progress small { color: var(--muted); font-size: .7rem; text-align: right; }
 .job-step strong { display: block; font-size: .78rem; }
@@ -196,7 +204,8 @@ a { color: inherit; text-decoration: none; }
 .toast.error { background: var(--red); }
 .auth-gate { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; overflow-y: auto; padding: 24px; background: radial-gradient(circle at 18% 5%, rgba(239,107,58,.22), transparent 32rem), rgba(18,27,39,.92); backdrop-filter: blur(9px); }
 .auth-card { width: min(430px,100%); padding: 34px; border: 1px solid rgba(255,255,255,.7); border-radius: 24px; background: rgba(255,255,255,.98); box-shadow: 0 30px 90px rgba(0,0,0,.3); }
-.auth-brand-mark { width: 52px; height: 52px; display: grid; place-items: center; margin-bottom: 20px; border-radius: 16px; color: #fff; background: linear-gradient(145deg,var(--brand),#f09a56); box-shadow: 0 12px 28px rgba(239,107,58,.3); font-size: 1.45rem; font-weight: 900; }
+.auth-brand-mark { width: 52px; height: 52px; display: block; margin-bottom: 20px; filter: drop-shadow(0 12px 14px rgba(239,107,58,.24)); }
+.auth-brand-mark img { display: block; width: 100%; height: 100%; }
 .auth-card h1 { margin: 6px 0 8px; font-size: 2rem; letter-spacing: -.045em; }
 .auth-card > p { margin: 0 0 24px; color: var(--muted); font-size: .88rem; line-height: 1.55; }
 .auth-form { display: grid; gap: 15px; }
@@ -309,6 +318,8 @@ a { color: inherit; text-decoration: none; }
   .douyin-auth-card,.tiktok-auth-card { grid-template-columns: 42px minmax(0,1fr); }
   .douyin-auth-actions,.tiktok-auth-actions { grid-column: 1 / -1; width: 100%; }
   .douyin-auth-actions .button,.tiktok-auth-actions .button { flex: 1; min-height: 44px; }
+  .tiktok-schedule-controls { grid-template-columns: 1fr; }
+  .tiktok-schedule-controls > span { min-height: 38px; justify-content: center; }
   .file-item { grid-template-columns: 34px minmax(0,1fr) 44px; padding: 9px 8px 9px 10px; }
   .file-item strong { max-width: none; }
   .metric-grid { gap: 9px; }

@@ -160,6 +160,10 @@ làm mất hàng đợi. Scheduler mặc định chạy tối đa hai pipeline, 
 slot để tránh tràn RAM/GPU. File nguồn được giữ để hỗ trợ retry và chỉ bị xóa khi người dùng xóa
 job. Xem [ARCHITECTURE.md](ARCHITECTURE.md) để biết ranh giới module.
 
+Ngay khi bấm **Bắt đầu xử lý**, giao diện chuyển sang trang **Tiến trình** và hiển thị một dòng
+upload tạm theo phần trăm. Giữ tab mở cho đến khi upload đạt 100%; sau khi server tạo job, dòng
+tạm tự được thay bằng các job bền vững và từ thời điểm đó có thể đóng trình duyệt.
+
 Video từ TikTok/Douyin được tải bằng `yt-dlp` bên trong worker, vì vậy API tạo batch trả kết quả
 ngay và dashboard hiển thị riêng tiến độ tải nguồn. Hệ thống chỉ chấp nhận domain TikTok/Douyin,
 không tải playlist, giới hạn mặc định 2 GB và 120 phút cho mỗi video, đồng thời xóa file `.part`

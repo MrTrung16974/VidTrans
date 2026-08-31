@@ -88,11 +88,15 @@ class SQLiteJobStore:
                 "priority": "INTEGER NOT NULL DEFAULT 0",
                 "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
                 "worker_id": "TEXT",
+                "scheduled_for": "TEXT",
             }.items():
                 if name not in columns:
                     connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, priority DESC, created_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(status, scheduled_for)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_jobs_batch_updated ON jobs(batch_id, updated_at DESC)"
@@ -251,7 +255,10 @@ class SQLiteJobStore:
                 ).fetchall()
                 batch["counts"] = {str(row["status"]): int(row["count"]) for row in counts}
                 batch["total_jobs"] = sum(batch["counts"].values())
-                active = sum(batch["counts"].get(status, 0) for status in ("queued", "processing", "cancelling"))
+                active = sum(
+                    batch["counts"].get(status, 0)
+                    for status in ("queued", "processing", "scheduled", "cancelling")
+                )
                 if active:
                     batch["status"] = "processing"
                 elif batch["total_jobs"] and batch["counts"].get("completed", 0) == batch["total_jobs"]:
@@ -296,13 +303,18 @@ class SQLiteJobStore:
             payload = self._decode(row["payload_json"])
             payload.update(fields)
             status = str(payload.get("status", "queued"))
+            scheduled_for = (
+                str(payload.get("tiktok_publish_at"))
+                if status == "scheduled" and payload.get("tiktok_publish_at")
+                else None
+            )
             connection.execute(
                 """
                 UPDATE jobs
-                SET status = ?, payload_json = ?, updated_at = ?
+                SET status = ?, payload_json = ?, scheduled_for = ?, updated_at = ?
                 WHERE job_id = ?
                 """,
-                (status, self._encode(payload), now, job_id),
+                (status, self._encode(payload), scheduled_for, now, job_id),
             )
         return payload
 
@@ -332,18 +344,31 @@ class SQLiteJobStore:
                 """
                 SELECT job_id, payload_json
                 FROM jobs
-                WHERE status = 'queued' AND cancel_requested = 0
-                ORDER BY priority DESC, created_at ASC
+                WHERE cancel_requested = 0
+                  AND (
+                    status = 'queued'
+                    OR (status = 'scheduled' AND scheduled_for IS NOT NULL AND scheduled_for <= ?)
+                  )
+                ORDER BY
+                  CASE WHEN status = 'scheduled' THEN 0 ELSE 1 END,
+                  priority DESC,
+                  COALESCE(scheduled_for, created_at) ASC
                 LIMIT 1
-                """
+                """,
+                (now,),
             ).fetchone()
             if row is None:
                 return None
             payload = self._decode(row["payload_json"])
+            is_scheduled_publish = payload.get("job_action") == "publish_tiktok"
             payload.update(
                 {
                     "status": "processing",
-                    "step": payload.get("step") if payload.get("step") != "queued" else "starting",
+                    "step": (
+                        "publishing-tiktok"
+                        if is_scheduled_publish
+                        else payload.get("step") if payload.get("step") != "queued" else "starting"
+                    ),
                     "worker_id": worker_id,
                     "started_at": payload.get("started_at") or now,
                     "cancel_requested": False,
@@ -352,7 +377,7 @@ class SQLiteJobStore:
             connection.execute(
                 """
                 UPDATE jobs
-                SET status = 'processing', payload_json = ?, worker_id = ?, updated_at = ?
+                SET status = 'processing', payload_json = ?, worker_id = ?, scheduled_for = NULL, updated_at = ?
                 WHERE job_id = ?
                 """,
                 (self._encode(payload), worker_id, now, row["job_id"]),
@@ -373,7 +398,7 @@ class SQLiteJobStore:
             status = str(row["status"])
             if status in {"completed", "failed", "cancelled"}:
                 return payload
-            if status in {"queued", "ready"}:
+            if status in {"queued", "ready", "scheduled"}:
                 payload.update(
                     {
                         "status": "cancelled",

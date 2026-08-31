@@ -63,17 +63,22 @@ class JobScheduler:
             claimed = await asyncio.to_thread(self._service.claim_next, worker_id)
             if claimed is not None:
                 job_id, job = claimed
-                resume_request = job.get("resume_request")
-                if not isinstance(resume_request, dict):
+                job_action = str(job.get("job_action") or "process_video")
+                request_key = "publish_request" if job_action == "publish_tiktok" else "resume_request"
+                stored_request = job.get(request_key)
+                if not isinstance(stored_request, dict):
                     self._service.update(
                         job_id,
                         status="failed",
                         step="failed",
-                        error="Job không có cấu hình chạy lại hợp lệ",
+                        error="Job không có cấu hình tác vụ nền hợp lệ",
                     )
                     continue
+                run_request = dict(stored_request)
+                if job_action != "process_video":
+                    run_request["_job_action"] = job_action
                 try:
-                    await asyncio.to_thread(self._runner, job_id, resume_request)
+                    await asyncio.to_thread(self._runner, job_id, run_request)
                 except Exception:
                     logger.exception("Unhandled worker failure for job %s", job_id)
                     self._service.update(

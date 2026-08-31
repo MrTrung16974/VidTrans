@@ -14,6 +14,12 @@ from typing import Any
 
 
 AUTH_COOKIE_NAMES = {"sessionid", "sessionid_ss", "sid_guard", "uid_tt", "uid_tt_ss"}
+SMS_CHALLENGE_MARKERS = (
+    "短信已发送",
+    "验证码已发送",
+    "接收短信验证码",
+    "重新发送",
+)
 ACTIVE_LOGIN_STATUSES = {
     "starting",
     "waiting_scan",
@@ -90,6 +96,11 @@ def mask_phone(country_code: str, phone: str) -> str:
     visible_tail = phone[-4:]
     hidden = "•" * max(2, len(phone) - len(visible_tail))
     return f"{country_code} {hidden}{visible_tail}"
+
+
+def looks_like_sms_challenge(page_text: str) -> bool:
+    normalized = " ".join(str(page_text or "").split())
+    return any(marker in normalized for marker in SMS_CHALLENGE_MARKERS)
 
 
 @dataclass
@@ -282,6 +293,41 @@ class DouyinQRAuthManager:
                 return
         raise RuntimeError("Không tìm thấy nút đăng nhập Douyin đang hiển thị")
 
+    @staticmethod
+    def _otp_input(page: Any) -> Any | None:
+        selectors = (
+            'input[name="button-input"]:visible',
+            'input[placeholder*="请输入验证码"]:visible',
+            'input[placeholder*="验证码"]:visible',
+            'input[maxlength="6"]:visible',
+        )
+        for selector in selectors:
+            candidate = page.locator(selector)
+            if candidate.count():
+                return candidate.last
+        return None
+
+    @classmethod
+    def _sms_challenge_visible(cls, page: Any) -> bool:
+        if cls._otp_input(page) is not None:
+            return True
+        try:
+            return looks_like_sms_challenge(page.locator("body").inner_text(timeout=1_000))
+        except Exception:
+            return False
+
+    def _mark_waiting_for_otp(self, session: QRLoginSession) -> None:
+        with self._lock:
+            if session.status in {"waiting_otp", "verifying_otp", "authenticated"}:
+                return
+            phone_masked = session.phone_masked
+        target = f" tới {phone_masked}" if phone_masked else ""
+        self._update(
+            session,
+            status="waiting_otp",
+            message=f"Douyin đã gửi OTP{target}. Nhập mã nhận được để đăng nhập.",
+        )
+
     def _send_sms_code(
         self,
         page: Any,
@@ -308,33 +354,43 @@ class DouyinQRAuthManager:
         area_input.last.press("Enter")
         phone_input.last.fill(phone)
         send_code = page.get_by_text("获取验证码", exact=True)
-        self._click_visible(send_code, prefer_last=True)
+        try:
+            self._click_visible(send_code, prefer_last=True)
+        except Exception:
+            # Douyin can replace the whole login panel as soon as the click is
+            # accepted. Playwright may then report a detached element even
+            # though the SMS challenge is already active.
+            page.wait_for_timeout(350)
+            if not self._sms_challenge_visible(page):
+                raise
         page.wait_for_timeout(1_200)
-        self._update(
-            session,
-            status="waiting_otp",
-            message=f"OTP đã được yêu cầu cho {session.phone_masked}. Nhập mã nhận được để đăng nhập.",
-        )
+        if not self._sms_challenge_visible(page):
+            raise RuntimeError("Douyin chưa xác nhận đã gửi OTP")
+        self._mark_waiting_for_otp(session)
 
     def _submit_login_otp(self, page: Any, session: QRLoginSession, *, otp: str) -> None:
-        otp_input = page.locator('input[name="button-input"]')
-        if not otp_input.count():
+        otp_input = self._otp_input(page)
+        if otp_input is None:
             raise RuntimeError("Douyin chưa hiển thị ô nhập OTP")
-        otp_input.last.fill(otp)
-        login_buttons = page.locator("button").filter(has_text=re.compile(r"^\s*登录\s*$"))
+        otp_input.fill(otp)
+        login_buttons = page.locator("button").filter(
+            has_text=re.compile(r"^\s*(?:登录|验证|确认)\s*$")
+        )
         self._click_visible(login_buttons, prefer_last=True)
         with self._lock:
             session.verification_started_monotonic = time.monotonic()
         page.wait_for_timeout(1_800)
         # Do not leave a one-time code visible in subsequent status images.
         try:
-            otp_input.last.fill("")
+            otp_input.fill("")
         except Exception:
             pass
 
     @staticmethod
     def _login_panel_clip(page: Any) -> dict[str, float]:
         anchor = page.locator('input[name="normal-input"]:visible')
+        if not anchor.count():
+            anchor = page.locator('input[placeholder*="验证码"]:visible')
         if not anchor.count():
             anchor = page.get_by_text("扫码登录", exact=True)
         if anchor.count():
@@ -421,7 +477,9 @@ class DouyinQRAuthManager:
                     except queue.Empty:
                         pass
                     except Exception:
-                        if command_kind == "otp":
+                        if command_kind == "phone" and self._sms_challenge_visible(page):
+                            self._mark_waiting_for_otp(session)
+                        elif command_kind == "otp":
                             self._update(
                                 session,
                                 status="waiting_otp",
@@ -435,6 +493,12 @@ class DouyinQRAuthManager:
                             )
                     finally:
                         command_payload.clear()
+
+                    # Scanning QR can make Douyin send an SMS automatically.
+                    # Detect the resulting challenge even when no phone command
+                    # came from VidTrans and reveal the OTP form immediately.
+                    if self._sms_challenge_visible(page):
+                        self._mark_waiting_for_otp(session)
 
                     self._capture_login_panel(page, session)
                     cookies = context.cookies()

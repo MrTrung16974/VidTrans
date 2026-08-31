@@ -8,6 +8,7 @@ from infrastructure.douyin_qr_auth import (
     DouyinQRAuthManager,
     QRLoginSession,
     has_authenticated_cookie,
+    looks_like_sms_challenge,
     mask_phone,
     normalize_otp,
     normalize_phone,
@@ -61,6 +62,11 @@ class DouyinQRAuthTests(unittest.TestCase):
             with self.subTest(otp=otp):
                 with self.assertRaises(ValueError):
                     normalize_otp(otp)
+
+    def test_detects_sms_challenge_after_qr_scan(self) -> None:
+        self.assertTrue(looks_like_sms_challenge("接收短信验证码\n短信已发送至 +84*******00"))
+        self.assertTrue(looks_like_sms_challenge("24s后重新发送"))
+        self.assertFalse(looks_like_sms_challenge("扫码登录 验证码登录 密码登录"))
 
     def test_session_snapshot_never_exposes_phone_or_otp(self) -> None:
         with TemporaryDirectory() as directory:

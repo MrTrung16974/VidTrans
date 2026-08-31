@@ -2,7 +2,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const state = {
-  files: [], links: [], jobs: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
+  files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
   qrSessionId: null, qrStatus: null, qrPollTimer: null, tiktokAuth: null, appStarted: false,
   auth: { enabled: false, configured: false, authenticated: false, username: null },
 };
@@ -13,9 +13,10 @@ const stepLabels = {
   transcribing: "Đang nhận diện giọng nói", translating: "Đang dịch sang tiếng Việt",
   summarizing: "Đang viết nội dung TikTok", "routing-voices": "Đang chọn giọng",
   tts: "Đang tạo giọng đọc", "mixing-audio": "Đang trộn âm thanh", rendering: "Đang dựng video", "publishing-tiktok": "Đang đăng lên TikTok",
+  "waiting-tiktok-publish": "Đang chờ lịch đăng TikTok",
   completed: "Đã hoàn tất", failed: "Xử lý thất bại", cancelled: "Đã hủy", cancelling: "Đang dừng an toàn",
 };
-const statusLabels = { queued: "Đang chờ", processing: "Đang chạy", completed: "Hoàn tất", failed: "Thất bại", cancelled: "Đã hủy", cancelling: "Đang hủy" };
+const statusLabels = { queued: "Đang chờ", scheduled: "Đã đặt lịch", processing: "Đang chạy", completed: "Hoàn tất", failed: "Thất bại", cancelled: "Đã hủy", cancelling: "Đang hủy" };
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
@@ -334,6 +335,39 @@ function subtitleStyle() {
   };
 }
 
+function localDateTimeValue(date) {
+  const pad = value => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatScheduledTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("vi-VN", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function syncTikTokSchedule({ setDefault = false } = {}) {
+  const mode = $("#tiktokPublishMode").value;
+  const scheduled = mode === "scheduled";
+  $("#autoPublishTikTok").value = mode === "off" ? "false" : "true";
+  $("#tiktokScheduleField").classList.toggle("is-hidden", !scheduled);
+  if (mode !== "off") $("#generateTikTokPost").value = "true";
+  const localInput = $("#tiktokPublishAtLocal");
+  if (scheduled && setDefault && !localInput.value) {
+    const defaultTime = new Date(Date.now() + 60 * 60 * 1000);
+    defaultTime.setMinutes(Math.ceil(defaultTime.getMinutes() / 5) * 5, 0, 0);
+    localInput.value = localDateTimeValue(defaultTime);
+  }
+  const selected = scheduled && localInput.value ? new Date(localInput.value) : null;
+  $("#tiktokPublishAt").value = selected && !Number.isNaN(selected.getTime()) ? selected.toISOString() : "";
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "múi giờ thiết bị";
+  $("#tiktokTimezoneLabel").textContent = timezone;
+}
+
 function updateFormSummary() {
   const modes = { "1": "Vietsub", "2": "Vietsub + voice", "3": "Voice + nhạc" };
   const placements = { replace_original: "Thay chữ gốc", above_original: "Trên chữ gốc", bottom_safe: "Vùng an toàn" };
@@ -373,9 +407,10 @@ function showView() {
   if (view === "jobs" && state.appStarted) loadJobs();
 }
 
-function uploadBatch(formData) {
+function uploadBatch(formData, { onProgress, onRequest } = {}) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
+    onRequest?.(request);
     request.open("POST", "/api/v1/batches");
     request.withCredentials = true;
     request.setRequestHeader("X-VidTrans-Request", "1");
@@ -385,7 +420,9 @@ function uploadBatch(formData) {
       const percent = Math.round(event.loaded / event.total * 100);
       $("#uploadPercent").textContent = `${percent}%`;
       $("#uploadFill").style.width = `${percent}%`;
+      onProgress?.(percent, "uploading");
     });
+    request.upload.addEventListener("load", () => onProgress?.(100, "creating"));
     request.addEventListener("load", () => {
       const payload = request.response || {};
       if (request.status >= 200 && request.status < 300) resolve(payload);
@@ -395,20 +432,27 @@ function uploadBatch(formData) {
       }
     });
     request.addEventListener("error", () => reject(new Error("Mất kết nối khi tải video")));
+    request.addEventListener("abort", () => reject(new Error("Đã hủy tải batch")));
     request.send(formData);
   });
 }
 
 async function submitBatch(event) {
   event.preventDefault();
+  syncTikTokSchedule();
   renderSourceLinks();
   const sourceText = $("#sourceLinks").value.trim();
   if (!state.files.length && !state.links.length) {
     return toast(sourceText ? "Không tìm thấy link TikTok/Douyin hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
-  if ($("#autoPublishTikTok").value === "true" && !state.tiktokAuth?.connected) {
+  if ($("#tiktokPublishMode").value !== "off" && !state.tiktokAuth?.connected) {
     return toast("Hãy kết nối tài khoản TikTok trước khi bật tự động đăng", true);
+  }
+  if ($("#tiktokPublishMode").value === "scheduled") {
+    const publishAt = new Date($("#tiktokPublishAtLocal").value);
+    if (Number.isNaN(publishAt.getTime())) return toast("Hãy chọn ngày giờ đăng TikTok", true);
+    if (publishAt.getTime() <= Date.now() + 30_000) return toast("Lịch đăng phải cách hiện tại ít nhất 30 giây", true);
   }
   updateFormSummary();
   const form = event.currentTarget;
@@ -423,20 +467,49 @@ async function submitBatch(event) {
   const sourceCookies = formData.get("source_cookies");
   if (sourceCookies instanceof File && !sourceCookies.name) formData.delete("source_cookies");
   if ($("#mode").value === "3" && !formData.has("background_music")) return toast("Mode 3 cần một file nhạc nền", true);
+
+  const pendingUpload = {
+    id: crypto.randomUUID?.() || `upload-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    batchName: String(formData.get("batch_name") || "Batch video mới"),
+    sources: [...state.files.map(file => file.name), ...state.links],
+    progress: 0,
+    status: "uploading",
+    detail: "Đang tải dữ liệu lên máy chủ. Giữ tab mở đến khi upload hoàn tất.",
+    request: null,
+  };
+  state.pendingUploads.unshift(pendingUpload);
   $("#submitButton").disabled = true;
   $("#uploadProgress").classList.remove("is-hidden");
+  location.hash = "#jobs";
+  showView();
+  renderJobDashboard();
   try {
-    const result = await uploadBatch(formData);
+    const result = await uploadBatch(formData, {
+      onRequest: request => { pendingUpload.request = request; },
+      onProgress: (percent, phase) => {
+        pendingUpload.progress = percent;
+        pendingUpload.detail = phase === "creating"
+          ? "Upload hoàn tất. Đang tạo các tiến trình xử lý…"
+          : `Đang tải dữ liệu lên máy chủ (${percent}%).`;
+        renderJobDashboard();
+      },
+    });
     toast(`Đã tạo ${result.total_jobs} job trong ${result.name}`);
+    state.pendingUploads = state.pendingUploads.filter(upload => upload.id !== pendingUpload.id);
     state.files = [];
     state.links = [];
     $("#sourceLinks").value = "";
     syncInputFiles();
     renderSourceLinks();
-    location.hash = "#jobs";
+    await loadJobs();
   } catch (error) {
+    pendingUpload.status = pendingUpload.status === "cancelled" ? "cancelled" : "failed";
+    pendingUpload.detail = error.message;
+    pendingUpload.request = null;
+    renderJobDashboard();
     toast(error.message, true);
   } finally {
+    pendingUpload.request = null;
     $("#submitButton").disabled = false;
     $("#uploadProgress").classList.add("is-hidden");
     $("#uploadFill").style.width = "0";
@@ -446,7 +519,7 @@ async function submitBatch(event) {
 function jobActions(job) {
   const terminal = ["completed", "failed", "cancelled"].includes(job.status);
   const downloads = job.download_all_url ? `<a href="${escapeHtml(job.download_all_url)}" title="Tải toàn bộ kết quả">ZIP</a>` : job.video_url ? `<a href="${escapeHtml(job.video_url)}" title="Tải video">Tải</a>` : "";
-  const cancel = ["queued", "processing", "cancelling"].includes(job.status) ? `<button data-action="cancel" data-job="${job.job_id}" title="Hủy">Hủy</button>` : "";
+  const cancel = ["queued", "scheduled", "processing", "cancelling"].includes(job.status) ? `<button data-action="cancel" data-job="${job.job_id}" title="Hủy">Hủy</button>` : "";
   const retry = terminal ? `<button data-action="retry" data-job="${job.job_id}" title="Chạy lại">Chạy lại</button>` : "";
   const remove = terminal ? `<button data-action="delete" data-job="${job.job_id}" title="Xóa">Xóa</button>` : "";
   const refreshTikTok = job.tiktok_publish_id && !["PUBLISH_COMPLETE", "FAILED"].includes(job.tiktok_publish_status) ? `<button data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok">TikTok</button>` : "";
@@ -455,7 +528,7 @@ function jobActions(job) {
 
 function eligibleJobs(action) {
   const selected = state.jobs.filter(job => state.selectedJobIds.has(job.job_id));
-  if (action === "cancel") return selected.filter(job => ["queued", "processing"].includes(job.status));
+  if (action === "cancel") return selected.filter(job => ["queued", "scheduled", "processing"].includes(job.status));
   return selected.filter(job => ["completed", "failed", "cancelled"].includes(job.status));
 }
 
@@ -480,17 +553,42 @@ function updateJobSelectionUI() {
   }
 }
 
+function renderPendingUpload(upload) {
+  const progress = Math.max(0, Math.min(100, Math.round(Number(upload.progress || 0))));
+  const sourceCount = upload.sources.length;
+  const sourceSummary = sourceCount === 1
+    ? upload.sources[0]
+    : `${sourceCount} video · ${upload.sources.slice(0, 2).join(" · ")}`;
+  const active = upload.status === "uploading";
+  const statusClass = active ? "processing" : "failed";
+  const statusText = active ? (progress >= 100 ? "Đang tạo job" : "Đang upload") : upload.status === "cancelled" ? "Đã hủy" : "Upload lỗi";
+  const action = active
+    ? `<button data-upload-cancel="${escapeHtml(upload.id)}" type="button">Hủy upload</button>`
+    : `<button data-upload-dismiss="${escapeHtml(upload.id)}" type="button">Ẩn</button>`;
+  return `<article class="job-row upload-row" data-upload-row="${escapeHtml(upload.id)}">
+    <span class="job-select upload-indicator" aria-hidden="true">↑</span>
+    <div class="job-file"><span class="job-file-icon">UP</span><div><strong title="${escapeHtml(sourceSummary)}">${escapeHtml(upload.batchName)}</strong><small>${escapeHtml(sourceSummary)}</small></div></div>
+    <span class="status-pill status-${statusClass}">${statusText}</span>
+    <div class="job-progress"><div class="progress-track"><span style="width:${progress}%"></span></div><small>${progress}%</small></div>
+    <div class="job-step"><strong>${progress >= 100 && active ? "Đang tạo tiến trình" : "Đang tải batch"}</strong><small title="${escapeHtml(upload.detail)}">${escapeHtml(upload.detail)}</small></div>
+    <div class="job-actions">${action}</div>
+  </article>`;
+}
+
 function renderJobs(jobs) {
-  if (!jobs.length) {
+  const pendingHtml = state.pendingUploads.map(renderPendingUpload).join("");
+  if (!jobs.length && !pendingHtml) {
     $("#jobsList").innerHTML = '<div class="empty-state"><div><strong>Chưa có tiến trình phù hợp</strong><br><small>Tạo batch mới hoặc thay đổi bộ lọc.</small></div></div>';
     updateJobSelectionUI();
     return;
   }
-  $("#jobsList").innerHTML = jobs.map(job => {
+  const jobsHtml = jobs.map(job => {
     const progress = Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100)));
     const queue = job.queue_position ? ` • Hàng đợi #${job.queue_position}` : "";
     const selected = state.selectedJobIds.has(job.job_id);
-    const detail = job.tiktok_publish_error
+    const detail = job.status === "scheduled" && job.tiktok_publish_at
+      ? `Sẽ đăng TikTok lúc ${formatScheduledTime(job.tiktok_publish_at)}`
+      : job.tiktok_publish_error
       ? `TikTok lỗi: ${job.tiktok_publish_error}`
       : job.tiktok_publish_status
         ? `TikTok: ${job.tiktok_publish_status}${job.tiktok_publish_title ? ` · ${job.tiktok_publish_title}` : ""}`
@@ -504,7 +602,20 @@ function renderJobs(jobs) {
       <div class="job-actions">${jobActions(job)}</div>
     </article>`;
   }).join("");
+  $("#jobsList").innerHTML = pendingHtml + jobsHtml;
   updateJobSelectionUI();
+}
+
+function renderJobDashboard() {
+  renderJobs(state.jobs);
+  const counts = state.jobs.reduce((result, job) => ({ ...result, [job.status]: (result[job.status] || 0) + 1 }), {});
+  const activeUploads = state.pendingUploads.filter(upload => upload.status === "uploading").length;
+  const failedUploads = state.pendingUploads.filter(upload => upload.status !== "uploading").length;
+  $("#queuedMetric").textContent = (counts.queued || 0) + (counts.scheduled || 0);
+  $("#processingMetric").textContent = (counts.processing || 0) + (counts.cancelling || 0) + activeUploads;
+  $("#completedMetric").textContent = counts.completed || 0;
+  $("#failedMetric").textContent = (counts.failed || 0) + (counts.cancelled || 0) + failedUploads;
+  $("#runningBadge").textContent = String((counts.queued || 0) + (counts.scheduled || 0) + (counts.processing || 0) + (counts.cancelling || 0) + activeUploads);
 }
 
 async function loadJobs() {
@@ -522,13 +633,7 @@ async function loadJobs() {
     state.jobs = data.items;
     const visibleIds = new Set(state.jobs.map(job => job.job_id));
     state.selectedJobIds = new Set([...state.selectedJobIds].filter(jobId => visibleIds.has(jobId)));
-    renderJobs(state.jobs);
-    const counts = state.jobs.reduce((result, job) => ({ ...result, [job.status]: (result[job.status] || 0) + 1 }), {});
-    $("#queuedMetric").textContent = counts.queued || 0;
-    $("#processingMetric").textContent = (counts.processing || 0) + (counts.cancelling || 0);
-    $("#completedMetric").textContent = counts.completed || 0;
-    $("#failedMetric").textContent = (counts.failed || 0) + (counts.cancelled || 0);
-    $("#runningBadge").textContent = String((counts.queued || 0) + (counts.processing || 0) + (counts.cancelling || 0));
+    renderJobDashboard();
   } catch (error) {
     toast(error.message, true);
   }
@@ -646,20 +751,37 @@ $("#tiktokConnectButton").addEventListener("click", connectTikTok);
 $("#tiktokDisconnectButton").addEventListener("click", async () => {
   try {
     await requestJson("/api/v1/tiktok-auth", { method: "DELETE" });
-    $("#autoPublishTikTok").value = "false";
+    $("#tiktokPublishMode").value = "off";
+    syncTikTokSchedule();
     await refreshTikTokAuthStatus();
     toast("Đã ngắt kết nối TikTok");
   } catch (error) { toast(error.message, true); }
 });
-$("#autoPublishTikTok").addEventListener("change", event => {
-  if (event.target.value === "true") $("#generateTikTokPost").value = "true";
-});
+$("#tiktokPublishMode").addEventListener("change", () => syncTikTokSchedule({ setDefault: true }));
+$("#tiktokPublishAtLocal").addEventListener("input", () => syncTikTokSchedule());
 $("#mode").addEventListener("change", updateFormSummary);
 [$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#statusFilter").addEventListener("change", loadJobs);
 $("#jobSearch").addEventListener("input", () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadJobs, 300); });
 $("#jobsList").addEventListener("click", event => {
+  const cancelUpload = event.target.closest("[data-upload-cancel]");
+  if (cancelUpload) {
+    const upload = state.pendingUploads.find(item => item.id === cancelUpload.dataset.uploadCancel);
+    if (upload?.request) {
+      upload.status = "cancelled";
+      upload.detail = "Đã hủy tải batch";
+      upload.request.abort();
+      renderJobDashboard();
+    }
+    return;
+  }
+  const dismissUpload = event.target.closest("[data-upload-dismiss]");
+  if (dismissUpload) {
+    state.pendingUploads = state.pendingUploads.filter(item => item.id !== dismissUpload.dataset.uploadDismiss);
+    renderJobDashboard();
+    return;
+  }
   const target = event.target.closest("[data-action]");
   if (target) jobAction(target.dataset.action, target.dataset.job);
 });
@@ -678,7 +800,13 @@ $("#selectAllJobs").addEventListener("change", event => {
 });
 $$('[data-bulk-action]').forEach(button => button.addEventListener("click", () => bulkJobAction(button.dataset.bulkAction)));
 window.addEventListener("hashchange", showView);
+window.addEventListener("beforeunload", event => {
+  if (!state.pendingUploads.some(upload => upload.status === "uploading")) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 updateFormSummary();
+syncTikTokSchedule();
 renderFiles();
 showView();
 const oauthParams = new URLSearchParams(location.search);
