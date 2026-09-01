@@ -251,6 +251,7 @@ class DouyinQRAuthManager:
             session.message = "Đang xác minh OTP với Douyin…"
             session.updated_at = _utc_now()
             session.commands.put(("otp", {"otp": normalized_otp}))
+            logger.info("Queued a redacted Douyin OTP confirmation for session %s", session_id[:8])
         return self.snapshot(session_id)
 
     def image_path(self, session_id: str) -> Path:
@@ -376,26 +377,21 @@ class DouyinQRAuthManager:
         otp_input = self._otp_input(page)
         if otp_input is None:
             raise RuntimeError("Douyin chưa hiển thị ô nhập OTP")
-        try:
-            # ``fill`` can leave the value selected in Douyin's controlled
-            # input.  Entering each digit produces the input/keyboard events
-            # that enable the red 验证 button in its current login panel.
-            otp_input.click()
-            otp_input.press("Control+A")
-            otp_input.press("Backspace")
-            otp_input.press_sequentially(otp, delay=65)
-            page.wait_for_timeout(250)
-            self._submit_otp_form(page, otp_input)
-            with self._lock:
-                session.verification_started_monotonic = time.monotonic()
-            page.wait_for_timeout(1_800)
-        finally:
-            # Do not leave a one-time code visible in subsequent status images,
-            # including when Douyin has changed the markup of its submit control.
-            try:
-                otp_input.fill("")
-            except Exception:
-                pass
+        # ``fill`` can leave the value selected in Douyin's controlled input.
+        # Entering each digit produces the input/keyboard events that enable
+        # the red 验证 button in its current login panel.
+        otp_input.click()
+        otp_input.press("Control+A")
+        otp_input.press("Backspace")
+        otp_input.press_sequentially(otp, delay=65)
+        page.wait_for_timeout(250)
+        self._submit_otp_form(page, otp_input)
+        with self._lock:
+            session.verification_started_monotonic = time.monotonic()
+        # Do not clear the controlled input after clicking. Douyin can finish
+        # handling the click asynchronously; clearing it here disables 验证
+        # and cancels a valid confirmation. Screenshots are redacted instead.
+        page.wait_for_timeout(1_800)
 
     @classmethod
     def _submit_otp_form(cls, page: Any, otp_input: Any) -> None:
@@ -526,10 +522,48 @@ class DouyinQRAuthManager:
 
     def _capture_login_panel(self, page: Any, session: QRLoginSession) -> None:
         temporary = session.image_path.with_suffix(".tmp.png")
-        page.screenshot(path=str(temporary), clip=self._login_panel_clip(page))
-        os.replace(temporary, session.image_path)
-        with self._lock:
-            session.updated_at = _utc_now()
+        redaction_marker = f"vidtrans-otp-redaction-{uuid.uuid4().hex}"
+        try:
+            # The OTP remains in the live Chromium form long enough for
+            # Douyin to validate it, but never becomes visible in the image
+            # served to the browser or in a persisted screenshot file.
+            page.locator(
+                'input[name="button-input"]:visible, '
+                'input[placeholder*="请输入验证码"]:visible, '
+                'input[placeholder*="验证码"]:visible, '
+                'input[maxlength="6"]:visible'
+            ).evaluate_all(
+                """(inputs, marker) => inputs.forEach(input => {
+                    input.dataset.vidtransOtpRedaction = marker;
+                    input.dataset.vidtransOriginalStyle = input.getAttribute('style') || '';
+                    input.style.color = 'transparent';
+                    input.style.webkitTextFillColor = 'transparent';
+                    input.style.caretColor = 'transparent';
+                    input.style.textShadow = 'none';
+                })""",
+                redaction_marker,
+            )
+            page.screenshot(path=str(temporary), clip=self._login_panel_clip(page))
+            os.replace(temporary, session.image_path)
+            with self._lock:
+                session.updated_at = _utc_now()
+        finally:
+            try:
+                page.locator(
+                    f'[data-vidtrans-otp-redaction="{redaction_marker}"]'
+                ).evaluate_all(
+                    """(inputs) => inputs.forEach(input => {
+                        const original = input.dataset.vidtransOriginalStyle;
+                        if (original) input.setAttribute('style', original);
+                        else input.removeAttribute('style');
+                        delete input.dataset.vidtransOtpRedaction;
+                        delete input.dataset.vidtransOriginalStyle;
+                    })"""
+                )
+            except Exception:
+                # Redaction is presentation-only. A page transition after a
+                # successful login may detach the input before restoration.
+                pass
 
     def _run(self, session: QRLoginSession) -> None:
         browser = None
@@ -623,11 +657,14 @@ class DouyinQRAuthManager:
                     with self._lock:
                         verification_started = session.verification_started_monotonic
                         verifying = session.status == "verifying_otp"
-                    if verifying and verification_started and time.monotonic() - verification_started >= 15:
+                    if verifying and verification_started and time.monotonic() - verification_started >= 30:
                         self._update(
                             session,
                             status="waiting_otp",
-                            message="Chưa đăng nhập được. Nhập lại OTP hoặc hoàn tất bước xác minh trong ảnh.",
+                            message=(
+                                "Douyin chưa xác nhận trong 30 giây. Hãy thử OTP mới hoặc đăng nhập bằng QR; "
+                                "ảnh bên trái chỉ để theo dõi."
+                            ),
                         )
                     if time.monotonic() - started >= self.timeout_seconds:
                         self._update(
