@@ -156,6 +156,16 @@ function renderQrSession(session) {
   sendButton.textContent = session.sms_retry_after > 0
     ? `Gửi lại sau ${session.sms_retry_after}s`
     : session.phone_masked ? "Gửi lại OTP" : "Gửi mã OTP";
+  const phoneInputsEnabled = Boolean(session.phone_login_available);
+  [$("#douyinCountryCode"), $("#douyinPhone")].forEach(input => {
+    input.disabled = !phoneInputsEnabled;
+    input.readOnly = false;
+    input.setAttribute("aria-disabled", String(!phoneInputsEnabled));
+  });
+  $("#douyinChangePhone").classList.toggle(
+    "is-hidden",
+    !session.phone_masked || !phoneInputsEnabled,
+  );
   $("#douyinOtpForm").classList.toggle("is-hidden", !session.otp_required);
   $("#douyinSubmitOtp").disabled = !session.can_submit_otp;
   const finished = ["authenticated", "expired", "failed", "cancelled"].includes(session.status);
@@ -201,6 +211,13 @@ async function startDouyinQrLogin() {
     $("#douyinQrMessage").textContent = error.message;
     $("#douyinQrRetry").classList.remove("is-hidden");
   }
+}
+
+async function changeDouyinPhone() {
+  // A new browser session removes the server-side SMS cooldown for the old
+  // number and makes it explicit that the user can edit the right-hand form.
+  await startDouyinQrLogin();
+  $("#douyinPhone").focus();
 }
 
 async function sendDouyinOtp(event) {
@@ -736,6 +753,7 @@ dropZone.addEventListener("drop", event => addFiles(event.dataTransfer.files));
 $("#batchForm").addEventListener("submit", submitBatch);
 $("#douyinQrButton").addEventListener("click", startDouyinQrLogin);
 $("#douyinQrRetry").addEventListener("click", startDouyinQrLogin);
+$("#douyinChangePhone").addEventListener("click", changeDouyinPhone);
 $("#douyinPhoneForm").addEventListener("submit", sendDouyinOtp);
 $("#douyinOtpForm").addEventListener("submit", submitDouyinOtp);
 $("#douyinQrClose").addEventListener("click", closeDouyinQrModal);

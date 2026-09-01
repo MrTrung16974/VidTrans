@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import logging
 import os
 import queue
 import re
@@ -11,6 +12,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 AUTH_COOKIE_NAMES = {"sessionid", "sessionid_ss", "sid_guard", "uid_tt", "uid_tt_ss"}
@@ -373,7 +377,14 @@ class DouyinQRAuthManager:
         if otp_input is None:
             raise RuntimeError("Douyin chưa hiển thị ô nhập OTP")
         try:
-            otp_input.fill(otp)
+            # ``fill`` can leave the value selected in Douyin's controlled
+            # input.  Entering each digit produces the input/keyboard events
+            # that enable the red 验证 button in its current login panel.
+            otp_input.click()
+            otp_input.press("Control+A")
+            otp_input.press("Backspace")
+            otp_input.press_sequentially(otp, delay=65)
+            page.wait_for_timeout(250)
             self._submit_otp_form(page, otp_input)
             with self._lock:
                 session.verification_started_monotonic = time.monotonic()
@@ -395,22 +406,25 @@ class DouyinQRAuthManager:
         ``button`` leaves the OTP in the field but never submits the form.
         """
 
-        submit_label = re.compile(r"^\s*(?:登录|验证|确认|提交)\s*$")
-        candidates = (
-            page.get_by_role("button", name=submit_label),
-            page.get_by_text(submit_label),
-            page.locator('[role="button"]').filter(has_text=submit_label),
-            page.locator('input[type="submit"], input[type="button"]').filter(
-                has_text=submit_label
-            ),
-        )
+        if cls._click_otp_submit_in_panel(page, otp_input):
+            return
+
+        # Keep the fallback labels exact and in verification-first order.  A
+        # broad "login" locator can otherwise click a header control outside
+        # the phone login panel and silently leave the OTP form unchanged.
         click_errors: list[str] = []
-        for candidate in candidates:
-            try:
-                cls._click_visible(candidate, prefer_last=True)
-                return
-            except Exception as exc:
-                click_errors.append(str(exc))
+        for label in ("验证", "确认", "提交", "登录"):
+            candidates = (
+                page.get_by_role("button", name=label, exact=True),
+                page.get_by_text(label, exact=True),
+                page.locator('[role="button"]').filter(has_text=re.compile(fr"^\s*{label}\s*$")),
+            )
+            for candidate in candidates:
+                try:
+                    cls._click_visible(candidate, prefer_last=True)
+                    return
+                except Exception as exc:
+                    click_errors.append(str(exc))
 
         # Some versions submit the SMS form only through its Enter handler.
         # Keep this as the final fallback so a visible explicit submit control
@@ -423,6 +437,62 @@ class DouyinQRAuthManager:
 
         detail = next((error for error in click_errors if error), "unknown control")
         raise RuntimeError(f"Không tìm thấy nút xác nhận OTP đang hiển thị: {detail[:120]}")
+
+    @staticmethod
+    def _click_otp_submit_in_panel(page: Any, otp_input: Any) -> bool:
+        """Find the exact verification control next to the active OTP input.
+
+        Douyin renders unrelated login buttons in the page header and in hidden
+        modals.  Marking the smallest visible ancestor containing the OTP input
+        lets Playwright perform a trusted click on the red 验证 control itself.
+        No OTP value is read or logged here.
+        """
+
+        marker = f"vidtrans-otp-{uuid.uuid4().hex}"
+        try:
+            found = otp_input.evaluate(
+                """(input, markerValue) => {
+                    const visible = node => {
+                        const style = window.getComputedStyle(node);
+                        const rect = node.getBoundingClientRect();
+                        return style.visibility !== 'hidden' && style.display !== 'none'
+                            && rect.width > 0 && rect.height > 0;
+                    };
+                    const labels = ['验证', '确认', '提交', '登录'];
+                    const roots = [];
+                    for (let node = input.parentElement; node && node !== document.body; node = node.parentElement) {
+                        const rect = node.getBoundingClientRect();
+                        if (visible(node) && rect.width >= 240 && rect.height >= 140) roots.push(node);
+                    }
+                    for (const root of roots) {
+                        for (const label of labels) {
+                            const match = [...root.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], div, span')]
+                                .find(node => visible(node) && (node.textContent || node.value || '').trim() === label);
+                            if (!match) continue;
+                            let target = match;
+                            while (target.parentElement && target !== root
+                                && !/^(BUTTON|A|INPUT)$/i.test(target.tagName)
+                                && target.getAttribute('role') !== 'button') {
+                                target = target.parentElement;
+                            }
+                            if (visible(target)) {
+                                target.setAttribute('data-vidtrans-otp-submit', markerValue);
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }""",
+                marker,
+            )
+            if not found:
+                return False
+            target = page.locator(f'[data-vidtrans-otp-submit="{marker}"]')
+            DouyinQRAuthManager._click_visible(target, prefer_last=True)
+            return True
+        except Exception as exc:
+            logger.info("Could not target the in-panel Douyin OTP submit control: %s", exc)
+            return False
 
     @staticmethod
     def _login_panel_clip(page: Any) -> dict[str, float]:
@@ -514,7 +584,8 @@ class DouyinQRAuthManager:
                             self._submit_login_otp(page, session, **command_payload)
                     except queue.Empty:
                         pass
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning("Douyin login command %s failed: %s", command_kind, exc)
                         if command_kind == "phone" and self._sms_challenge_visible(page):
                             self._mark_waiting_for_otp(session)
                         elif command_kind == "otp":
@@ -552,7 +623,7 @@ class DouyinQRAuthManager:
                     with self._lock:
                         verification_started = session.verification_started_monotonic
                         verifying = session.status == "verifying_otp"
-                    if verifying and verification_started and time.monotonic() - verification_started >= 5:
+                    if verifying and verification_started and time.monotonic() - verification_started >= 15:
                         self._update(
                             session,
                             status="waiting_otp",
