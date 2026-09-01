@@ -143,11 +143,34 @@ def translate_segments(
                 translated_by_index[index] = source_texts[index]
                 fallback_indexes.add(index)
 
+    # Some providers preserve a marked batch but leave individual Chinese cues
+    # unchanged. A non-empty response is not enough in that case: retry the
+    # affected cue on its own before rendering it as a Vietnamese subtitle.
+    for index, source_text in enumerate(source_texts):
+        translated = _clean(translated_by_index.get(index, ""))
+        if not (contains_han(source_text) and contains_han(translated)):
+            continue
+        try:
+            retried = _translate_with_retry(
+                source_text,
+                translator,
+                retries=retries,
+                sleeper=sleeper,
+            )
+            if contains_han(retried):
+                raise RuntimeError("Dịch vụ trả lại nguyên văn tiếng Trung")
+            translated_by_index[index] = retried
+            fallback_indexes.discard(index)
+        except Exception as exc:
+            logger.warning("Translation remained Chinese for cue %d: %s", index, exc)
+            translated_by_index[index] = source_text
+            fallback_indexes.add(index)
+
     output: list[dict[str, Any]] = []
     for index, segment in enumerate(usable):
         source_text = source_texts[index]
         translated = _clean(translated_by_index.get(index, "")) or source_text
-        unchanged_han = contains_han(source_text) and translated.casefold() == source_text.casefold()
+        unchanged_han = contains_han(source_text) and contains_han(translated)
         used_fallback = index in fallback_indexes or unchanged_han
         output.append(
             {

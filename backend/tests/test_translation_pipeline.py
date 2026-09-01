@@ -61,6 +61,25 @@ class TranslationPipelineTests(unittest.TestCase):
         self.assertEqual(translated[0]["translation_status"], "source_fallback")
         self.assertTrue(translated[0]["needs_review"])
 
+    def test_retries_cue_when_marked_batch_leaves_chinese_unchanged(self) -> None:
+        class BatchThenCueTranslator:
+            def translate(self, text: str) -> str:
+                if "[[VTS:" in text:
+                    return "[[VTS:000000]]\n\u8fd9\u5929\u4e24\u4eba\u539f\u672c\u8ba1\u5212\u4e00\u540c\u524d\u5f80\u90ca\u5916\u6e38\u73a9"
+                return "Hôm đó, cả hai vốn định cùng nhau đi chơi ở ngoại ô"
+
+        translated = translate_segments(
+            [{"start": 0, "end": 1, "text": "\u8fd9\u5929\u4e24\u4eba\u539f\u672c\u8ba1\u5212\u4e00\u540c\u524d\u5f80\u90ca\u5916\u6e38\u73a9"}],
+            BatchThenCueTranslator(),
+            sleeper=lambda _: None,
+        )
+
+        self.assertEqual(
+            translated[0]["text"],
+            "Hôm đó, cả hai vốn định cùng nhau đi chơi ở ngoại ô",
+        )
+        self.assertEqual(translated[0]["translation_status"], "translated")
+
     def test_detects_cjk_text(self) -> None:
         self.assertTrue(contains_han("Tên riêng 炭治郎"))
         self.assertFalse(contains_han("Tiếng Việt đầy đủ"))

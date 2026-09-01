@@ -119,6 +119,7 @@ class QRLoginSession:
     phone_masked: str | None = None
     last_sms_request_monotonic: float | None = field(default=None, repr=False)
     verification_started_monotonic: float | None = field(default=None, repr=False)
+    verification_diagnostic_recorded: bool = field(default=False, repr=False)
     otp_attempts: int = field(default=0, repr=False)
     commands: queue.Queue[tuple[str, dict[str, str]]] = field(
         default_factory=queue.Queue,
@@ -247,6 +248,7 @@ class DouyinQRAuthManager:
             if session.otp_attempts >= 5:
                 raise ValueError("Đã nhập OTP quá nhiều lần. Hãy tạo phiên đăng nhập mới")
             session.otp_attempts += 1
+            session.verification_diagnostic_recorded = False
             session.status = "verifying_otp"
             session.message = "Đang xác minh OTP với Douyin…"
             session.updated_at = _utc_now()
@@ -565,6 +567,35 @@ class DouyinQRAuthManager:
                 # successful login may detach the input before restoration.
                 pass
 
+    @staticmethod
+    def _safe_otp_browser_state(page: Any, cookies: list[dict[str, Any]]) -> dict[str, Any]:
+        """Return diagnostics that prove browser state without reading OTP/cookie values."""
+
+        input_length: int | None = None
+        try:
+            otp_input = DouyinQRAuthManager._otp_input(page)
+            if otp_input is not None:
+                input_length = len(otp_input.input_value())
+        except Exception:
+            pass
+        try:
+            visible_controls = page.locator(
+                'button:visible, [role="button"]:visible, input[type="submit"]:visible, input[type="button"]:visible'
+            ).count()
+        except Exception:
+            visible_controls = None
+        return {
+            "otp_input_length": input_length,
+            "visible_submit_controls": visible_controls,
+            "cookie_names": sorted(
+                {
+                    str(cookie.get("name") or "")
+                    for cookie in cookies
+                    if cookie.get("name") and cookie.get("value")
+                }
+            )[:40],
+        }
+
     def _run(self, session: QRLoginSession) -> None:
         browser = None
         try:
@@ -657,6 +688,23 @@ class DouyinQRAuthManager:
                     with self._lock:
                         verification_started = session.verification_started_monotonic
                         verifying = session.status == "verifying_otp"
+                        diagnostic_recorded = session.verification_diagnostic_recorded
+                    if (
+                        verifying
+                        and verification_started
+                        and not diagnostic_recorded
+                        and time.monotonic() - verification_started >= 4
+                    ):
+                        diagnostic = self._safe_otp_browser_state(page, cookies)
+                        logger.info(
+                            "Douyin OTP browser state for session %s: input_length=%s controls=%s cookies=%s",
+                            session.session_id[:8],
+                            diagnostic["otp_input_length"],
+                            diagnostic["visible_submit_controls"],
+                            diagnostic["cookie_names"],
+                        )
+                        with self._lock:
+                            session.verification_diagnostic_recorded = True
                     if verifying and verification_started and time.monotonic() - verification_started >= 30:
                         self._update(
                             session,

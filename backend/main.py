@@ -77,7 +77,10 @@ VOICE_OPTIONS = {
 }
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 DEFAULT_SUB_STYLE = {
-    "font_name": "Noto Sans CJK SC",
+    # DejaVu Sans is installed in the Docker image and includes Vietnamese
+    # diacritics. Noto Sans CJK is retained as a fallback for any source text
+    # that cannot be translated, but must not be forced as the render font.
+    "font_name": "DejaVu Sans",
     "font_size": 36,
     "primary_color": "&H00FFFFFF",
     "outline_color": "&H00000000",
@@ -307,20 +310,19 @@ def wrap_text(text: str, width: int = 34) -> str:
 
 
 def find_font_file(preferred_name: str) -> Optional[str]:
-    if BUNDLED_FONT.is_file():
-        return str(BUNDLED_FONT)
     fc_match = shutil.which("fc-match")
-    if not fc_match:
-        return None
-    for candidate in [preferred_name, *FONT_CANDIDATES]:
-        try:
-            result = run_cmd([fc_match, "-f", "%{file}", candidate], check=False)
-            font_file = (result.stdout or "").strip()
-            if font_file and Path(font_file).exists():
-                return font_file
-        except Exception:
-            continue
-    return None
+    if fc_match:
+        for candidate in [preferred_name, *FONT_CANDIDATES]:
+            try:
+                result = run_cmd([fc_match, "-f", "%{file}", candidate], check=False)
+                font_file = (result.stdout or "").strip()
+                if font_file and Path(font_file).exists():
+                    return font_file
+            except Exception:
+                continue
+    # The bundled CJK font is a last resort only. Returning it first caused
+    # Vietnamese subtitles to render as missing-glyph boxes.
+    return str(BUNDLED_FONT) if BUNDLED_FONT.is_file() else None
 
 
 def write_srt(segments: list[dict[str, Any]], output_path: Path) -> None:
@@ -988,10 +990,10 @@ def burn_subtitles(
 ) -> None:
     subtitle_filter = f"subtitles=filename='{ff_escape_path(subtitle_path)}'"
     if BUNDLED_FONT.is_file():
-        subtitle_filter += (
-            f":fontsdir='{ff_escape_path(FONT_DIR)}'"
-            ":force_style='FontName=Noto Sans CJK SC'"
-        )
+        # Make the bundled CJK font available for libass fallback, but honor
+        # the FontName written in the ASS file. Forcing CJK here breaks all
+        # Vietnamese glyphs even when the chosen style supports them.
+        subtitle_filter += f":fontsdir='{ff_escape_path(FONT_DIR)}'"
     cmd = [
         FFMPEG,
         "-y",
@@ -1126,8 +1128,6 @@ def process_video(
     work_dir = WORK_DIR / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
     subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
-    if BUNDLED_FONT.is_file():
-        subtitle_style["font_name"] = "Noto Sans CJK SC"
     try:
         ensure_job_active(job_id)
         ocr_segments: list[dict[str, Any]] = []
