@@ -121,6 +121,10 @@ class QRLoginSession:
     verification_started_monotonic: float | None = field(default=None, repr=False)
     verification_diagnostic_recorded: bool = field(default=False, repr=False)
     otp_attempts: int = field(default=0, repr=False)
+    otp_requested_after_qr: bool = field(default=False, repr=False)
+    interaction_clip: dict[str, float] | None = field(default=None, repr=False)
+    direct_input_focus: str | None = field(default=None, repr=False)
+    direct_input_length: int | None = field(default=None, repr=False)
     commands: queue.Queue[tuple[str, dict[str, str]]] = field(
         default_factory=queue.Queue,
         repr=False,
@@ -202,6 +206,18 @@ class DouyinQRAuthManager:
                 "can_submit_phone": session.status in ACTIVE_LOGIN_STATUSES and sms_retry_after == 0,
                 "otp_required": session.status in {"waiting_otp", "verifying_otp"},
                 "can_submit_otp": session.status == "waiting_otp" and session.otp_attempts < 5,
+                # A scanned QR can authenticate the device but still require
+                # the account's SMS as a second factor.  Tell the UI this is
+                # not the user-initiated phone-login form.
+                "otp_requested_after_qr": session.otp_requested_after_qr,
+                "can_resend_otp": (
+                    session.status == "waiting_otp"
+                    and session.otp_requested_after_qr
+                    and sms_retry_after == 0
+                ),
+                "direct_control_available": session.status in ACTIVE_LOGIN_STATUSES,
+                "direct_input_focus": session.direct_input_focus,
+                "direct_input_length": session.direct_input_length,
                 "sms_retry_after": sms_retry_after,
                 "qr_image_url": (
                     f"/api/v1/douyin-auth/qr/{session.session_id}/image?v={session.image_path.stat().st_mtime_ns}"
@@ -228,6 +244,7 @@ class DouyinQRAuthManager:
             session.last_sms_request_monotonic = now
             session.phone_masked = mask_phone(normalized_country, normalized_phone)
             session.otp_attempts = 0
+            session.otp_requested_after_qr = False
             session.verification_started_monotonic = None
             session.status = "sending_code"
             session.message = f"Đang yêu cầu Douyin gửi OTP tới {session.phone_masked}…"
@@ -254,6 +271,79 @@ class DouyinQRAuthManager:
             session.updated_at = _utc_now()
             session.commands.put(("otp", {"otp": normalized_otp}))
             logger.info("Queued a redacted Douyin OTP confirmation for session %s", session_id[:8])
+        return self.snapshot(session_id)
+
+    def resend_otp(self, session_id: str) -> dict[str, Any]:
+        """Request a fresh SMS for the second factor opened after QR scan."""
+
+        with self._lock:
+            session = self._session
+            if session is None or session.session_id != session_id:
+                raise KeyError("QR login session not found")
+            if session.status != "waiting_otp" or not session.otp_requested_after_qr:
+                raise ValueError("Phiên này không chờ OTP xác thực sau QR")
+            now = time.monotonic()
+            if (
+                session.last_sms_request_monotonic is not None
+                and now - session.last_sms_request_monotonic < 60
+            ):
+                remaining = max(1, math.ceil(60 - (now - session.last_sms_request_monotonic)))
+                raise ValueError(f"Hãy chờ {remaining} giây trước khi gửi lại OTP")
+            session.last_sms_request_monotonic = now
+            session.otp_attempts = 0
+            session.verification_started_monotonic = None
+            session.verification_diagnostic_recorded = False
+            session.status = "sending_code"
+            session.message = "Đang yêu cầu Douyin gửi OTP mới…"
+            session.updated_at = _utc_now()
+            session.commands.put(("resend_otp", {}))
+        return self.snapshot(session_id)
+
+    def interact(
+        self,
+        session_id: str,
+        *,
+        action: str,
+        x_ratio: float | None = None,
+        y_ratio: float | None = None,
+        key: str | None = None,
+    ) -> dict[str, Any]:
+        """Queue a user gesture for the visible, active Douyin login panel.
+
+        This only relays the account holder's click or restricted login-input
+        keystroke to Chromium. Values are neither recorded in the session nor
+        written to logs.
+        """
+
+        normalized_action = str(action or "").strip().lower()
+        payload: dict[str, str] = {"action": normalized_action}
+        if normalized_action == "click":
+            if x_ratio is None or y_ratio is None:
+                raise ValueError("Thiếu vị trí click trên màn hình Douyin")
+            if not 0 <= float(x_ratio) <= 1 or not 0 <= float(y_ratio) <= 1:
+                raise ValueError("Vị trí click không hợp lệ")
+            payload.update({"x_ratio": str(float(x_ratio)), "y_ratio": str(float(y_ratio))})
+        elif normalized_action == "key":
+            normalized_key = str(key or "")
+            supported_keys = {"Backspace", "Enter", "Tab", "Escape", "ArrowLeft", "ArrowRight"}
+            if normalized_key not in supported_keys and not re.fullmatch(r"[0-9+]", normalized_key):
+                raise ValueError("Phím này không được hỗ trợ trên màn hình đăng nhập")
+            payload["key"] = normalized_key
+        elif normalized_action == "paste":
+            text = str(key or "")
+            if not re.fullmatch(r"[0-9+ ]{1,20}", text):
+                raise ValueError("Chỉ có thể dán số điện thoại hoặc OTP")
+            payload["key"] = text
+        else:
+            raise ValueError("Thao tác đăng nhập không hợp lệ")
+
+        with self._lock:
+            session = self._session
+            if session is None or session.session_id != session_id:
+                raise KeyError("QR login session not found")
+            if session.status not in ACTIVE_LOGIN_STATUSES:
+                raise ValueError("Phiên đăng nhập Douyin không còn hoạt động")
+            session.commands.put(("interact", payload))
         return self.snapshot(session_id)
 
     def image_path(self, session_id: str) -> Path:
@@ -302,7 +392,15 @@ class DouyinQRAuthManager:
 
     @staticmethod
     def _otp_input(page: Any) -> Any | None:
+        # After a QR scan Douyin can require an SMS second factor. Its OTP
+        # input lives in ``#uc-second-verify`` above the original login form,
+        # so always prefer that active layer over similarly named inputs in
+        # the covered form below.
         selectors = (
+            '#uc-second-verify input[name="button-input"]:visible',
+            '#uc-second-verify input[placeholder*="请输入验证码"]:visible',
+            '#uc-second-verify input[placeholder*="验证码"]:visible',
+            '#uc-second-verify input[maxlength="6"]:visible',
             'input[name="button-input"]:visible',
             'input[placeholder*="请输入验证码"]:visible',
             'input[placeholder*="验证码"]:visible',
@@ -316,8 +414,8 @@ class DouyinQRAuthManager:
 
     @classmethod
     def _sms_challenge_visible(cls, page: Any) -> bool:
-        if cls._otp_input(page) is not None:
-            return True
+        # Douyin renders its OTP input before it has sent an SMS. The field
+        # alone therefore cannot prove that the send-code action succeeded.
         try:
             return looks_like_sms_challenge(page.locator("body").inner_text(timeout=1_000))
         except Exception:
@@ -328,11 +426,21 @@ class DouyinQRAuthManager:
             if session.status in {"waiting_otp", "verifying_otp", "authenticated"}:
                 return
             phone_masked = session.phone_masked
+            requested_after_qr = phone_masked is None
+            session.otp_requested_after_qr = requested_after_qr
+            if requested_after_qr and session.last_sms_request_monotonic is None:
+                # Douyin starts a roughly 60-second resend countdown when the
+                # QR scan triggers its second-factor SMS automatically.
+                session.last_sms_request_monotonic = time.monotonic()
         target = f" tới {phone_masked}" if phone_masked else ""
         self._update(
             session,
             status="waiting_otp",
-            message=f"Douyin đã gửi OTP{target}. Nhập mã nhận được để đăng nhập.",
+            message=(
+                "QR đã được Douyin chấp nhận. Nhập OTP SMS được gửi tới số điện thoại đã liên kết."
+                if requested_after_qr
+                else f"Douyin đã gửi OTP{target}. Nhập mã nhận được để đăng nhập."
+            ),
         )
 
     def _send_sms_code(
@@ -386,14 +494,60 @@ class DouyinQRAuthManager:
         otp_input.press("Control+A")
         otp_input.press("Backspace")
         otp_input.press_sequentially(otp, delay=65)
-        page.wait_for_timeout(250)
+        # The custom submit control becomes enabled asynchronously after all
+        # input events have been received. Clicking too early is a no-op.
+        page.wait_for_timeout(750)
         self._submit_otp_form(page, otp_input)
         with self._lock:
             session.verification_started_monotonic = time.monotonic()
         # Do not clear the controlled input after clicking. Douyin can finish
         # handling the click asynchronously; clearing it here disables 验证
         # and cancels a valid confirmation. Screenshots are redacted instead.
-        page.wait_for_timeout(1_800)
+        page.wait_for_timeout(4_000)
+        # A rejected/expired code is cleared by Douyin immediately. Detect
+        # that browser state instead of leaving the UI stuck on "verifying"
+        # for 30 seconds. A successful response is still decided exclusively
+        # by the authenticated cookies checked by the main browser loop.
+        try:
+            current_input = self._otp_input(page)
+            cookies = page.context.cookies()
+            rejected = (
+                current_input is not None
+                and current_input.input_value() == ""
+                and not has_authenticated_cookie(cookies)
+            )
+        except Exception:
+            rejected = False
+        if rejected:
+            with self._lock:
+                session.verification_started_monotonic = None
+            self._update(
+                session,
+                status="waiting_otp",
+                message=(
+                    "Douyin đã nhận nhưng từ chối OTP này. Hãy bấm Gửi lại OTP, "
+                    "sau đó nhập mã SMS mới nhất."
+                ),
+            )
+
+    def _resend_second_factor_otp(self, page: Any, session: QRLoginSession) -> None:
+        """Click Douyin's resend control inside the QR second-factor layer."""
+
+        layer = page.locator("#uc-second-verify")
+        if not layer.count():
+            raise RuntimeError("Douyin không còn hiển thị lớp xác thực OTP sau QR")
+        resend = layer.last.get_by_text("重新发送", exact=True)
+        clicked = False
+        for index in range(resend.count() - 1, -1, -1):
+            target = resend.nth(index)
+            if target.is_visible():
+                target.click(timeout=5_000)
+                clicked = True
+                break
+        if not clicked:
+            raise RuntimeError("Douyin chưa cho phép gửi lại OTP")
+        page.wait_for_timeout(800)
+        self._mark_waiting_for_otp(session)
 
     @classmethod
     def _submit_otp_form(cls, page: Any, otp_input: Any) -> None:
@@ -403,6 +557,38 @@ class DouyinQRAuthManager:
         ``span`` controls for the same Chinese labels.  Restricting this to a
         ``button`` leaves the OTP in the field but never submits the form.
         """
+
+        # QR login can open a second-factor layer above the original login
+        # form. Submit inside that layer first. Clicking the original
+        # ``#douyin_login_comp_btn_id`` while this layer is open is correctly
+        # rejected by Playwright because ``#uc-second-verify`` intercepts it.
+        second_verify_present = False
+        for _ in range(8):
+            second_result = cls._click_second_verify_otp_submit(page)
+            if second_result is True:
+                return
+            if second_result is None:
+                break
+            second_verify_present = True
+            page.wait_for_timeout(250)
+
+        if second_verify_present:
+            # Enter is a normal form action and covers a markup variant where
+            # the visible verification button has no stable accessible name.
+            otp_input.press("Enter")
+            logger.info("Submitted the Douyin second-verification OTP with Enter")
+            return
+
+        # The standard phone-login form uses this clickable div. The generic
+        # panel search used to click the parent panel instead, leaving an
+        # otherwise valid OTP unsubmitted.
+        for _ in range(8):
+            direct_result = cls._click_current_douyin_otp_submit(page)
+            if direct_result is True:
+                return
+            if direct_result is None:
+                break
+            page.wait_for_timeout(250)
 
         if cls._click_otp_submit_in_panel(page, otp_input):
             return
@@ -436,6 +622,68 @@ class DouyinQRAuthManager:
         detail = next((error for error in click_errors if error), "unknown control")
         raise RuntimeError(f"Không tìm thấy nút xác nhận OTP đang hiển thị: {detail[:120]}")
 
+    @classmethod
+    def _click_second_verify_otp_submit(cls, page: Any) -> bool | None:
+        """Click the trusted submit control inside Douyin's second-factor layer.
+
+        ``None`` means the layer is absent. ``False`` means it is present but
+        its submit control is not ready yet. No forced click is used: any
+        additional Douyin challenge remains visible for the account owner.
+        """
+
+        # The root is a positioning portal and can have a zero-size bounding
+        # box. Playwright then considers ``#uc-second-verify:visible`` absent
+        # even while its child content is visibly intercepting pointer events.
+        # Detect the portal by presence and require visibility only on the
+        # actual submit descendants.
+        layer = page.locator('#uc-second-verify')
+        if not layer.count():
+            return None
+
+        labels = ("验证", "确认", "提交", "登录")
+        for label in labels:
+            candidates = (
+                layer.last.get_by_role("button", name=label, exact=True),
+                layer.last.get_by_text(label, exact=True),
+                layer.last.locator('button, [role="button"], input[type="submit"], div, span').filter(
+                    has_text=re.compile(fr"^\s*{label}\s*$")
+                ),
+            )
+            for candidate in candidates:
+                for index in range(candidate.count() - 1, -1, -1):
+                    target = candidate.nth(index)
+                    if not target.is_visible():
+                        continue
+                    if (
+                        target.get_attribute("disabled") is not None
+                        or target.get_attribute("aria-disabled") == "true"
+                    ):
+                        return False
+                    target.click(timeout=5_000)
+                    logger.info("Clicked the Douyin second-verification OTP submit control")
+                    return True
+        return False
+
+    @classmethod
+    def _click_current_douyin_otp_submit(cls, page: Any) -> bool | None:
+        """Click Douyin's current OTP button without clicking its container.
+
+        ``None`` means this DOM version is absent; ``False`` means it is
+        present but still disabled, so the caller should wait and retry.
+        """
+
+        candidate = page.locator('#douyin_login_comp_btn_id:visible')
+        if not candidate.count():
+            return None
+        target = candidate.last
+        if not target.is_visible():
+            return None
+        if target.get_attribute("disabled") is not None or target.get_attribute("aria-disabled") == "true":
+            return False
+        target.click(timeout=5_000)
+        logger.info("Clicked the direct Douyin OTP submit control")
+        return True
+
     @staticmethod
     def _click_otp_submit_in_panel(page: Any, otp_input: Any) -> bool:
         """Find the exact verification control next to the active OTP input.
@@ -467,12 +715,10 @@ class DouyinQRAuthManager:
                             const match = [...root.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], div, span')]
                                 .find(node => visible(node) && (node.textContent || node.value || '').trim() === label);
                             if (!match) continue;
-                            let target = match;
-                            while (target.parentElement && target !== root
-                                && !/^(BUTTON|A|INPUT)$/i.test(target.tagName)
-                                && target.getAttribute('role') !== 'button') {
-                                target = target.parentElement;
-                            }
+                            // Some Douyin versions use a clickable div. Do
+                            // not climb to its large panel container: that
+                            // click lands in empty space and does not submit.
+                            let target = match.closest('button, a, input, [role="button"]') || match;
                             if (visible(target)) {
                                 target.setAttribute('data-vidtrans-otp-submit', markerValue);
                                 return true;
@@ -545,9 +791,11 @@ class DouyinQRAuthManager:
                 })""",
                 redaction_marker,
             )
-            page.screenshot(path=str(temporary), clip=self._login_panel_clip(page))
+            clip = self._login_panel_clip(page)
+            page.screenshot(path=str(temporary), clip=clip)
             os.replace(temporary, session.image_path)
             with self._lock:
+                session.interaction_clip = clip
                 session.updated_at = _utc_now()
         finally:
             try:
@@ -595,6 +843,43 @@ class DouyinQRAuthManager:
                 }
             )[:40],
         }
+
+    def _apply_user_interaction(self, page: Any, session: QRLoginSession, payload: dict[str, str]) -> None:
+        action = payload.get("action")
+        if action == "click":
+            with self._lock:
+                clip = dict(session.interaction_clip or self._login_panel_clip(page))
+            x = float(clip["x"]) + float(clip["width"]) * float(payload["x_ratio"])
+            y = float(clip["y"]) + float(clip["height"]) * float(payload["y_ratio"])
+            page.mouse.click(x, y)
+        elif action == "key":
+            page.keyboard.press(payload["key"])
+        elif action == "paste":
+            page.keyboard.insert_text(payload["key"])
+        else:  # Defensive guard if a queued payload is malformed.
+            raise RuntimeError("Unsupported Douyin interaction")
+        # Return only focus type and character count to the UI. This confirms
+        # that direct typing reached Chromium without exposing phone or OTP.
+        try:
+            state = page.evaluate(
+                """() => {
+                    const active = document.activeElement;
+                    if (!(active instanceof HTMLInputElement)) return {focus: null, length: null};
+                    const focus = active.name === 'button-input'
+                        ? 'otp'
+                        : active.name === 'normal-input'
+                            ? 'phone'
+                            : null;
+                    return {focus, length: focus ? active.value.length : null};
+                }"""
+            )
+            with self._lock:
+                session.direct_input_focus = state.get("focus")
+                session.direct_input_length = state.get("length")
+        except Exception:
+            # Direct control stays usable even if Douyin replaces an input
+            # during an animation or verification transition.
+            pass
 
     def _run(self, session: QRLoginSession) -> None:
         browser = None
@@ -647,17 +932,25 @@ class DouyinQRAuthManager:
                             self._send_sms_code(page, session, **command_payload)
                         elif command_kind == "otp":
                             self._submit_login_otp(page, session, **command_payload)
+                        elif command_kind == "resend_otp":
+                            self._resend_second_factor_otp(page, session)
+                        elif command_kind == "interact":
+                            self._apply_user_interaction(page, session, command_payload)
                     except queue.Empty:
                         pass
                     except Exception as exc:
                         logger.warning("Douyin login command %s failed: %s", command_kind, exc)
                         if command_kind == "phone" and self._sms_challenge_visible(page):
                             self._mark_waiting_for_otp(session)
-                        elif command_kind == "otp":
+                        elif command_kind in {"otp", "resend_otp"}:
                             self._update(
                                 session,
                                 status="waiting_otp",
-                                message="Douyin chưa chấp nhận OTP. Kiểm tra mã hoặc thử lại.",
+                                message=(
+                                    "Douyin chưa cho phép gửi lại OTP. Hãy chờ hết thời gian đếm ngược."
+                                    if command_kind == "resend_otp"
+                                    else "Douyin chưa chấp nhận OTP. Kiểm tra mã hoặc thử lại."
+                                ),
                             )
                         else:
                             self._update(
@@ -721,7 +1014,10 @@ class DouyinQRAuthManager:
                             message="Mã QR đã hết hạn. Hãy tạo mã mới.",
                         )
                         return
-                    page.wait_for_timeout(1_000)
+                    # Gesture commands arrive one key at a time. Keep the
+                    # browser loop responsive so a six-digit OTP is received
+                    # in order rather than taking several seconds to type.
+                    page.wait_for_timeout(120 if command_kind == "interact" else 1_000)
 
                 self._update(session, status="cancelled", message="Đã đóng phiên đăng nhập QR")
         except Exception as exc:

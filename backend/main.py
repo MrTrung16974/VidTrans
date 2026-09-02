@@ -1833,6 +1833,40 @@ def submit_douyin_otp(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/v1/douyin-auth/qr/{session_id}/otp/resend")
+def resend_douyin_otp(session_id: str) -> JSONResponse:
+    try:
+        return JSONResponse(DOUYIN_QR_AUTH.resend_otp(session_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Phiên đăng nhập Douyin không còn tồn tại") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/douyin-auth/qr/{session_id}/interact")
+def interact_with_douyin_login(
+    session_id: str,
+    action: str = Form(...),
+    x_ratio: float | None = Form(default=None),
+    y_ratio: float | None = Form(default=None),
+    key: str | None = Form(default=None),
+) -> JSONResponse:
+    try:
+        return JSONResponse(
+            DOUYIN_QR_AUTH.interact(
+                session_id,
+                action=action,
+                x_ratio=x_ratio,
+                y_ratio=y_ratio,
+                key=key,
+            )
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Phiên đăng nhập Douyin không còn tồn tại") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/v1/douyin-auth/qr/{session_id}/image")
 def get_douyin_qr_image(session_id: str) -> FileResponse:
     try:

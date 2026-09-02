@@ -9,7 +9,7 @@
     <title>VidTrans Studio</title>
     <link rel="icon" type="image/svg+xml" href="/assets/vidtrans-mark.svg?v=20260901-1" />
     <link rel="shortcut icon" href="/assets/vidtrans-mark.svg?v=20260901-1" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20260901-15" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260902-20" />
   </head>
   <body>
     <div class="app-shell">
@@ -201,11 +201,12 @@
         <div class="douyin-login-grid">
           <div class="qr-frame">
             <div id="douyinQrLoading" class="qr-loading">Đang mở trang đăng nhập an toàn…</div>
-            <img id="douyinQrImage" class="is-hidden" alt="Trang đăng nhập Douyin" />
+            <img id="douyinQrImage" class="is-hidden" alt="Trang đăng nhập Douyin có thể thao tác trực tiếp" tabindex="0" />
+            <span id="douyinDirectHint" class="douyin-direct-hint is-hidden">Click vào màn hình, rồi gõ số/OTP trực tiếp. Nội dung nhập không hiển thị hoặc lưu lại.</span>
           </div>
           <div class="douyin-otp-panel">
-            <strong>Đăng nhập bằng OTP</strong>
-            <small>Với tài khoản Trung Quốc, giữ mã vùng +86. Ảnh bên trái chỉ để theo dõi; hãy nhập và sửa số điện thoại tại đây.</small>
+            <strong id="douyinOtpPanelTitle">Đăng nhập bằng OTP</strong>
+            <small id="douyinOtpPanelDescription">Với tài khoản Trung Quốc, giữ mã vùng +86. Ảnh bên trái chỉ để theo dõi; hãy nhập và sửa số điện thoại tại đây.</small>
             <form id="douyinPhoneForm" class="douyin-phone-form">
               <label>
                 <span>Mã vùng</span>
@@ -225,6 +226,7 @@
               </label>
               <button id="douyinSubmitOtp" class="button primary full" type="submit">Xác nhận OTP</button>
             </form>
+            <button id="douyinResendOtp" class="button secondary full is-hidden" type="button">Gửi lại OTP</button>
             <small class="otp-privacy">OTP chỉ được chuyển vào Chromium đang chạy và không được lưu hoặc ghi log.</small>
           </div>
         </div>
@@ -234,6 +236,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20260901-16"></script>
+    <script type="module" src="/js/app.js?v=20260902-20"></script>
   </body>
 </html>
