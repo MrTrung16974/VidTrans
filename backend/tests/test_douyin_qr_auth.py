@@ -307,6 +307,8 @@ class DouyinQRAuthTests(unittest.TestCase):
             otp_snapshot = manager.submit_otp("test-session", "123456")
             self.assertNotIn("123456", repr(otp_snapshot))
             self.assertEqual(otp_snapshot["status"], "verifying_otp")
+            self.assertIsNone(otp_snapshot["browser_otp_input_length"])
+            self.assertFalse(otp_snapshot["browser_otp_submit_clicked"])
 
     def test_queues_direct_login_gesture_without_exposing_input(self) -> None:
         with TemporaryDirectory() as directory:

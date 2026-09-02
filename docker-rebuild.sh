@@ -54,8 +54,16 @@ else
     docker build --file Dockerfile.code --tag "$APP_IMAGE" .
 fi
 
+# The interactive Douyin browser has its own dependency image. Docker keeps
+# this layer cached, so normal code-only rebuilds remain fast after first use.
+docker compose build douyin-browser
+
 if [[ "$PRODUCTION" -eq 1 ]]; then
     bash deploy/vps-first-run.sh
+    # Keep an already-configured VPS in sync when routes are added to the
+    # versioned HTTPS template (vps-first-run intentionally runs only once).
+    mkdir -p deploy/nginx/runtime
+    cp deploy/nginx/https.conf.template deploy/nginx/runtime/default.conf.template
     compose=(
         docker compose
         --env-file .env
@@ -66,10 +74,10 @@ if [[ "$PRODUCTION" -eq 1 ]]; then
     public_host="$(awk -F= '$1 == "VIDTRANS_PUBLIC_HOST" { print substr($0, index($0, "=") + 1); exit }' .env.production)"
     "${compose[@]}" build nginx
     printf 'Applying the new image behind Nginx at https://%s...\n' "$public_host"
-    "${compose[@]}" up -d --force-recreate --remove-orphans vidtrans nginx certbot
-    "${compose[@]}" ps vidtrans nginx certbot
+    "${compose[@]}" up -d --force-recreate --remove-orphans douyin-browser vidtrans nginx certbot
+    "${compose[@]}" ps douyin-browser vidtrans nginx certbot
 else
     printf '%s\n' "Applying the new image at http://localhost:5200..."
-    docker compose up -d --force-recreate --remove-orphans vidtrans
-    docker compose ps vidtrans
+    docker compose up -d --force-recreate --remove-orphans douyin-browser vidtrans
+    docker compose ps douyin-browser vidtrans
 fi

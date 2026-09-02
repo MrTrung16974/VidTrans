@@ -1,10 +1,33 @@
 services:
+  douyin-browser:
+    image: vidtrans-douyin-browser
+    build:
+      context: ./deploy/douyin-browser
+      dockerfile: Dockerfile
+    container_name: vidtrans-douyin-browser
+    ports:
+      # noVNC is loopback-only. Production traffic enters through authenticated Nginx.
+      - "127.0.0.1:5201:6080"
+    expose:
+      - "9222"
+    environment:
+      DISPLAY: ":99"
+      SCREEN_GEOMETRY: "1024x720x24"
+      CHROMIUM_PROFILE_DIR: "/data/profile"
+    volumes:
+      - douyin-browser-profile:/data/profile
+    shm_size: "1gb"
+    restart: unless-stopped
+
   vidtrans:
     image: vidtrans-vidtrans
     build:
       context: .
       dockerfile: Dockerfile
     container_name: vidtrans
+    depends_on:
+      douyin-browser:
+        condition: service_healthy
     ports:
       # Keep the FastAPI port private to the VPS. Production traffic must enter via Nginx.
       - "127.0.0.1:5200:8000"
@@ -28,6 +51,8 @@ services:
       VIDTRANS_AUTH_COOKIE_NAME: "${VIDTRANS_AUTH_COOKIE_NAME:-vidtrans_access_token}"
       VIDTRANS_AUTH_COOKIE_SECURE: "${VIDTRANS_AUTH_COOKIE_SECURE:-0}"
       VIDTRANS_TRUST_PROXY_HEADERS: "${VIDTRANS_TRUST_PROXY_HEADERS:-0}"
+      VIDTRANS_DOUYIN_BROWSER_CDP_URL: "${VIDTRANS_DOUYIN_BROWSER_CDP_URL:-http://douyin-browser:9222}"
+      VIDTRANS_DOUYIN_BROWSER_PUBLIC_URL: "${VIDTRANS_DOUYIN_BROWSER_PUBLIC_URL:-http://localhost:5201/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=websockify}"
     volumes:
       - ./backend/outputs:/app/backend/outputs
       - ./backend/uploads:/app/backend/uploads
@@ -37,5 +62,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  douyin-browser-profile:
   whisper-models:
   paddle-models:

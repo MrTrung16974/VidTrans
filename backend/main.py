@@ -18,7 +18,7 @@ import whisper
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
@@ -27,7 +27,8 @@ from app.config import AppSettings
 from application.job_scheduler import JobScheduler
 from application.job_service import JobService
 from domain.models import ProcessingMode, ProcessingRequest
-from infrastructure.douyin_qr_auth import DouyinQRAuthManager
+
+from infrastructure.douyin_browser_auth import DouyinBrowserAuthManager
 from infrastructure.auth import (
     AuthConfigurationError,
     AuthManager,
@@ -122,7 +123,7 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     ffmpeg_location=FFMPEG,
     cookie_file=Path(_social_cookie_value) if _social_cookie_value else None,
 )
-DOUYIN_QR_AUTH = DouyinQRAuthManager(WORK_DIR / "douyin-auth")
+DOUYIN_BROWSER_AUTH = DouyinBrowserAuthManager(WORK_DIR / "douyin-auth" / "douyin.cookies.txt")
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
 AUTH_MANAGER = AuthManager()
 _whisper_models: dict[str, Any] = {}
@@ -1689,8 +1690,6 @@ async def stop_job_scheduler() -> None:
     scheduler = getattr(app.state, "job_scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
-    await asyncio.to_thread(DOUYIN_QR_AUTH.close)
-
 
 def notify_scheduler() -> None:
     scheduler = getattr(app.state, "job_scheduler", None)
@@ -1788,107 +1787,47 @@ def delete_auth_session() -> JSONResponse:
     return response
 
 
+@app.get("/api/v1/auth/proxy-check")
+def check_proxy_auth() -> Response:
+    """Lightweight protected endpoint used by Nginx auth_request."""
+
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/douyin-browser/status")
+def get_douyin_browser_status(refresh: bool = Query(default=False)) -> JSONResponse:
+    return JSONResponse(DOUYIN_BROWSER_AUTH.status(refresh=refresh))
+
+
+@app.post("/api/v1/douyin-browser/sync")
+def sync_douyin_browser_session() -> JSONResponse:
+    payload = DOUYIN_BROWSER_AUTH.sync()
+    return JSONResponse(payload, status_code=200 if payload["available"] else 503)
+
+
+@app.post("/api/v1/douyin-browser/reload")
+def reload_douyin_browser() -> JSONResponse:
+    try:
+        return JSONResponse(DOUYIN_BROWSER_AUTH.reload())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.delete("/api/v1/douyin-browser/session")
+def delete_douyin_browser_session() -> JSONResponse:
+    try:
+        return JSONResponse(DOUYIN_BROWSER_AUTH.logout())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.get("/api/v1/douyin-auth")
 def get_douyin_auth_status() -> JSONResponse:
-    return JSONResponse(DOUYIN_QR_AUTH.auth_status())
-
-
-@app.post("/api/v1/douyin-auth/qr")
-def start_douyin_qr_login() -> JSONResponse:
-    return JSONResponse(DOUYIN_QR_AUTH.start(), status_code=201)
-
-
-@app.get("/api/v1/douyin-auth/qr/{session_id}")
-def get_douyin_qr_login(session_id: str) -> JSONResponse:
-    try:
-        return JSONResponse(DOUYIN_QR_AUTH.snapshot(session_id))
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Phiên đăng nhập QR không còn tồn tại") from exc
-
-
-@app.post("/api/v1/douyin-auth/qr/{session_id}/phone")
-def submit_douyin_phone(
-    session_id: str,
-    country_code: str = Form("+86"),
-    phone: str = Form(...),
-) -> JSONResponse:
-    try:
-        return JSONResponse(DOUYIN_QR_AUTH.submit_phone(session_id, country_code, phone))
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Phiên đăng nhập Douyin không còn tồn tại") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/v1/douyin-auth/qr/{session_id}/otp")
-def submit_douyin_otp(
-    session_id: str,
-    otp: str = Form(...),
-) -> JSONResponse:
-    try:
-        return JSONResponse(DOUYIN_QR_AUTH.submit_otp(session_id, otp))
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Phiên đăng nhập Douyin không còn tồn tại") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/v1/douyin-auth/qr/{session_id}/otp/resend")
-def resend_douyin_otp(session_id: str) -> JSONResponse:
-    try:
-        return JSONResponse(DOUYIN_QR_AUTH.resend_otp(session_id))
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Phiên đăng nhập Douyin không còn tồn tại") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/v1/douyin-auth/qr/{session_id}/interact")
-def interact_with_douyin_login(
-    session_id: str,
-    action: str = Form(...),
-    x_ratio: float | None = Form(default=None),
-    y_ratio: float | None = Form(default=None),
-    key: str | None = Form(default=None),
-) -> JSONResponse:
-    try:
-        return JSONResponse(
-            DOUYIN_QR_AUTH.interact(
-                session_id,
-                action=action,
-                x_ratio=x_ratio,
-                y_ratio=y_ratio,
-                key=key,
-            )
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Phiên đăng nhập Douyin không còn tồn tại") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/douyin-auth/qr/{session_id}/image")
-def get_douyin_qr_image(session_id: str) -> FileResponse:
-    try:
-        image_path = DOUYIN_QR_AUTH.image_path(session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Ảnh QR chưa sẵn sàng") from exc
-    return FileResponse(
-        image_path,
-        media_type="image/png",
-        headers={"Cache-Control": "no-store, max-age=0"},
-    )
-
-
-@app.delete("/api/v1/douyin-auth/qr/{session_id}")
-def cancel_douyin_qr_login(session_id: str) -> JSONResponse:
-    DOUYIN_QR_AUTH.cancel(session_id)
-    return JSONResponse({"session_id": session_id, "cancelled": True})
-
+    return JSONResponse(DOUYIN_BROWSER_AUTH.auth_status())
 
 @app.delete("/api/v1/douyin-auth")
 def logout_douyin() -> JSONResponse:
-    DOUYIN_QR_AUTH.logout()
+    DOUYIN_BROWSER_AUTH.logout()
     return JSONResponse({"authenticated": False, "message": "Đã xóa phiên đăng nhập Douyin"})
 
 
@@ -2119,8 +2058,8 @@ async def create_batch_endpoint(
             raise HTTPException(status_code=400, detail="File cookies.txt không được vượt quá 512 KB")
         if not cookie_payload or b"\x00" in cookie_payload:
             raise HTTPException(status_code=400, detail="File cookies.txt không hợp lệ")
-    elif source_urls and DOUYIN_QR_AUTH.cookie_path.is_file():
-        cookie_payload = DOUYIN_QR_AUTH.cookie_path.read_bytes()
+    elif source_urls and DOUYIN_BROWSER_AUTH.cookie_path.is_file():
+        cookie_payload = DOUYIN_BROWSER_AUTH.cookie_path.read_bytes()
     total_sources = len(uploads) + len(source_urls)
     if total_sources < 1 or total_sources > 50:
         raise HTTPException(

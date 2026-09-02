@@ -3,7 +3,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const state = {
   files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
-  qrSessionId: null, qrStatus: null, qrPollTimer: null, directInteractionChain: Promise.resolve(), tiktokAuth: null, appStarted: false,
+  tiktokAuth: null, appStarted: false,
+  douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false,
   auth: { enabled: false, configured: false, authenticated: false, username: null },
 };
 const stepLabels = {
@@ -39,7 +40,9 @@ function apiFetch(url, options = {}) {
 
 function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", isError = true) {
   clearInterval(state.pollTimer);
+  clearInterval(state.douyinBrowserPollTimer);
   state.pollTimer = null;
+  state.douyinBrowserPollTimer = null;
   state.appStarted = false;
   state.auth.authenticated = false;
   $("#appLogoutButton").classList.add("is-hidden");
@@ -90,6 +93,7 @@ async function startProtectedApplication() {
   await Promise.all([loadJobs(), refreshDouyinAuthStatus(), refreshTikTokAuthStatus()]);
   clearInterval(state.pollTimer);
   state.pollTimer = setInterval(loadJobs, 2500);
+  if (location.hash === "#douyin") startDouyinBrowserPolling();
 }
 
 async function bootstrapApplication() {
@@ -106,10 +110,107 @@ async function refreshDouyinAuthStatus() {
     const label = $("#douyinAuthStatus");
     label.textContent = status.message;
     label.classList.toggle("authenticated", Boolean(status.authenticated));
-    $("#douyinQrButton").classList.toggle("is-hidden", Boolean(status.authenticated));
     $("#douyinLogoutButton").classList.toggle("is-hidden", !status.authenticated);
   } catch (error) {
     $("#douyinAuthStatus").textContent = "Không kiểm tra được phiên Douyin";
+  }
+}
+
+function renderDouyinBrowserStatus(status) {
+  state.douyinBrowser = status;
+  const indicator = $("#douyinBrowserIndicator");
+  const label = $("#douyinBrowserStatus");
+  label.textContent = status.message;
+  indicator.classList.toggle("available", Boolean(status.available));
+  indicator.classList.toggle("authenticated", Boolean(status.authenticated));
+  $("#douyinBrowserSync").disabled = !status.available;
+  $("#douyinBrowserReload").disabled = !status.available;
+  $("#douyinBrowserLogout").disabled = !status.available;
+
+  const frame = $("#douyinBrowserFrame");
+  const loading = $("#douyinBrowserLoading");
+  if (status.available && status.browser_url && frame.dataset.source !== status.browser_url) {
+    state.douyinBrowserLoaded = false;
+    loading.classList.remove("is-hidden");
+    frame.dataset.source = status.browser_url;
+    frame.src = status.browser_url + "vnc.html?resize=scale&autoconnect=true";
+  }
+  if (!status.available) {
+    loading.classList.remove("is-hidden");
+    $("#douyinBrowserHelp").textContent = "Container douyin-browser chưa sẵn sàng; xem log để kiểm tra Chromium/noVNC.";
+  } else if (status.authenticated) {
+    $("#douyinBrowserHelp").textContent = "Cookie đã đồng bộ và sẵn sàng cho bộ tải video Douyin.";
+  } else {
+    $("#douyinBrowserHelp").textContent = "Đăng nhập trong khung bên dưới; OTP được nhập thẳng vào Douyin.";
+  }
+}
+
+async function refreshDouyinBrowserStatus({ refresh = false, quiet = false } = {}) {
+  try {
+    const status = await requestJson(`/api/v1/douyin-browser/status${refresh ? "?refresh=true" : ""}`);
+    renderDouyinBrowserStatus(status);
+    if (status.authenticated) await refreshDouyinAuthStatus();
+    return status;
+  } catch (error) {
+    renderDouyinBrowserStatus({ available: false, authenticated: false, message: error.message, browser_url: null });
+    if (!quiet) toast(error.message, true);
+    return null;
+  }
+}
+
+function stopDouyinBrowserPolling() {
+  clearInterval(state.douyinBrowserPollTimer);
+  state.douyinBrowserPollTimer = null;
+}
+
+function startDouyinBrowserPolling() {
+  stopDouyinBrowserPolling();
+  refreshDouyinBrowserStatus();
+  state.douyinBrowserPollTimer = setInterval(() => {
+    refreshDouyinBrowserStatus({ refresh: true, quiet: true });
+  }, 8000);
+}
+
+async function syncDouyinBrowserLogin() {
+  const button = $("#douyinBrowserSync");
+  button.disabled = true;
+  button.textContent = "Đang đồng bộ…";
+  try {
+    const status = await requestJson("/api/v1/douyin-browser/sync", { method: "POST" });
+    renderDouyinBrowserStatus(status);
+    await refreshDouyinAuthStatus();
+    toast(status.message, !status.authenticated);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.textContent = "Đã đăng nhập — Đồng bộ";
+    button.disabled = !state.douyinBrowser?.available;
+  }
+}
+
+async function reloadDouyinBrowserPage() {
+  const button = $("#douyinBrowserReload");
+  button.disabled = true;
+  try {
+    const status = await requestJson("/api/v1/douyin-browser/reload", { method: "POST" });
+    renderDouyinBrowserStatus(status);
+    toast("Đã tải lại trang Douyin");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = !state.douyinBrowser?.available;
+  }
+}
+
+async function logoutDouyinBrowser() {
+  if (!window.confirm("Đăng xuất Douyin và xóa cookie đã đồng bộ?")) return;
+  try {
+    const status = await requestJson("/api/v1/douyin-browser/session", { method: "DELETE" });
+    renderDouyinBrowserStatus(status);
+    await refreshDouyinAuthStatus();
+    toast(status.message);
+  } catch (error) {
+    toast(error.message, true);
   }
 }
 
@@ -138,236 +239,6 @@ async function connectTikTok() {
   }
 }
 
-function stopQrPolling() {
-  clearInterval(state.qrPollTimer);
-  state.qrPollTimer = null;
-}
-
-function renderQrSession(session) {
-  state.qrStatus = session.status;
-  $("#douyinQrMessage").textContent = session.message;
-  const otpRequestedAfterQr = Boolean(session.otp_requested_after_qr);
-  $("#douyinOtpPanelTitle").textContent = otpRequestedAfterQr
-    ? "Xác minh OTP sau khi quét QR"
-    : "Đăng nhập bằng OTP";
-  $("#douyinOtpPanelDescription").textContent = otpRequestedAfterQr
-    ? "QR đã được chấp nhận. Douyin yêu cầu mã SMS thứ hai; nhập mã vào ô bên dưới. Không cần nhập lại số điện thoại."
-    : "Với tài khoản Trung Quốc, giữ mã vùng +86. Ảnh bên trái chỉ để theo dõi; hãy nhập và sửa số điện thoại tại đây.";
-  if (session.qr_image_url) {
-    $("#douyinQrImage").src = session.qr_image_url;
-    $("#douyinQrImage").classList.remove("is-hidden");
-    $("#douyinQrLoading").classList.add("is-hidden");
-  }
-  const sendButton = $("#douyinSendOtp");
-  sendButton.disabled = !session.can_submit_phone;
-  sendButton.textContent = session.sms_retry_after > 0
-    ? `Gửi lại sau ${session.sms_retry_after}s`
-    : session.phone_masked ? "Gửi lại OTP" : "Gửi mã OTP";
-  const phoneInputsEnabled = Boolean(session.phone_login_available) && !otpRequestedAfterQr;
-  [$("#douyinCountryCode"), $("#douyinPhone")].forEach(input => {
-    input.disabled = !phoneInputsEnabled;
-    input.readOnly = false;
-    input.setAttribute("aria-disabled", String(!phoneInputsEnabled));
-  });
-  $("#douyinChangePhone").classList.toggle(
-    "is-hidden",
-    !session.phone_masked || !phoneInputsEnabled || otpRequestedAfterQr,
-  );
-  $("#douyinPhoneForm").classList.toggle("is-hidden", otpRequestedAfterQr);
-  $("#douyinOtpForm").classList.toggle("is-hidden", !session.otp_required);
-  $("#douyinSubmitOtp").disabled = !session.can_submit_otp;
-  const resendButton = $("#douyinResendOtp");
-  resendButton.classList.toggle("is-hidden", !otpRequestedAfterQr || !session.otp_required);
-  resendButton.disabled = !session.can_resend_otp;
-  resendButton.textContent = session.sms_retry_after > 0
-    ? `Gửi lại sau ${session.sms_retry_after}s`
-    : "Gửi lại OTP";
-  const directScreen = $("#douyinQrImage");
-  directScreen.classList.toggle("is-interactive", Boolean(session.direct_control_available));
-  directScreen.setAttribute("aria-disabled", String(!session.direct_control_available));
-  const directHint = $("#douyinDirectHint");
-  directHint.classList.toggle("is-hidden", !session.direct_control_available);
-  if (session.direct_input_focus === "otp") {
-    const count = Number.isInteger(session.direct_input_length) ? session.direct_input_length : 0;
-    directHint.textContent = count
-      ? `Đã nhập ${count} ký tự vào ô OTP trong Douyin (đã che an toàn). Click nút đỏ để xác nhận.`
-      : "Đã chọn ô OTP trong Douyin. Gõ hoặc dán mã trực tiếp; nội dung sẽ được che an toàn.";
-  } else if (session.direct_input_focus === "phone") {
-    const count = Number.isInteger(session.direct_input_length) ? session.direct_input_length : 0;
-    directHint.textContent = count
-      ? `Đã nhập ${count} ký tự vào số điện thoại trong Douyin (đã che an toàn).`
-      : "Đã chọn ô số điện thoại trong Douyin. Gõ hoặc dán số trực tiếp.";
-  } else {
-    directHint.textContent = "Click vào màn hình, rồi gõ số/OTP trực tiếp. Nội dung nhập không hiển thị hoặc lưu lại.";
-  }
-  const finished = ["authenticated", "expired", "failed", "cancelled"].includes(session.status);
-  $("#douyinQrRetry").classList.toggle("is-hidden", !["expired", "failed", "cancelled"].includes(session.status));
-  if (finished) stopQrPolling();
-  if (session.status === "authenticated") {
-    $("#douyinOtp").value = "";
-    refreshDouyinAuthStatus();
-    toast("Đăng nhập Douyin thành công");
-  }
-}
-
-async function pollQrSession() {
-  if (!state.qrSessionId) return;
-  try {
-    renderQrSession(await requestJson(`/api/v1/douyin-auth/qr/${state.qrSessionId}`));
-  } catch (error) {
-    stopQrPolling();
-    $("#douyinQrMessage").textContent = error.message;
-    $("#douyinQrRetry").classList.remove("is-hidden");
-  }
-}
-
-async function startDouyinQrLogin() {
-  stopQrPolling();
-  state.qrSessionId = null;
-  state.qrStatus = "starting";
-  state.directInteractionChain = Promise.resolve();
-  $("#douyinQrModal").classList.remove("is-hidden");
-  $("#douyinQrImage").classList.add("is-hidden");
-  $("#douyinQrImage").removeAttribute("src");
-  $("#douyinQrLoading").classList.remove("is-hidden");
-  $("#douyinQrRetry").classList.add("is-hidden");
-  $("#douyinOtpForm").classList.add("is-hidden");
-  $("#douyinOtp").value = "";
-  $("#douyinSendOtp").disabled = true;
-  $("#douyinQrMessage").textContent = "Đang mở trang đăng nhập Douyin…";
-  try {
-    const session = await requestJson("/api/v1/douyin-auth/qr", { method: "POST" });
-    state.qrSessionId = session.session_id;
-    renderQrSession(session);
-    state.qrPollTimer = setInterval(pollQrSession, 1000);
-  } catch (error) {
-    $("#douyinQrMessage").textContent = error.message;
-    $("#douyinQrRetry").classList.remove("is-hidden");
-  }
-}
-
-async function changeDouyinPhone() {
-  // A new browser session removes the server-side SMS cooldown for the old
-  // number and makes it explicit that the user can edit the right-hand form.
-  await startDouyinQrLogin();
-  $("#douyinPhone").focus();
-}
-
-async function sendDouyinOtp(event) {
-  event.preventDefault();
-  if (!state.qrSessionId) return;
-  const button = $("#douyinSendOtp");
-  button.disabled = true;
-  try {
-    const body = new URLSearchParams({
-      country_code: $("#douyinCountryCode").value.trim(),
-      phone: $("#douyinPhone").value.trim(),
-    });
-    const session = await requestJson(`/api/v1/douyin-auth/qr/${state.qrSessionId}/phone`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    renderQrSession(session);
-  } catch (error) {
-    $("#douyinQrMessage").textContent = error.message;
-    button.disabled = false;
-  }
-}
-
-async function submitDouyinOtp(event) {
-  event.preventDefault();
-  if (!state.qrSessionId) return;
-  const button = $("#douyinSubmitOtp");
-  button.disabled = true;
-  try {
-    const body = new URLSearchParams({ otp: $("#douyinOtp").value.trim() });
-    const session = await requestJson(`/api/v1/douyin-auth/qr/${state.qrSessionId}/otp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    $("#douyinOtp").value = "";
-    renderQrSession(session);
-  } catch (error) {
-    $("#douyinQrMessage").textContent = error.message;
-    button.disabled = false;
-  }
-}
-
-async function resendDouyinOtp() {
-  if (!state.qrSessionId) return;
-  const button = $("#douyinResendOtp");
-  button.disabled = true;
-  try {
-    const session = await requestJson(
-      `/api/v1/douyin-auth/qr/${state.qrSessionId}/otp/resend`,
-      { method: "POST" },
-    );
-    $("#douyinOtp").value = "";
-    renderQrSession(session);
-  } catch (error) {
-    $("#douyinQrMessage").textContent = error.message;
-    button.disabled = false;
-  }
-}
-
-async function sendDouyinBrowserInteraction(payload) {
-  if (!state.qrSessionId || !["waiting_scan", "sending_code", "waiting_otp", "verifying_otp"].includes(state.qrStatus)) return;
-  // Fetches for successive keystrokes must be serialized. Otherwise browser
-  // networking can reach the server out of order and scramble an OTP.
-  state.directInteractionChain = state.directInteractionChain
-    .catch(() => undefined)
-    .then(async () => {
-      try {
-        await requestJson(`/api/v1/douyin-auth/qr/${state.qrSessionId}/interact`, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams(payload),
-        });
-      } catch (error) {
-        $("#douyinQrMessage").textContent = error.message;
-      }
-    });
-  return state.directInteractionChain;
-}
-
-function interactWithDouyinScreen(event) {
-  const screen = $("#douyinQrImage");
-  if (!state.qrSessionId || !screen.classList.contains("is-interactive")) return;
-  const bounds = screen.getBoundingClientRect();
-  if (!bounds.width || !bounds.height) return;
-  screen.focus({ preventScroll: true });
-  sendDouyinBrowserInteraction({
-    action: "click",
-    x_ratio: String(Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width))),
-    y_ratio: String(Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height))),
-  });
-}
-
-function typeIntoDouyinScreen(event) {
-  if (event.target !== $("#douyinQrImage")) return;
-  const supported = new Set(["Backspace", "Enter", "Tab", "Escape", "ArrowLeft", "ArrowRight"]);
-  if (!supported.has(event.key) && !/^[0-9+]$/.test(event.key)) return;
-  event.preventDefault();
-  sendDouyinBrowserInteraction({ action: "key", key: event.key });
-}
-
-function pasteIntoDouyinScreen(event) {
-  if (event.target !== $("#douyinQrImage")) return;
-  const text = event.clipboardData?.getData("text") || "";
-  if (!/^[0-9+ ]{1,20}$/.test(text)) return;
-  event.preventDefault();
-  sendDouyinBrowserInteraction({ action: "paste", key: text });
-}
-
-async function closeDouyinQrModal() {
-  stopQrPolling();
-  if (state.qrSessionId && !["authenticated", "expired", "failed", "cancelled"].includes(state.qrStatus)) {
-    apiFetch(`/api/v1/douyin-auth/qr/${state.qrSessionId}`, { method: "DELETE" }).catch(() => {});
-  }
-  $("#douyinQrModal").classList.add("is-hidden");
-}
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -516,11 +387,14 @@ function updateFormSummary() {
 }
 
 function showView() {
-  const view = location.hash === "#jobs" ? "jobs" : "create";
+  const view = location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : "create";
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
+  $("#douyinView").classList.toggle("is-hidden", view !== "douyin");
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
   if (view === "jobs" && state.appStarted) loadJobs();
+  if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
+  else stopDouyinBrowserPolling();
 }
 
 function uploadBatch(formData, { onProgress, onRequest } = {}) {
@@ -850,17 +724,13 @@ const dropZone = $("#dropZone");
 ["dragleave", "drop"].forEach(type => dropZone.addEventListener(type, event => { event.preventDefault(); dropZone.classList.remove("dragging"); }));
 dropZone.addEventListener("drop", event => addFiles(event.dataTransfer.files));
 $("#batchForm").addEventListener("submit", submitBatch);
-$("#douyinQrButton").addEventListener("click", startDouyinQrLogin);
-$("#douyinQrRetry").addEventListener("click", startDouyinQrLogin);
-$("#douyinChangePhone").addEventListener("click", changeDouyinPhone);
-$("#douyinPhoneForm").addEventListener("submit", sendDouyinOtp);
-$("#douyinOtpForm").addEventListener("submit", submitDouyinOtp);
-$("#douyinResendOtp").addEventListener("click", resendDouyinOtp);
-$("#douyinQrImage").addEventListener("click", interactWithDouyinScreen);
-$("#douyinQrImage").addEventListener("keydown", typeIntoDouyinScreen);
-$("#douyinQrImage").addEventListener("paste", pasteIntoDouyinScreen);
-$("#douyinQrClose").addEventListener("click", closeDouyinQrModal);
-$("#douyinQrModal").addEventListener("click", event => { if (event.target === event.currentTarget) closeDouyinQrModal(); });
+$("#douyinBrowserSync").addEventListener("click", syncDouyinBrowserLogin);
+$("#douyinBrowserReload").addEventListener("click", reloadDouyinBrowserPage);
+$("#douyinBrowserLogout").addEventListener("click", logoutDouyinBrowser);
+$("#douyinBrowserFrame").addEventListener("load", () => {
+  state.douyinBrowserLoaded = true;
+  $("#douyinBrowserLoading").classList.add("is-hidden");
+});
 $("#douyinLogoutButton").addEventListener("click", async () => {
   try {
     await requestJson("/api/v1/douyin-auth", { method: "DELETE" });
