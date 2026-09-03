@@ -1823,7 +1823,7 @@ def delete_douyin_browser_session() -> JSONResponse:
 
 @app.get("/api/v1/douyin-auth")
 def get_douyin_auth_status() -> JSONResponse:
-    return JSONResponse(DOUYIN_BROWSER_AUTH.auth_status())
+    return JSONResponse(DOUYIN_BROWSER_AUTH.status())
 
 @app.delete("/api/v1/douyin-auth")
 def logout_douyin() -> JSONResponse:
