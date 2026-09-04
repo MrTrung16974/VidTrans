@@ -579,7 +579,7 @@ def synthesize_tts_segments(
     tts_dir = work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
     rate_percent = int((speech_rate - 1.0) * 100)
-    rate_string = f"{rate_percent:+d}%"
+    base_rate_string = f"{rate_percent:+d}%"
     
     import concurrent.futures
     import threading
@@ -591,24 +591,83 @@ def synthesize_tts_segments(
         nonlocal completed_count
         if job_id:
             ensure_job_active(job_id)
-        text = " ".join(segment["text"].split())
-        if not text:
+        
+        # Clean text
+        raw_text = " ".join(segment["text"].split())
+        if not raw_text:
             return None
+            
+        # Optimize Translation text pacing using Original Word Timestamps
+        # If the original Chinese text had long gaps between words, we insert commas
+        # in the translated text to force edge-tts to pause naturally.
+        text = raw_text
+        words = segment.get("words", [])
+        if words and len(words) > 1:
+            seg_start = float(segment.get("start", 0))
+            seg_end = float(segment.get("end", seg_start + 1))
+            seg_dur = max(0.1, seg_end - seg_start)
+            
+            chars = list(text)
+            inserts = []
+            for i in range(len(words) - 1):
+                gap = float(words[i+1].get("start", 0)) - float(words[i].get("end", 0))
+                if gap > 0.4:
+                    # Map the temporal pause to character position proportionally
+                    ratio = (float(words[i].get("end", 0)) - seg_start) / seg_dur
+                    char_idx = min(len(chars) - 1, max(0, int(ratio * len(chars))))
+                    # Find nearest space to insert the punctuation
+                    offset = 0
+                    best_idx = char_idx
+                    while offset < 15:
+                        if char_idx + offset < len(chars) and chars[char_idx + offset] == ' ':
+                            best_idx = char_idx + offset
+                            break
+                        if char_idx - offset >= 0 and chars[char_idx - offset] == ' ':
+                            best_idx = char_idx - offset
+                            break
+                        offset += 1
+                    # Avoid double punctuation
+                    if best_idx > 0 and chars[best_idx-1] not in (',', '.', '!', '?', ':', ';'):
+                        inserts.append((best_idx, ','))
+            
+            for idx, punct in sorted(inserts, reverse=True):
+                chars.insert(idx, punct)
+            text = "".join(chars)
+
         output_path = tts_dir / f"{index:04d}.mp3"
         selected_voice_type = str(segment.get("voice_type", voice_type))
         voice_name = VOICE_OPTIONS.get(selected_voice_type, VOICE_OPTIONS["female"])
+        
+        # Pass 1: Generate initial audio to gauge speaking duration
         try:
-            asyncio.run(tts_edge_sync(text, output_path, voice_name, rate_string))
+            asyncio.run(tts_edge_sync(text, output_path, voice_name, base_rate_string))
         except Exception as exc:
             logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
             tts_gtts_sync(text, output_path, slow=speech_rate < 0.95)
             
         cue_duration = max(0.25, float(segment["end"]) - float(segment["start"]) - 0.05)
         rendered_duration = get_media_duration(output_path)
+        
+        # Pass 2: Auto-sync Timing (2-pass dynamic rate)
+        # If the generated audio heavily exceeds the subtitle block, Edge-TTS native speedup 
+        # sounds much more natural than aggressive FFmpeg atempo time-stretching.
+        if rendered_duration > cue_duration * 1.10:
+            target_ratio = rendered_duration / cue_duration
+            # Calculate optimal edge-tts rate increase, capping at +50% for stability
+            added_rate = min(50, int((target_ratio - 1.0) * 100))
+            new_rate = rate_percent + added_rate
+            new_rate_string = f"{new_rate:+d}%"
+            try:
+                # Re-synthesize with perfectly aligned native rate
+                asyncio.run(tts_edge_sync(text, output_path, voice_name, new_rate_string))
+                rendered_duration = get_media_duration(output_path)
+            except Exception as exc:
+                logger.warning("edge-tts 2nd pass failed: %s", exc)
+        
         fitted_path = output_path
         if rendered_duration > cue_duration * 1.05:
-            # Cap speed_factor at 1.65 to prevent chipmunk voice
-            speed_factor = min(rendered_duration / cue_duration, 1.65)
+            # Final fallback: FFmpeg atempo for remaining sync gaps (cap at 1.4x)
+            speed_factor = min(rendered_duration / cue_duration, 1.40)
             fitted_path = tts_dir / f"{index:04d}_fitted.wav"
             run_ffmpeg(
                 [
