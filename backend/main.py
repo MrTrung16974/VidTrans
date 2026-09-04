@@ -580,13 +580,20 @@ def synthesize_tts_segments(
     tts_dir.mkdir(parents=True, exist_ok=True)
     rate_percent = int((speech_rate - 1.0) * 100)
     rate_string = f"{rate_percent:+d}%"
-    paths: list[Path] = []
-    for index, segment in enumerate(segments):
+    
+    import concurrent.futures
+    import threading
+    completed_count = 0
+    total_valid = sum(1 for s in segments if " ".join(s["text"].split()))
+    progress_lock = threading.Lock()
+    
+    def process_segment(index: int, segment: dict[str, Any]) -> Path | None:
+        nonlocal completed_count
         if job_id:
             ensure_job_active(job_id)
         text = " ".join(segment["text"].split())
         if not text:
-            continue
+            return None
         output_path = tts_dir / f"{index:04d}.mp3"
         selected_voice_type = str(segment.get("voice_type", voice_type))
         voice_name = VOICE_OPTIONS.get(selected_voice_type, VOICE_OPTIONS["female"])
@@ -595,11 +602,13 @@ def synthesize_tts_segments(
         except Exception as exc:
             logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
             tts_gtts_sync(text, output_path, slow=speech_rate < 0.95)
+            
         cue_duration = max(0.25, float(segment["end"]) - float(segment["start"]) - 0.05)
         rendered_duration = get_media_duration(output_path)
         fitted_path = output_path
         if rendered_duration > cue_duration * 1.05:
-            speed_factor = rendered_duration / cue_duration
+            # Cap speed_factor at 1.65 to prevent chipmunk voice
+            speed_factor = min(rendered_duration / cue_duration, 1.65)
             fitted_path = tts_dir / f"{index:04d}_fitted.wav"
             run_ffmpeg(
                 [
@@ -608,9 +617,7 @@ def synthesize_tts_segments(
                     "-i",
                     str(output_path),
                     "-af",
-                    build_atempo_filter(speed_factor),
-                    "-t",
-                    f"{cue_duration:.3f}",
+                    f"silenceremove=start_periods=1:start_threshold=-50dB:stop_periods=1:stop_threshold=-50dB,{build_atempo_filter(speed_factor)}",
                     "-ac",
                     "1",
                     "-ar",
@@ -619,14 +626,27 @@ def synthesize_tts_segments(
                 ]
             )
             segment["tts_speed_factor"] = round(speed_factor, 3)
-        paths.append(fitted_path)
         segment["tts_path"] = fitted_path
-        if job_id and (index == len(segments) - 1 or index % max(1, len(segments) // 30) == 0):
-            update_job(
-                job_id,
-                progress=0.55 + (0.15 * (index + 1) / max(len(segments), 1)),
-                step_detail=f"Đã tạo giọng đọc {index + 1}/{len(segments)} câu",
-            )
+        
+        with progress_lock:
+            completed_count += 1
+            if job_id and (completed_count == total_valid or completed_count % max(1, total_valid // 15) == 0):
+                update_job(
+                    job_id,
+                    progress=0.55 + (0.15 * completed_count / max(total_valid, 1)),
+                    step_detail=f"Đã tạo giọng đọc {completed_count}/{total_valid} câu",
+                )
+        return fitted_path
+
+    paths: list[Path] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(process_segment, i, seg) for i, seg in enumerate(segments)]
+        concurrent.futures.wait(futures)
+        
+    for segment in segments:
+        if "tts_path" in segment:
+            paths.append(segment["tts_path"])
+            
     return paths
 
 

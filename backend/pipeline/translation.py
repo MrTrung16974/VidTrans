@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 import re
 import time
+import concurrent.futures
 from typing import Any, Callable, Protocol, Sequence
 
 
 logger = logging.getLogger(__name__)
 
-_MARKER_RE = re.compile(r"\[\[\s*VTS\s*:\s*(\d{6})\s*\]\]", re.IGNORECASE)
+# Use HTML-style tags. Translators usually preserve these better than brackets.
+_MARKER_RE = re.compile(r'<\s*vts\s+id\s*=\s*["\']?(\d{6})["\']?\s*/?>', re.IGNORECASE)
 _HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 
@@ -70,7 +72,7 @@ def _translate_marked_batch(
     retries: int,
     sleeper: Callable[[float], None],
 ) -> dict[int, str]:
-    payload = "\n".join(f"[[VTS:{index:06d}]]\n{source_texts[index]}" for index in indexes)
+    payload = "\n".join(f'<vts id="{index:06d}"/>\n{source_texts[index]}' for index in indexes)
     translated = _translate_with_retry(payload, translator, retries=retries, sleeper=sleeper)
     markers = list(_MARKER_RE.finditer(translated))
     parsed: dict[int, str] = {}
@@ -90,7 +92,7 @@ def translate_segments(
     segments: Sequence[dict[str, Any]],
     translator: TextTranslator | None = None,
     *,
-    max_batch_chars: int = 2800,
+    max_batch_chars: int = 1200,
     retries: int = 4,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> list[dict[str, Any]]:
@@ -103,8 +105,8 @@ def translate_segments(
 
     if translator is None:
         from deep_translator import GoogleTranslator
-
         translator = GoogleTranslator(source="zh-CN", target="vi")
+        
     if max_batch_chars < 200:
         raise ValueError("max_batch_chars must be at least 200")
     if retries < 1:
@@ -115,56 +117,86 @@ def translate_segments(
     translated_by_index: dict[int, str] = {}
     fallback_indexes: set[int] = set()
 
-    for indexes in _batch_indexes(source_texts, max_batch_chars):
+    batches = _batch_indexes(source_texts, max_batch_chars)
+    
+    def process_batch(indexes: list[int]) -> tuple[list[int], dict[int, str]]:
         try:
-            translated_by_index.update(
-                _translate_marked_batch(
-                    indexes,
-                    source_texts,
-                    translator,
-                    retries=retries,
-                    sleeper=sleeper,
-                )
-            )
-            continue
-        except Exception as exc:
-            logger.warning("Batch translation failed; retrying %d cues individually: %s", len(indexes), exc)
-
-        for index in indexes:
-            try:
-                translated_by_index[index] = _translate_with_retry(
-                    source_texts[index],
-                    translator,
-                    retries=retries,
-                    sleeper=sleeper,
-                )
-            except Exception as exc:
-                logger.warning("Translation failed for cue %d: %s", index, exc)
-                translated_by_index[index] = source_texts[index]
-                fallback_indexes.add(index)
-
-    # Some providers preserve a marked batch but leave individual Chinese cues
-    # unchanged. A non-empty response is not enough in that case: retry the
-    # affected cue on its own before rendering it as a Vietnamese subtitle.
-    for index, source_text in enumerate(source_texts):
-        translated = _clean(translated_by_index.get(index, ""))
-        if not (contains_han(source_text) and contains_han(translated)):
-            continue
-        try:
-            retried = _translate_with_retry(
-                source_text,
+            res = _translate_marked_batch(
+                indexes,
+                source_texts,
                 translator,
                 retries=retries,
                 sleeper=sleeper,
             )
-            if contains_han(retried):
-                raise RuntimeError("Dịch vụ trả lại nguyên văn tiếng Trung")
-            translated_by_index[index] = retried
-            fallback_indexes.discard(index)
+            return (indexes, res)
         except Exception as exc:
-            logger.warning("Translation remained Chinese for cue %d: %s", index, exc)
-            translated_by_index[index] = source_text
-            fallback_indexes.add(index)
+            logger.warning("Batch translation failed; retrying %d cues individually: %s", len(indexes), exc)
+            return (indexes, {})
+            
+    def process_individual(index: int) -> tuple[int, str, bool]:
+        try:
+            res = _translate_with_retry(
+                source_texts[index],
+                translator,
+                retries=retries,
+                sleeper=sleeper,
+            )
+            return (index, res, False)
+        except Exception as exc:
+            logger.warning("Translation failed for cue %d: %s", index, exc)
+            return (index, source_texts[index], True)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # 1. Process batches concurrently
+        batch_futures = [executor.submit(process_batch, indexes) for indexes in batches]
+        failed_indexes: list[int] = []
+        for future in concurrent.futures.as_completed(batch_futures):
+            indexes, result = future.result()
+            if result:
+                translated_by_index.update(result)
+            else:
+                failed_indexes.extend(indexes)
+                
+        # 2. Process failed batch cues individually concurrently
+        if failed_indexes:
+            indiv_futures = [executor.submit(process_individual, idx) for idx in failed_indexes]
+            for future in concurrent.futures.as_completed(indiv_futures):
+                idx, res, failed = future.result()
+                translated_by_index[idx] = res
+                if failed:
+                    fallback_indexes.add(idx)
+
+        # 3. Check for unchanged han and retry them concurrently
+        han_check_indexes: list[int] = []
+        for index, source_text in enumerate(source_texts):
+            translated = _clean(translated_by_index.get(index, ""))
+            if contains_han(source_text) and contains_han(translated):
+                han_check_indexes.append(index)
+                
+        if han_check_indexes:
+            def retry_han(index: int) -> tuple[int, str, bool]:
+                try:
+                    retried = _translate_with_retry(
+                        source_texts[index],
+                        translator,
+                        retries=retries,
+                        sleeper=sleeper,
+                    )
+                    if contains_han(retried):
+                        raise RuntimeError("Dịch vụ trả lại nguyên văn tiếng Trung")
+                    return (index, retried, False)
+                except Exception as exc:
+                    logger.warning("Translation remained Chinese for cue %d: %s", index, exc)
+                    return (index, source_texts[index], True)
+                    
+            retry_futures = [executor.submit(retry_han, idx) for idx in han_check_indexes]
+            for future in concurrent.futures.as_completed(retry_futures):
+                idx, res, failed = future.result()
+                translated_by_index[idx] = res
+                if failed:
+                    fallback_indexes.add(idx)
+                else:
+                    fallback_indexes.discard(idx)
 
     output: list[dict[str, Any]] = []
     for index, segment in enumerate(usable):

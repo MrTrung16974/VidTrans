@@ -531,15 +531,38 @@ def scan_subtitle_frames(
 ) -> list[FrameObservation]:
     observations: list[FrameObservation] = []
     total = len(frame_paths)
-    for index, frame_path in enumerate(frame_paths):
-        lines = reader.read(frame_path)
-        try:
-            from PIL import Image
+    
+    import numpy as np
+    from PIL import Image
 
+    prev_gray = None
+    prev_lines = []
+
+    for index, frame_path in enumerate(frame_paths):
+        try:
             with Image.open(frame_path) as image:
                 frame_width, frame_height = image.size
+                current_gray = np.array(image.convert("L"), dtype=np.int16)
         except Exception:
             frame_width, frame_height = 0, 0
+            current_gray = None
+
+        is_similar = False
+        if prev_gray is not None and current_gray is not None:
+            if prev_gray.shape == current_gray.shape:
+                diff = np.abs(prev_gray - current_gray)
+                mean_diff = np.mean(diff)
+                # If difference is minimal (bypassing minor compression artifacts), skip expensive OCR
+                if mean_diff < 5.0:
+                    is_similar = True
+
+        if is_similar:
+            lines = prev_lines
+        else:
+            lines = reader.read(frame_path)
+            prev_lines = lines
+            prev_gray = current_gray
+
         text, confidence, bbox = select_subtitle_geometry(
             lines,
             config.min_confidence,
