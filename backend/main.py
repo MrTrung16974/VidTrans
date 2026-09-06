@@ -49,6 +49,7 @@ from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burn
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
 from pipeline.translation import translate_segments
+from pipeline.tts_timing import bounded_tempo, schedule_voice_segments
 from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
 
 try:
@@ -336,7 +337,8 @@ def write_srt(segments: list[dict[str, Any]], output_path: Path) -> None:
             "\n".join(
                 [
                     str(index),
-                    f"{format_time(segment['start'])} --> {format_time(segment['end'])}",
+                    f"{format_time(segment.get('tts_start', segment['start']))} --> "
+                    f"{format_time(segment.get('tts_end', segment['end']))}",
                     text,
                 ]
             )
@@ -373,6 +375,8 @@ def write_ass(
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
     ]
     for segment in segments:
+        render_start = segment.get("tts_start", segment["start"])
+        render_end = segment.get("tts_end", segment["end"])
         layout = segment.get("subtitle_layout") if isinstance(segment.get("subtitle_layout"), dict) else {}
         raw_text = str(layout.get("render_text") or wrap_text(segment["text"]))
         text = raw_text.replace("\n", "\\N")
@@ -387,8 +391,8 @@ def write_ass(
                 "Dialogue: 0,{start},{end},Default,,0,0,0,,"
                 "{{\\an7\\pos({x},{y})\\p1\\bord0\\shad0\\1c&H000000&\\1a&H45&}}"
                 "m 0 0 l {width} 0 l {width} {height} l 0 {height}".format(
-                    start=format_time(segment["start"], for_ass=True),
-                    end=format_time(segment["end"], for_ass=True),
+                    start=format_time(render_start, for_ass=True),
+                    end=format_time(render_end, for_ass=True),
                     x=mask_x,
                     y=mask_y,
                     width=mask_width,
@@ -404,8 +408,8 @@ def write_ass(
             )
         lines.append(
             "Dialogue: 1,{start},{end},Default,,0,0,0,,{override}{text}".format(
-                start=format_time(segment["start"], for_ass=True),
-                end=format_time(segment["end"], for_ass=True),
+                start=format_time(render_start, for_ass=True),
+                end=format_time(render_end, for_ass=True),
                 override=override,
                 text=text,
             )
@@ -646,37 +650,44 @@ def synthesize_tts_segments(
             tts_gtts_sync(text, output_path, slow=speech_rate < 0.95)
             
         cue_duration = max(0.25, float(segment["end"]) - float(segment["start"]) - 0.05)
-        rendered_duration = get_media_duration(output_path)
-        
-        # Pass 2: Auto-sync Timing (2-pass dynamic rate)
-        # If the generated audio heavily exceeds the subtitle block, Edge-TTS native speedup 
-        # sounds much more natural than aggressive FFmpeg atempo time-stretching.
-        if rendered_duration > cue_duration * 1.10:
-            target_ratio = rendered_duration / cue_duration
-            # Calculate optimal edge-tts rate increase, capping at +50% for stability
-            added_rate = min(50, int((target_ratio - 1.0) * 100))
-            new_rate = rate_percent + added_rate
-            new_rate_string = f"{new_rate:+d}%"
-            try:
-                # Re-synthesize with perfectly aligned native rate
-                asyncio.run(tts_edge_sync(text, output_path, voice_name, new_rate_string))
-                rendered_duration = get_media_duration(output_path)
-            except Exception as exc:
-                logger.warning("edge-tts 2nd pass failed: %s", exc)
-        
-        fitted_path = output_path
-        if rendered_duration > cue_duration * 1.05:
-            # Final fallback: FFmpeg atempo for remaining sync gaps (cap at 1.4x)
-            speed_factor = min(rendered_duration / cue_duration, 1.40)
+
+        # Trim only the outer silence. Reversing for the tail is important:
+        # stop_periods=1 would stop at the first natural pause inside a line.
+        trimmed_path = tts_dir / f"{index:04d}_trimmed.wav"
+        trim_filter = (
+            "silenceremove=start_periods=1:start_duration=0.08:start_threshold=-50dB,"
+            "areverse,"
+            "silenceremove=start_periods=1:start_duration=0.08:start_threshold=-50dB,"
+            "areverse"
+        )
+        run_ffmpeg(
+            [
+                FFMPEG,
+                "-y",
+                "-i",
+                str(output_path),
+                "-af",
+                trim_filter,
+                "-ac",
+                "1",
+                "-ar",
+                "24000",
+                str(trimmed_path),
+            ]
+        )
+        rendered_duration = get_media_duration(trimmed_path)
+        speed_factor = bounded_tempo(rendered_duration, cue_duration)
+        fitted_path = trimmed_path
+        if speed_factor > 1.0:
             fitted_path = tts_dir / f"{index:04d}_fitted.wav"
             run_ffmpeg(
                 [
                     FFMPEG,
                     "-y",
                     "-i",
-                    str(output_path),
+                    str(trimmed_path),
                     "-af",
-                    f"silenceremove=start_periods=1:start_threshold=-50dB:stop_periods=1:stop_threshold=-50dB,{build_atempo_filter(speed_factor)}",
+                    build_atempo_filter(speed_factor),
                     "-ac",
                     "1",
                     "-ar",
@@ -684,7 +695,8 @@ def synthesize_tts_segments(
                     str(fitted_path),
                 ]
             )
-            segment["tts_speed_factor"] = round(speed_factor, 3)
+        segment["tts_speed_factor"] = round(speed_factor, 3)
+        segment["tts_duration"] = round(get_media_duration(fitted_path), 3)
         segment["tts_path"] = fitted_path
         
         with progress_lock:
@@ -728,14 +740,22 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
     input_args: list[str] = []
     filter_parts = []
     labels = []
-    for index, segment in enumerate(segments):
+    schedule_voice_segments(segments, video_duration=video_duration)
+    input_index = 0
+    for segment in segments:
         tts_path = segment.get("tts_path")
         if not tts_path:
             continue
-        delay_ms = max(0, int(segment["start"] * 1000))
+        tts_start = float(segment.get("tts_start", segment["start"]))
+        if tts_start >= video_duration:
+            continue
+        delay_ms = max(0, int(tts_start * 1000))
         input_args.extend(["-i", str(tts_path)])
-        filter_parts.append(f"[{index}:a]adelay={delay_ms}|{delay_ms},volume=1.4[a{index}]")
-        labels.append(f"[a{index}]")
+        filter_parts.append(
+            f"[{input_index}:a]adelay={delay_ms}|{delay_ms},volume=1.4[a{input_index}]"
+        )
+        labels.append(f"[a{input_index}]")
+        input_index += 1
     if not labels:
         raise RuntimeError("No TTS segments were generated")
     filter_parts.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,alimiter=limit=0.95[out]")
@@ -1295,15 +1315,6 @@ def process_video(
         srt_path = OUTPUT_DIR / f"{job_id}.srt"
         translation_path = OUTPUT_DIR / f"{job_id}.translation.json"
         ass_path = work_dir / f"{job_id}.ass"
-        write_srt(translated_segments, srt_path)
-        write_ass(
-            translated_segments,
-            ass_path,
-            subtitle_style,
-            video_width=video_width,
-            video_height=video_height,
-        )
-
         tiktok_json_path: Path | None = None
         tiktok_text_path: Path | None = None
         tiktok_post = None
@@ -1352,25 +1363,6 @@ def process_video(
             else:
                 voice_summary = route_segments_manually(translated_segments, voice_type)
 
-        translation_path.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "source_method": "ocr" if ocr_segments else "speech",
-                    "review_cues": sum(1 for segment in translated_segments if segment.get("needs_review")),
-                    "voice_routing": {
-                        "mode": voice_mode,
-                        "fallback_voice": voice_type,
-                        "summary": voice_summary,
-                    },
-                    "segments": translated_segments,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-
         audio_path = None
         if mode in (2, 3):
             ensure_job_active(job_id)
@@ -1396,6 +1388,40 @@ def process_video(
                 original_audio_volume=original_audio_volume,
                 music_volume=music_volume,
             )
+
+        # Write subtitle artifacts only after TTS planning. In dubbing modes,
+        # tts_start/tts_end make the visible Vietnamese line follow the natural
+        # voice instead of the much shorter source-language cue.
+        write_srt(translated_segments, srt_path)
+        write_ass(
+            translated_segments,
+            ass_path,
+            subtitle_style,
+            video_width=video_width,
+            video_height=video_height,
+        )
+        serializable_segments = [
+            {key: value for key, value in segment.items() if key != "tts_path"}
+            for segment in translated_segments
+        ]
+        translation_path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "source_method": "ocr" if ocr_segments else "speech",
+                    "review_cues": sum(1 for segment in translated_segments if segment.get("needs_review")),
+                    "voice_routing": {
+                        "mode": voice_mode,
+                        "fallback_voice": voice_type,
+                        "summary": voice_summary,
+                    },
+                    "segments": serializable_segments,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         output_video = OUTPUT_DIR / f"output_{job_id}.mp4"
         ensure_job_active(job_id)
