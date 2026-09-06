@@ -74,10 +74,10 @@ if [[ "$PRODUCTION" -eq 1 ]]; then
     public_host="$(awk -F= '$1 == "VIDTRANS_PUBLIC_HOST" { print substr($0, index($0, "=") + 1); exit }' .env.production)"
     "${compose[@]}" build nginx
     printf 'Applying the new image behind Nginx at https://%s...\n' "$public_host"
-    "${compose[@]}" up -d --force-recreate --remove-orphans douyin-browser vidtrans nginx certbot
-    "${compose[@]}" ps douyin-browser vidtrans nginx certbot
+    "${compose[@]}" up -d --force-recreate --remove-orphans douyin-browser tiktok-browser vidtrans nginx certbot
+    "${compose[@]}" ps douyin-browser tiktok-browser vidtrans nginx certbot
 else
     printf '%s\n' "Applying the new image at http://localhost:5200..."
-    docker compose up -d --force-recreate --remove-orphans douyin-browser vidtrans
-    docker compose ps douyin-browser vidtrans
+    docker compose up -d --force-recreate --remove-orphans douyin-browser tiktok-browser vidtrans
+    docker compose ps douyin-browser tiktok-browser vidtrans
 fi

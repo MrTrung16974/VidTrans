@@ -144,6 +144,9 @@ hóa toàn bộ token ngay lập tức, đổi `VIDTRANS_JWT_SECRET` rồi resta
 
 ### Tự động đăng TikTok
 
+Xem [hướng dẫn kết nối TikTok Việt Nam](docs/tiktok-viet-nam.md) để cấu hình ứng dụng,
+cấp quyền tài khoản, đăng thử, đặt lịch và kiểm tra các giới hạn trước khi đăng công khai.
+
 VidTrans dùng Login Kit và Content Posting API chính thức. Tạo TikTok Developer App, bật quyền
 `video.publish`, đăng ký đúng HTTPS redirect URI, sau đó sao chép
 `.env.example` thành `.env` và điền ba giá trị TikTok. Không đưa file `.env` hoặc client secret

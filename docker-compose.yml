@@ -19,6 +19,30 @@ services:
     shm_size: "1gb"
     restart: unless-stopped
 
+  tiktok-browser:
+    image: vidtrans-douyin-browser
+    build:
+      context: ./deploy/douyin-browser
+      dockerfile: Dockerfile
+    container_name: vidtrans-tiktok-browser
+    ports:
+      - "127.0.0.1:5202:6080"
+    expose:
+      - "9222"
+    environment:
+      DISPLAY: ":99"
+      SCREEN_GEOMETRY: "1024x720x24"
+      CHROMIUM_PROFILE_DIR: "/data/profile"
+      BROWSER_START_URL: "https://www.tiktok.com/tiktokstudio/upload"
+      BROWSER_LANGUAGE: "vi-VN"
+      CDP_EXTERNAL_HOST: "tiktok-browser"
+      TZ: "Asia/Ho_Chi_Minh"
+    volumes:
+      - tiktok-browser-profile:/data/profile
+      - ./backend/outputs:/app/backend/outputs:ro
+    shm_size: "1gb"
+    restart: unless-stopped
+
   vidtrans:
     image: vidtrans-vidtrans
     build:
@@ -27,6 +51,8 @@ services:
     container_name: vidtrans
     depends_on:
       douyin-browser:
+        condition: service_healthy
+      tiktok-browser:
         condition: service_healthy
     ports:
       # Keep the FastAPI port private to the VPS. Production traffic must enter via Nginx.
@@ -37,6 +63,8 @@ services:
       VIDTRANS_WORKER_CONCURRENCY: "2"
       VIDTRANS_WHISPER_CONCURRENCY: "1"
       VIDTRANS_OCR_CONCURRENCY: "1"
+      VIDTRANS_TIKTOK_BROWSER_CDP_URL: "http://tiktok-browser:9222"
+      VIDTRANS_TIKTOK_BROWSER_PUBLIC_URL: "${VIDTRANS_TIKTOK_BROWSER_PUBLIC_URL:-http://localhost:5202/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=websockify}"
       VIDTRANS_TIKTOK_CLIENT_KEY: "${VIDTRANS_TIKTOK_CLIENT_KEY:-}"
       VIDTRANS_TIKTOK_CLIENT_SECRET: "${VIDTRANS_TIKTOK_CLIENT_SECRET:-}"
       VIDTRANS_TIKTOK_REDIRECT_URI: "${VIDTRANS_TIKTOK_REDIRECT_URI:-}"
@@ -62,6 +90,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  tiktok-browser-profile:
   douyin-browser-profile:
   whisper-models:
   paddle-models:

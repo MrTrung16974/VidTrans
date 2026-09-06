@@ -1,6 +1,7 @@
 services:
   vidtrans:
     environment:
+      VIDTRANS_TIKTOK_BROWSER_PUBLIC_URL: "/tiktok-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=tiktok-browser/websockify"
       VIDTRANS_AUTH_COOKIE_SECURE: "1"
       VIDTRANS_TRUST_PROXY_HEADERS: "1"
       VIDTRANS_DOUYIN_BROWSER_PUBLIC_URL: "/douyin-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=douyin-browser/websockify"
@@ -15,6 +16,8 @@ services:
       vidtrans:
         condition: service_started
       douyin-browser:
+        condition: service_healthy
+      tiktok-browser:
         condition: service_healthy
     ports:
       - "80:80"

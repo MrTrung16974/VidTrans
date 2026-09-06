@@ -83,11 +83,11 @@ chromium \
     --no-first-run \
     --no-default-browser-check \
     --password-store=basic \
-    --lang=zh-CN \
+    --lang="${BROWSER_LANGUAGE:-zh-CN}" \
     --force-device-scale-factor=1 \
     --window-size=1024,720 \
     --window-position=0,0 \
-    --app=https://www.douyin.com/ \
+    --app="${BROWSER_START_URL:-https://www.douyin.com/}" \
     --remote-debugging-port=9223 \
     --user-data-dir="$profile_dir" \
     >/tmp/chromium.log 2>&1 &
@@ -96,7 +96,7 @@ chromium_pid=$!
 # Current Chromium releases intentionally bind DevTools to loopback even when
 # remote-debugging-address is supplied. This small raw TCP bridge exposes CDP
 # only to the private Docker network; Compose never publishes port 9222.
-python3 /usr/local/bin/douyin-cdp-proxy 0.0.0.0 9222 127.0.0.1 9223 douyin-browser \
+python3 /usr/local/bin/douyin-cdp-proxy 0.0.0.0 9222 127.0.0.1 9223 "${CDP_EXTERNAL_HOST:-douyin-browser}" \
     >/tmp/cdp-proxy.log 2>&1 &
 cdp_proxy_pid=$!
 

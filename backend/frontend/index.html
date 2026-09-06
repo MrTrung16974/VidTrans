@@ -9,7 +9,7 @@
     <title>VidTrans Studio</title>
     <link rel="icon" type="image/svg+xml" href="/assets/vidtrans-mark.svg?v=20260901-1" />
     <link rel="shortcut icon" href="/assets/vidtrans-mark.svg?v=20260901-1" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20260902-22" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260906-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -21,6 +21,7 @@
         <nav class="nav-tabs" aria-label="Điều hướng chính">
           <a href="#create" data-view-link="create">Tạo quy trình</a>
           <a href="#jobs" data-view-link="jobs">Tiến trình <span id="runningBadge" class="nav-badge">0</span></a>
+          <a href="#tiktok" data-view-link="tiktok">Đăng TikTok</a>
           <a href="#douyin" data-view-link="douyin">Douyin</a>
         </nav>
         <div class="topbar-actions">
@@ -117,25 +118,21 @@
                 </div>
               </section>
 
-              <section class="card step-card">
-                <div class="step-heading"><span>4</span><div><h2>Nội dung và đăng TikTok</h2><p>Tạo tiêu đề rồi dùng chính tiêu đề đó để tự động đăng video đã dựng.</p></div></div>
-                <div class="tiktok-auth-card">
-                  <span class="tiktok-auth-icon">♪</span>
-                  <span class="tiktok-auth-copy"><strong>Tài khoản TikTok Việt Nam</strong><small id="tiktokAuthStatus">Đang kiểm tra kết nối…</small></span>
-                  <div class="tiktok-auth-actions">
-                    <button id="tiktokConnectButton" class="button tiktok-button" type="button">Kết nối TikTok</button>
-                    <button id="tiktokDisconnectButton" class="button secondary is-hidden" type="button">Ngắt kết nối</button>
-                  </div>
+              <section class="card step-card tiktok-setup-card">
+                <div class="step-heading"><span>4</span><div><h2>Chuẩn bị nội dung TikTok</h2><p>Tạo caption và hashtag để bạn duyệt cùng video sau khi xử lý.</p></div></div>
+                <div class="tiktok-flow" aria-label="Quy trình đăng TikTok">
+                  <div><span>01</span><strong>Tạo video</strong><small>Dịch và dựng hoàn chỉnh</small></div>
+                  <div><span>02</span><strong>Duyệt nội dung</strong><small>Xem video, sửa caption</small></div>
+                  <div><span>03</span><strong>Đăng trên TikTok</strong><small>Bạn kiểm tra và bấm Đăng</small></div>
                 </div>
                 <div class="field-grid">
-                  <label class="field"><span>Tự động tạo</span><select id="generateTikTokPost" name="generate_tiktok_post"><option value="true">Có</option><option value="false">Không</option></select></label>
+                  <label class="field"><span>Gợi ý nội dung đăng</span><select id="generateTikTokPost" name="generate_tiktok_post"><option value="true">Tạo caption và hashtag</option><option value="false">Tôi sẽ tự viết</option></select></label>
                   <label class="field"><span>Độ dài tóm tắt tối đa</span><input type="number" name="tiktok_max_summary_chars" min="80" max="1500" step="10" value="350" /></label>
                   <label class="field"><span>Số hashtag tối đa</span><input type="number" name="tiktok_hashtag_count" min="0" max="12" value="6" /></label>
-                  <label class="field"><span>Cách đăng TikTok</span><select id="tiktokPublishMode"><option value="off">Không — chỉ tạo file</option><option value="immediate">Đăng ngay sau khi gen video</option><option value="scheduled">Đặt lịch đăng</option></select><input id="autoPublishTikTok" type="hidden" name="auto_publish_tiktok" value="false" /></label>
-                  <label class="field"><span>Quyền riêng tư khi đăng</span><select id="tiktokPrivacyLevel" name="tiktok_privacy_level"><option value="PUBLIC_TO_EVERYONE">Công khai</option><option value="MUTUAL_FOLLOW_FRIENDS">Bạn bè</option><option value="FOLLOWER_OF_CREATOR">Người theo dõi</option><option value="SELF_ONLY">Chỉ mình tôi</option></select></label>
-                  <label id="tiktokScheduleField" class="field wide tiktok-schedule-field is-hidden"><span>Ngày giờ đăng</span><div class="tiktok-schedule-controls"><input id="tiktokPublishAtLocal" type="datetime-local" step="60" /><span id="tiktokTimezoneLabel">Giờ địa phương</span></div><input id="tiktokPublishAt" type="hidden" name="tiktok_publish_at" value="" /><small>Một lịch được áp dụng cho toàn bộ video trong batch; các video đến hạn sẽ đăng lần lượt để tránh trùng upload.</small></label>
-                  <p class="tiktok-consent wide">Khi chọn đăng ngay hoặc đặt lịch, bạn đồng ý để VidTrans đăng video đầu ra lên tài khoản TikTok đã kết nối. Lịch được lưu trên máy chủ và tiếp tục hoạt động sau khi restart container.</p>
+                  <input type="hidden" name="auto_publish_tiktok" value="false" />
                 </div>
+                <div class="tiktok-connect-strip"><div><strong>TikTok Studio</strong><p id="tiktokSetupStatus">Đăng nhập trực tiếp bằng tài khoản TikTok của bạn.</p></div><a class="button secondary" href="#tiktok">Mở khu vực đăng →</a></div>
+                <p class="fine-print">Sau khi video hoàn tất, chọn “Duyệt đăng” trong Tiến trình. Bắt đầu xử lý chỉ tạo video và nội dung gợi ý.</p>
               </section>
             </div>
 
@@ -168,6 +165,39 @@
             </div>
             <div id="jobsList" class="jobs-list"><div class="empty-state"><strong>Đang tải tiến trình…</strong></div></div>
           </section>
+        </section>
+
+        <section id="tiktokView" class="view is-hidden">
+          <div class="page-heading"><div><span class="eyebrow">TikTok Studio</span><h1>Từ video đến bài đăng</h1><p>Duyệt video và caption tại đây, hoàn tất bài đăng trong TikTok Studio.</p></div><a class="button secondary" href="#jobs">← Chọn từ Tiến trình</a></div>
+          <section class="card tiktok-account-bar">
+            <span class="tiktok-account-mark" aria-hidden="true">♪</span>
+            <div class="tiktok-account-copy"><strong>Tài khoản TikTok của bạn</strong><p id="tiktokBrowserStatus" role="status">Đang kiểm tra trình duyệt…</p></div>
+            <div class="tiktok-toolbar"><button id="tiktokBrowserOpen" class="button tiktok-button" type="button">Mở / đăng nhập TikTok</button><button id="tiktokBrowserCheck" class="button secondary" type="button">Kiểm tra phiên</button><button id="tiktokBrowserLogout" class="button secondary" type="button">Ngắt kết nối</button></div>
+          </section>
+          <div class="tiktok-workspace">
+            <section class="card tiktok-review-card">
+              <div class="tiktok-section-title"><span>1</span><div><h2>Duyệt bài đăng</h2><p>Chọn video đã xử lý xong.</p></div></div>
+              <label class="field"><span>Video của bạn</span><select id="tiktokJobSelect"><option value="">Chọn video đã hoàn tất…</option></select></label>
+              <div id="tiktokDraftEmpty" class="tiktok-empty"><span aria-hidden="true">▷</span><strong>Video sẵn sàng, nội dung chỉn chu</strong><p>Chọn video ở trên hoặc bấm “Duyệt đăng” trong Tiến trình để bắt đầu.</p><a href="#jobs" class="button secondary">Xem video đã tạo</a></div>
+              <div id="tiktokDraftEditor" class="is-hidden">
+                <video id="tiktokVideoPreview" controls playsinline preload="metadata" aria-label="Xem trước video sẽ đăng"></video>
+                <p id="tiktokDraftName" class="tiktok-filename"></p>
+                <label class="field" for="tiktokCaption">Caption và hashtag</label>
+                <textarea id="tiktokCaption" rows="6" maxlength="2200" placeholder="Viết nội dung cho video của bạn…" aria-describedby="tiktokCaptionCount"></textarea>
+                <div class="tiktok-caption-meta"><button id="tiktokCopyCaption" type="button" class="tiktok-text-button">Sao chép caption</button><span id="tiktokCaptionCount">0 / 2.200</span></div>
+                <p id="tiktokPreviousAttempt" class="tiktok-notice is-hidden"></p>
+                <label class="tiktok-check"><input id="tiktokReviewConsent" type="checkbox" /><span>Tôi đã xem video, duyệt caption và kiểm tra đúng tài khoản trong TikTok Studio.</span></label>
+                <button id="tiktokPrepareButton" class="button primary full" type="button" disabled>Tải video và điền caption →</button>
+                <p class="fine-print">Thao tác này tải video lên TikTok. Bạn chọn quyền riêng tư, khai báo nội dung và bấm Đăng trong khung bên cạnh.</p>
+              </div>
+            </section>
+            <section class="card tiktok-studio-card">
+              <div class="tiktok-studio-heading"><div class="tiktok-section-title"><span>2</span><div><h2>Hoàn tất trên TikTok</h2><p>Đăng nhập, xác minh và đăng bài trực tiếp.</p></div></div><a id="tiktokBrowserExternal" class="tiktok-text-button is-hidden" target="_blank" rel="noopener">Mở rộng ↗</a></div>
+              <div id="tiktokAttemptPanel" class="tiktok-attempt is-hidden" role="status"><strong id="tiktokAttemptTitle"></strong><p id="tiktokAttemptMessage"></p><button id="tiktokActiveDraft" class="tiktok-text-button" type="button">Xem nội dung đang chuẩn bị</button><div id="tiktokResolveControls" class="is-hidden"><label class="tiktok-check"><input id="tiktokResolveConsent" type="checkbox" /><span>Tôi đã kiểm tra và hoàn tất đăng hoặc hủy bài này trong TikTok Studio.</span></label><button id="tiktokResolveButton" type="button" class="button secondary" disabled>Kết thúc lượt chuẩn bị</button></div></div>
+              <div class="tiktok-browser-stage"><div id="tiktokBrowserPlaceholder" class="tiktok-browser-placeholder"><span aria-hidden="true">♪</span><strong>Không gian TikTok của bạn</strong><p id="tiktokBrowserHelp">Bấm “Mở / đăng nhập TikTok” để bắt đầu.</p></div><iframe id="tiktokBrowserFrame" title="TikTok Studio — đăng nhập và hoàn tất bài đăng" class="is-hidden" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe></div>
+              <p class="tiktok-studio-footnote">Nếu TikTok yêu cầu QR, OTP hoặc CAPTCHA, hãy hoàn tất ngay trong trình duyệt này. Trạng thái tải lên chưa phải xác nhận bài đã đăng.</p>
+            </section>
+          </div>
         </section>
 
         <section id="douyinView" class="view is-hidden">
@@ -224,6 +254,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20260902-22"></script>
+    <script type="module" src="/js/app.js?v=20260906-2"></script>
   </body>
 </html>

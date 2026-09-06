@@ -26,6 +26,8 @@ from gtts import gTTS
 from app.config import AppSettings
 from application.job_scheduler import JobScheduler
 from application.job_service import JobService
+from application.tiktok_browser_routes import create_tiktok_browser_router
+from infrastructure.tiktok_browser import TikTokBrowserManager
 from domain.models import ProcessingMode, ProcessingRequest
 
 from infrastructure.douyin_browser_auth import DouyinBrowserAuthManager
@@ -126,6 +128,8 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
 )
 DOUYIN_BROWSER_AUTH = DouyinBrowserAuthManager(WORK_DIR / "douyin-auth" / "douyin.cookies.txt")
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
+TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
+app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR))
 AUTH_MANAGER = AuthManager()
 _whisper_models: dict[str, Any] = {}
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
@@ -2584,6 +2588,9 @@ def retry_job_endpoint(job_id: str) -> JSONResponse:
 
 @app.delete("/api/v1/jobs/{job_id}")
 def delete_job_endpoint(job_id: str) -> JSONResponse:
+    active = TIKTOK_BROWSER.active_attempt()
+    if active and active["job_id"] == job_id:
+        raise HTTPException(status_code=409, detail="Hãy kết thúc lượt chuẩn bị TikTok trước khi xóa video")
     job = JOB_SERVICE.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")

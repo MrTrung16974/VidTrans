@@ -1,3 +1,4 @@
+import { createTikTokWorkspace } from "./tiktok.js?v=20260906-2";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -38,7 +39,73 @@ function apiFetch(url, options = {}) {
   return fetch(url, { ...options, headers, credentials: "same-origin" });
 }
 
+function safeDownloadName(value, fallback = "vidtrans-download") {
+  const filename = String(value || "").split(/[\\/]/).pop().trim();
+  return (filename || fallback).replace(/[<>:"|?*\u0000-\u001f]/g, "_");
+}
+
+function startBrowserDownload(url, filename) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+async function saveDownload(url, suggestedName, trigger) {
+  const filename = safeDownloadName(suggestedName);
+
+  // Chrome/Edge trên localhost mở Save As ngay trong thao tác click của người dùng.
+  // Nếu trình duyệt không hỗ trợ File System Access API, giữ cơ chế tải mặc định.
+  if (typeof window.showSaveFilePicker !== "function") {
+    startBrowserDownload(url, filename);
+    toast("Trình duyệt sẽ tải file theo thiết lập thư mục tải xuống hiện tại.");
+    return;
+  }
+
+  let fileHandle;
+  try {
+    fileHandle = await window.showSaveFilePicker({ suggestedName: filename });
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    startBrowserDownload(url, filename);
+    toast("Không mở được hộp chọn nơi lưu; đã chuyển sang tải xuống mặc định.", true);
+    return;
+  }
+
+  if (trigger) trigger.disabled = true;
+  try {
+    const response = await apiFetch(url);
+    if (response.status === 401) lockApplication();
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `Không tải được file (HTTP ${response.status})`);
+    }
+
+    const writable = await fileHandle.createWritable();
+    try {
+      if (response.body && typeof response.body.pipeTo === "function") {
+        await response.body.pipeTo(writable);
+      } else {
+        await writable.write(await response.blob());
+        await writable.close();
+      }
+    } catch (error) {
+      await writable.abort().catch(() => {});
+      throw error;
+    }
+    toast(`Đã lưu ${filename}`);
+  } catch (error) {
+    toast(error.message || "Không thể lưu file", true);
+  } finally {
+    if (trigger) trigger.disabled = false;
+  }
+}
+
 function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", isError = true) {
+  tiktokWorkspace.lock();
   clearInterval(state.pollTimer);
   clearInterval(state.douyinBrowserPollTimer);
   state.pollTimer = null;
@@ -90,10 +157,11 @@ async function refreshApplicationAuth() {
 async function startProtectedApplication() {
   if (state.appStarted) return;
   state.appStarted = true;
-  await Promise.all([loadJobs(), refreshDouyinAuthStatus(), refreshTikTokAuthStatus()]);
+  await Promise.all([loadJobs(), refreshDouyinAuthStatus(), tiktokWorkspace.refresh()]);
   clearInterval(state.pollTimer);
   state.pollTimer = setInterval(loadJobs, 2500);
   if (location.hash === "#douyin") startDouyinBrowserPolling();
+  if (location.hash === "#tiktok") tiktokWorkspace.enter();
 }
 
 async function bootstrapApplication() {
@@ -214,31 +282,6 @@ async function logoutDouyinBrowser() {
   }
 }
 
-async function refreshTikTokAuthStatus() {
-  try {
-    const status = await requestJson("/api/v1/tiktok-auth");
-    state.tiktokAuth = status;
-    const label = $("#tiktokAuthStatus");
-    label.textContent = status.message;
-    label.classList.toggle("authenticated", Boolean(status.connected));
-    $("#tiktokConnectButton").classList.toggle("is-hidden", Boolean(status.connected));
-    $("#tiktokDisconnectButton").classList.toggle("is-hidden", !status.connected);
-    $("#tiktokConnectButton").disabled = !status.configured;
-  } catch (error) {
-    state.tiktokAuth = null;
-    $("#tiktokAuthStatus").textContent = "Không kiểm tra được kết nối TikTok";
-  }
-}
-
-async function connectTikTok() {
-  try {
-    const result = await requestJson("/api/v1/tiktok-auth/connect");
-    location.href = result.authorization_url;
-  } catch (error) {
-    toast(error.message, true);
-  }
-}
-
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -337,23 +380,6 @@ function formatScheduledTime(value) {
   }).format(date);
 }
 
-function syncTikTokSchedule({ setDefault = false } = {}) {
-  const mode = $("#tiktokPublishMode").value;
-  const scheduled = mode === "scheduled";
-  $("#autoPublishTikTok").value = mode === "off" ? "false" : "true";
-  $("#tiktokScheduleField").classList.toggle("is-hidden", !scheduled);
-  if (mode !== "off") $("#generateTikTokPost").value = "true";
-  const localInput = $("#tiktokPublishAtLocal");
-  if (scheduled && setDefault && !localInput.value) {
-    const defaultTime = new Date(Date.now() + 60 * 60 * 1000);
-    defaultTime.setMinutes(Math.ceil(defaultTime.getMinutes() / 5) * 5, 0, 0);
-    localInput.value = localDateTimeValue(defaultTime);
-  }
-  const selected = scheduled && localInput.value ? new Date(localInput.value) : null;
-  $("#tiktokPublishAt").value = selected && !Number.isNaN(selected.getTime()) ? selected.toISOString() : "";
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "múi giờ thiết bị";
-  $("#tiktokTimezoneLabel").textContent = timezone;
-}
 
 function updateFormSummary() {
   const modes = { "1": "Vietsub", "2": "Vietsub + voice", "3": "Voice + nhạc" };
@@ -387,9 +413,12 @@ function updateFormSummary() {
 }
 
 function showView() {
-  const view = location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : "create";
+  const view = location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : "create";
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
+  $("#tiktokView").classList.toggle("is-hidden", view !== "tiktok");
+  if (view === "tiktok" && state.appStarted) tiktokWorkspace.enter();
+  else tiktokWorkspace.leave();
   $("#douyinView").classList.toggle("is-hidden", view !== "douyin");
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
   if (view === "jobs" && state.appStarted) loadJobs();
@@ -429,21 +458,12 @@ function uploadBatch(formData, { onProgress, onRequest } = {}) {
 
 async function submitBatch(event) {
   event.preventDefault();
-  syncTikTokSchedule();
   renderSourceLinks();
   const sourceText = $("#sourceLinks").value.trim();
   if (!state.files.length && !state.links.length) {
     return toast(sourceText ? "Không tìm thấy link TikTok/Douyin hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
-  if ($("#tiktokPublishMode").value !== "off" && !state.tiktokAuth?.connected) {
-    return toast("Hãy kết nối tài khoản TikTok trước khi bật tự động đăng", true);
-  }
-  if ($("#tiktokPublishMode").value === "scheduled") {
-    const publishAt = new Date($("#tiktokPublishAtLocal").value);
-    if (Number.isNaN(publishAt.getTime())) return toast("Hãy chọn ngày giờ đăng TikTok", true);
-    if (publishAt.getTime() <= Date.now() + 30_000) return toast("Lịch đăng phải cách hiện tại ít nhất 30 giây", true);
-  }
   updateFormSummary();
   const form = event.currentTarget;
   const formData = new FormData(form);
@@ -508,12 +528,17 @@ async function submitBatch(event) {
 
 function jobActions(job) {
   const terminal = ["completed", "failed", "cancelled"].includes(job.status);
-  const downloads = job.download_all_url ? `<a href="${escapeHtml(job.download_all_url)}" title="Tải toàn bộ kết quả">ZIP</a>` : job.video_url ? `<a href="${escapeHtml(job.video_url)}" title="Tải video">Tải</a>` : "";
+  const downloadUrl = job.download_all_url || job.video_url;
+  const downloadName = job.download_all_url ? `${job.job_id}.artifacts.zip` : (job.output_video || `${job.job_id}.mp4`);
+  const downloadLabel = job.download_all_url ? "ZIP" : "Tải";
+  const downloadTitle = job.download_all_url ? "Chọn nơi lưu toàn bộ kết quả" : "Chọn nơi lưu video";
+  const downloads = downloadUrl ? `<button type="button" data-download-url="${escapeHtml(downloadUrl)}" data-download-name="${escapeHtml(downloadName)}" title="${downloadTitle}">${downloadLabel}</button>` : "";
   const cancel = ["queued", "scheduled", "processing", "cancelling"].includes(job.status) ? `<button data-action="cancel" data-job="${job.job_id}" title="Hủy">Hủy</button>` : "";
   const retry = terminal ? `<button data-action="retry" data-job="${job.job_id}" title="Chạy lại">Chạy lại</button>` : "";
   const remove = terminal ? `<button data-action="delete" data-job="${job.job_id}" title="Xóa">Xóa</button>` : "";
   const refreshTikTok = job.tiktok_publish_id && !["PUBLISH_COMPLETE", "FAILED"].includes(job.tiktok_publish_status) ? `<button data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok">TikTok</button>` : "";
-  return downloads + refreshTikTok + cancel + retry + remove;
+  const review = job.status === "completed" && job.video_url ? `<button data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="tiktok-review-action">Duyệt đăng</button>` : "";
+  return review + downloads + refreshTikTok + cancel + retry + remove;
 }
 
 function eligibleJobs(action) {
@@ -630,6 +655,10 @@ async function loadJobs() {
 }
 
 async function jobAction(action, jobId) {
+  if (action === "tiktok-review") {
+    location.hash = "tiktok";
+    return tiktokWorkspace.openDraft(jobId);
+  }
   if (action === "delete" && !confirm("Xóa job và toàn bộ file kết quả?")) return;
   if (action === "cancel" && !confirm("Yêu cầu dừng job này?")) return;
   const method = action === "delete" ? "DELETE" : "POST";
@@ -738,18 +767,6 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
     toast("Đã xóa phiên đăng nhập Douyin");
   } catch (error) { toast(error.message, true); }
 });
-$("#tiktokConnectButton").addEventListener("click", connectTikTok);
-$("#tiktokDisconnectButton").addEventListener("click", async () => {
-  try {
-    await requestJson("/api/v1/tiktok-auth", { method: "DELETE" });
-    $("#tiktokPublishMode").value = "off";
-    syncTikTokSchedule();
-    await refreshTikTokAuthStatus();
-    toast("Đã ngắt kết nối TikTok");
-  } catch (error) { toast(error.message, true); }
-});
-$("#tiktokPublishMode").addEventListener("change", () => syncTikTokSchedule({ setDefault: true }));
-$("#tiktokPublishAtLocal").addEventListener("input", () => syncTikTokSchedule());
 $("#mode").addEventListener("change", updateFormSummary);
 [$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
@@ -771,6 +788,11 @@ $("#jobsList").addEventListener("click", event => {
   if (dismissUpload) {
     state.pendingUploads = state.pendingUploads.filter(item => item.id !== dismissUpload.dataset.uploadDismiss);
     renderJobDashboard();
+    return;
+  }
+  const download = event.target.closest("[data-download-url]");
+  if (download) {
+    saveDownload(download.dataset.downloadUrl, download.dataset.downloadName, download);
     return;
   }
   const target = event.target.closest("[data-action]");
@@ -796,8 +818,8 @@ window.addEventListener("beforeunload", event => {
   event.preventDefault();
   event.returnValue = "";
 });
+const tiktokWorkspace = createTikTokWorkspace({ requestJson, toast });
 updateFormSummary();
-syncTikTokSchedule();
 renderFiles();
 showView();
 const oauthParams = new URLSearchParams(location.search);
