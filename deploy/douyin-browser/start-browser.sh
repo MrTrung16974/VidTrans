@@ -82,6 +82,9 @@ chromium \
     --disable-dev-shm-usage \
     --no-first-run \
     --no-default-browser-check \
+    --disable-blink-features=AutomationControlled \
+    --disable-infobars \
+    --test-type \
     --password-store=basic \
     --lang="${BROWSER_LANGUAGE:-zh-CN}" \
     --force-device-scale-factor=1 \
