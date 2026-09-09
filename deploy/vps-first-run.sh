@@ -28,10 +28,7 @@ if [[ -f "$STATE_FILE" && "$FORCE_SETUP" -eq 0 ]]; then
     printf '%s\n' "The VPS marker exists but generated configuration is incomplete; repairing setup."
 fi
 
-if [[ "$(uname -s)" != "Linux" ]]; then
-    printf '%s\n' "VPS setup must run on the target Linux server, not on the development machine." >&2
-    exit 1
-fi
+# Bỏ qua kiểm tra Linux để hỗ trợ Windows VPS qua Git Bash
 if ! docker compose version >/dev/null 2>&1; then
     printf '%s\n' "Docker Engine with the Compose plugin is required." >&2
     exit 1

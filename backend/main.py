@@ -2482,7 +2482,7 @@ def download_all_job_artifacts(job_id: str) -> FileResponse:
     if not artifacts:
         raise HTTPException(status_code=404, detail="job chưa có artifact để tải")
     archive_path = OUTPUT_DIR / f"{job_id}.artifacts.zip"
-    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
         for artifact in artifacts:
             archive.write(artifact, arcname=artifact.name)
     return FileResponse(archive_path, filename=archive_path.name)

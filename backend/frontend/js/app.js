@@ -528,11 +528,15 @@ async function submitBatch(event) {
 
 function jobActions(job) {
   const terminal = ["completed", "failed", "cancelled"].includes(job.status);
-  const downloadUrl = job.download_all_url || job.video_url;
-  const downloadName = job.download_all_url ? `${job.job_id}.artifacts.zip` : (job.output_video || `${job.job_id}.mp4`);
-  const downloadLabel = job.download_all_url ? "ZIP" : "Tải";
-  const downloadTitle = job.download_all_url ? "Chọn nơi lưu toàn bộ kết quả" : "Chọn nơi lưu video";
-  const downloads = downloadUrl ? `<button type="button" data-download-url="${escapeHtml(downloadUrl)}" data-download-name="${escapeHtml(downloadName)}" title="${downloadTitle}">${downloadLabel}</button>` : "";
+  let downloads = "";
+  if (job.video_url) {
+    const videoName = job.output_video || `${job.job_id}.mp4`;
+    downloads += `<button type="button" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Chọn nơi lưu video">Video</button>`;
+  }
+  if (job.download_all_url) {
+    const zipName = `${job.job_id}.artifacts.zip`;
+    downloads += (downloads ? " " : "") + `<button type="button" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Chọn nơi lưu toàn bộ kết quả">ZIP</button>`;
+  }
   const cancel = ["queued", "scheduled", "processing", "cancelling"].includes(job.status) ? `<button data-action="cancel" data-job="${job.job_id}" title="Hủy">Hủy</button>` : "";
   const retry = terminal ? `<button data-action="retry" data-job="${job.job_id}" title="Chạy lại">Chạy lại</button>` : "";
   const remove = terminal ? `<button data-action="delete" data-job="${job.job_id}" title="Xóa">Xóa</button>` : "";
