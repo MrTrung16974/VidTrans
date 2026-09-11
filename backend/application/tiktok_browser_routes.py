@@ -45,6 +45,10 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
     def open_studio():
         return call(manager.open_studio)
 
+    @router.post("/tiktok-browser/login")
+    def restart_login():
+        return call(manager.restart_login)
+
     @router.delete("/tiktok-browser/session")
     def logout():
         return call(manager.logout)

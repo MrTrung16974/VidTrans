@@ -19,6 +19,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokSetupStatus').textContent = result.available ? 'Trình duyệt sẵn sàng. Duyệt video tại khu vực Đăng TikTok.' : 'Kết nối tài khoản tại khu vực Đăng TikTok sau khi trình duyệt sẵn sàng.';
     $('#tiktokBrowserOpen').disabled = !result.available || busyStates.has(result.attempt?.state);
     $('#tiktokBrowserCheck').disabled = !result.available;
+    $('#tiktokBrowserLoginRetry').disabled = !result.available || Boolean(result.attempt);
     $('#tiktokBrowserLogout').disabled = !result.available || Boolean(result.attempt);
     const frame = $('#tiktokBrowserFrame');
     const external = $('#tiktokBrowserExternal');
@@ -148,6 +149,11 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     await refresh();
   });
   $('#tiktokBrowserCheck').addEventListener('click', () => refresh(true));
+  $('#tiktokBrowserLoginRetry').addEventListener('click', async () => {
+    $('#tiktokBrowserLoginRetry').disabled = true;
+    await browserAction('login');
+    await refresh();
+  });
   $('#tiktokBrowserLogout').addEventListener('click', () => {
     if (confirm('Xóa phiên đăng nhập TikTok của trình duyệt này?')) browserAction('session', 'DELETE');
   });

@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -38,6 +38,26 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertFalse(has_session([{**cookie, 'name': 'csrf_token'}]))
         self.assertFalse(is_tiktok_url('https://www.tiktok.com.attacker.test/tiktokstudio/upload'))
         self.assertFalse(is_tiktok_url('http://www.tiktok.com/tiktokstudio/upload'))
+
+    def test_status_detects_qr_login_without_manual_check(self):
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        with patch('urllib.request.urlopen', return_value=response), patch.object(self.manager, '_with_browser', return_value=True) as check:
+            result = self.manager.status()
+            self.assertTrue(result['session_present'])
+            self.manager.status()
+            self.assertEqual(check.call_count, 1)
+            self.manager.status(refresh=True)
+            self.assertEqual(check.call_count, 2)
+
+    def test_check_transport_error_does_not_report_logout(self):
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        self.manager._session_present = True
+        with patch('urllib.request.urlopen', return_value=response), patch.object(self.manager, '_with_browser', side_effect=RuntimeError('connection')):
+            result = self.manager.status(refresh=True)
+            self.assertTrue(result['session_present'])
+            self.assertTrue(result['session_check_error'])
 
     def test_double_click_and_concurrent_jobs_do_not_upload_twice(self):
         started, resume = threading.Event(), threading.Event()

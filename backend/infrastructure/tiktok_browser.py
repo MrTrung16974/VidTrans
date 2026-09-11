@@ -54,6 +54,8 @@ class TikTokBrowserManager:
         self._lock = threading.RLock()
         self._browser_lock = threading.Lock()
         self._session_present = False
+        self._session_checked_at = 0.0
+        self._session_check_error = False
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, state TEXT NOT NULL, caption TEXT NOT NULL, message TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_browser ON attempts(active) WHERE active=1")
@@ -103,23 +105,31 @@ class TikTokBrowserManager:
                 available = response.status == 200
         except (OSError, ValueError):
             pass
-        if refresh and available and self._browser_lock.acquire(blocking=False):
+        # Poll real cookies after QR confirmation, with bounded CDP traffic.
+        check_due = refresh or time.monotonic() - self._session_checked_at >= 5
+        if check_due and available and self._browser_lock.acquire(blocking=False):
             try:
                 self._session_present = self._with_browser(lambda b: has_session(b.contexts[0].cookies()))
+                self._session_check_error = False
             except Exception:
-                self._session_present = False
+                # A transport failure does not mean TikTok rejected the login.
+                self._session_check_error = True
             finally:
+                self._session_checked_at = time.monotonic()
                 self._browser_lock.release()
         if not available:
             self._session_present = False
         return {
             "available": available,
             "session_present": self._session_present,
+            "session_check_error": self._session_check_error,
             "browser_url": self.public_url if available else None,
             "attempt": self.active_attempt(),
             "message": "Trình duyệt chưa sẵn sàng" if not available else (
+                "Chưa kiểm tra được phiên TikTok. Bấm Kiểm tra phiên để thử lại; đây không phải thông báo đăng nhập thất bại."
+                if self._session_check_error else
                 "Đã tìm thấy phiên đăng nhập · Kiểm tra tài khoản trong TikTok Studio" if self._session_present
-                else "Mở TikTok Studio để đăng nhập và kiểm tra tài khoản"
+                else "Chưa thấy phiên TikTok. Quét QR và xác nhận trên điện thoại; trạng thái sẽ tự cập nhật."
             ),
         }
 
@@ -143,6 +153,25 @@ class TikTokBrowserManager:
             raise TikTokBrowserError("Không mở được trình duyệt TikTok. Kiểm tra dịch vụ tiktok-browser") from exc
         finally:
             self._browser_lock.release()
+        return self.status(refresh=True)
+
+    def restart_login(self):
+        """Open TikTok's login chooser without deleting the user's profile."""
+        with self._lock:
+            if self.active_attempt():
+                raise TikTokBrowserError("Hãy kết thúc lượt chuẩn bị bài hiện tại trước khi mở lại đăng nhập")
+            if not self._browser_lock.acquire(blocking=False):
+                raise TikTokBrowserError("Trình duyệt đang bận. Hãy thử lại sau")
+            try:
+                def open_login(browser):
+                    page = self._page(browser)
+                    page.goto("https://www.tiktok.com/login", wait_until="domcontentloaded", timeout=30_000)
+                    page.bring_to_front()
+                self._with_browser(open_login)
+            except Exception as exc:
+                raise TikTokBrowserError("Không mở được trang đăng nhập TikTok. Kiểm tra kết nối trình duyệt trên máy chủ") from exc
+            finally:
+                self._browser_lock.release()
         return self.status(refresh=True)
 
     def logout(self):
