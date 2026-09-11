@@ -8,7 +8,6 @@ import subprocess
 import textwrap
 import threading
 import uuid
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -22,6 +21,8 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
+from starlette.background import BackgroundTask
+from infrastructure.artifact_archive import build_artifact_archive
 
 from app.config import AppSettings
 from application.job_scheduler import JobScheduler
@@ -2481,11 +2482,14 @@ def download_all_job_artifacts(job_id: str) -> FileResponse:
             artifacts.append(target)
     if not artifacts:
         raise HTTPException(status_code=404, detail="job chưa có artifact để tải")
-    archive_path = OUTPUT_DIR / f"{job_id}.artifacts.zip"
-    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
-        for artifact in artifacts:
-            archive.write(artifact, arcname=artifact.name)
-    return FileResponse(archive_path, filename=archive_path.name)
+    archive_path = build_artifact_archive(artifacts, WORK_DIR)
+    return FileResponse(
+        archive_path,
+        filename=f"{job_id}.artifacts.zip",
+        media_type="application/zip",
+        headers={"Cache-Control": "no-store"},
+        background=BackgroundTask(archive_path.unlink, missing_ok=True),
+    )
 
 
 @app.get("/api/v1/batches")

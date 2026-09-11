@@ -56,52 +56,10 @@ function startBrowserDownload(url, filename) {
 
 async function saveDownload(url, suggestedName, trigger) {
   const filename = safeDownloadName(suggestedName);
-
-  // Chrome/Edge trên localhost mở Save As ngay trong thao tác click của người dùng.
-  // Nếu trình duyệt không hỗ trợ File System Access API, giữ cơ chế tải mặc định.
-  if (typeof window.showSaveFilePicker !== "function") {
-    startBrowserDownload(url, filename);
-    toast("Trình duyệt sẽ tải file theo thiết lập thư mục tải xuống hiện tại.");
-    return;
-  }
-
-  let fileHandle;
-  try {
-    fileHandle = await window.showSaveFilePicker({ suggestedName: filename });
-  } catch (error) {
-    if (error?.name === "AbortError") return;
-    startBrowserDownload(url, filename);
-    toast("Không mở được hộp chọn nơi lưu; đã chuyển sang tải xuống mặc định.", true);
-    return;
-  }
-
-  if (trigger) trigger.disabled = true;
-  try {
-    const response = await apiFetch(url);
-    if (response.status === 401) lockApplication();
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.detail || `Không tải được file (HTTP ${response.status})`);
-    }
-
-    const writable = await fileHandle.createWritable();
-    try {
-      if (response.body && typeof response.body.pipeTo === "function") {
-        await response.body.pipeTo(writable);
-      } else {
-        await writable.write(await response.blob());
-        await writable.close();
-      }
-    } catch (error) {
-      await writable.abort().catch(() => {});
-      throw error;
-    }
-    toast(`Đã lưu ${filename}`);
-  } catch (error) {
-    toast(error.message || "Không thể lưu file", true);
-  } finally {
-    if (trigger) trigger.disabled = false;
-  }
+  // Let the browser own the transfer so navigation does not interrupt a page
+  // stream or leave a zero-byte Save File Picker destination and .crswap file.
+  startBrowserDownload(url, filename);
+  toast("Đã yêu cầu tải file. Xem tiến độ trong mục Tải xuống của trình duyệt; chờ tải xong trước khi mở.");
 }
 
 function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", isError = true) {
