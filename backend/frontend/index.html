@@ -9,7 +9,7 @@
     <title>VidTrans Studio</title>
     <link rel="icon" type="image/svg+xml" href="/assets/vidtrans-mark.svg?v=20260901-1" />
     <link rel="shortcut icon" href="/assets/vidtrans-mark.svg?v=20260901-1" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20260906-2" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260913-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -128,7 +128,7 @@
                 <div class="field-grid">
                   <label class="field"><span>Gợi ý nội dung đăng</span><select id="generateTikTokPost" name="generate_tiktok_post"><option value="true">Tạo caption và hashtag</option><option value="false">Tôi sẽ tự viết</option></select></label>
                   <label class="field"><span>Độ dài tóm tắt tối đa</span><input type="number" name="tiktok_max_summary_chars" min="80" max="1500" step="10" value="350" /></label>
-                  <label class="field"><span>Số hashtag tối đa</span><input type="number" name="tiktok_hashtag_count" min="0" max="12" value="6" /></label>
+                  <label class="field"><span>Số hashtag tối đa</span><input type="number" name="tiktok_hashtag_count" min="0" max="5" value="5" /></label>
                   <input type="hidden" name="auto_publish_tiktok" value="false" />
                 </div>
                 <div class="tiktok-connect-strip"><div><strong>TikTok Studio</strong><p id="tiktokSetupStatus">Đăng nhập trực tiếp bằng tài khoản TikTok của bạn.</p></div><a class="button secondary" href="#tiktok">Mở khu vực đăng →</a></div>
@@ -185,7 +185,12 @@
                 <p id="tiktokDraftName" class="tiktok-filename"></p>
                 <label class="field" for="tiktokCaption">Caption và hashtag</label>
                 <textarea id="tiktokCaption" rows="6" maxlength="2200" placeholder="Viết nội dung cho video của bạn…" aria-describedby="tiktokCaptionCount"></textarea>
-                <div class="tiktok-caption-meta"><button id="tiktokCopyCaption" type="button" class="tiktok-text-button">Sao chép caption</button><span id="tiktokCaptionCount">0 / 2.200</span></div>
+                <div class="tiktok-caption-meta"><button id="tiktokSuggestCaption" type="button" class="tiktok-text-button">✦ Gợi ý caption</button><button id="tiktokCopyCaption" type="button" class="tiktok-text-button">Sao chép caption</button><span id="tiktokCaptionCount">0 / 2.200</span></div>
+                <div id="tiktokCaptionSuggestion" class="tiktok-caption-suggestion is-hidden" aria-live="polite">
+                  <strong>Gợi ý từ bản dịch</strong><p id="tiktokCaptionSuggestionText"></p>
+                  <small>Đọc lại để bảo đảm đúng ý video trước khi sử dụng.</small>
+                  <div><button id="tiktokApplyCaption" type="button" class="button secondary">Dùng caption này</button><button id="tiktokDismissCaption" type="button" class="tiktok-text-button">Giữ bản hiện tại</button></div>
+                </div>
                 <p id="tiktokPreviousAttempt" class="tiktok-notice is-hidden"></p>
                 <label class="tiktok-check"><input id="tiktokReviewConsent" type="checkbox" /><span>Tôi đã xem video, duyệt caption và kiểm tra đúng tài khoản trong TikTok Studio.</span></label>
                 <button id="tiktokPrepareButton" class="button primary full" type="button" disabled>Tải video và điền caption →</button>
@@ -255,6 +260,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20260911-2"></script>
+    <script type="module" src="/js/app.js?v=20260913-1"></script>
   </body>
 </html>

@@ -78,6 +78,18 @@ _STOP_WORDS = {
 }
 
 
+# Conservative phrase vocabulary: tags are emitted only when the exact phrase
+# appears in a usable translation. Ordering favors topics over generic themes.
+_HASHTAG_PHRASES = (
+    "nấu ăn", "ẩm thực", "công thức", "du lịch", "chăm sóc da", "trang điểm",
+    "thời trang", "tập luyện", "thể thao", "bóng đá", "sức khỏe", "dinh dưỡng",
+    "nuôi dạy con", "gia đình", "tình yêu", "tình bạn", "hôn nhân", "cha mẹ",
+    "học tập", "học tiếng trung", "công việc", "kinh doanh", "khởi nghiệp",
+    "phát triển bản thân", "kỷ luật", "kiên trì", "mục tiêu", "lựa chọn",
+    "cuộc sống", "cuộc đời", "tương lai", "thành công", "hạnh phúc",
+)
+
+
 @dataclass(frozen=True)
 class TikTokPost:
     title: str
@@ -87,7 +99,7 @@ class TikTokPost:
     keywords: list[str]
     hashtags: list[str]
     source_cues: int
-    generator: str = "local-extractive-v1"
+    generator: str = "local-extractive-v2"
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -162,7 +174,7 @@ def _unique_sentences(segments: Sequence[dict[str, Any]]) -> list[_Sentence]:
     seen: set[str] = set()
     for segment in segments:
         text = _clean_text(str(segment.get("text") or ""))
-        normalized = text.casefold()
+        normalized = " ".join(_tokenize(text))
         if not text or normalized in seen:
             continue
         seen.add(normalized)
@@ -180,7 +192,7 @@ def _unique_sentences(segments: Sequence[dict[str, Any]]) -> list[_Sentence]:
 class LocalExtractiveTikTokProvider:
     """Deterministic Vietnamese post generator without network dependencies."""
 
-    generator_name = "local-extractive-v1"
+    generator_name = "local-extractive-v2"
 
     def generate(
         self,
@@ -198,6 +210,11 @@ class LocalExtractiveTikTokProvider:
         if not sentences:
             raise ValueError("Cannot create TikTok content from an empty translation")
 
+        source_cues = len(sentences)
+        # Uncertain translations must not become confident marketing copy when
+        # usable translations exist. Keep the original cue count for metadata.
+        reliable = [sentence for sentence in sentences if not sentence.needs_review]
+        sentences = reliable or sentences
         frequencies = Counter(token for sentence in sentences for token in sentence.tokens)
         first_seen: dict[str, int] = {}
         for sentence in sentences:
@@ -213,7 +230,11 @@ class LocalExtractiveTikTokProvider:
             return ((lexical_score / length_penalty) + position_bonus) * review_factor
 
         ranked = sorted(sentences, key=lambda sentence: (-score(sentence), sentence.index))
-        hook_sentence = ranked[0]
+        # Favor complete, readable statements over clipped subtitle fragments.
+        readable = [sentence for sentence in ranked
+                    if 5 <= len(_tokenize(sentence.text)) <= 32
+                    and not re.match(r"^(?:và|nhưng|bởi vì|cho nên|vì vậy|sau đó)\b", sentence.text, re.I)]
+        hook_sentence = (readable or ranked)[0]
         hook = _truncate_at_word(hook_sentence.text, 110)
         title = _truncate_at_word(hook_sentence.text, 80)
 
@@ -240,17 +261,39 @@ class LocalExtractiveTikTokProvider:
         )
         keywords = ranked_keywords[:8]
 
-        hashtag_candidates = ["vietsub", "tiengtrung", *keywords]
-        hashtags: list[str] = []
-        if hashtag_count:
-            for candidate in hashtag_candidates:
-                hashtag = _ascii_hashtag(candidate)
-                if hashtag and hashtag not in hashtags:
-                    hashtags.append(hashtag)
-                if len(hashtags) >= hashtag_count:
-                    break
+        # Match meaningful Vietnamese phrases, never isolated syllables such
+        # as #quan or #trong, and never fill a quota with unrelated viral tags.
+        source_text = " " + " ".join(_tokenize(" ".join(sentence.text for sentence in sentences))) + " "
+        hashtags = []
+        for phrase in _HASHTAG_PHRASES:
+            if f" {phrase} " in source_text:
+                hashtags.append(_ascii_hashtag(phrase))
+        hashtags = list(dict.fromkeys(hashtags))[:min(hashtag_count, 5)]
 
-        caption_parts = [summary]
+        # Caption is its own short reading flow, not the four-sentence summary.
+        # Keep adjacent source context and do not invent clickbait or a CTA.
+        caption_limit = min(max_summary_chars, 350)
+        opening = hook_sentence
+        fitting = [sentence for sentence in sentences
+                   if len(_ensure_sentence_end(sentence.text)) <= caption_limit
+                   and len(_tokenize(sentence.text)) >= 5]
+        if len(_ensure_sentence_end(opening.text)) > caption_limit and fitting:
+            opening = fitting[0]
+        opening_text = _truncate_at_word(_ensure_sentence_end(opening.text), caption_limit)
+        caption_parts = [opening_text]
+        for sentence in sentences:
+            if sentence.index <= opening.index:
+                continue
+            overlap = len(set(opening.tokens) & set(sentence.tokens)) / max(1, len(set(sentence.tokens)))
+            if overlap >= 0.75 or len(_tokenize(sentence.text)) < 5:
+                continue
+            detail = _ensure_sentence_end(sentence.text)
+            if len(opening_text) + 2 + len(detail) <= caption_limit:
+                caption_parts.append(detail)
+            # Do not jump over context to assemble unrelated dialogue lines.
+            break
+        hook = _truncate_at_word(opening.text, 110)
+        title = _truncate_at_word(opening.text, 80)
         if hashtags:
             caption_parts.append(" ".join(hashtags))
         caption = "\n\n".join(caption_parts)
@@ -262,7 +305,7 @@ class LocalExtractiveTikTokProvider:
             caption=caption,
             keywords=keywords,
             hashtags=hashtags,
-            source_cues=len(sentences),
+            source_cues=source_cues,
             generator=self.generator_name,
         )
 

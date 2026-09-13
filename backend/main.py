@@ -51,7 +51,7 @@ from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherErro
 from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
-from pipeline.translation import translate_segments
+from pipeline.translation import filter_meaningful_segments, translate_segments
 from pipeline.tts_timing import bounded_tempo, schedule_voice_segments
 from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
 
@@ -334,14 +334,18 @@ def find_font_file(preferred_name: str) -> Optional[str]:
 
 def write_srt(segments: list[dict[str, Any]], output_path: Path) -> None:
     blocks = []
-    for index, segment in enumerate(segments, start=1):
+    srt_index = 0
+    for segment in segments:
+        if segment.get("skip_subtitle"):
+            continue
         text = wrap_text(segment["text"])
         if not text:
             continue
+        srt_index += 1
         blocks.append(
             "\n".join(
                 [
-                    str(index),
+                    str(srt_index),
                     f"{format_time(segment.get('tts_start', segment['start']))} --> "
                     f"{format_time(segment.get('tts_end', segment['end']))}",
                     text,
@@ -380,6 +384,8 @@ def write_ass(
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
     ]
     for segment in segments:
+        if segment.get("skip_subtitle"):
+            continue
         render_start = segment.get("tts_start", segment["start"])
         render_end = segment.get("tts_end", segment["end"])
         layout = segment.get("subtitle_layout") if isinstance(segment.get("subtitle_layout"), dict) else {}
@@ -589,23 +595,27 @@ def synthesize_tts_segments(
     tts_dir.mkdir(parents=True, exist_ok=True)
     rate_percent = int((speech_rate - 1.0) * 100)
     base_rate_string = f"{rate_percent:+d}%"
-    
+
     import concurrent.futures
     import threading
     completed_count = 0
-    total_valid = sum(1 for s in segments if " ".join(s["text"].split()))
+    total_valid = sum(1 for s in segments if not s.get("skip_tts") and " ".join(s["text"].split()))
     progress_lock = threading.Lock()
-    
+
     def process_segment(index: int, segment: dict[str, Any]) -> Path | None:
         nonlocal completed_count
         if job_id:
             ensure_job_active(job_id)
-        
+
+        # Skip non-meaningful segments (filler words, hallucinations, etc.)
+        if segment.get("skip_tts"):
+            return None
+
         # Clean text
         raw_text = " ".join(segment["text"].split())
         if not raw_text:
             return None
-            
+
         # Optimize Translation text pacing using Original Word Timestamps
         # If the original Chinese text had long gaps between words, we insert commas
         # in the translated text to force edge-tts to pause naturally.
@@ -924,6 +934,8 @@ def build_drawtext_filter(segments: list[dict[str, Any]], subtitle_style: dict[s
     margin_v = subtitle_style.get("margin_v", 30)
     filters = []
     for segment in segments:
+        if segment.get("skip_subtitle"):
+            continue
         layout = segment.get("subtitle_layout") if isinstance(segment.get("subtitle_layout"), dict) else {}
         text = str(layout.get("render_text") or wrap_text(segment["text"]))
         if not text:
@@ -994,7 +1006,10 @@ def burn_subtitles_with_pillow(
 
     for index, frame_path in enumerate(frame_paths):
         timestamp = index / fps
-        active = next((seg for seg in segments if seg["start"] <= timestamp <= seg["end"]), None)
+        active = next(
+            (seg for seg in segments if not seg.get("skip_subtitle") and seg["start"] <= timestamp <= seg["end"]),
+            None,
+        )
         output_frame = rendered_dir / frame_path.name
         if not active:
             shutil.copy2(frame_path, output_frame)
@@ -1284,6 +1299,18 @@ def process_video(
                 "Check the OCR subtitle region or try a larger Whisper model."
             )
 
+        # Filter out non-meaningful segments (filler words, noise, hallucinations)
+        # before translation so we don't waste API calls and TTS on them.
+        segments = filter_meaningful_segments(segments)
+        meaningful_count = sum(1 for s in segments if not s.get("skip_subtitle"))
+        skipped_count = len(segments) - meaningful_count
+        if skipped_count:
+            logger.info(
+                "Filtered %d non-meaningful segment(s); %d remain for translation",
+                skipped_count,
+                meaningful_count,
+            )
+
         transcript_path = work_dir / "transcript.json"
         transcript_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -1293,6 +1320,7 @@ def process_video(
             progress=0.4,
             subtitle_source_used="ocr" if ocr_segments else "speech",
             review_cues=sum(1 for segment in segments if segment.get("needs_review")),
+            skipped_cues=skipped_count,
         )
         ensure_job_active(job_id)
         translated_segments = translate_segments(segments)

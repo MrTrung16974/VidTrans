@@ -197,6 +197,28 @@ class TikTokBrowserRouteTests(unittest.TestCase):
                 self.assertEqual(self.client.post('/api/v1/jobs/good/tiktok-browser/prepare', data=data).status_code, 422)
             prepare.assert_not_called()
 
+    def test_caption_suggestion_uses_translation_without_changing_artifacts(self):
+        translation = self.output / 'translation.json'
+        translation.write_text(json.dumps({'segments': [
+            {'text': 'Kiên trì giúp bạn tiến gần hơn tới mục tiêu.'},
+            {'text': 'Du lịch vòng quanh thế giới.', 'needs_review': True},
+        ]}))
+        self.jobs['good']['translation_file'] = translation.name
+        original = (self.output / 'post.json').read_bytes()
+        response = self.client.post('/api/v1/jobs/good/tiktok-caption')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('#kientri', response.json()['caption'])
+        self.assertNotIn('#dulich', response.json()['caption'])
+        self.assertEqual((self.output / 'post.json').read_bytes(), original)
+        self.assertIsNone(self.manager.active_attempt())
+
+    def test_caption_suggestion_rejects_missing_or_unreliable_translation(self):
+        self.assertEqual(self.client.post('/api/v1/jobs/good/tiktok-caption').status_code, 422)
+        translation = self.output / 'translation.json'
+        self.jobs['good']['translation_file'] = translation.name
+        translation.write_text(json.dumps({'segments': [{'text': 'Chưa chắc chắn', 'needs_review': True}]}))
+        self.assertEqual(self.client.post('/api/v1/jobs/good/tiktok-caption').status_code, 422)
+
     def test_prepares_only_the_jobs_output_path(self):
         with patch.object(self.manager, 'prepare', return_value={'state':'queued'}) as prepare:
             response = self.client.post('/api/v1/jobs/good/tiktok-browser/prepare', data={'caption':'caption','reviewed':'true','video_path':'/secret'})

@@ -1,6 +1,7 @@
 export function createTikTokWorkspace({ requestJson, toast }) {
   const $ = selector => document.querySelector(selector);
   let status = null, draft = null, timer = null, refreshing = false, loading = false, submitting = false;
+  let suggestion = null, suggesting = false;
   let requestVersion = 0, locked = false, attemptId = null;
   const edits = new Map();
   const busyStates = new Set(['queued', 'opening', 'uploading']);
@@ -10,6 +11,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     const caption = $('#tiktokCaption').value;
     $('#tiktokCaptionCount').textContent = `${caption.length.toLocaleString('vi-VN')} / 2.200`;
     $('#tiktokPrepareButton').disabled = locked || submitting || loading || !draft || !status?.available || Boolean(status?.attempt) || !caption.trim() || caption.length > 2200 || !$('#tiktokReviewConsent').checked;
+    $('#tiktokSuggestCaption').disabled = locked || loading || suggesting || !draft || Boolean(status?.attempt);
     $('#tiktokResolveButton').disabled = !$('#tiktokResolveConsent').checked;
   }
 
@@ -89,6 +91,8 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   async function openDraft(jobId) {
     if (draft) edits.set(draft.job_id, $('#tiktokCaption').value);
     const version = ++requestVersion;
+    suggestion = null;
+    $('#tiktokCaptionSuggestion').classList.add('is-hidden');
     loading = true;
     $('#tiktokReviewConsent').checked = false;
     controls();
@@ -172,6 +176,29 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   $('#tiktokCaption').addEventListener('input', () => { $('#tiktokReviewConsent').checked = false; controls(); });
   $('#tiktokReviewConsent').addEventListener('change', controls);
   $('#tiktokPrepareButton').addEventListener('click', prepare);
+  $('#tiktokSuggestCaption').addEventListener('click', async () => {
+    if (!draft || suggesting) return;
+    const version = requestVersion;
+    suggesting = true; controls();
+    $('#tiktokSuggestCaption').textContent = 'Đang gợi ý…';
+    try {
+      const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}/tiktok-caption`, { method: 'POST' });
+      if (locked || version !== requestVersion) return;
+      suggestion = result.caption;
+      $('#tiktokCaptionSuggestionText').textContent = suggestion;
+      $('#tiktokCaptionSuggestion').classList.remove('is-hidden');
+    } catch (error) { if (!locked && version === requestVersion) toast(error.message, true); }
+    finally { suggesting = false; $('#tiktokSuggestCaption').textContent = '✦ Gợi ý caption'; controls(); }
+  });
+  $('#tiktokApplyCaption').addEventListener('click', () => {
+    if (!draft || !suggestion || status?.attempt) return;
+    $('#tiktokCaption').value = suggestion;
+    edits.set(draft.job_id, suggestion);
+    $('#tiktokReviewConsent').checked = false;
+    $('#tiktokCaptionSuggestion').classList.add('is-hidden');
+    controls();
+  });
+  $('#tiktokDismissCaption').addEventListener('click', () => $('#tiktokCaptionSuggestion').classList.add('is-hidden'));
   $('#tiktokCopyCaption').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText($('#tiktokCaption').value); toast('Đã sao chép caption'); }
     catch { $('#tiktokCaption').select(); toast('Hãy sao chép phần caption đã chọn.'); }

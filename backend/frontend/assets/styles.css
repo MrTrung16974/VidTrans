@@ -449,3 +449,11 @@ a { color: inherit; text-decoration: none; }
   .tiktok-browser-stage { height: 520px; }
   #tiktokVideoPreview { height: 340px; }
 }
+
+.tiktok-caption-meta { flex-wrap: wrap; }
+.tiktok-caption-suggestion { margin-top: 14px; padding: 16px; border: 1px solid #cfe4df; border-radius: 12px; background: #f1f8f6; }
+.tiktok-caption-suggestion > strong { font-size: .8rem; color: var(--teal); }
+.tiktok-caption-suggestion > p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: .83rem; }
+.tiktok-caption-suggestion > small { color: var(--muted); line-height: 1.6; display: block; }
+.tiktok-caption-suggestion > div { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.tiktok-caption-suggestion .button { font-size: .75rem; }

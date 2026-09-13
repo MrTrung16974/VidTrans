@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException
 
+from pipeline.tiktok import LocalExtractiveTikTokProvider
 from infrastructure.tiktok_browser import TikTokBrowserError, TikTokBrowserManager
 
 
@@ -81,6 +82,25 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
             caption = latest["caption"]
         return {"job_id": job_id, "filename": job.get("filename") or video.name,
                 "video_url": f"/download/{quote(video.name)}", "caption": caption, "latest_attempt": latest}
+
+    @router.post("/jobs/{job_id}/tiktok-caption")
+    def suggest_caption(job_id: str):
+        job, _ = ready_job(job_id)
+        if not job.get("translation_file"):
+            raise HTTPException(422, "Video chưa có bản dịch để gợi ý caption. Bạn có thể viết caption trực tiếp")
+        try:
+            payload = json.loads(artifact(job["translation_file"]).read_text(encoding="utf-8"))
+            segments = payload.get("segments") if isinstance(payload, dict) else None
+            if not isinstance(segments, list):
+                raise ValueError("Missing segments")
+            usable = [segment for segment in segments if isinstance(segment, dict)
+                      and not segment.get("needs_review")
+                      and segment.get("translation_status") != "source_fallback"]
+            post = LocalExtractiveTikTokProvider().generate(usable, max_summary_chars=280, hashtag_count=5)
+        except (OSError, ValueError, TypeError) as exc:
+            raise HTTPException(422, "Bản dịch chưa có nội dung đủ tin cậy. Hãy kiểm tra bản dịch hoặc tự chỉnh caption") from exc
+        # Preview only: never overwrite the user's caption or a prepared post.
+        return {"caption": post.caption, "generator": post.generator}
 
     @router.post("/jobs/{job_id}/tiktok-browser/prepare", status_code=202)
     def prepare(job_id: str, caption: str = Form(..., min_length=1, max_length=2200), reviewed: bool = Form(...)):

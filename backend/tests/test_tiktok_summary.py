@@ -26,9 +26,9 @@ class TikTokSummaryTests(unittest.TestCase):
         self.assertTrue(first.hook)
         self.assertLessEqual(len(first.summary), 220)
         self.assertEqual(first.source_cues, 4)
-        self.assertEqual(len(first.hashtags), 6)
-        self.assertIn("#vietsub", first.hashtags)
-        self.assertIn("#tiengtrung", first.hashtags)
+        self.assertLessEqual(len(first.hashtags), 5)
+        self.assertIn("#luachon", first.hashtags)
+        self.assertNotIn("#tiengtrung", first.hashtags)
 
     def test_low_confidence_cue_is_deprioritized_for_hook(self) -> None:
         post = self.provider.generate(
@@ -62,9 +62,48 @@ class TikTokSummaryTests(unittest.TestCase):
             rendered = text_path.read_text(encoding="utf-8")
 
         self.assertEqual(payload["version"], 1)
-        self.assertEqual(payload["generator"], "local-extractive-v1")
+        self.assertEqual(payload["generator"], "local-extractive-v2")
         self.assertEqual(payload["caption"], post.caption)
         self.assertIn(post.summary, rendered)
+
+    def test_caption_is_short_and_does_not_repeat_the_hook(self):
+        post = self.provider.generate(self.segments, max_summary_chars=350, hashtag_count=5)
+        paragraphs = post.caption.split("\n\n")
+        self.assertLessEqual(len(paragraphs), 3)
+        self.assertEqual(len(paragraphs), len(set(paragraphs)))
+        self.assertLessEqual(len("\n\n".join(p for p in paragraphs if not p.startswith("#"))), 350)
+
+    def test_tags_use_relevant_phrases_not_syllables_or_generic_tags(self):
+        post = self.provider.generate([
+            {"text": "Công thức nấu ăn này giúp cả gia đình có bữa tối ngon miệng."},
+            {"text": "Cho cà chua vào nồi rồi đảo đều trong hai phút."},
+        ], hashtag_count=12)
+        self.assertIn("#nauan", post.hashtags)
+        self.assertIn("#congthuc", post.hashtags)
+        self.assertNotIn("#cho", post.hashtags)
+        self.assertNotIn("#tiengtrung", post.hashtags)
+        self.assertNotIn("#fyp", post.hashtags)
+        self.assertLessEqual(len(post.hashtags), 5)
+
+    def test_unknown_topic_does_not_get_unrelated_hashtags(self):
+        post = self.provider.generate([{"text": "Ốc vít cần được siết lại bằng dụng cụ chuyên dụng."}])
+        self.assertEqual(post.hashtags, [])
+
+    def test_review_flagged_content_does_not_enter_caption_or_tags(self):
+        post = self.provider.generate([
+            {"text": "Du lịch du lịch du lịch du lịch du lịch.", "needs_review": True},
+            {"text": "Công thức nấu ăn này rất dễ thực hiện."},
+        ])
+        self.assertNotIn("du lịch", post.caption.lower())
+        self.assertNotIn("#dulich", post.hashtags)
+        self.assertEqual(post.source_cues, 2)
+
+    def test_deduplicates_punctuation_variants(self):
+        post = self.provider.generate([
+            {"text": "Kiên trì giúp bạn tiến gần hơn tới mục tiêu."},
+            {"text": "Kiên trì giúp bạn tiến gần hơn tới mục tiêu!"},
+        ])
+        self.assertEqual(post.source_cues, 1)
 
     def test_rejects_empty_content(self) -> None:
         with self.assertRaisesRegex(ValueError, "empty translation"):
