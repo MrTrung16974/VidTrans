@@ -85,6 +85,20 @@ class DouyinBrowserAuthManager:
         except (OSError, ValueError, urllib.error.URLError):
             return False
 
+    # JavaScript injected into every page to remove Chromium automation fingerprints.
+    # navigator.webdriver is the primary signal TikTok/Douyin check before allowing QR login.
+    _STEALTH_JS = """
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['vi-VN', 'vi', 'zh-CN', 'zh', 'en-US', 'en']});
+        window.chrome = {runtime: {}};
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) =>
+            parameters.name === 'notifications'
+                ? Promise.resolve({state: Notification.permission})
+                : originalQuery(parameters);
+    """
+
     def _with_browser(self, operation: Callable[[Any], Any]) -> Any:
         try:
             from playwright.sync_api import sync_playwright
@@ -106,6 +120,20 @@ class DouyinBrowserAuthManager:
             browser = playwright.chromium.connect_over_cdp(ws_url, timeout=8_000)
             if not browser.contexts:
                 raise RuntimeError("Chromium chưa tạo browser context")
+
+            # Inject stealth script on every new document to prevent bot detection.
+            for context in browser.contexts:
+                try:
+                    context.add_init_script(self._STEALTH_JS)
+                except Exception:
+                    pass  # Non-fatal: some CDP contexts don't support this
+                # Also apply immediately to already-open pages
+                for page in context.pages:
+                    try:
+                        page.evaluate(self._STEALTH_JS)
+                    except Exception:
+                        pass
+
             # Do not call browser.close(): over CDP that would terminate the
             # long-lived sidecar browser. Stopping Playwright only disconnects.
             return operation(browser)

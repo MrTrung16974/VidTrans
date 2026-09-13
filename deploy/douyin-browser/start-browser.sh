@@ -76,6 +76,17 @@ FLUXEOF
 fluxbox -display "$DISPLAY" >/tmp/fluxbox.log 2>&1 &
 fluxbox_pid=$!
 
+# Build optional proxy flag. Supported formats:
+#   socks5://user:pass@host:port   — SOCKS5 proxy (recommended for TikTok)
+#   http://host:port               — HTTP/HTTPS proxy
+#   socks4://host:port             — SOCKS4 proxy
+# Leave BROWSER_PROXY_SERVER empty to connect directly.
+proxy_args=""
+if [ -n "${BROWSER_PROXY_SERVER:-}" ]; then
+    echo "startup: routing Chromium traffic through proxy: ${BROWSER_PROXY_SERVER}"
+    proxy_args="--proxy-server=${BROWSER_PROXY_SERVER}"
+fi
+
 chromium \
     --no-sandbox \
     --disable-setuid-sandbox \
@@ -83,13 +94,22 @@ chromium \
     --no-first-run \
     --no-default-browser-check \
     --disable-blink-features=AutomationControlled \
+    --disable-features=IsolateOrigins,site-per-process \
     --disable-infobars \
-    --test-type \
     --password-store=basic \
     --lang="${BROWSER_LANGUAGE:-zh-CN}" \
     --force-device-scale-factor=1 \
     --window-size=1024,720 \
     --window-position=0,0 \
+    --user-agent="${BROWSER_USER_AGENT:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36}" \
+    --disable-extensions-except= \
+    --disable-component-extensions-with-background-pages \
+    --disable-background-networking \
+    --disable-client-side-phishing-detection \
+    --disable-sync \
+    --metrics-recording-only \
+    --no-report-upload \
+    ${proxy_args} \
     --app="${BROWSER_START_URL:-https://www.douyin.com/}" \
     --remote-debugging-port=9223 \
     --user-data-dir="$profile_dir" \

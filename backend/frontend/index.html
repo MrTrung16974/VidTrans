@@ -172,9 +172,23 @@
           <section class="card tiktok-account-bar">
             <span class="tiktok-account-mark" aria-hidden="true">♪</span>
             <div class="tiktok-account-copy"><strong>Tài khoản TikTok của bạn</strong><p id="tiktokBrowserStatus" role="status">Đang kiểm tra trình duyệt…</p></div>
-            <div class="tiktok-toolbar"><button id="tiktokBrowserOpen" class="button tiktok-button" type="button">Mở / đăng nhập TikTok</button><button id="tiktokBrowserLoginRetry" class="button secondary" type="button">QR lỗi / Đổi cách đăng nhập</button><button id="tiktokBrowserCheck" class="button secondary" type="button">Kiểm tra phiên</button><button id="tiktokBrowserLogout" class="button secondary" type="button">Ngắt kết nối</button></div>
+            <div class="tiktok-toolbar"><button id="tiktokBrowserOpen" class="button tiktok-button" type="button">Mở / đăng nhập TikTok</button><button id="tiktokBrowserLoginQr" class="button secondary" type="button">Đổi sang QR</button><button id="tiktokBrowserLoginEmail" class="button secondary" type="button">Đăng nhập Email / SĐT</button><button id="tiktokBrowserCheck" class="button secondary" type="button">Kiểm tra phiên</button><button id="tiktokBrowserLogout" class="button secondary" type="button">Ngắt kết nối</button></div>
           </section>
-          <p class="tiktok-consent">Nếu điện thoại báo “Couldn't log in”, bấm “QR lỗi / Đổi cách đăng nhập” rồi chọn điện thoại, email hoặc phương thức có sẵn trên trang TikTok. Nhập thông tin trực tiếp trong khung TikTok. Nếu chọn QR, quét mã mới và xác nhận trên điện thoại.</p>
+          <details id="tiktokEmailLoginPanel" class="card tiktok-email-panel">
+            <summary><strong>🔑 Đăng nhập bằng Email / Số điện thoại</strong> <span class="tiktok-email-hint">Dùng khi QR bị lỗi hoặc IP bị chặn</span></summary>
+            <p class="tiktok-consent">Nhập thông tin TikTok — mật khẩu chỉ dùng một lần để tự động điền, không được lưu lại. Nếu TikTok yêu cầu CAPTCHA, hoàn tất thủ công trong khung bên dưới rồi bấm <strong>Kiểm tra phiên</strong>.</p>
+            <form id="tiktokEmailLoginForm" autocomplete="off">
+              <div class="tiktok-email-fields">
+                <label class="field"><span>Email hoặc Số điện thoại</span><input id="tiktokLoginEmail" type="text" autocomplete="username" placeholder="email@example.com hoặc +84…" required /></label>
+                <label class="field"><span>Mật khẩu</span><input id="tiktokLoginPassword" type="password" autocomplete="current-password" placeholder="••••••••" required /></label>
+              </div>
+              <div class="tiktok-email-actions">
+                <button id="tiktokEmailSubmit" class="button tiktok-button" type="submit">Đăng nhập tự động</button>
+                <span id="tiktokEmailStatus" role="status" class="tiktok-email-status"></span>
+              </div>
+            </form>
+          </details>
+          <p class="tiktok-consent">Nếu điện thoại báo "Couldn't log in", hãy thử <strong>Đăng nhập Email / SĐT</strong> bên trên, hoặc bấm "Đổi sang QR" để lấy mã QR mới.</p>
           <div class="tiktok-workspace">
             <section class="card tiktok-review-card">
               <div class="tiktok-section-title"><span>1</span><div><h2>Duyệt bài đăng</h2><p>Chọn video đã xử lý xong.</p></div></div>

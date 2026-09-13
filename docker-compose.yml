@@ -14,6 +14,9 @@ services:
       DISPLAY: ":99"
       SCREEN_GEOMETRY: "1024x720x24"
       CHROMIUM_PROFILE_DIR: "/data/profile"
+      # Optional: route Chromium through a proxy to bypass IP blocks.
+      # Formats: socks5://user:pass@host:port | http://host:port | socks4://host:port
+      BROWSER_PROXY_SERVER: "${VIDTRANS_DOUYIN_PROXY:-}"
     volumes:
       - douyin-browser-profile:/data/profile
     shm_size: "1gb"
@@ -37,6 +40,9 @@ services:
       BROWSER_LANGUAGE: "vi-VN"
       CDP_EXTERNAL_HOST: "tiktok-browser"
       TZ: "Asia/Ho_Chi_Minh"
+      # Optional: route Chromium through a proxy to bypass TikTok IP blocks.
+      # Formats: socks5://user:pass@host:port | http://host:port | socks4://host:port
+      BROWSER_PROXY_SERVER: "${VIDTRANS_TIKTOK_PROXY:-}"
     volumes:
       - tiktok-browser-profile:/data/profile
       - ./backend/outputs:/app/backend/outputs:ro

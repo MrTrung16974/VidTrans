@@ -88,6 +88,20 @@ class TikTokBrowserManager:
         with self._db() as db:
             db.execute("UPDATE attempts SET state=?, message=? WHERE id=? AND active=1", (state, message, attempt_id))
 
+    # JavaScript injected into every page to remove Chromium automation fingerprints.
+    # navigator.webdriver is the primary signal TikTok checks before allowing QR login.
+    _STEALTH_JS = """
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['vi-VN', 'vi', 'zh-CN', 'zh', 'en-US', 'en']});
+        window.chrome = {runtime: {}};
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) =>
+            parameters.name === 'notifications'
+                ? Promise.resolve({state: Notification.permission})
+                : originalQuery(parameters);
+    """
+
     def _with_browser(self, operation: Callable[[Any], Any]):
         from playwright.sync_api import sync_playwright
         with urllib.request.urlopen(f"{self.cdp_url.rstrip('/')}/json/version", timeout=3) as response:
@@ -96,6 +110,19 @@ class TikTokBrowserManager:
             browser = playwright.chromium.connect_over_cdp(ws_url, timeout=8_000)
             if not browser.contexts:
                 raise TikTokBrowserError("Trình duyệt chưa sẵn sàng")
+
+            # Inject stealth script on every new document to prevent bot detection.
+            for context in browser.contexts:
+                try:
+                    context.add_init_script(self._STEALTH_JS)
+                except Exception:
+                    pass
+                for page in context.pages:
+                    try:
+                        page.evaluate(self._STEALTH_JS)
+                    except Exception:
+                        pass
+
             return operation(browser)  # Disconnect only; preserve the user's Chromium.
 
     def status(self, *, refresh: bool = False) -> dict[str, Any]:
@@ -155,8 +182,14 @@ class TikTokBrowserManager:
             self._browser_lock.release()
         return self.status(refresh=True)
 
-    def restart_login(self):
-        """Open TikTok's login chooser without deleting the user's profile."""
+    def restart_login(self, method: str = "default") -> dict[str, Any]:
+        """Open TikTok's login page.
+
+        ``method`` controls which login tab is pre-selected:
+        - ``"default"``  – navigate to /login and show whatever TikTok defaults to
+        - ``"email"``    – click the "Use phone / email / username" tab automatically
+        - ``"qr"``       – navigate to /login?loginType=qrCode
+        """
         with self._lock:
             if self.active_attempt():
                 raise TikTokBrowserError("Hãy kết thúc lượt chuẩn bị bài hiện tại trước khi mở lại đăng nhập")
@@ -165,14 +198,165 @@ class TikTokBrowserManager:
             try:
                 def open_login(browser):
                     page = self._page(browser)
-                    page.goto("https://www.tiktok.com/login", wait_until="domcontentloaded", timeout=30_000)
+                    if method == "qr":
+                        url = "https://www.tiktok.com/login?loginType=qrCode"
+                    elif method == "email":
+                        url = "https://www.tiktok.com/login?loginType=phoneOrEmail"
+                    else:
+                        url = "https://www.tiktok.com/login"
+                    page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                     page.bring_to_front()
+
+                    if method == "email":
+                        # Try to click the "Email / Phone / Username" tab if still on chooser page
+                        try:
+                            tab_selector = (
+                                "a[href*='loginType=phoneOrEmail'], "
+                                "[data-e2e='login-phone-email-tab'], "
+                                "button:has-text('phone'), "
+                                "a:has-text('phone')"
+                            )
+                            tab = page.locator(tab_selector).first
+                            if tab.is_visible(timeout=3_000):
+                                tab.click()
+                                page.wait_for_load_state("domcontentloaded", timeout=10_000)
+                        except Exception:
+                            pass  # Non-fatal — the page URL already has loginType=phoneOrEmail
+
                 self._with_browser(open_login)
             except Exception as exc:
-                raise TikTokBrowserError("Không mở được trang đăng nhập TikTok. Kiểm tra kết nối trình duyệt trên máy chủ") from exc
+                raise TikTokBrowserError(
+                    "Không mở được trang đăng nhập TikTok. Kiểm tra kết nối trình duyệt trên máy chủ"
+                ) from exc
             finally:
                 self._browser_lock.release()
         return self.status(refresh=True)
+
+    def login_with_email(self, email: str, password: str) -> dict[str, Any]:
+        """Automate TikTok login with email/phone + password via Playwright.
+
+        This method is designed for VPS deployments where QR code scanning is
+        blocked by TikTok's IP policies.  It:
+
+        1. Navigates to the email/phone login page.
+        2. Fills in the identifier and password fields.
+        3. Clicks the login button.
+        4. Waits up to 20 s for a session cookie to appear.
+        5. Returns status; if a CAPTCHA or 2FA screen appears the user must
+           complete it manually in the VNC browser — the method returns
+           ``login_pending`` status so the frontend can prompt accordingly.
+        """
+        if not email or not password:
+            raise TikTokBrowserError("Email/số điện thoại và mật khẩu không được để trống")
+        with self._lock:
+            if self.active_attempt():
+                raise TikTokBrowserError("Hãy kết thúc lượt chuẩn bị bài hiện tại trước khi đăng nhập lại")
+            if not self._browser_lock.acquire(blocking=False):
+                raise TikTokBrowserError("Trình duyệt đang bận. Hãy thử lại sau")
+            login_result: dict[str, Any] = {}
+            try:
+                def do_login(browser):
+                    page = self._page(browser)
+                    page.goto(
+                        "https://www.tiktok.com/login?loginType=phoneOrEmail",
+                        wait_until="domcontentloaded",
+                        timeout=30_000,
+                    )
+                    page.bring_to_front()
+
+                    # --- Step 1: Switch to Email sub-tab if we are on a phone tab ---
+                    try:
+                        email_tab = page.locator(
+                            "a:has-text('Email'), [data-e2e='login-email-tab'], "
+                            "button:has-text('Email')"
+                        ).first
+                        if email_tab.is_visible(timeout=3_000):
+                            email_tab.click()
+                            page.wait_for_timeout(600)
+                    except Exception:
+                        pass
+
+                    # --- Step 2: Fill email/phone ---
+                    identifier_input = page.locator(
+                        "input[name='email'], input[type='email'], "
+                        "input[placeholder*='mail'], input[placeholder*='phone'], "
+                        "input[placeholder*='Email'], "
+                        "[data-e2e='login-email-or-phone-input'] input, "
+                        "[data-e2e='login-user-input'] input"
+                    ).first
+                    identifier_input.wait_for(state="visible", timeout=10_000)
+                    identifier_input.fill("")
+                    identifier_input.type(email, delay=80)
+                    page.wait_for_timeout(400)
+
+                    # --- Step 3: Fill password ---
+                    password_input = page.locator(
+                        "input[type='password'], [data-e2e='login-password'] input"
+                    ).first
+                    password_input.wait_for(state="visible", timeout=8_000)
+                    password_input.fill("")
+                    password_input.type(password, delay=60)
+                    page.wait_for_timeout(400)
+
+                    # --- Step 4: Submit ---
+                    login_btn = page.locator(
+                        "button[type='submit'], [data-e2e='login-button'], "
+                        "button:has-text('Log in'), button:has-text('Đăng nhập')"
+                    ).first
+                    login_btn.wait_for(state="visible", timeout=5_000)
+                    login_btn.click()
+
+                    # --- Step 5: Wait for session cookie or error ---
+                    deadline = time.monotonic() + 20
+                    session_found = False
+                    while time.monotonic() < deadline:
+                        cookies = browser.contexts[0].cookies()
+                        if has_session(cookies):
+                            session_found = True
+                            break
+                        page.wait_for_timeout(800)
+
+                    login_result["session_found"] = session_found
+                    login_result["current_url"] = page.url
+
+                self._with_browser(do_login)
+            except TikTokBrowserError:
+                raise
+            except Exception as exc:
+                raise TikTokBrowserError(
+                    f"Không thể tự động điền thông tin đăng nhập: {exc}. "
+                    "Hãy đăng nhập thủ công trong cửa sổ trình duyệt bên dưới."
+                ) from exc
+            finally:
+                self._browser_lock.release()
+
+        current_url = login_result.get("current_url", "")
+        session_found = login_result.get("session_found", False)
+
+        base = self.status(refresh=True)
+        if session_found:
+            self._session_present = True
+            base["message"] = "Đăng nhập email thành công · Đã tìm thấy phiên TikTok"
+            base["login_state"] = "success"
+        elif "captcha" in current_url.lower() or "verify" in current_url.lower():
+            base["message"] = (
+                "TikTok yêu cầu xác minh thêm (CAPTCHA/2FA). "
+                "Hoàn tất thủ công trong cửa sổ trình duyệt bên dưới, rồi bấm 'Kiểm tra phiên'."
+            )
+            base["login_state"] = "captcha_required"
+        elif "login" in current_url:
+            base["message"] = (
+                "Đăng nhập không thành công — email/mật khẩu có thể sai, hoặc IP bị TikTok chặn. "
+                "Kiểm tra thông tin và thử lại, hoặc dùng VPN."
+            )
+            base["login_state"] = "failed"
+        else:
+            base["message"] = (
+                "Đang chờ xác nhận phiên. Bấm 'Kiểm tra phiên' sau vài giây, "
+                "hoặc hoàn tất CAPTCHA thủ công nếu cần."
+            )
+            base["login_state"] = "pending"
+        return base
 
     def logout(self):
         with self._lock:

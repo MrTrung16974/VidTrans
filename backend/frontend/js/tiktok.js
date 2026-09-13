@@ -3,6 +3,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   let status = null, draft = null, timer = null, refreshing = false, loading = false, submitting = false;
   let suggestion = null, suggesting = false;
   let requestVersion = 0, locked = false, attemptId = null;
+  let emailSubmitting = false;
   const edits = new Map();
   const busyStates = new Set(['queued', 'opening', 'uploading']);
   const labels = { queued: 'Đang chuẩn bị', opening: 'Đang mở TikTok Studio', uploading: 'Đang chuyển video', awaiting_review: 'Chờ bạn hoàn tất trên TikTok', needs_login: 'Cần đăng nhập TikTok', needs_review: 'Cần bạn kiểm tra' };
@@ -21,7 +22,9 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokSetupStatus').textContent = result.available ? 'Trình duyệt sẵn sàng. Duyệt video tại khu vực Đăng TikTok.' : 'Kết nối tài khoản tại khu vực Đăng TikTok sau khi trình duyệt sẵn sàng.';
     $('#tiktokBrowserOpen').disabled = !result.available || busyStates.has(result.attempt?.state);
     $('#tiktokBrowserCheck').disabled = !result.available;
-    $('#tiktokBrowserLoginRetry').disabled = !result.available || Boolean(result.attempt);
+    const loginDisabled = !result.available || Boolean(result.attempt);
+    $('#tiktokBrowserLoginQr').disabled = loginDisabled;
+    $('#tiktokBrowserLoginEmail').disabled = loginDisabled;
     $('#tiktokBrowserLogout').disabled = !result.available || Boolean(result.attempt);
     const frame = $('#tiktokBrowserFrame');
     const external = $('#tiktokBrowserExternal');
@@ -153,10 +156,61 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     await refresh();
   });
   $('#tiktokBrowserCheck').addEventListener('click', () => refresh(true));
-  $('#tiktokBrowserLoginRetry').addEventListener('click', async () => {
-    $('#tiktokBrowserLoginRetry').disabled = true;
-    await browserAction('login');
+  $('#tiktokBrowserLoginQr').addEventListener('click', async () => {
+    $('#tiktokBrowserLoginQr').disabled = true;
+    await browserAction('login?method=qr');
     await refresh();
+  });
+  $('#tiktokBrowserLoginEmail').addEventListener('click', async () => {
+    // Toggle the email panel open and focus the email field
+    const panel = $('#tiktokEmailLoginPanel');
+    panel.open = true;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    setTimeout(() => $('#tiktokLoginEmail').focus(), 300);
+  });
+  $('#tiktokEmailLoginForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (emailSubmitting) return;
+    const email = $('#tiktokLoginEmail').value.trim();
+    const password = $('#tiktokLoginPassword').value;
+    if (!email || !password) return;
+    emailSubmitting = true;
+    const statusEl = $('#tiktokEmailStatus');
+    const submitBtn = $('#tiktokEmailSubmit');
+    submitBtn.disabled = true;
+    statusEl.textContent = 'Đang đăng nhập…';
+    try {
+      const body = new FormData();
+      body.set('email', email);
+      body.set('password', password);
+      const result = await requestJson('/api/v1/tiktok-browser/login-email', { method: 'POST', body });
+      render(result);
+      const state = result.login_state || '';
+      if (state === 'success') {
+        statusEl.textContent = '✓ Đăng nhập thành công';
+        $('#tiktokLoginPassword').value = '';          // clear password immediately
+        $('#tiktokEmailLoginPanel').open = false;       // collapse form
+        toast('Đã đăng nhập TikTok bằng email thành công!');
+      } else if (state === 'captcha_required') {
+        statusEl.textContent = '⚠ Cần xác minh thêm';
+        toast(result.message, true);
+      } else if (state === 'failed') {
+        statusEl.textContent = '✗ Đăng nhập thất bại';
+        toast(result.message, true);
+      } else {
+        statusEl.textContent = '⏳ Đang chờ xác nhận';
+        toast(result.message);
+      }
+      await refresh();
+    } catch (error) {
+      statusEl.textContent = '✗ Lỗi';
+      toast(error.message, true);
+    } finally {
+      emailSubmitting = false;
+      submitBtn.disabled = false;
+      // Always clear the password after the attempt
+      $('#tiktokLoginPassword').value = '';
+    }
   });
   $('#tiktokBrowserLogout').addEventListener('click', () => {
     if (confirm('Xóa phiên đăng nhập TikTok của trình duyệt này?')) browserAction('session', 'DELETE');
