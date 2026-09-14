@@ -1,4 +1,4 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20260913-1";
+import { createTikTokWorkspace } from "./tiktok.js?v=20260914-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 

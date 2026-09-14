@@ -1,3 +1,4 @@
+import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20260914-1";
 export function createTikTokWorkspace({ requestJson, toast }) {
   const $ = selector => document.querySelector(selector);
   let status = null, draft = null, timer = null, refreshing = false, loading = false, submitting = false;
@@ -5,6 +6,17 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   let requestVersion = 0, locked = false, attemptId = null;
   let emailSubmitting = false;
   const edits = new Map();
+  let checkedFrameUrl = null, frameProblem = null, frameChecking = false;
+  function checkFrame(url) {
+    if (checkedFrameUrl === url || frameChecking) return;
+    checkedFrameUrl = url; frameChecking = true; frameProblem = null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    fetch(url, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store', signal: controller.signal })
+      .then(response => { if (checkedFrameUrl === url) frameProblem = frameResponseProblem(response); })
+      .catch(() => { if (checkedFrameUrl === url) frameProblem = 'Không kết nối được khung TikTok. Kiểm tra kết nối hoặc dùng “Mở rộng”.'; })
+      .finally(() => { clearTimeout(timeout); frameChecking = false; if (status && !locked) render(status); });
+  }
   const busyStates = new Set(['queued', 'opening', 'uploading']);
   const labels = { queued: 'Đang chuẩn bị', opening: 'Đang mở TikTok Studio', uploading: 'Đang chuyển video', awaiting_review: 'Chờ bạn hoàn tất trên TikTok', needs_login: 'Cần đăng nhập TikTok', needs_review: 'Cần bạn kiểm tra' };
 
@@ -28,16 +40,12 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokBrowserLogout').disabled = !result.available || Boolean(result.attempt);
     const frame = $('#tiktokBrowserFrame');
     const external = $('#tiktokBrowserExternal');
-    let browserUrl = null;
-    if (result.browser_url) {
-      const candidate = new URL(result.browser_url, location.href);
-      if (['http:', 'https:'].includes(candidate.protocol)) browserUrl = candidate.href;
-    }
+    const browserUrl = resolveTikTokFrameUrl(result.browser_url, location.href);
     if (!browserUrl) {
       frame.removeAttribute('src');
       frame.classList.add('is-hidden');
       $('#tiktokBrowserPlaceholder').classList.remove('is-hidden');
-      $('#tiktokBrowserHelp').textContent = 'Trình duyệt chưa sẵn sàng. Khởi động dịch vụ TikTok trên máy chủ rồi bấm Kiểm tra phiên.';
+      $('#tiktokBrowserHelp').textContent = result.available ? 'Địa chỉ khung TikTok không hợp lệ. Trên VPS cần dùng /tiktok-browser/vnc_lite.html qua Nginx.' : 'Trình duyệt chưa sẵn sàng. Khởi động dịch vụ TikTok trên máy chủ rồi bấm Kiểm tra phiên.';
       external.classList.add('is-hidden');
       // Keep a recovery action available even when the sidecar starts later.
       $('#tiktokBrowserCheck').disabled = false;
@@ -45,9 +53,17 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       external.href = browserUrl;
       external.classList.remove('is-hidden');
       if (location.hash === '#tiktok' && !locked) {
+        const sameOrigin = new URL(browserUrl).origin === location.origin;
+        if (sameOrigin) checkFrame(browserUrl);
+        if (sameOrigin && (frameChecking || frameProblem)) {
+          frame.removeAttribute('src'); frame.classList.add('is-hidden');
+          $('#tiktokBrowserPlaceholder').classList.remove('is-hidden');
+          $('#tiktokBrowserHelp').textContent = frameProblem || 'Đang kiểm tra kết nối trình duyệt…';
+        } else {
         if (frame.getAttribute('src') !== browserUrl) frame.src = browserUrl;
         frame.classList.remove('is-hidden');
         $('#tiktokBrowserPlaceholder').classList.add('is-hidden');
+        }
       }
     }
     const attempt = result.attempt;
@@ -155,7 +171,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     await browserAction('open');
     await refresh();
   });
-  $('#tiktokBrowserCheck').addEventListener('click', () => refresh(true));
+  $('#tiktokBrowserCheck').addEventListener('click', () => { checkedFrameUrl = null; frameProblem = null; refresh(true); });
   $('#tiktokBrowserLoginQr').addEventListener('click', async () => {
     $('#tiktokBrowserLoginQr').disabled = true;
     await browserAction('login?method=qr');
