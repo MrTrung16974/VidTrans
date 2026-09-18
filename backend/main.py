@@ -2566,6 +2566,9 @@ def retry_job_endpoint(job_id: str) -> JSONResponse:
     source = JOB_SERVICE.get(job_id)
     if source is None:
         raise HTTPException(status_code=404, detail="job not found")
+    if source.get("status") in {"queued", "scheduled", "processing", "cancelling"}:
+        raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý")
+
     resume_request = source.get("resume_request")
     if not isinstance(resume_request, dict):
         raise HTTPException(status_code=409, detail="job không có cấu hình retry")
@@ -2573,49 +2576,36 @@ def retry_job_endpoint(job_id: str) -> JSONResponse:
     source_url = resume_request.get("source_url")
     if not video_path.is_file() and not source_url:
         raise HTTPException(status_code=409, detail="file video nguồn không còn tồn tại")
-    new_job_id = uuid.uuid4().hex[:8]
-    retry_request = dict(resume_request)
-    source_cookie_value = retry_request.get("source_cookie_path")
-    if source_cookie_value:
-        source_cookie_path = Path(str(source_cookie_value)).resolve()
-        if source_cookie_path.parent == UPLOAD_DIR.resolve() and source_cookie_path.is_file():
-            retry_cookie_path = UPLOAD_DIR / f"{new_job_id}.cookies.txt"
-            shutil.copyfile(source_cookie_path, retry_cookie_path)
-            try:
-                retry_cookie_path.chmod(0o600)
-            except OSError:
-                logger.warning("Unable to restrict retry cookie file permissions for job %s", new_job_id)
-            retry_request["source_cookie_path"] = str(retry_cookie_path)
-    new_payload = {
-        key: value
-        for key, value in source.items()
-        if key
-        in {
-            "mode",
-            "filename",
-            "source_url",
-            "source_platform",
-            "subtitle_source",
-            "voice_routing",
-            "tiktok",
-            "ocr_config",
-        }
+
+    update_payload = {
+        "status": "queued",
+        "step": "queued",
+        "progress": 0.0,
+        "error": None,
+        "error_message": None,
+        "step_detail": None,
+        "cancel_requested": 0,
+        "worker_id": None,
+        "started_at": None,
+        "finished_at": None,
+        "completed_at": None,
+        "tiktok_publish_id": None,
+        "tiktok_publish_status": None,
+        "tiktok_publish_detail": None,
     }
-    new_payload.update(
-        {
-            "status": "queued",
-            "step": "queued",
-            "progress": 0.0,
-            "resume_request": retry_request,
-            "retry_of": job_id,
-        }
-    )
-    JOB_SERVICE.create(new_job_id, new_payload)
-    batch_id = source.get("batch_id")
-    if batch_id:
-        JOB_SERVICE.attach_to_batch(new_job_id, str(batch_id))
+
+    for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
+        filename = source.get(key)
+        if filename:
+            target = (OUTPUT_DIR / str(filename)).resolve()
+            if target.parent == OUTPUT_DIR.resolve():
+                target.unlink(missing_ok=True)
+        update_payload[key] = None
+    (OUTPUT_DIR / f"{job_id}.artifacts.zip").unlink(missing_ok=True)
+
+    JOB_SERVICE.update(job_id, **update_payload)
     notify_scheduler()
-    return JSONResponse(job_response(new_job_id, new_payload), status_code=201)
+    return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
 
 
 @app.delete("/api/v1/jobs/{job_id}")

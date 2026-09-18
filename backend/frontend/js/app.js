@@ -630,7 +630,7 @@ async function jobAction(action, jobId) {
     if (response.status === 401) lockApplication();
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || `Không thể ${action} job`);
-    toast(action === "retry" ? `Đã tạo job chạy lại ${data.job_id}` : action === "cancel" ? "Đã gửi yêu cầu hủy" : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
+    toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "cancel" ? "Đã gửi yêu cầu hủy" : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
     await loadJobs();
   } catch (error) { toast(error.message, true); }
 }

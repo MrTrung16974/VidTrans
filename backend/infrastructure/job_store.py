@@ -308,14 +308,16 @@ class SQLiteJobStore:
                 if status == "scheduled" and payload.get("tiktok_publish_at")
                 else None
             )
-            connection.execute(
-                """
-                UPDATE jobs
-                SET status = ?, payload_json = ?, scheduled_for = ?, updated_at = ?
-                WHERE job_id = ?
-                """,
-                (status, self._encode(payload), scheduled_for, now, job_id),
-            )
+            
+            set_clause = "SET status = ?, payload_json = ?, scheduled_for = ?, updated_at = ?"
+            params = [status, self._encode(payload), scheduled_for, now]
+            
+            if "cancel_requested" in fields:
+                set_clause += ", cancel_requested = ?"
+                params.append(1 if fields["cancel_requested"] else 0)
+                
+            params.append(job_id)
+            connection.execute(f"UPDATE jobs {set_clause} WHERE job_id = ?", tuple(params))
         return payload
 
     def attach_to_batch(self, job_id: str, batch_id: str, *, priority: int = 0) -> None:
