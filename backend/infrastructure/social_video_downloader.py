@@ -205,15 +205,52 @@ class SocialVideoDownloader:
             cleanup()
             if cancel_requested and cancel_requested():
                 raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from exc
-            message = " ".join(str(exc).split())
-            if "fresh cookies" in message.lower():
-                message = (
-                    "Douyin yêu cầu cookie mới. Hãy xuất cookies.txt định dạng Netscape từ trình duyệt "
-                    "đang mở được Douyin, rồi chọn file đó trong mục Link TikTok / Douyin."
-                )
-            raise SocialVideoDownloadError(
-                f"Không tải được video {social_platform(normalized_url)}: {message or 'nguồn từ chối truy cập'}"
-            ) from exc
+            
+            # FALLBACK: Dùng API TikWM để tải video khi bị Douyin chặn
+            import urllib.request
+            import urllib.parse
+            import json
+            import shutil
+            import ssl
+            
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            
+            try:
+                api_url = f"https://www.tikwm.com/api/?url={urllib.parse.quote(normalized_url)}&hd=1"
+                req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                with urllib.request.urlopen(req, timeout=15, context=ctx) as response:
+                    data = json.loads(response.read().decode())
+                
+                if data.get("code") == 0 and data.get("data") and data["data"].get("play"):
+                    play_url = data["data"]["play"]
+                    if not play_url.startswith("http"):
+                        play_url = "https://www.tikwm.com" + play_url
+                    
+                    fallback_path = Path(f"{destination_stem}.mp4")
+                    req_vid = urllib.request.Request(play_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                    with urllib.request.urlopen(req_vid, timeout=120, context=ctx) as vid_resp, open(fallback_path, "wb") as f:
+                        shutil.copyfileobj(vid_resp, f)
+                    
+                    sanitized = {
+                        "title": data["data"].get("title", ""),
+                        "id": data["data"].get("id", ""),
+                        "duration": data["data"].get("duration", 0)
+                    }
+                else:
+                    raise RuntimeError("API Fallback failed")
+            except Exception:
+                # Nếu API cũng thất bại, trả về lỗi ban đầu
+                message = " ".join(str(exc).split())
+                if "fresh cookies" in message.lower():
+                    message = (
+                        "Douyin yêu cầu cookie mới và API phụ cũng không hoạt động. Hãy tải thẳng file video (MP4) về máy tính của bạn, "
+                        "rồi up trực tiếp bằng nút 'Chọn file có sẵn' thay vì dán link nhé."
+                    )
+                raise SocialVideoDownloadError(
+                    f"Không tải được video {social_platform(normalized_url)}: {message or 'nguồn từ chối truy cập'}"
+                ) from exc
 
         candidates = sorted(
             (
