@@ -51,7 +51,7 @@ from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherErro
 from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
-from pipeline.translation import filter_meaningful_segments, translate_segments
+from pipeline.translation import ensure_translation_complete, filter_meaningful_segments, translate_segments
 from pipeline.tts_timing import bounded_tempo, schedule_voice_segments
 from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
 
@@ -505,6 +505,7 @@ def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any
     result = model.transcribe(
         str(video_path),
         language="zh",
+        task="transcribe",
         fp16=False,
         temperature=0,
         best_of=5,
@@ -522,6 +523,7 @@ def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any
     result = model.transcribe(
         str(video_path),
         language="zh",
+        task="transcribe",
         fp16=False,
         word_timestamps=True,
         verbose=False,
@@ -534,6 +536,7 @@ def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any
     result = model.transcribe(
         str(video_path),
         fp16=False,
+        task="transcribe",
         word_timestamps=True,
         verbose=False,
     )
@@ -1325,7 +1328,15 @@ def process_video(
             skipped_cues=skipped_count,
         )
         ensure_job_active(job_id)
-        translated_segments = translate_segments(segments)
+        translated_segments = translate_segments(
+            segments,
+            check_active=lambda: ensure_job_active(job_id),
+            progress_callback=lambda completed, total: update_job(
+                job_id,
+                progress=0.4 + 0.06 * completed / max(1, total),
+                step_detail=f"Đã kiểm tra bản dịch {completed}/{total} câu",
+            ),
+        )
         translation_fallback_cues = sum(
             1 for segment in translated_segments if segment.get("translation_status") == "source_fallback"
         )
@@ -1339,6 +1350,18 @@ def process_video(
                 else "Đã dịch đầy đủ các câu"
             ),
         )
+        # Publish diagnostics even on failure, before any TTS, rendering or posting.
+        translation_path = OUTPUT_DIR / f"{job_id}.translation.json"
+        translation_path.write_text(json.dumps({
+            "version": 3,
+            "source_method": "ocr" if ocr_segments else "speech",
+            "source_language": "zh", "target_language": "vi",
+            "translation_complete": translation_fallback_cues == 0 and meaningful_count > 0,
+            "review_cues": sum(1 for s in translated_segments if s.get("needs_review")),
+            "segments": translated_segments,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        update_job(job_id, translation_file=translation_path.name)
+        ensure_translation_complete(translated_segments)
         video_width, video_height = get_video_dimensions(video_path)
         translated_segments = apply_subtitle_layout(
             translated_segments,
@@ -1442,7 +1465,10 @@ def process_video(
         translation_path.write_text(
             json.dumps(
                 {
-                    "version": 2,
+                    "version": 3,
+                    "source_language": "zh",
+                    "target_language": "vi",
+                    "translation_complete": True,
                     "source_method": "ocr" if ocr_segments else "speech",
                     "review_cues": sum(1 for segment in translated_segments if segment.get("needs_review")),
                     "voice_routing": {

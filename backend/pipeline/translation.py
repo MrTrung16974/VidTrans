@@ -4,7 +4,6 @@ import logging
 import os
 import re
 import time
-import concurrent.futures
 from typing import Any, Callable, Protocol, Sequence
 
 
@@ -42,13 +41,6 @@ _MAX_NO_SPEECH_PROB: float = float(os.environ.get("VIDTRANS_MAX_NO_SPEECH_PROB",
 
 # Minimum number of distinct Han characters after stripping fillers.
 _MIN_HAN_CHARS: int = 1
-
-# Chars at which a single cue is split before translation.
-_SPLIT_CHAR_THRESHOLD: int = int(os.environ.get("VIDTRANS_SPLIT_CHARS", "80"))
-
-# Sentence-boundary punctuation used for splitting long cues.
-_SPLIT_RE = re.compile(r"(?<=[。！？；，、…])")
-
 
 class TextTranslator(Protocol):
     def translate(self, text: str) -> str | None: ...
@@ -155,339 +147,193 @@ def filter_meaningful_segments(
 # Translation internals
 # ---------------------------------------------------------------------------
 
+class TranslationIncompleteError(RuntimeError):
+    """Prevent rendering/dubbing source text as a successful translation."""
+
+
+def ensure_translation_complete(segments: Sequence[dict[str, Any]]) -> None:
+    active = [s for s in segments if s.get("translation_status") != "skipped" and not s.get("skip_subtitle")]
+    if not active:
+        raise TranslationIncompleteError("Không có câu thoại đủ rõ để dịch. Kiểm tra nguồn hoặc dùng model nhận diện lớn hơn.")
+    failed = [
+        s for s in active
+        if s.get("translation_status") in {"source_fallback", "failed"}
+        or not _clean(str(s.get("text") or ""))
+        or contains_han(str(s.get("text") or ""))
+    ]
+    if failed:
+        positions = ", ".join(f"{float(s['start']):.1f}s" for s in failed[:5])
+        raise TranslationIncompleteError(
+            f"Chưa dịch được {len(failed)}/{len(active)} câu sang tiếng Việt (tại {positions}). "
+            "Đã dừng trước khi lồng tiếng/xuất video để tránh chèn lại chữ Trung. "
+            "Kiểm tra kết nối dịch vụ dịch và thử lại; chi tiết có trong file bản dịch."
+        )
+
+
 def _translate_with_retry(
     text: str,
     translator: TextTranslator,
     *,
     retries: int,
     sleeper: Callable[[float], None],
+    check_active: Callable[[], None],
 ) -> str:
     last_error: Exception | None = None
     for attempt in range(retries):
+        check_active()
         try:
             translated = _clean(translator.translate(text) or "")
-            if translated:
-                return translated
-            raise RuntimeError("Dịch vụ trả về bản dịch rỗng")
-        except Exception as exc:  # pragma: no cover - concrete network errors vary
+            if not translated:
+                raise ValueError("empty_translation")
+            if contains_han(translated):
+                raise ValueError("untranslated_chinese")
+            if translated.casefold() == _clean(text).casefold():
+                raise ValueError("unchanged_translation")
+            return translated
+        except Exception as exc:
             last_error = exc
-            if attempt + 1 < retries:
-                sleeper(min(0.75 * (2**attempt), 4.0))
-    raise RuntimeError(f"Không thể dịch sau {retries} lần thử: {last_error}") from last_error
+        check_active()
+        if attempt + 1 < retries:
+            sleeper(min(0.75 * (2**attempt), 4.0))
+    raise RuntimeError(f"Dịch thất bại sau {retries} lần: {type(last_error).__name__}") from last_error
 
 
-def _translate_with_context_force(
-    text: str,
-    translator: TextTranslator,
-    *,
-    retries: int,
-    sleeper: Callable[[float], None],
-) -> str:
-    """Retry translation by prepending a Vietnamese instruction prefix.
-
-    When a translator echoes back Chinese characters, adding an explicit
-    instruction often forces it to produce a Vietnamese output.
-    """
-    prefix = "请翻译成越南语："
-    raw = _translate_with_retry(
-        f"{prefix}{text}",
-        translator,
-        retries=retries,
-        sleeper=sleeper,
-    )
-    # Strip the prefix if it leaked into the output (unlikely but defensive)
-    cleaned = raw.removeprefix(prefix).strip()
-    return cleaned or raw
-
-
-def _split_long_text(text: str) -> list[str]:
-    """Split a long Chinese cue at sentence boundaries for better translation."""
-    if len(text) <= _SPLIT_CHAR_THRESHOLD:
+def _split_long_text(text: str, *, limit: int = 1200) -> list[str]:
+    """Preserve complete sentences; split only at the provider request limit."""
+    if len(text) <= limit:
         return [text]
-    parts = [p.strip() for p in _SPLIT_RE.split(text) if p.strip()]
-    return parts if len(parts) > 1 else [text]
-
-
-def _translate_long_cue(
-    text: str,
-    translator: TextTranslator,
-    *,
-    retries: int,
-    sleeper: Callable[[float], None],
-) -> tuple[str, str]:
-    """Translate a potentially long cue, splitting if needed.
-
-    Returns ``(translated_text, status)`` where status is one of
-    ``"translated"`` or ``"split_translated"``.
-    """
-    parts = _split_long_text(text)
-    if len(parts) == 1:
-        result = _translate_with_retry(text, translator, retries=retries, sleeper=sleeper)
-        return result, "translated"
-
-    translated_parts: list[str] = []
-    for part in parts:
-        try:
-            translated_parts.append(
-                _translate_with_retry(part, translator, retries=retries, sleeper=sleeper)
-            )
-        except Exception:
-            translated_parts.append(part)  # keep original for this fragment
-    return " ".join(translated_parts), "split_translated"
+    parts: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        candidates = [m.end() for m in re.finditer(r"[。！？；，、….!?;\s]", remaining[:limit])]
+        boundary = candidates[-1] if candidates and candidates[-1] >= limit // 2 else limit
+        parts.append(remaining[:boundary].strip())
+        remaining = remaining[boundary:].strip()
+    if remaining:
+        parts.append(remaining)
+    return parts
 
 
 def _batch_indexes(source_texts: Sequence[str], max_batch_chars: int) -> list[list[int]]:
     batches: list[list[int]] = []
     current: list[int] = []
-    current_size = 0
+    size = 0
     for index, text in enumerate(source_texts):
         item_size = len(text) + 24
-        if current and current_size + item_size > max_batch_chars:
+        if current and size + item_size > max_batch_chars:
             batches.append(current)
-            current = []
-            current_size = 0
+            current, size = [], 0
         current.append(index)
-        current_size += item_size
+        size += item_size
     if current:
         batches.append(current)
     return batches
 
 
-def _translate_marked_batch(
-    indexes: Sequence[int],
-    source_texts: Sequence[str],
-    translator: TextTranslator,
-    *,
-    retries: int,
-    sleeper: Callable[[float], None],
-) -> dict[int, str]:
-    payload = "\n".join(f'<vts id="{index:06d}"/>\n{source_texts[index]}' for index in indexes)
-    translated = _translate_with_retry(payload, translator, retries=retries, sleeper=sleeper)
+def _parse_marked_batch(translated: str, indexes: Sequence[int]) -> dict[int, str]:
     markers = list(_MARKER_RE.finditer(translated))
-    parsed: dict[int, str] = {}
+    ids = [int(marker.group(1)) for marker in markers]
+    if ids != list(indexes) or (markers and translated[:markers[0].start()].strip()):
+        raise ValueError("missing_or_reordered_markers")
+    parsed = {}
     for position, marker in enumerate(markers):
-        index = int(marker.group(1))
-        start = marker.end()
         end = markers[position + 1].start() if position + 1 < len(markers) else len(translated)
-        value = _clean(translated[start:end])
-        if value:
-            parsed[index] = value
-    if set(parsed) != set(indexes):
-        raise RuntimeError("Dịch vụ không giữ đủ marker khi dịch theo batch")
+        value = _clean(translated[marker.end():end])
+        if not value or contains_han(value):
+            raise ValueError("invalid_batch_translation")
+        parsed[int(marker.group(1))] = value
     return parsed
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def translate_segments(
     segments: Sequence[dict[str, Any]],
     translator: TextTranslator | None = None,
     *,
     max_batch_chars: int = 1200,
-    retries: int = 4,
+    retries: int = 3,
     sleeper: Callable[[float], None] = time.sleep,
+    check_active: Callable[[], None] = lambda: None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Translate cues with few network calls and per-cue fallback metadata.
+    """Translate complete cues with bounded retries and stable timestamps.
 
-    Markers let a large request keep the original timing boundaries. If a
-    provider modifies those markers, only that batch falls back to individual
-    translation instead of silently writing every source cue into the output.
-
-    Segments marked with ``skip_subtitle=True`` (by
-    :func:`filter_meaningful_segments`) are passed through untouched — their
-    source text is kept as-is and they are never sent to the translation
-    service.
+    Calls are serial: HTML translation clients mutate request parameters.
+    Repeated cues share a per-job cache. Marker batching is only used for
+    providers that support it; failed batches fall back to complete cues.
+    Failed source text is retained for diagnostics, never approved for render.
     """
-
+    if max_batch_chars < 200 or retries < 1:
+        raise ValueError("max_batch_chars must be >= 200 and retries must be >= 1")
     if translator is None:
-        from deep_translator import GoogleTranslator
-        translator = GoogleTranslator(source="zh-CN", target="vi")
+        from infrastructure.vietnamese_translator import GoogleVietnameseTranslator
+        translator = GoogleVietnameseTranslator()
 
-    if max_batch_chars < 200:
-        raise ValueError("max_batch_chars must be at least 200")
-    if retries < 1:
-        raise ValueError("retries must be at least 1")
+    sources = [_clean(str(s.get("source_text") or s.get("text") or "")) for s in segments]
+    active = [i for i, s in enumerate(segments) if not s.get("skip_subtitle") and sources[i]]
+    translations: dict[int, tuple[str, str, str | None]] = {}
+    cache: dict[str, tuple[str, str, str | None]] = {}
+    check_active()
 
-    # Pass-through skipped segments; only work on meaningful ones.
-    usable = [
-        segment
-        for segment in segments
-        if not segment.get("skip_subtitle") and _clean(str(segment.get("text") or ""))
-    ]
-    source_texts = [_clean(str(segment["text"])) for segment in usable]
-    translated_by_index: dict[int, str] = {}
-    translation_status_by_index: dict[int, str] = {}
-    fallback_indexes: set[int] = set()
+    if getattr(translator, "supports_markers", True):
+        texts = [sources[i] for i in active]
+        for batch in _batch_indexes(texts, max_batch_chars):
+            if len(batch) < 2 or any(len(texts[i]) > max_batch_chars for i in batch):
+                continue
+            payload = "\n".join(f'<vts id="{i:06d}"/>\n{texts[i]}' for i in batch)
+            try:
+                raw = _translate_with_retry(payload, translator, retries=1,
+                                            sleeper=sleeper, check_active=check_active)
+                parsed = _parse_marked_batch(raw, batch)
+                for index, value in parsed.items():
+                    translations[active[index]] = (value, "translated", None)
+                    cache[texts[index]] = (value, "translated", None)
+            except Exception as exc:
+                check_active()
+                logger.warning("Batch translation failed (%s); retrying complete cues", type(exc).__name__)
 
-    batches = _batch_indexes(source_texts, max_batch_chars)
-
-    def process_batch(indexes: list[int]) -> tuple[list[int], dict[int, str]]:
-        try:
-            res = _translate_marked_batch(
-                indexes,
-                source_texts,
-                translator,
-                retries=retries,
-                sleeper=sleeper,
-            )
-            return (indexes, res)
-        except Exception as exc:
-            logger.warning("Batch translation failed; retrying %d cues individually: %s", len(indexes), exc)
-            return (indexes, {})
-
-    def process_individual(index: int) -> tuple[int, str, str, bool]:
-        try:
-            res, status = _translate_long_cue(
-                source_texts[index],
-                translator,
-                retries=retries,
-                sleeper=sleeper,
-            )
-            return (index, res, status, False)
-        except Exception as exc:
-            logger.warning("Translation failed for cue %d: %s", index, exc)
-            return (index, source_texts[index], "source_fallback", True)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        # 1. Process batches concurrently
-        batch_futures = [executor.submit(process_batch, indexes) for indexes in batches]
-        failed_indexes: list[int] = []
-        for future in concurrent.futures.as_completed(batch_futures):
-            indexes, result = future.result()
-            if result:
-                translated_by_index.update(result)
-                for idx in indexes:
-                    translation_status_by_index[idx] = "translated"
-            else:
-                failed_indexes.extend(indexes)
-
-        # 2. Process failed batch cues individually (with long-cue splitting)
-        if failed_indexes:
-            indiv_futures = [executor.submit(process_individual, idx) for idx in failed_indexes]
-            for future in concurrent.futures.as_completed(indiv_futures):
-                idx, res, status, failed = future.result()
-                translated_by_index[idx] = res
-                translation_status_by_index[idx] = status
-                if failed:
-                    fallback_indexes.add(idx)
-
-        # 3. Check for unchanged Han and retry with context forcing
-        han_check_indexes: list[int] = []
-        for index, source_text in enumerate(source_texts):
-            translated = _clean(translated_by_index.get(index, ""))
-            if contains_han(source_text) and contains_han(translated):
-                han_check_indexes.append(index)
-
-        if han_check_indexes:
-            def retry_han(index: int) -> tuple[int, str, str, bool]:
-                source = source_texts[index]
-                # First: plain retry in case it was transient
+    for completed, index in enumerate(active, 1):
+        check_active()
+        source = sources[index]
+        if index not in translations:
+            if source not in cache:
                 try:
-                    retried = _translate_with_retry(
-                        source,
-                        translator,
-                        retries=retries,
-                        sleeper=sleeper,
-                    )
-                    if not contains_han(retried):
-                        return (index, retried, "translated", False)
-                except Exception:
-                    pass
+                    parts = _split_long_text(source, limit=max_batch_chars)
+                    translated_parts = [
+                        _translate_with_retry(part, translator, retries=retries,
+                                              sleeper=sleeper, check_active=check_active)
+                        for part in parts
+                    ]
+                    value = " ".join(translated_parts)
+                    status = "split_translated" if len(parts) > 1 else "translated"
+                    cache[source] = (value, status, None)
+                except Exception as exc:
+                    check_active()
+                    # Retain structured failure, never silently mix translated/source fragments.
+                    cause = exc.__cause__ or exc
+                    reason = str(cause) if isinstance(cause, ValueError) else type(cause).__name__
+                    cache[source] = (source, "source_fallback", reason[:160])
+                    logger.warning("Translation failed at %.2fs (%s)", float(segments[index]["start"]), reason[:160])
+            translations[index] = cache[source]
+        if progress_callback:
+            progress_callback(completed, len(active))
 
-                # Second: context-forced translation ("请翻译成越南语：…")
-                try:
-                    forced = _translate_with_context_force(
-                        source,
-                        translator,
-                        retries=retries,
-                        sleeper=sleeper,
-                    )
-                    if not contains_han(forced):
-                        logger.info("Context-force translation succeeded for cue %d", index)
-                        return (index, forced, "context_forced", False)
-                except Exception:
-                    pass
-
-                # Third: split long text and translate each part
-                parts = _split_long_text(source)
-                if len(parts) > 1:
-                    try:
-                        translated_parts: list[str] = []
-                        for part in parts:
-                            t = _translate_with_retry(part, translator, retries=retries, sleeper=sleeper)
-                            translated_parts.append(t)
-                        joined = " ".join(translated_parts)
-                        if not contains_han(joined):
-                            logger.info("Split translation succeeded for cue %d (%d parts)", index, len(parts))
-                            return (index, joined, "split_translated", False)
-                    except Exception:
-                        pass
-
-                logger.warning("All translation strategies failed for cue %d; keeping Chinese source", index)
-                return (index, source, "source_fallback", True)
-
-            retry_futures = [executor.submit(retry_han, idx) for idx in han_check_indexes]
-            for future in concurrent.futures.as_completed(retry_futures):
-                idx, res, status, failed = future.result()
-                translated_by_index[idx] = res
-                translation_status_by_index[idx] = status
-                if failed:
-                    fallback_indexes.add(idx)
-                else:
-                    fallback_indexes.discard(idx)
-
-    # Build output — include both skipped and translated segments in original order
-    usable_iter = iter(range(len(usable)))
-    usable_index_map = {id(seg): i for i, seg in enumerate(usable)}
-
-    # Map by original segment identity for O(1) lookup
-    translated_results: dict[int, tuple[str, str, bool]] = {}
-    for i, segment in enumerate(usable):
-        source_text = source_texts[i]
-        translated = _clean(translated_by_index.get(i, "")) or source_text
-        unchanged_han = contains_han(source_text) and contains_han(translated)
-        used_fallback = i in fallback_indexes or unchanged_han
-        status = translation_status_by_index.get(i, "source_fallback" if used_fallback else "translated")
-        if unchanged_han and status not in {"source_fallback"}:
-            status = "source_fallback"
-            used_fallback = True
-        translated_results[id(segment)] = (translated, status, used_fallback)
-
-    output: list[dict[str, Any]] = []
-    for segment in segments:
-        if segment.get("skip_subtitle"):
-            # Non-meaningful: pass through with original text, no translation
-            source_text = _clean(str(segment.get("text") or ""))
-            output.append(
-                {
-                    **segment,
-                    "start": float(segment["start"]),
-                    "end": float(segment["end"]),
-                    "source_text": source_text,
-                    "text": source_text,
-                    "translation_status": "skipped",
-                    "needs_review": False,
-                }
-            )
-        else:
-            seg_id = id(segment)
-            if seg_id in translated_results:
-                translated, status, used_fallback = translated_results[seg_id]
-            else:
-                # Segment had empty text — keep as-is
-                source_text = _clean(str(segment.get("text") or ""))
-                translated, status, used_fallback = source_text, "source_fallback", True
-            output.append(
-                {
-                    **segment,
-                    "start": float(segment["start"]),
-                    "end": float(segment["end"]),
-                    "source_text": _clean(str(segment.get("text") or "")),
-                    "text": translated,
-                    "translation_status": status,
-                    "needs_review": bool(segment.get("needs_review")) or used_fallback,
-                }
-            )
+    output = []
+    for index, segment in enumerate(segments):
+        skipped = bool(segment.get("skip_subtitle"))
+        text, status, error = translations.get(
+            index, (sources[index], "skipped" if skipped else "source_fallback", None if skipped else "empty_source")
+        )
+        result = {
+            **segment, "start": float(segment["start"]), "end": float(segment["end"]),
+            "source_text": sources[index], "text": text, "translation_status": status,
+            "translation_provider": getattr(translator, "name", type(translator).__name__),
+            "target_language": "vi",
+            "needs_review": bool(segment.get("needs_review")) or status == "source_fallback",
+        }
+        # An imported/retried JSON must not keep the old render_text.
+        result.pop("subtitle_layout", None)
+        result.pop("translation_error", None)
+        if error:
+            result["translation_error"] = error
+        output.append(result)
     return output

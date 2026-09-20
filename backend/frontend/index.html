@@ -79,7 +79,7 @@
                   <label class="field wide"><span>Tên batch</span><input name="batch_name" value="Batch video mới" maxlength="120" /></label>
                   <label class="field"><span>Chế độ</span><select id="mode" name="mode"><option value="1">Chỉ Vietsub — giữ âm thanh gốc</option><option value="2">Vietsub + lồng tiếng Việt</option><option value="3">Vietsub + lồng tiếng + nhạc nền</option></select></label>
                   <label class="field"><span>Nguồn phụ đề Trung</span><select name="subtitle_source"><option value="speech">Whisper — khuyến nghị</option><option value="auto">OCR trước, Whisper dự phòng</option><option value="burned">Chữ có sẵn trên video</option></select></label>
-                  <label class="field"><span>Whisper model</span><select name="whisper_model"><option value="base">Base — nhanh</option><option value="small">Small — cân bằng</option><option value="medium">Medium — chính xác</option></select></label>
+                  <label class="field"><span>Whisper model</span><select name="whisper_model"><option value="base">Base — nhanh</option><option value="small" selected>Small — cân bằng</option><option value="medium">Medium — chính xác</option></select></label>
                   <label id="voiceModeField" class="field"><span>Chọn giọng</span><select name="voice_mode"><option value="auto">Tự động theo cao độ</option><option value="manual">Thủ công</option></select></label>
                   <label id="voiceTypeField" class="field"><span>Giọng dự phòng</span><select name="voice_type"><option value="female">Nữ</option><option value="male">Nam</option></select></label>
                   <label id="speechRateField" class="field"><span>Tốc độ đọc</span><input type="number" name="speech_rate" min="0.75" max="1.5" step="0.01" value="1" /></label>
@@ -100,7 +100,7 @@
               </section>
 
               <section class="card step-card">
-                <div class="step-heading"><span>3</span><div><h2>Vị trí và cỡ phụ đề</h2><p>Tự bám chữ Trung nếu OCR phát hiện được.</p></div></div>
+                <div class="step-heading"><span>3</span><div><h2>Vị trí và cỡ phụ đề</h2><p>Tự bám và che chữ gốc khi OCR tìm được vị trí. Nếu chỉ nhận diện giọng nói, chữ đã có trên video vẫn còn.</p></div></div>
                 <div class="subtitle-editor">
                   <div class="field-grid">
                     <label class="field"><span>Cách đặt phụ đề</span><select id="placementMode"><option value="replace_original">Thay đúng vị trí chữ Trung</option><option value="above_original">Đặt ngay trên chữ Trung</option><option value="bottom_safe">Vùng an toàn phía dưới</option></select></label>
