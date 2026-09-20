@@ -171,8 +171,13 @@ Video từ TikTok/Douyin được tải bằng `yt-dlp` bên trong worker, vì v
 ngay và dashboard hiển thị riêng tiến độ tải nguồn. Hệ thống chỉ chấp nhận domain TikTok/Douyin,
 không tải playlist, giới hạn mặc định 2 GB và 120 phút cho mỗi video, đồng thời xóa file `.part`
 khi tải lỗi hoặc bị hủy. Douyin thường yêu cầu phiên đăng nhập mới kể cả với video công khai.
-Web hỗ trợ quét QR hoặc nhập số điện thoại để nhận OTP ngay trong một phiên Chromium ngắn hạn;
-OTP chỉ nằm trong bộ nhớ đến khi được chuyển vào Chromium, không được lưu hoặc trả lại qua API.
+Tab Douyin mở phiên Chromium của dịch vụ `douyin-browser` để đăng nhập và xác minh.
+Worker lấy cookie mới (kể cả cookie khách) khi bắt đầu tải, thay vì chụp cookie lúc tạo batch.
+Nếu `yt-dlp` bị từ chối, worker mở link bằng phiên Chromium này, lấy địa chỉ MP4 đúng ID
+video và tải với cùng giới hạn dung lượng/thời lượng. Douyin không còn phụ thuộc API TikWM.
+Nếu Douyin vẫn yêu cầu xác minh, mở tab Douyin, hoàn tất xác minh, bấm Đồng bộ rồi thử lại job.
+Trong production, `/douyin-browser/` phải đi qua Nginx tới cổng 6080 của sidecar, bao gồm
+WebSocket `/douyin-browser/websockify`. Khi cập nhật, build lại dịch vụ `vidtrans` và tải lại trang.
 `cookies.txt` dạng Netscape vẫn là phương án dự phòng. Mỗi job nhận một bản cookie riêng với
 quyền file hạn chế; bản này tự xóa ngay khi tải thành công và không xuất hiện trong API hoặc gói
 kết quả. Có thể cấu hình một cookie dùng chung bằng cách mount file vào container rồi đặt

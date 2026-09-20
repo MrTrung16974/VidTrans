@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qs, unquote, urlsplit
+
+from infrastructure.social_video_downloader import (
+    SocialVideoDownloadCancelled, normalize_social_video_url, social_platform,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +58,40 @@ def write_netscape_cookies(cookies: list[dict[str, Any]], target: Path) -> None:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def douyin_video_info(detail: dict[str, Any]) -> dict[str, Any] | None:
+    video = detail.get("video") or {}
+    addresses = [video.get("play_addr") or {}]
+    addresses.extend(item.get("play_addr") or {} for item in video.get("bit_rate") or [])
+    formats = []
+    seen = set()
+    for address in addresses:
+        for url in address.get("url_list") or []:
+            if not isinstance(url, str) or url in seen:
+                continue
+            parsed = urlsplit(url)
+            hostname = parsed.hostname or ""
+            if parsed.scheme not in {"https", "http"} or parsed.username or parsed.password:
+                continue
+            if not any(hostname == domain or hostname.endswith("." + domain)
+                       for domain in ("douyinvod.com", "douyin.com", "amemv.com", "snssdk.com", "bytecdn.cn", "ibytedtos.com")):
+                continue
+            seen.add(url)
+            formats.append({"url": url, "ext": "mp4", "format_id": str(len(formats)),
+                            "width": address.get("width"), "height": address.get("height")})
+    if not formats:
+        return None
+    duration = video.get("duration") or detail.get("duration")
+    return {"id": str(detail["aweme_id"]), "title": detail.get("desc") or "Video Douyin",
+            "duration": float(duration) / 1000 if duration is not None else None,
+            "extractor": "douyin-browser", "formats": formats}
+
+
+def _video_id(url: str) -> str | None:
+    parsed = urlsplit(url)
+    match = re.search(r"/(?:video|note)/(\d+)", parsed.path)
+    return match.group(1) if match else parse_qs(parsed.query).get("modal_id", [None])[0]
 
 
 class DouyinBrowserAuthManager:
@@ -153,6 +195,75 @@ class DouyinBrowserAuthManager:
 
     def _authenticated(self) -> bool:
         return self.cookie_path.is_file() and self.cookie_path.stat().st_size > 80
+
+    def export_download_cookies(self, target: Path) -> Path:
+        """Take a private snapshot at execution time, including guest cookies."""
+        with self._lock:
+            cookies = self._with_browser(self._collect_cookies)
+            write_netscape_cookies(cookies, target)
+        return target
+
+    def resolve_video(self, url: str, cookie_path: Path, cancel_requested=None) -> dict[str, Any]:
+        """Read the requested video's data using the existing Chromium session."""
+        url = normalize_social_video_url(url)
+        if social_platform(url) != "Douyin":
+            raise ValueError("Chỉ hỗ trợ Douyin trong trình duyệt này")
+
+        def resolve(browser: Any) -> dict[str, Any]:
+            page = browser.contexts[0].new_page()
+            details: dict[str, dict[str, Any]] = {}
+            expected_id = _video_id(url)
+
+            def collect(value: Any) -> None:
+                if isinstance(value, dict):
+                    if value.get("aweme_id") and isinstance(value.get("video"), dict):
+                        details[str(value["aweme_id"])] = value
+                    else:
+                        for child in value.values():
+                            collect(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        collect(child)
+
+            def on_response(response: Any) -> None:
+                parsed = urlsplit(response.url)
+                if (parsed.hostname or "").endswith(".douyin.com") and "/aweme/" in parsed.path:
+                    try:
+                        collect(response.json())
+                    except Exception:
+                        pass
+
+            try:
+                page.on("response", on_response)
+                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    if cancel_requested and cancel_requested():
+                        raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
+                    expected_id = expected_id or _video_id(page.url)
+                    # Hydration is useful when the page does not make a detail API call.
+                    for raw in page.locator('script#RENDER_DATA, script#__NEXT_DATA__').all_text_contents():
+                        try:
+                            collect(json.loads(unquote(raw)))
+                        except (ValueError, TypeError):
+                            pass
+                    for detail in details.values():
+                        if expected_id and str(detail.get("aweme_id")) == expected_id:
+                            info = douyin_video_info(detail)
+                            if info:
+                                info["http_headers"] = {
+                                    "Referer": page.url,
+                                    "User-Agent": page.evaluate("navigator.userAgent"),
+                                }
+                                write_netscape_cookies(self._collect_cookies(browser), cookie_path)
+                                return info
+                    page.wait_for_timeout(250)
+                raise RuntimeError("Không tìm thấy video trong phiên Douyin. Mở tab Douyin để đăng nhập hoặc hoàn tất xác minh rồi thử lại.")
+            finally:
+                page.close()
+
+        with self._lock:
+            return self._with_browser(resolve)
 
     def status(self, *, refresh: bool = False) -> dict[str, Any]:
         available = self._cdp_available()

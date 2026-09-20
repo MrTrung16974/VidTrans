@@ -1,4 +1,5 @@
 import { createTikTokWorkspace } from "./tiktok.js?v=20260914-1";
+import { resolveDouyinFrameUrl } from "./browser-frame.js?v=20260920-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -155,11 +156,12 @@ function renderDouyinBrowserStatus(status) {
 
   const frame = $("#douyinBrowserFrame");
   const loading = $("#douyinBrowserLoading");
-  if (status.available && status.browser_url && frame.dataset.source !== status.browser_url) {
+  const browserUrl = resolveDouyinFrameUrl(status.browser_url, location.href);
+  if (status.available && browserUrl && frame.dataset.source !== browserUrl) {
     state.douyinBrowserLoaded = false;
     loading.classList.remove("is-hidden");
-    frame.dataset.source = status.browser_url;
-    frame.src = status.browser_url + "vnc.html?resize=scale&autoconnect=true";
+    frame.dataset.source = browserUrl;
+    frame.src = browserUrl;
   }
   if (!status.available) {
     loading.classList.remove("is-hidden");

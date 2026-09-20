@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
-from fastapi.staticfiles import StaticFiles
+from infrastructure.frontend_static import FrontendStaticFiles
 from gtts import gTTS
 from starlette.background import BackgroundTask
 from infrastructure.artifact_archive import build_artifact_archive
@@ -123,11 +123,13 @@ app.add_middleware(
 JOB_SERVICE = JobService(SQLiteJobStore(WORK_DIR / "jobs.sqlite3"))
 TIKTOK_SUMMARY_PROVIDER = LocalExtractiveTikTokProvider()
 _social_cookie_value = os.environ.get("VIDTRANS_YTDLP_COOKIE_FILE", "").strip()
+DOUYIN_BROWSER_AUTH = DouyinBrowserAuthManager(WORK_DIR / "douyin-auth" / "douyin.cookies.txt")
 SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     ffmpeg_location=FFMPEG,
     cookie_file=Path(_social_cookie_value) if _social_cookie_value else None,
+    douyin_cookie_provider=DOUYIN_BROWSER_AUTH.export_download_cookies,
+    douyin_resolver=DOUYIN_BROWSER_AUTH.resolve_video,
 )
-DOUYIN_BROWSER_AUTH = DouyinBrowserAuthManager(WORK_DIR / "douyin-auth" / "douyin.cookies.txt")
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
 app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR))
@@ -2196,8 +2198,6 @@ async def create_batch_endpoint(
             raise HTTPException(status_code=400, detail="File cookies.txt không được vượt quá 512 KB")
         if not cookie_payload or b"\x00" in cookie_payload:
             raise HTTPException(status_code=400, detail="File cookies.txt không hợp lệ")
-    elif source_urls and DOUYIN_BROWSER_AUTH.cookie_path.is_file():
-        cookie_payload = DOUYIN_BROWSER_AUTH.cookie_path.read_bytes()
     total_sources = len(uploads) + len(source_urls)
     if total_sources < 1 or total_sources > 50:
         raise HTTPException(
@@ -2685,4 +2685,4 @@ app.openapi = custom_openapi
 
 
 if FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    app.mount("/", FrontendStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

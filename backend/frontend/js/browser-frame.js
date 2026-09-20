@@ -1,5 +1,13 @@
 // Browser desktop pages only. Never embed TikTok's website itself.
 export function resolveTikTokFrameUrl(raw, pageHref) {
+  return resolveBrowserFrameUrl(raw, pageHref, 'tiktok');
+}
+
+export function resolveDouyinFrameUrl(raw, pageHref) {
+  return resolveBrowserFrameUrl(raw, pageHref, 'douyin');
+}
+
+function resolveBrowserFrameUrl(raw, pageHref, platform) {
   if (!raw) return null;
   const page = new URL(pageHref);
   let target;
@@ -8,13 +16,13 @@ export function resolveTikTokFrameUrl(raw, pageHref) {
   const loopback = host => ['localhost', '127.0.0.1', '[::1]'].includes(host);
   // Old .env files can retain the development noVNC URL on a deployed VPS.
   if (!loopback(page.hostname) && loopback(target.hostname)) {
-    target = new URL('/tiktok-browser/vnc_lite.html', page);
+    target = new URL(`/${platform}-browser/vnc_lite.html`, page);
   }
-  const proxied = target.origin === page.origin && target.pathname === '/tiktok-browser/vnc_lite.html';
+  const proxied = target.origin === page.origin && target.pathname === `/${platform}-browser/vnc_lite.html`;
   const local = loopback(page.hostname) && loopback(target.hostname) && target.pathname === '/vnc_lite.html';
   if (!proxied && !local) return null;
   if (page.protocol === 'https:' && target.protocol !== 'https:') return null;
-  target.searchParams.set('path', proxied ? 'tiktok-browser/websockify' : 'websockify');
+  target.searchParams.set('path', proxied ? `${platform}-browser/websockify` : 'websockify');
   target.searchParams.set('scale', 'true');
   return target.href;
 }

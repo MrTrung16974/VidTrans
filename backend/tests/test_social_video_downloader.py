@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import Mock, patch
 
 from infrastructure.social_video_downloader import (
     SocialVideoDownloadCancelled,
+    SocialVideoDownloadError,
     SocialVideoDownloader,
     extract_social_video_urls,
     normalize_social_video_url,
@@ -78,6 +80,97 @@ class SocialVideoDownloaderTests(unittest.TestCase):
     def test_platform_name_uses_allowlisted_hostname(self) -> None:
         self.assertEqual(social_platform("https://v.douyin.com/example/"), "Douyin")
         self.assertEqual(social_platform("https://vm.tiktok.com/example/"), "TikTok")
+        self.assertEqual(social_platform("https://www.iesdouyin.com/share/video/123"), "Douyin")
+
+    def test_browser_fallback_recovers_cookie_error_and_cleans_private_snapshot(self) -> None:
+        with TemporaryDirectory() as directory:
+            stem = Path(directory) / "recover"
+            first = FakeYoutubeDL({})
+            first.extract_info = Mock(side_effect=RuntimeError("Fresh cookies are needed"))
+            calls = []
+
+            def factory(options):
+                calls.append(dict(options))
+                if len(calls) == 1:
+                    return first
+                ydl = FakeYoutubeDL(options)
+                ydl.process_ie_result = lambda info, download: {**ydl.extract_info("direct", download=download), **info}
+                return ydl
+
+            def resolve(url, cookie_path, cancel):
+                cookie_path.write_text("fresh cookies", encoding="utf-8")
+                return {"id": "7661982102736473384", "title": "Recovered", "duration": 20,
+                        "url": "https://v.douyinvod.com/video.mp4"}
+
+            downloader = SocialVideoDownloader(ydl_factory=factory, douyin_resolver=resolve)
+            with patch("urllib.request.urlopen", side_effect=AssertionError("No third-party API for Douyin")):
+                result = downloader.download("https://www.douyin.com/video/7661982102736473384", stem)
+            self.assertEqual(result.video_id, "7661982102736473384")
+            self.assertEqual(result.path.read_bytes(), b"video")
+            self.assertIn("cookiefile", calls[1])
+            self.assertFalse(Path(calls[1]["cookiefile"]).exists())
+
+    def test_browser_fallback_respects_duration_and_cancellation(self) -> None:
+        for failure in ("duration", "cancel"):
+            with self.subTest(failure=failure), TemporaryDirectory() as directory:
+                ydl = FakeYoutubeDL({})
+                ydl.extract_info = Mock(side_effect=RuntimeError("Fresh cookies are needed"))
+
+                def resolve(*args):
+                    if failure == "cancel":
+                        raise SocialVideoDownloadCancelled("cancelled")
+                    return {"id": "1", "duration": 99999}
+
+                downloader = SocialVideoDownloader(ydl_factory=lambda options: ydl, douyin_resolver=resolve)
+                error_type = SocialVideoDownloadCancelled if failure == "cancel" else SocialVideoDownloadError
+                with self.assertRaises(error_type):
+                    downloader.download("https://www.douyin.com/video/1", Path(directory) / "failed")
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_guest_cookie_snapshot_is_refreshed_per_download(self) -> None:
+        with TemporaryDirectory() as directory:
+            snapshots = []
+            def provider(path):
+                snapshots.append(path)
+                path.write_text("guest cookies", encoding="utf-8")
+                return path
+            downloader = SocialVideoDownloader(ydl_factory=FakeYoutubeDL, douyin_cookie_provider=provider)
+            for name in ("first", "second"):
+                downloader.download("https://www.douyin.com/video/1", Path(directory) / name)
+            self.assertEqual(len(snapshots), 2)
+            self.assertNotEqual(*snapshots)
+            self.assertTrue(all(not path.exists() for path in snapshots))
+
+    def test_failed_browser_transfer_removes_partial_video_and_cookie(self) -> None:
+        with TemporaryDirectory() as directory:
+            stem = Path(directory) / "broken"
+            attempts = []
+            def factory(options):
+                ydl = FakeYoutubeDL(options)
+                attempts.append(ydl)
+                ydl.extract_info = Mock(side_effect=RuntimeError("Fresh cookies are needed"))
+                def fail_transfer(info, download):
+                    stem.with_suffix(".mp4.part").write_bytes(b"partial")
+                    raise RuntimeError("Connection reset")
+                ydl.process_ie_result = fail_transfer
+                return ydl
+            def resolve(url, path, cancel):
+                path.write_text("fresh cookies", encoding="utf-8")
+                return {"id": "1", "duration": 1}
+            downloader = SocialVideoDownloader(ydl_factory=factory, douyin_resolver=resolve)
+            with self.assertRaises(SocialVideoDownloadError):
+                downloader.download("https://www.douyin.com/video/1", stem)
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_oversized_download_does_not_trigger_fallback(self) -> None:
+        with TemporaryDirectory() as directory:
+            resolver = Mock()
+            downloader = SocialVideoDownloader(ydl_factory=FakeYoutubeDL, max_bytes=4, douyin_resolver=resolver)
+            with self.assertRaisesRegex(SocialVideoDownloadError, "giới hạn"):
+                downloader.download("https://www.douyin.com/video/1", Path(directory) / "large")
+            resolver.assert_not_called()
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_download_returns_downloaded_video_and_metadata(self) -> None:
         with TemporaryDirectory() as directory:

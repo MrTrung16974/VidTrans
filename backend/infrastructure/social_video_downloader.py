@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import importlib
+import json
+import logging
 import re
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ContextManager
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
+
+logger = logging.getLogger(__name__)
 
 
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
@@ -87,7 +92,8 @@ def extract_social_video_urls(share_text: str, *, limit: int = 50) -> list[str]:
 
 def social_platform(url: str) -> str:
     hostname = (urlsplit(url).hostname or "").lower()
-    return "Douyin" if hostname == "douyin.com" or hostname.endswith(".douyin.com") else "TikTok"
+    return "Douyin" if any(hostname == domain or hostname.endswith("." + domain)
+                           for domain in ("douyin.com", "iesdouyin.com")) else "TikTok"
 
 
 ProgressCallback = Callable[[int, int | None], None]
@@ -107,6 +113,8 @@ class SocialVideoDownloader:
         socket_timeout: int = 30,
         cookie_file: Path | None = None,
         ydl_factory: YoutubeDLFactory | None = None,
+        douyin_cookie_provider: Callable[[Path], Path] | None = None,
+        douyin_resolver: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self.ffmpeg_location = ffmpeg_location
         self.max_bytes = max_bytes
@@ -114,6 +122,8 @@ class SocialVideoDownloader:
         self.socket_timeout = socket_timeout
         self.cookie_file = cookie_file
         self._ydl_factory = ydl_factory
+        self._douyin_cookie_provider = douyin_cookie_provider
+        self._douyin_resolver = douyin_resolver
 
     def _create_ydl(self, options: dict[str, Any]) -> ContextManager[Any]:
         if self._ydl_factory is not None:
@@ -190,15 +200,26 @@ class SocialVideoDownloader:
         }
         if self.ffmpeg_location:
             options["ffmpeg_location"] = self.ffmpeg_location
+        browser_cookie_path = destination_stem.with_name(destination_stem.name + ".browser.cookies.txt")
         effective_cookie_file = cookie_file or self.cookie_file
+        if social_platform(normalized_url) == "Douyin" and self._douyin_cookie_provider and not effective_cookie_file:
+            try:
+                effective_cookie_file = self._douyin_cookie_provider(browser_cookie_path)
+            except Exception as cookie_error:
+                logger.warning("Cannot refresh Douyin download cookies: %s", type(cookie_error).__name__)
         if effective_cookie_file and effective_cookie_file.is_file():
             options["cookiefile"] = str(effective_cookie_file)
 
         try:
+            if cancel_requested and cancel_requested():
+                raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
             with self._create_ydl(options) as ydl:
                 info = ydl.extract_info(normalized_url, download=True)
                 sanitized = ydl.sanitize_info(info) if hasattr(ydl, "sanitize_info") else dict(info or {})
         except SocialVideoDownloadCancelled:
+            cleanup()
+            raise
+        except SocialVideoDownloadError:
             cleanup()
             raise
         except Exception as exc:
@@ -206,51 +227,52 @@ class SocialVideoDownloader:
             if cancel_requested and cancel_requested():
                 raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from exc
             
-            # FALLBACK: Dùng API TikWM để tải video khi bị Douyin chặn
-            import urllib.request
-            import urllib.parse
-            import json
-            import shutil
-            import ssl
-            
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            
             try:
-                api_url = f"https://www.tikwm.com/api/?url={urllib.parse.quote(normalized_url)}&hd=1"
-                req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-                with urllib.request.urlopen(req, timeout=15, context=ctx) as response:
-                    data = json.loads(response.read().decode())
-                
-                if data.get("code") == 0 and data.get("data") and data["data"].get("play"):
-                    play_url = data["data"]["play"]
-                    if not play_url.startswith("http"):
-                        play_url = "https://www.tikwm.com" + play_url
-                    
-                    fallback_path = Path(f"{destination_stem}.mp4")
-                    req_vid = urllib.request.Request(play_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-                    with urllib.request.urlopen(req_vid, timeout=120, context=ctx) as vid_resp, open(fallback_path, "wb") as f:
-                        shutil.copyfileobj(vid_resp, f)
-                    
-                    sanitized = {
-                        "title": data["data"].get("title", ""),
-                        "id": data["data"].get("id", ""),
-                        "duration": data["data"].get("duration", 0)
-                    }
+                if social_platform(normalized_url) == "Douyin":
+                    if self._douyin_resolver is None:
+                        raise RuntimeError("Douyin browser is not configured")
+                    info = self._douyin_resolver(normalized_url, browser_cookie_path, cancel_requested)
+                    if browser_cookie_path.is_file():
+                        options["cookiefile"] = str(browser_cookie_path)
                 else:
-                    raise RuntimeError("API Fallback failed")
-            except Exception:
-                # Nếu API cũng thất bại, trả về lỗi ban đầu
+                    request = urllib.request.Request(
+                        f"https://www.tikwm.com/api/?url={quote(normalized_url, safe='')}&hd=1",
+                        headers={"User-Agent": "Mozilla/5.0"},
+                    )
+                    with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
+                        payload = json.loads(response.read(2 * 1024 * 1024))
+                    data = payload.get("data") or {}
+                    if payload.get("code") != 0 or not data.get("play"):
+                        raise RuntimeError("API fallback failed")
+                    info = {"id": str(data.get("id") or "video"), "title": data.get("title") or "Video TikTok",
+                            "duration": data.get("duration"), "ext": "mp4",
+                            "url": urljoin("https://www.tikwm.com/", data["play"])}
+                rejected = match_filter(info)
+                if rejected:
+                    raise SocialVideoDownloadError(rejected)
+                progress_hook({})
+                with self._create_ydl(options) as ydl:
+                    downloaded_info = ydl.process_ie_result(info, download=True)
+                    sanitized = ydl.sanitize_info(downloaded_info) if hasattr(ydl, "sanitize_info") else dict(downloaded_info or info)
+            except SocialVideoDownloadError:
+                cleanup()
+                raise
+            except Exception as fallback_error:
+                cleanup()
+                if cancel_requested and cancel_requested():
+                    raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from fallback_error
+                logger.warning("Social video fallback failed: %s", type(fallback_error).__name__)
                 message = " ".join(str(exc).split())
-                if "fresh cookies" in message.lower():
+                if social_platform(normalized_url) == "Douyin":
                     message = (
-                        "Douyin yêu cầu cookie mới và API phụ cũng không hoạt động. Hãy tải thẳng file video (MP4) về máy tính của bạn, "
-                        "rồi up trực tiếp bằng nút 'Chọn file có sẵn' thay vì dán link nhé."
+                        "Không lấy được video qua phiên trình duyệt. Mở tab Douyin, đăng nhập hoặc hoàn tất "
+                        "xác minh rồi bấm Đồng bộ và thử lại. Nếu trình duyệt không mở được, kiểm tra dịch vụ douyin-browser."
                     )
                 raise SocialVideoDownloadError(
                     f"Không tải được video {social_platform(normalized_url)}: {message or 'nguồn từ chối truy cập'}"
                 ) from exc
+        finally:
+            browser_cookie_path.unlink(missing_ok=True)
 
         candidates = sorted(
             (
@@ -265,6 +287,13 @@ class SocialVideoDownloader:
             cleanup()
             raise SocialVideoDownloadError("yt-dlp không tạo được file video hợp lệ")
         output_path = candidates[0]
+        if output_path.stat().st_size == 0:
+            cleanup()
+            raise SocialVideoDownloadError("File video tải về bị rỗng")
+        rejected = match_filter(sanitized)
+        if rejected:
+            cleanup()
+            raise SocialVideoDownloadError(rejected)
         if output_path.stat().st_size > self.max_bytes:
             cleanup()
             raise SocialVideoDownloadError(
