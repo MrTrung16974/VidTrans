@@ -194,6 +194,8 @@ class SocialVideoDownloader:
             "socket_timeout": self.socket_timeout,
             "retries": 3,
             "fragment_retries": 3,
+            # A missing HLS/DASH fragment must fail, not produce a partial video.
+            "skip_unavailable_fragments": False,
             "quiet": True,
             "no_warnings": True,
             "overwrites": True,
@@ -278,14 +280,17 @@ class SocialVideoDownloader:
             (
                 path
                 for path in destination_stem.parent.glob(f"{destination_stem.name}.*")
-                if path.is_file() and path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+                if path.is_file()
+                and path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+                # Only the final outtmpl file; exclude .f137.mp4/.temp.mp4.
+                and path.stem == destination_stem.name
             ),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
         if not candidates:
             cleanup()
-            raise SocialVideoDownloadError("yt-dlp không tạo được file video hợp lệ")
+            raise SocialVideoDownloadError("Tải nguồn chưa hoàn tất: không tìm thấy file video đã ghép xong")
         output_path = candidates[0]
         if output_path.stat().st_size == 0:
             cleanup()

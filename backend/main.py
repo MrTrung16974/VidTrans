@@ -1290,10 +1290,18 @@ def process_video(
 
         ensure_job_active(job_id)
         update_job(job_id, status="processing", step="transcribing", step_detail=None, progress=0.22)
-        with _whisper_slots:
-            ensure_job_active(job_id)
-            model = get_whisper_model(whisper_model)
-            asr_segments = transcribe_chinese_video(model, video_path)
+        asr_segments: list[dict[str, Any]] = []
+        if has_audio_stream(video_path):
+            with _whisper_slots:
+                ensure_job_active(job_id)
+                model = get_whisper_model(whisper_model)
+                asr_segments = transcribe_chinese_video(model, video_path)
+        elif not ocr_segments:
+            raise RuntimeError(
+                "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
+                "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
+                "nếu không, hãy chọn video có âm thanh."
+            )
         if ocr_segments:
             segments = annotate_ocr_segments_with_asr(ocr_segments, asr_segments)
         else:

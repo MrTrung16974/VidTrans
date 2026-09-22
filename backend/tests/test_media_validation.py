@@ -51,8 +51,24 @@ class MediaValidationTests(unittest.TestCase):
     def test_collapses_verbose_ffmpeg_error_for_dashboard(self) -> None:
         raw = "Failed to load audio: ffmpeg version 7.1 " + ("configuration details " * 100)
         message = public_error_message(raw)
-        self.assertIn("Video nguồn", message)
-        self.assertLess(len(message), 150)
+        self.assertIn("âm thanh", message)
+        self.assertLess(len(message), 200)
+
+    def test_audio_error_is_not_mislabeled_as_corrupt_video(self):
+        self.assertNotIn("Video nguồn bị rỗng", public_error_message("Failed to load audio: conversion failed"))
+        self.assertIn("quyền", public_error_message("Failed to load audio: Permission denied"))
+        self.assertIn("dung lượng", public_error_message("Failed to load audio: No space left on device"))
+        self.assertIn("Không tìm thấy", public_error_message("Error opening input file: No such file or directory"))
+
+    def test_unavailable_stream_duration_uses_container_duration(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "valid.webm"
+            path.write_bytes(b"video")
+            for value in ("N/A", "nan", "inf", "0"):
+                payload = {"streams": [{"width": 640, "height": 480, "duration": value}],
+                           "format": {"duration": "5.0"}}
+                probe = validate_video_file(path, runner=lambda *a, **k: subprocess.CompletedProcess([], 0, json.dumps(payload), ""))
+                self.assertEqual(probe.duration, 5.0)
 
     def test_truncates_unknown_internal_error(self) -> None:
         message = public_error_message("x" * 1000, max_length=80)

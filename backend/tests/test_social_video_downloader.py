@@ -187,10 +187,43 @@ class SocialVideoDownloaderTests(unittest.TestCase):
                 progress_callback=lambda downloaded, total: progress.append((downloaded, total)),
             )
 
-            self.assertEqual(result.path, tmp_path / "job123.mp4")
+            self.assertEqual(result.path, (tmp_path / "job123.mp4").resolve())
             self.assertEqual(result.display_filename, "Video thử nghiệm.mp4")
             self.assertEqual(result.platform, "Douyin")
             self.assertEqual(progress, [(5, 5)])
+
+    def test_does_not_accept_unmerged_component_as_finished_video(self):
+        with TemporaryDirectory() as directory:
+            stem = Path(directory) / "partial"
+            def factory(options):
+                instance = FakeYoutubeDL(options)
+                def extract(url, download):
+                    stem.with_suffix(".f137.mp4").write_bytes(b"video track")
+                    stem.with_suffix(".mp4.part").write_bytes(b"partial")
+                    return {"id": "1", "duration": 10}
+                instance.extract_info = extract
+                return instance
+            downloader = SocialVideoDownloader(ydl_factory=factory)
+            with self.assertRaisesRegex(SocialVideoDownloadError, "chưa hoàn tất"):
+                downloader.download("https://v.douyin.com/example/", stem)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_final_video_wins_over_newer_component(self):
+        with TemporaryDirectory() as directory:
+            stem = Path(directory) / "complete"
+            def factory(options):
+                self.assertFalse(options["skip_unavailable_fragments"])
+                instance = FakeYoutubeDL(options)
+                original = instance.extract_info
+                def extract(url, download):
+                    result = original(url, download=download)
+                    stem.with_suffix(".f137.mp4").write_bytes(b"component")
+                    return result
+                instance.extract_info = extract
+                return instance
+            result = SocialVideoDownloader(ydl_factory=factory).download("https://v.douyin.com/example/", stem)
+            self.assertEqual(result.path.name, "complete.mp4")
+            self.assertEqual(result.path.read_bytes(), b"video")
 
     def test_single_video_does_not_use_max_downloads_guard(self) -> None:
         """yt-dlp may raise MaxDownloadsReached after a successful first file."""
