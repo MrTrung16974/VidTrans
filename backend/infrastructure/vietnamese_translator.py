@@ -12,8 +12,17 @@ class GoogleVietnameseTranslator:
     name = "google-vi"
 
     def __init__(self, *, timeout: float = 15, opener=None):
+        import os
         self.timeout = timeout
-        self._open = opener or urllib.request.urlopen
+        if opener:
+            self._open = opener
+        else:
+            proxy_url = os.environ.get("VIDTRANS_TIKTOK_PROXY") or os.environ.get("VIDTRANS_DOUYIN_PROXY")
+            if proxy_url:
+                proxy_handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+                self._open = urllib.request.build_opener(proxy_handler).open
+            else:
+                self._open = urllib.request.urlopen
 
     def _get(self, base: str, params: dict) -> str:
         request = urllib.request.Request(
