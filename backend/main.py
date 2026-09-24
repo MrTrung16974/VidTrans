@@ -129,6 +129,8 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     cookie_file=Path(_social_cookie_value) if _social_cookie_value else None,
     douyin_cookie_provider=DOUYIN_BROWSER_AUTH.export_download_cookies,
     douyin_resolver=DOUYIN_BROWSER_AUTH.resolve_video,
+    tiktok_proxy=os.environ.get("VIDTRANS_TIKTOK_PROXY", "").strip() or None,
+    douyin_proxy=os.environ.get("VIDTRANS_DOUYIN_PROXY", "").strip() or None,
 )
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")

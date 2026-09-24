@@ -8,7 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ContextManager
-from urllib.parse import quote, urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,8 @@ class SocialVideoDownloader:
         ydl_factory: YoutubeDLFactory | None = None,
         douyin_cookie_provider: Callable[[Path], Path] | None = None,
         douyin_resolver: Callable[..., dict[str, Any]] | None = None,
+        tiktok_proxy: str | None = None,
+        douyin_proxy: str | None = None,
     ) -> None:
         self.ffmpeg_location = ffmpeg_location
         self.max_bytes = max_bytes
@@ -124,6 +126,8 @@ class SocialVideoDownloader:
         self._ydl_factory = ydl_factory
         self._douyin_cookie_provider = douyin_cookie_provider
         self._douyin_resolver = douyin_resolver
+        self.tiktok_proxy = tiktok_proxy
+        self.douyin_proxy = douyin_proxy
 
     def _create_ydl(self, options: dict[str, Any]) -> ContextManager[Any]:
         if self._ydl_factory is not None:
@@ -200,6 +204,12 @@ class SocialVideoDownloader:
             "no_warnings": True,
             "overwrites": True,
         }
+        platform = social_platform(normalized_url)
+        if platform == "Douyin" and self.douyin_proxy:
+            options["proxy"] = self.douyin_proxy
+        elif platform == "TikTok" and self.tiktok_proxy:
+            options["proxy"] = self.tiktok_proxy
+
         if self.ffmpeg_location:
             options["ffmpeg_location"] = self.ffmpeg_location
         browser_cookie_path = destination_stem.with_name(destination_stem.name + ".browser.cookies.txt")
@@ -237,18 +247,46 @@ class SocialVideoDownloader:
                     if browser_cookie_path.is_file():
                         options["cookiefile"] = str(browser_cookie_path)
                 else:
-                    request = urllib.request.Request(
-                        f"https://www.tikwm.com/api/?url={quote(normalized_url, safe='')}&hd=1",
-                        headers={"User-Agent": "Mozilla/5.0"},
-                    )
-                    with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
-                        payload = json.loads(response.read(2 * 1024 * 1024))
-                    data = payload.get("data") or {}
-                    if payload.get("code") != 0 or not data.get("play"):
-                        raise RuntimeError("API fallback failed")
-                    info = {"id": str(data.get("id") or "video"), "title": data.get("title") or "Video TikTok",
-                            "duration": data.get("duration"), "ext": "mp4",
-                            "url": urljoin("https://www.tikwm.com/", data["play"])}
+                    info = None
+                    # Try ssstik.io first (more reliable)
+                    try:
+                        req_url = "https://ssstik.io/abc?url=dl"
+                        req_data = urlencode({"id": normalized_url, "locale": "en", "tt": "1"}).encode('utf-8')
+                        request = urllib.request.Request(req_url, data=req_data, headers={
+                            "User-Agent": "Mozilla/5.0",
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "Hx-Request": "true"
+                        })
+                        with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
+                            html = response.read(10 * 1024 * 1024).decode('utf-8', errors='ignore')
+                        match = re.search(r'class="[^"]*download_link[^"]*".*?href="([^"#]+)"', html)
+                        if not match:
+                            match = re.search(r'class="[^"]*download_link[^"]*".*?data-directurl="([^"#]+)"', html)
+                        if match:
+                            info = {
+                                "id": "video",
+                                "title": "Video TikTok",
+                                "duration": None,
+                                "ext": "mp4",
+                                "url": match.group(1).replace('&amp;', '&')
+                            }
+                    except Exception as ssstik_err:
+                        logger.warning("ssstik.io fallback failed: %s", ssstik_err)
+
+                    # Try tikwm.com if ssstik.io failed
+                    if not info:
+                        request = urllib.request.Request(
+                            f"https://www.tikwm.com/api/?url={quote(normalized_url, safe='')}&hd=1",
+                            headers={"User-Agent": "Mozilla/5.0"},
+                        )
+                        with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
+                            payload = json.loads(response.read(2 * 1024 * 1024))
+                        data = payload.get("data") or {}
+                        if payload.get("code") != 0 or not data.get("play"):
+                            raise RuntimeError("Both ssstik.io and tikwm.com API fallbacks failed")
+                        info = {"id": str(data.get("id") or "video"), "title": data.get("title") or "Video TikTok",
+                                "duration": data.get("duration"), "ext": "mp4",
+                                "url": urljoin("https://www.tikwm.com/", data["play"])}
                 rejected = match_filter(info)
                 if rejected:
                     raise SocialVideoDownloadError(rejected)
