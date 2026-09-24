@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 
 class GoogleVietnameseTranslator:
     # Web translators do not promise to preserve custom HTML cue markers.
-    supports_markers = False
+    supports_markers = True
     name = "google-vi"
 
     def __init__(self, *, timeout: float = 15, opener=None):
