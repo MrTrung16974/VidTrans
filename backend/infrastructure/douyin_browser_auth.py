@@ -63,7 +63,6 @@ def _utc_now() -> str:
 def douyin_video_info(detail: dict[str, Any]) -> dict[str, Any] | None:
     video = detail.get("video") or {}
     addresses = [video.get("play_addr") or {}]
-    addresses.extend(item.get("play_addr") or {} for item in video.get("bit_rate") or [])
     formats = []
     seen = set()
     for address in addresses:
