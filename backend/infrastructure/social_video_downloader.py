@@ -268,7 +268,8 @@ class SocialVideoDownloader:
                                 "title": "Video TikTok",
                                 "duration": None,
                                 "ext": "mp4",
-                                "url": match.group(1).replace('&amp;', '&')
+                                "url": match.group(1).replace('&amp;', '&'),
+                                "http_headers": {"Referer": "https://ssstik.io/"}
                             }
                     except Exception as ssstik_err:
                         logger.warning("ssstik.io fallback failed: %s", ssstik_err)
