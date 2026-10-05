@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import threading
 import time
 import urllib.error
@@ -11,10 +10,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 
 from infrastructure.social_video_downloader import (
-    SocialVideoDownloadCancelled, normalize_social_video_url, social_platform,
+    SocialVideoDownloadCancelled, SocialVideoDownloadError, douyin_video_id,
+    normalize_social_video_url, social_platform,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,11 @@ def _utc_now() -> str:
 
 
 def douyin_video_info(detail: dict[str, Any]) -> dict[str, Any] | None:
+    if detail.get("images"):
+        # Image posts carry the background music in video.play_addr, not a video.
+        raise SocialVideoDownloadError(
+            "Link Douyin này là bài đăng ảnh (图文), không phải video. Hãy chọn link một video."
+        )
     video = detail.get("video") or {}
     addresses = [video.get("play_addr") or {}]
     formats = []
@@ -88,9 +93,7 @@ def douyin_video_info(detail: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _video_id(url: str) -> str | None:
-    parsed = urlsplit(url)
-    match = re.search(r"/(?:video|note)/(\d+)", parsed.path)
-    return match.group(1) if match else parse_qs(parsed.query).get("modal_id", [None])[0]
+    return douyin_video_id(url)[0]
 
 
 class DouyinBrowserAuthManager:

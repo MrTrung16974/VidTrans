@@ -179,6 +179,7 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             downloader = SocialVideoDownloader(
                 ydl_factory=lambda options: FakeYoutubeDL(options),
                 max_bytes=100,
+                redirect_resolver=lambda url: "https://www.iesdouyin.com/share/video/7661982102736473384/?region=CN",
             )
 
             result = downloader.download(
@@ -281,3 +282,46 @@ class SocialVideoDownloaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DouyinCanonicalUrlTests(unittest.TestCase):
+    VIDEO = "https://www.douyin.com/video/7661982102736473384"
+
+    def downloader(self, redirect="https://www.douyin.com/"):
+        return SocialVideoDownloader(redirect_resolver=Mock(return_value=redirect))
+
+    def test_modal_and_share_links_map_to_video_page_without_network(self) -> None:
+        downloader = self.downloader()
+        for url in (
+            "https://www.douyin.com/jingxuan?modal_id=7661982102736473384",
+            "https://www.douyin.com/user/MS4wLjABAAAA?from_tab_name=main&modal_id=7661982102736473384",
+            "https://www.iesdouyin.com/share/video/7661982102736473384/?region=CN",
+            self.VIDEO + "?previous_page=app_code_link",
+        ):
+            self.assertEqual(downloader.canonical_douyin_url(url), self.VIDEO, url)
+        downloader._redirect_resolver.assert_not_called()
+
+    def test_short_link_is_resolved_to_requested_video(self) -> None:
+        downloader = self.downloader("https://www.iesdouyin.com/share/video/7661982102736473384/?u_code=x")
+        self.assertEqual(downloader.canonical_douyin_url("https://v.douyin.com/GXgZS-F73fI/"), self.VIDEO)
+
+    def test_image_post_is_rejected_instead_of_downloading_music(self) -> None:
+        downloader = self.downloader("https://www.iesdouyin.com/share/note/7661982102736473384/")
+        with self.assertRaises(SocialVideoDownloadError):
+            downloader.canonical_douyin_url("https://v.douyin.com/abc/")
+
+    def test_yt_dlp_receives_canonical_url_and_no_generic_extractor(self) -> None:
+        seen = {}
+
+        class Recorder(FakeYoutubeDL):
+            def extract_info(self, url, *, download):
+                seen["url"], seen["allowed"] = url, self.options.get("allowed_extractors")
+                return super().extract_info(url, download=download)
+
+        with TemporaryDirectory() as directory:
+            downloader = SocialVideoDownloader(ydl_factory=Recorder, redirect_resolver=Mock())
+            result = downloader.download(
+                "https://www.douyin.com/jingxuan?modal_id=7661982102736473384", Path(directory) / "job"
+            )
+        self.assertEqual(seen, {"url": self.VIDEO, "allowed": ["douyin"]})
+        self.assertEqual(result.source_url, self.VIDEO)

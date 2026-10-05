@@ -141,3 +141,13 @@ class DouyinBrowserAuthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DouyinImagePostTests(unittest.TestCase):
+    def test_image_post_is_not_treated_as_video(self) -> None:
+        from infrastructure.douyin_browser_auth import douyin_video_info
+        from infrastructure.social_video_downloader import SocialVideoDownloadError
+        detail = {"aweme_id": "1", "images": [{"url_list": ["https://p3.douyinpic.com/a.jpg"]}],
+                  "video": {"play_addr": {"url_list": ["https://v.douyinvod.com/music.mp3"]}}}
+        with self.assertRaises(SocialVideoDownloadError):
+            douyin_video_info(detail)

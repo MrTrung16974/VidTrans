@@ -69,6 +69,11 @@ services:
       VIDTRANS_WORKER_CONCURRENCY: "2"
       VIDTRANS_TRANSLATION_PROXY: "${VIDTRANS_TRANSLATION_PROXY:-}"
       VIDTRANS_WHISPER_CONCURRENCY: "1"
+      VIDTRANS_ASR_ENGINE: "${VIDTRANS_ASR_ENGINE:-faster}"
+      VIDTRANS_ASR_COMPUTE_TYPE: "${VIDTRANS_ASR_COMPUTE_TYPE:-int8}"
+      VIDTRANS_ASR_BEAM_SIZE: "${VIDTRANS_ASR_BEAM_SIZE:-5}"
+      VIDTRANS_ASR_VAD: "${VIDTRANS_ASR_VAD:-1}"
+      VIDTRANS_ASR_CPU_THREADS: "${VIDTRANS_ASR_CPU_THREADS:-0}"
       VIDTRANS_OCR_CONCURRENCY: "1"
       VIDTRANS_TIKTOK_BROWSER_CDP_URL: "http://tiktok-browser:9222"
       VIDTRANS_TIKTOK_BROWSER_PUBLIC_URL: "${VIDTRANS_TIKTOK_BROWSER_PUBLIC_URL:-http://localhost:5202/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=websockify}"
@@ -93,6 +98,8 @@ services:
       - ./backend/uploads:/app/backend/uploads
       - ./backend/work:/app/backend/work
       - whisper-models:/root/.cache/whisper
+      # faster-whisper models are downloaded from Hugging Face on first use.
+      - whisper-hf-models:/root/.cache/huggingface
       - paddle-models:/root/.paddlex
     restart: unless-stopped
 
@@ -100,4 +107,5 @@ volumes:
   tiktok-browser-profile:
   douyin-browser-profile:
   whisper-models:
+  whisper-hf-models:
   paddle-models:

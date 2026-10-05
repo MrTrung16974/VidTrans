@@ -35,6 +35,9 @@ RUN pip install --upgrade pip \
 COPY requirements-downloader.txt ./
 RUN pip install -r requirements-downloader.txt
 
+COPY requirements-asr.txt ./
+RUN pip install -r requirements-asr.txt
+
 # Chromium is isolated in its own late layer so adding QR login does not
 # invalidate the expensive Torch/Paddle dependency installation above.
 RUN apt-get update -o Acquire::Retries=3 \

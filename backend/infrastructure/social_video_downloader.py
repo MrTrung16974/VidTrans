@@ -8,7 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ContextManager
-from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,32 @@ def social_platform(url: str) -> str:
                            for domain in ("douyin.com", "iesdouyin.com")) else "TikTok"
 
 
+_DOUYIN_PATH_ID = re.compile(r"/(?:share/)?(video|note|slides)/(\d+)")
+
+
+def douyin_video_id(url: str) -> tuple[str | None, str | None]:
+    """Return (aweme id, kind) from any Douyin page/share URL form."""
+    parsed = urlsplit(url)
+    match = _DOUYIN_PATH_ID.search(parsed.path)
+    if match:
+        return match.group(2), match.group(1)
+    query = parse_qs(parsed.query)
+    for key in ("modal_id", "vid", "aweme_id"):
+        value = (query.get(key) or [""])[0]
+        if value.isdigit():
+            return value, "video"
+    return None, None
+
+
+def _follow_redirects(url: str, *, timeout: int, proxy: str | None) -> str:
+    handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy} if proxy else {})
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+    })
+    with urllib.request.build_opener(handler).open(request, timeout=timeout) as response:
+        return response.geturl()
+
+
 ProgressCallback = Callable[[int, int | None], None]
 CancelCallback = Callable[[], bool]
 YoutubeDLFactory = Callable[[dict[str, Any]], ContextManager[Any]]
@@ -117,6 +143,7 @@ class SocialVideoDownloader:
         douyin_resolver: Callable[..., dict[str, Any]] | None = None,
         tiktok_proxy: str | None = None,
         douyin_proxy: str | None = None,
+        redirect_resolver: Callable[[str], str] | None = None,
     ) -> None:
         self.ffmpeg_location = ffmpeg_location
         self.max_bytes = max_bytes
@@ -128,6 +155,31 @@ class SocialVideoDownloader:
         self._douyin_resolver = douyin_resolver
         self.tiktok_proxy = tiktok_proxy
         self.douyin_proxy = douyin_proxy
+        self._redirect_resolver = redirect_resolver or (
+            lambda url: _follow_redirects(url, timeout=self.socket_timeout, proxy=self.douyin_proxy)
+        )
+
+    def canonical_douyin_url(self, url: str) -> str:
+        """Map share/modal/short links to the /video/<id> page yt-dlp's Douyin extractor supports.
+
+        Other forms fall through to yt-dlp's generic extractor, which grabs whatever
+        video appears first in the page HTML (often a recommended clip).
+        """
+        video_id, kind = douyin_video_id(url)
+        if video_id is None:
+            try:
+                final_url = self._redirect_resolver(url)
+            except Exception as exc:
+                logger.warning("Cannot resolve Douyin short link: %s", type(exc).__name__)
+                return url
+            video_id, kind = douyin_video_id(final_url)
+            if video_id is None:
+                return url
+        if kind in {"note", "slides"}:
+            raise SocialVideoDownloadError(
+                "Link Douyin này là bài đăng ảnh (图文), không phải video. Hãy chọn link một video."
+            )
+        return f"https://www.douyin.com/video/{video_id}"
 
     def _create_ydl(self, options: dict[str, Any]) -> ContextManager[Any]:
         if self._ydl_factory is not None:
@@ -150,6 +202,8 @@ class SocialVideoDownloader:
         cookie_file: Path | None = None,
     ) -> SocialVideoDownloadResult:
         normalized_url = normalize_social_video_url(url)
+        if social_platform(normalized_url) == "Douyin":
+            normalized_url = self.canonical_douyin_url(normalized_url)
         destination_stem = Path(destination_stem).resolve()
         destination_stem.parent.mkdir(parents=True, exist_ok=True)
 
@@ -205,6 +259,10 @@ class SocialVideoDownloader:
             "overwrites": True,
         }
         platform = social_platform(normalized_url)
+        if platform == "Douyin":
+            # Never let the generic extractor pick an unrelated video from the page;
+            # unsupported forms go to the browser resolver, which matches the aweme id.
+            options["allowed_extractors"] = ["douyin"]
         if platform == "Douyin" and self.douyin_proxy:
             options["proxy"] = self.douyin_proxy
         elif platform == "TikTok" and self.tiktok_proxy:

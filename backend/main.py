@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import quote_plus
 
-import whisper
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -51,6 +50,7 @@ from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherErro
 from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
+from pipeline.asr import ASRConfig, ASRService
 from pipeline.translation import ensure_translation_complete, filter_meaningful_segments, translate_segments
 from pipeline.tts_timing import bounded_tempo, schedule_voice_segments
 from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
@@ -136,7 +136,7 @@ TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
 app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR))
 AUTH_MANAGER = AuthManager()
-_whisper_models: dict[str, Any] = {}
+ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
 _job_context = threading.local()
@@ -496,53 +496,32 @@ def get_video_fps(path: Path) -> float:
         return 30.0
 
 
-def get_whisper_model(model_name: str) -> Any:
-    if model_name not in _whisper_models:
-        logger.info("Loading whisper model: %s", model_name)
-        _whisper_models[model_name] = whisper.load_model(model_name)
-    return _whisper_models[model_name]
+def transcribe_chinese_video(model_name: str, video_path: Path, job_id: str | None = None) -> list[dict[str, Any]]:
+    progress = make_asr_progress_callback(job_id) if job_id else None
+    return normalize_segments(ASR_SERVICE.transcribe_chinese(model_name, video_path, progress=progress))
 
 
-def transcribe_chinese_video(model: Any, video_path: Path) -> list[dict[str, Any]]:
-    result = model.transcribe(
-        str(video_path),
-        language="zh",
-        task="transcribe",
-        fp16=False,
-        temperature=0,
-        best_of=5,
-        beam_size=5,
-        condition_on_previous_text=True,
-        word_timestamps=True,
-        hallucination_silence_threshold=1.0,
-        verbose=False,
-    )
-    segments = normalize_segments(result.get("segments", []))
-    if segments:
-        return segments
+def make_asr_progress_callback(job_id: str) -> Callable[[float, float | None], None]:
+    """Report recognised audio time so a long transcription is visibly moving."""
 
-    logger.warning("No transcript segments with forced zh, retrying with simpler whisper settings")
-    result = model.transcribe(
-        str(video_path),
-        language="zh",
-        task="transcribe",
-        fp16=False,
-        word_timestamps=True,
-        verbose=False,
-    )
-    segments = normalize_segments(result.get("segments", []))
-    if segments:
-        return segments
+    last_reported = -1
 
-    logger.warning("No transcript segments with forced zh, retrying with auto language detection")
-    result = model.transcribe(
-        str(video_path),
-        fp16=False,
-        task="transcribe",
-        word_timestamps=True,
-        verbose=False,
-    )
-    return normalize_segments(result.get("segments", []))
+    def report(position: float, total: float | None) -> None:
+        nonlocal last_reported
+        if not total:
+            return
+        percent = min(100, int(100 * position / total))
+        if percent - last_reported < 2 and percent != 100:
+            return
+        last_reported = percent
+        update_job(
+            job_id,
+            progress=0.22 + 0.16 * percent / 100,
+            step_detail=f"Nhận diện giọng nói {int(position // 60)}:{int(position % 60):02d}"
+                        f"/{int(total // 60)}:{int(total % 60):02d}",
+        )
+
+    return report
 
 
 def update_job(job_id: str, **fields: Any) -> None:
@@ -1296,8 +1275,7 @@ def process_video(
         if has_audio_stream(video_path):
             with _whisper_slots:
                 ensure_job_active(job_id)
-                model = get_whisper_model(whisper_model)
-                asr_segments = transcribe_chinese_video(model, video_path)
+                asr_segments = transcribe_chinese_video(whisper_model, video_path, job_id)
         elif not ocr_segments:
             raise RuntimeError(
                 "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "

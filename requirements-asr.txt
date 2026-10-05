@@ -1,0 +1,4 @@
+# Kept separate so the fast CPU speech recogniser can be updated without
+# invalidating the expensive Torch/Paddle dependency layer in Docker.
+# CTranslate2 publishes Linux x86_64 and aarch64 wheels.
+faster-whisper>=1.1,<2

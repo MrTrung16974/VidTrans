@@ -42,6 +42,9 @@ _MAX_NO_SPEECH_PROB: float = float(os.environ.get("VIDTRANS_MAX_NO_SPEECH_PROB",
 # Minimum number of distinct Han characters after stripping fillers.
 _MIN_HAN_CHARS: int = 1
 
+# Attempts (5s, 10s, 20s, 40s backoff) before giving up on an HTTP 429 provider.
+_RATE_LIMIT_RETRIES: int = 5
+
 class TextTranslator(Protocol):
     def translate(self, text: str) -> str | None: ...
 
@@ -163,10 +166,14 @@ def ensure_translation_complete(segments: Sequence[dict[str, Any]]) -> None:
     ]
     if failed:
         positions = ", ".join(f"{float(s['start']):.1f}s" for s in failed[:5])
+        if any("http_429" in str(s.get("translation_error") or "") for s in failed):
+            hint = ("Google dịch đang giới hạn tần suất (HTTP 429) với IP máy chủ: đợi 10–30 phút rồi thử lại, "
+                    "hoặc cấu hình VIDTRANS_TRANSLATION_PROXY (proxy HTTP/HTTPS) để đổi IP.")
+        else:
+            hint = "Kiểm tra kết nối dịch vụ dịch và thử lại; chi tiết có trong file bản dịch."
         raise TranslationIncompleteError(
             f"Chưa dịch được {len(failed)}/{len(active)} câu sang tiếng Việt (tại {positions}). "
-            "Đã dừng trước khi lồng tiếng/xuất video để tránh chèn lại chữ Trung. "
-            "Kiểm tra kết nối dịch vụ dịch và thử lại; chi tiết có trong file bản dịch."
+            "Đã dừng trước khi lồng tiếng/xuất video để tránh chèn lại chữ Trung. " + hint
         )
 
 
@@ -178,24 +185,52 @@ def _translate_with_retry(
     sleeper: Callable[[float], None],
     check_active: Callable[[], None],
 ) -> str:
+    def call() -> str:
+        translated = _clean(translator.translate(text) or "")
+        if not translated:
+            raise ValueError("empty_translation")
+        if contains_han(translated):
+            raise ValueError("untranslated_chinese")
+        if translated.casefold() == _clean(text).casefold():
+            raise ValueError("unchanged_translation")
+        return translated
+
+    return _call_with_retry(call, retries=retries, sleeper=sleeper, check_active=check_active)
+
+
+def _call_with_retry(
+    call: Callable[[], Any],
+    *,
+    retries: int,
+    sleeper: Callable[[float], None],
+    check_active: Callable[[], None],
+) -> Any:
     last_error: Exception | None = None
-    for attempt in range(retries):
+    attempt = 0
+    for attempt in range(max(retries, _RATE_LIMIT_RETRIES)):
         check_active()
         try:
-            translated = _clean(translator.translate(text) or "")
-            if not translated:
-                raise ValueError("empty_translation")
-            if contains_han(translated):
-                raise ValueError("untranslated_chinese")
-            if translated.casefold() == _clean(text).casefold():
-                raise ValueError("unchanged_translation")
-            return translated
+            return call()
         except Exception as exc:
             last_error = exc
         check_active()
-        if attempt + 1 < retries:
-            sleeper(min(0.75 * (2**attempt), 4.0))
-    raise RuntimeError(f"Dịch thất bại sau {retries} lần: {type(last_error).__name__}") from last_error
+        if getattr(last_error, "rate_limited", False):
+            # Short retries only extend an HTTP 429 block; wait meaningfully.
+            attempts = max(retries, _RATE_LIMIT_RETRIES)
+        else:
+            attempts = retries
+        if attempt + 1 < attempts:
+            sleeper(_retry_delay(last_error, attempt))
+        else:
+            break
+    raise RuntimeError(f"Dịch thất bại sau {attempt + 1} lần: {type(last_error).__name__}") from last_error
+
+
+def _retry_delay(error: Exception | None, attempt: int) -> float:
+    if getattr(error, "rate_limited", False):
+        retry_after = getattr(error, "retry_after", None) or 0.0
+        return min(max(float(retry_after), 5.0 * (2**attempt)), 60.0)
+    return min(0.75 * (2**attempt), 4.0)
 
 
 def _split_long_text(text: str, *, limit: int = 1200) -> list[str]:
@@ -290,11 +325,37 @@ def translate_segments(
             except Exception as exc:
                 check_active()
                 logger.warning("Batch translation failed (%s); retrying complete cues", type(exc).__name__)
+    elif hasattr(translator, "translate_lines"):
+        # One request per batch instead of per cue keeps long videos under provider rate limits.
+        unique = list(dict.fromkeys(sources[i] for i in active))
+        for batch in _batch_indexes(unique, max_batch_chars):
+            if len(batch) < 2 or any(len(unique[i]) > max_batch_chars for i in batch):
+                continue
+            lines = [unique[i] for i in batch]
+            try:
+                values = _call_with_retry(lambda: translator.translate_lines(lines), retries=1,
+                                          sleeper=sleeper, check_active=check_active)
+                if len(values) != len(lines):
+                    raise ValueError("missing_batch_lines")
+                for line, value in zip(lines, values):
+                    value = _clean(value)
+                    if value and not contains_han(value) and value.casefold() != line.casefold():
+                        cache[line] = (value, "translated", None)
+            except Exception as exc:
+                check_active()
+                cause = exc.__cause__ or exc
+                logger.warning("Batch translation failed (%s); retrying complete cues", type(cause).__name__)
+                if getattr(cause, "rate_limited", False):
+                    break
 
+    rate_limit_reason: str | None = None
     for completed, index in enumerate(active, 1):
         check_active()
         source = sources[index]
         if index not in translations:
+            if source not in cache and rate_limit_reason:
+                # Provider is still blocking after full backoff; do not hammer it cue by cue.
+                cache[source] = (source, "source_fallback", rate_limit_reason)
             if source not in cache:
                 try:
                     parts = _split_long_text(source, limit=max_batch_chars)
@@ -313,6 +374,8 @@ def translate_segments(
                     from infrastructure.vietnamese_translator import TranslationServiceError
                     reason = str(cause) if isinstance(cause, (ValueError, TranslationServiceError)) else type(cause).__name__
                     cache[source] = (source, "source_fallback", reason[:160])
+                    if getattr(cause, "rate_limited", False):
+                        rate_limit_reason = reason[:160]
                     logger.warning("Translation failed at %.2fs (%s)", float(segments[index]["start"]), reason[:160])
             translations[index] = cache[source]
         if progress_callback:
