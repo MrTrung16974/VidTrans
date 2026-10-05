@@ -310,7 +310,8 @@ def translate_segments(
                     check_active()
                     # Retain structured failure, never silently mix translated/source fragments.
                     cause = exc.__cause__ or exc
-                    reason = str(cause) if isinstance(cause, ValueError) else type(cause).__name__
+                    from infrastructure.vietnamese_translator import TranslationServiceError
+                    reason = str(cause) if isinstance(cause, (ValueError, TranslationServiceError)) else type(cause).__name__
                     cache[source] = (source, "source_fallback", reason[:160])
                     logger.warning("Translation failed at %.2fs (%s)", float(segments[index]["start"]), reason[:160])
             translations[index] = cache[source]

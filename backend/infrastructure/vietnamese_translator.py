@@ -3,12 +3,28 @@ from __future__ import annotations
 
 import json
 import urllib.request
+import urllib.error
+from urllib.parse import urlsplit
 from urllib.parse import urlencode
+
+
+class TranslationServiceError(RuntimeError):
+    """Sanitized provider failure safe to include in translation diagnostics."""
+
+
+def failure_code(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return f"http_{error.code}"
+    if isinstance(error, (TimeoutError,)):
+        return "timeout"
+    if isinstance(error, urllib.error.URLError):
+        return "connection_failed"
+    return type(error).__name__
 
 
 class GoogleVietnameseTranslator:
     # Web translators do not promise to preserve custom HTML cue markers.
-    supports_markers = True
+    supports_markers = False
     name = "google-vi"
 
     def __init__(self, *, timeout: float = 15, opener=None):
@@ -17,12 +33,21 @@ class GoogleVietnameseTranslator:
         if opener:
             self._open = opener
         else:
-            proxy_url = os.environ.get("VIDTRANS_TIKTOK_PROXY") or os.environ.get("VIDTRANS_DOUYIN_PROXY")
+            # Browser proxies may be SOCKS or require a browser-only auth flow.
+            # Translation has its own explicit HTTP(S) proxy configuration.
+            proxy_url = os.environ.get("VIDTRANS_TRANSLATION_PROXY", "").strip()
             if proxy_url:
-                proxy_handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
-                self._open = urllib.request.build_opener(proxy_handler).open
-            else:
-                self._open = urllib.request.urlopen
+                try:
+                    parsed = urlsplit(proxy_url)
+                    valid = parsed.scheme in {"http", "https"} and parsed.hostname and parsed.port != 0
+                except ValueError:
+                    valid = False
+                if not valid:
+                    raise TranslationServiceError("translation_proxy_invalid: dùng proxy HTTP hoặc HTTPS")
+            handler = urllib.request.ProxyHandler(
+                {'http': proxy_url, 'https': proxy_url} if proxy_url else {}
+            )
+            self._open = urllib.request.build_opener(handler).open
 
     def _get(self, base: str, params: dict) -> str:
         request = urllib.request.Request(
@@ -44,7 +69,7 @@ class GoogleVietnameseTranslator:
                 return translated
             errors.append("invalid_translation")
         except Exception as exc:
-            errors.append(type(exc).__name__)
+            errors.append(failure_code(exc))
 
         try:
             from bs4 import BeautifulSoup
@@ -57,9 +82,9 @@ class GoogleVietnameseTranslator:
                 return translated
             errors.append("invalid_translation")
         except Exception as exc:
-            errors.append(type(exc).__name__)
+            errors.append(failure_code(exc))
         # Do not expose query text, provider response HTML or connection secrets.
-        raise RuntimeError("Google dịch không trả bản tiếng Việt hợp lệ (" + ", ".join(errors) + ")")
+        raise TranslationServiceError("Google dịch không trả bản tiếng Việt hợp lệ (" + ", ".join(errors) + ")")
 
     @staticmethod
     def _valid(source: str, translated: str) -> bool:
