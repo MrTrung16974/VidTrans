@@ -23,3 +23,31 @@ class LoginRecoveryTests(unittest.TestCase):
                 with self.assertRaises(TikTokBrowserError):
                     manager.restart_login()
                 browser.assert_not_called()
+
+    def test_rate_limit_preserves_page_and_blocks_resubmission(self):
+        with TemporaryDirectory() as directory:
+            manager = TikTokBrowserManager(Path(directory))
+            page = MagicMock()
+            page.locator.return_value.inner_text.return_value = "Maximum number of attempts reached. Try again later."
+            with patch.object(manager, '_page', return_value=page), patch.object(manager, '_with_browser', side_effect=lambda operation: operation(object())):
+                for operation in (lambda: manager.restart_login('qr'), lambda: manager.login_with_email('test@example.com', 'not-a-real-password')):
+                    with self.assertRaisesRegex(TikTokBrowserError, "giới hạn"):
+                        operation()
+                page.goto.assert_not_called()
+                self.assertFalse(manager._browser_lock.locked())
+
+    def test_read_only_check_clears_limit_when_notice_disappears(self):
+        with TemporaryDirectory() as directory:
+            manager = TikTokBrowserManager(Path(directory))
+            browser = MagicMock()
+            page = MagicMock()
+            page.url = 'https://www.tiktok.com/login'
+            browser.contexts[0].pages = [page]
+            browser.contexts[0].cookies.return_value = []
+            page.locator.return_value.inner_text.return_value = 'Too many attempts'
+            manager._read_session(browser)
+            self.assertTrue(manager._login_limited)
+            page.locator.return_value.inner_text.return_value = 'Enter 6-digit code'
+            manager._read_session(browser)
+            self.assertFalse(manager._login_limited)
+            page.goto.assert_not_called()

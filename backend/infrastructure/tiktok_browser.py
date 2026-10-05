@@ -23,6 +23,20 @@ STUDIO_URL = "https://www.tiktok.com/tiktokstudio/upload"
 BUSY_STATES = {"queued", "opening", "uploading"}
 
 
+LOGIN_LIMIT_MESSAGE = (
+    "TikTok đang giới hạn số lần xác minh. Dừng gửi lại OTP hoặc đăng nhập lại; "
+    "chờ TikTok cho phép thử lại. TikTok chưa cung cấp thời gian mở khóa. "
+    "Giữ nguyên phiên và dùng Kiểm tra phiên để cập nhật trạng thái."
+)
+
+
+def login_is_limited(text: str) -> bool:
+    return isinstance(text, str) and any(marker in text.casefold() for marker in (
+        "maximum number of attempts reached", "too many attempts",
+        "đã đạt số lần thử tối đa", "quá nhiều lần thử",
+    ))
+
+
 class TikTokBrowserError(RuntimeError):
     pass
 
@@ -56,6 +70,7 @@ class TikTokBrowserManager:
         self._session_present = False
         self._session_checked_at = 0.0
         self._session_check_error = False
+        self._login_limited = False
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, state TEXT NOT NULL, caption TEXT NOT NULL, message TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_browser ON attempts(active) WHERE active=1")
@@ -125,6 +140,21 @@ class TikTokBrowserManager:
 
             return operation(browser)  # Disconnect only; preserve the user's Chromium.
 
+    @staticmethod
+    def _page_login_limited(page) -> bool:
+        return login_is_limited(page.locator("body").inner_text(timeout=2_000))
+
+    def _read_session(self, browser):
+        present = has_session(browser.contexts[0].cookies())
+        pages = [p for p in browser.contexts[0].pages if is_tiktok_url(p.url)]
+        self._login_limited = not present and any(self._page_login_limited(p) for p in pages)
+        return present
+
+    def _guard_login(self, page):
+        self._login_limited = self._page_login_limited(page)
+        if self._login_limited:
+            raise TikTokBrowserError(LOGIN_LIMIT_MESSAGE)
+
     def status(self, *, refresh: bool = False) -> dict[str, Any]:
         available = False
         try:
@@ -136,7 +166,7 @@ class TikTokBrowserManager:
         check_due = refresh or time.monotonic() - self._session_checked_at >= 5
         if check_due and available and self._browser_lock.acquire(blocking=False):
             try:
-                self._session_present = self._with_browser(lambda b: has_session(b.contexts[0].cookies()))
+                self._session_present = self._with_browser(self._read_session)
                 self._session_check_error = False
             except Exception:
                 # A transport failure does not mean TikTok rejected the login.
@@ -147,6 +177,7 @@ class TikTokBrowserManager:
         if not available:
             self._session_present = False
         return {
+            "login_state": "rate_limited" if self._login_limited else "success" if self._session_present else "pending",
             "available": available,
             "session_present": self._session_present,
             "session_check_error": self._session_check_error,
@@ -156,6 +187,7 @@ class TikTokBrowserManager:
                 "Chưa kiểm tra được phiên TikTok. Bấm Kiểm tra phiên để thử lại; đây không phải thông báo đăng nhập thất bại."
                 if self._session_check_error else
                 "Đã tìm thấy phiên đăng nhập · Kiểm tra tài khoản trong TikTok Studio" if self._session_present
+                else LOGIN_LIMIT_MESSAGE if self._login_limited
                 else "Chưa thấy phiên TikTok. Quét QR và xác nhận trên điện thoại; trạng thái sẽ tự cập nhật."
             ),
         }
@@ -198,6 +230,7 @@ class TikTokBrowserManager:
             try:
                 def open_login(browser):
                     page = self._page(browser)
+                    self._guard_login(page)
                     if method == "qr":
                         url = "https://www.tiktok.com/login?loginType=qrCode"
                     elif method == "email":
@@ -224,6 +257,8 @@ class TikTokBrowserManager:
                             pass  # Non-fatal — the page URL already has loginType=phoneOrEmail
 
                 self._with_browser(open_login)
+            except TikTokBrowserError:
+                raise
             except Exception as exc:
                 raise TikTokBrowserError(
                     "Không mở được trang đăng nhập TikTok. Kiểm tra kết nối trình duyệt trên máy chủ"
@@ -257,6 +292,7 @@ class TikTokBrowserManager:
             try:
                 def do_login(browser):
                     page = self._page(browser)
+                    self._guard_login(page)
                     page.goto(
                         "https://www.tiktok.com/login?loginType=phoneOrEmail",
                         wait_until="domcontentloaded",
@@ -314,6 +350,9 @@ class TikTokBrowserManager:
                         if has_session(cookies):
                             session_found = True
                             break
+                        if self._page_login_limited(page):
+                            self._login_limited = True
+                            break
                         page.wait_for_timeout(800)
 
                     login_result["session_found"] = session_found
@@ -338,6 +377,9 @@ class TikTokBrowserManager:
             self._session_present = True
             base["message"] = "Đăng nhập email thành công · Đã tìm thấy phiên TikTok"
             base["login_state"] = "success"
+        elif self._login_limited:
+            base["message"] = LOGIN_LIMIT_MESSAGE
+            base["login_state"] = "rate_limited"
         elif "captcha" in current_url.lower() or "verify" in current_url.lower():
             base["message"] = (
                 "TikTok yêu cầu xác minh thêm (CAPTCHA/2FA). "
@@ -346,8 +388,8 @@ class TikTokBrowserManager:
             base["login_state"] = "captcha_required"
         elif "login" in current_url:
             base["message"] = (
-                "Đăng nhập không thành công — email/mật khẩu có thể sai, hoặc IP bị TikTok chặn. "
-                "Kiểm tra thông tin và thử lại, hoặc dùng VPN."
+                "TikTok chưa xác nhận đăng nhập. Kiểm tra thông báo trong khung trình duyệt "
+                "và hoàn tất xác minh nếu được yêu cầu; không gửi lại liên tục."
             )
             base["login_state"] = "failed"
         else:

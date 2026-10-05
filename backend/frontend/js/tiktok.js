@@ -34,7 +34,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokSetupStatus').textContent = result.available ? 'Trình duyệt sẵn sàng. Duyệt video tại khu vực Đăng TikTok.' : 'Kết nối tài khoản tại khu vực Đăng TikTok sau khi trình duyệt sẵn sàng.';
     $('#tiktokBrowserOpen').disabled = !result.available || busyStates.has(result.attempt?.state);
     $('#tiktokBrowserCheck').disabled = !result.available;
-    const loginDisabled = !result.available || Boolean(result.attempt);
+    const loginDisabled = !result.available || Boolean(result.attempt) || result.login_state === 'rate_limited';
     $('#tiktokBrowserLoginQr').disabled = loginDisabled;
     $('#tiktokBrowserLoginEmail').disabled = loginDisabled;
     $('#tiktokBrowserLogout').disabled = !result.available || Boolean(result.attempt);
@@ -207,6 +207,9 @@ export function createTikTokWorkspace({ requestJson, toast }) {
         $('#tiktokLoginPassword').value = '';          // clear password immediately
         $('#tiktokEmailLoginPanel').open = false;       // collapse form
         toast('Đã đăng nhập TikTok bằng email thành công!');
+      } else if (state === 'rate_limited') {
+        statusEl.textContent = 'TikTok đang giới hạn xác minh';
+        toast(result.message, true);
       } else if (state === 'captcha_required') {
         statusEl.textContent = '⚠ Cần xác minh thêm';
         toast(result.message, true);
