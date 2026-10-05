@@ -30,6 +30,31 @@ def _retry_after(error) -> float | None:
     return value if value >= 0 else None
 
 
+def _parse_single(payload) -> str:
+    # Concatenate every sentence, not just the first response fragment.
+    return "".join(part[0] for part in payload[0] if part and isinstance(part[0], str))
+
+
+def _parse_dict_chrome(payload) -> str:
+    # ["text"] with a fixed source language, [["text", "zh-CN"]] with auto-detect.
+    first = payload[0] if isinstance(payload, list) and payload else ""
+    if isinstance(first, list):
+        first = first[0] if first else ""
+    return first if isinstance(first, str) else ""
+
+
+_GTX = {"client": "gtx", "sl": "zh-CN", "tl": "vi", "dt": "t"}
+# Separate Google hosts/clients are rate limited independently; on HTTP 429 the
+# next one is used instead of failing the whole job.
+_JSON_ENDPOINTS = (
+    ("googleapis", "https://translate.googleapis.com/translate_a/single", _GTX, _parse_single),
+    ("dict-chrome", "https://clients5.google.com/translate_a/t",
+     {"client": "dict-chrome-ex", "sl": "zh-CN", "tl": "vi"}, _parse_dict_chrome),
+    ("google-com", "https://translate.google.com/translate_a/single", _GTX, _parse_single),
+)
+_RATE_LIMIT_COOLDOWN = 30.0
+
+
 def failure_code(error):
     if isinstance(error, urllib.error.HTTPError):
         return f"http_{error.code}"
@@ -53,6 +78,7 @@ class GoogleVietnameseTranslator:
             min_interval = 0.0 if opener else float(os.environ.get("VIDTRANS_TRANSLATION_MIN_INTERVAL", "0.4"))
         self.min_interval = max(0.0, min_interval)
         self._last_request = 0.0
+        self._cooldown_until: dict[str, float] = {}
         if opener:
             self._open = opener
         else:
@@ -84,59 +110,83 @@ class GoogleVietnameseTranslator:
         with self._open(request, timeout=self.timeout) as response:
             return response.read(2 * 1024 * 1024).decode("utf-8")
 
+    def _cooling(self, name: str) -> bool:
+        return self._cooldown_until.get(name, 0.0) > time.monotonic()
+
+    def _mark_rate_limited(self, name: str, retry_after: float | None) -> None:
+        self._cooldown_until[name] = time.monotonic() + max(retry_after or 0.0, _RATE_LIMIT_COOLDOWN)
+
+    def _rate_limited(self, errors: list[str]) -> TranslationRateLimitedError:
+        now = time.monotonic()
+        # Callers back off until the first endpoint is usable again.
+        wait = min((until - now for until in self._cooldown_until.values() if until > now), default=None)
+        return TranslationRateLimitedError(
+            "Google dịch giới hạn tần suất (" + ", ".join(errors or ["http_429"]) + ")", wait
+        )
+
+    def _query_json(self, text: str, errors: list[str], valid) -> str | None:
+        """Try each JSON endpoint not cooling down after a 429; return the first valid result."""
+        for name, base, params, parse in _JSON_ENDPOINTS:
+            if self._cooling(name):
+                errors.append("http_429")
+                continue
+            try:
+                translated = parse(json.loads(self._get(base, {**params, "q": text})))
+            except Exception as exc:
+                errors.append(failure_code(exc))
+                if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+                    self._mark_rate_limited(name, _retry_after(exc))
+                continue
+            if valid(translated):
+                return translated
+            errors.append("invalid_translation")
+        return None
+
     def translate_lines(self, lines: list[str]) -> list[str]:
         """Translate many single-line cues in one request; Google keeps line breaks."""
         if any("\n" in line for line in lines):
             raise ValueError("multiline_cue")
-        try:
-            payload = json.loads(self._get("https://translate.googleapis.com/translate_a/single", {
-                "client": "gtx", "sl": "zh-CN", "tl": "vi", "dt": "t", "q": "\n".join(lines),
-            }))
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                raise TranslationRateLimitedError("Google dịch giới hạn tần suất (http_429)", _retry_after(exc)) from None
-            raise TranslationServiceError("Google dịch lỗi (" + failure_code(exc) + ")") from None
-        except Exception as exc:
-            raise TranslationServiceError("Google dịch lỗi (" + failure_code(exc) + ")") from None
-        translated = "".join(part[0] for part in payload[0] if part and isinstance(part[0], str))
-        result = [line.strip() for line in translated.split("\n")]
-        if len(result) != len(lines) or not all(self._valid(src, out) for src, out in zip(lines, result)):
+        errors: list[str] = []
+
+        def valid(translated: str) -> bool:
+            result = [line.strip() for line in translated.split("\n")]
+            return len(result) == len(lines) and all(self._valid(src, out) for src, out in zip(lines, result))
+
+        translated = self._query_json("\n".join(lines), errors, valid)
+        if translated is not None:
+            return [line.strip() for line in translated.split("\n")]
+        if all(code == "http_429" for code in errors):
+            raise self._rate_limited(errors)
+        if "invalid_translation" in errors:
             raise ValueError("invalid_batch_translation")
-        return result
+        raise TranslationServiceError("Google dịch lỗi (" + ", ".join(errors) + ")")
 
     def translate(self, text: str) -> str:
-        errors = []
-        retry_after = None
-        try:
-            payload = json.loads(self._get("https://translate.googleapis.com/translate_a/single", {
-                "client": "gtx", "sl": "zh-CN", "tl": "vi", "dt": "t", "q": text,
-            }))
-            # Concatenate every sentence, not just the first response fragment.
-            translated = "".join(part[0] for part in payload[0] if part and isinstance(part[0], str))
-            if self._valid(text, translated):
-                return translated
-            errors.append("invalid_translation")
-        except Exception as exc:
-            errors.append(failure_code(exc))
-            retry_after = _retry_after(exc)
+        errors: list[str] = []
+        translated = self._query_json(text, errors, lambda value: self._valid(text, value))
+        if translated is not None:
+            return translated
 
-        try:
-            from bs4 import BeautifulSoup
+        if self._cooling("mobile"):
+            errors.append("http_429")
+        else:
+            try:
+                from bs4 import BeautifulSoup
 
-            page = self._get("https://translate.google.com/m", {"sl": "zh-CN", "tl": "vi", "q": text})
-            soup = BeautifulSoup(page, "html.parser")
-            node = soup.select_one(".result-container, .t0")
-            translated = node.get_text(" ", strip=True) if node else ""
-            if self._valid(text, translated):
-                return translated
-            errors.append("invalid_translation")
-        except Exception as exc:
-            errors.append(failure_code(exc))
+                page = self._get("https://translate.google.com/m", {"sl": "zh-CN", "tl": "vi", "q": text})
+                soup = BeautifulSoup(page, "html.parser")
+                node = soup.select_one(".result-container, .t0")
+                translated = node.get_text(" ", strip=True) if node else ""
+                if self._valid(text, translated):
+                    return translated
+                errors.append("invalid_translation")
+            except Exception as exc:
+                errors.append(failure_code(exc))
+                if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+                    self._mark_rate_limited("mobile", _retry_after(exc))
         # Do not expose query text, provider response HTML or connection secrets.
         if all(code == "http_429" for code in errors):
-            raise TranslationRateLimitedError(
-                "Google dịch giới hạn tần suất (" + ", ".join(errors) + ")", retry_after
-            )
+            raise self._rate_limited(errors)
         raise TranslationServiceError("Google dịch không trả bản tiếng Việt hợp lệ (" + ", ".join(errors) + ")")
 
     @staticmethod

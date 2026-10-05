@@ -36,11 +36,27 @@ class RateLimitTests(unittest.TestCase):
     def _http_429(self, *a, **k):
         raise urllib.error.HTTPError('https://x', 429, 'Too Many Requests', {'Retry-After': '7'}, None)
 
-    def test_both_endpoints_429_raises_rate_limited_with_retry_after(self):
+    def test_all_endpoints_429_raises_rate_limited_with_retry_after(self):
         from infrastructure.vietnamese_translator import TranslationRateLimitedError
+        def opener(*a, **k):
+            raise urllib.error.HTTPError('https://x', 429, 'Too Many Requests', {'Retry-After': '120'}, None)
         with self.assertRaises(TranslationRateLimitedError) as error:
-            GoogleVietnameseTranslator(opener=self._http_429).translate('你好')
-        self.assertEqual(error.exception.retry_after, 7.0)
+            GoogleVietnameseTranslator(opener=opener).translate('你好')
+        self.assertGreater(error.exception.retry_after, 100)
+
+    def test_rate_limited_endpoint_falls_back_to_next_host(self):
+        calls = []
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            if 'translate.googleapis.com' in request.full_url:
+                self._http_429()
+            return io.BytesIO(json.dumps(['Xin chào\nCảm ơn']).encode())
+        translator = GoogleVietnameseTranslator(opener=opener)
+        self.assertEqual(translator.translate_lines(['你好', '谢谢']), ['Xin chào', 'Cảm ơn'])
+        self.assertIn('clients5.google.com', calls[1])
+        # The blocked host is skipped while cooling down.
+        translator.translate_lines(['你好', '谢谢'])
+        self.assertEqual(len(calls), 3)
 
     def test_translate_lines_uses_one_request(self):
         calls = []
@@ -71,8 +87,8 @@ class RateLimitTests(unittest.TestCase):
         result = translate_segments(segments, GoogleVietnameseTranslator(opener=opener), sleeper=sleeps.append)
         self.assertTrue(all(s['translation_status'] == 'source_fallback' for s in result))
         self.assertTrue(sleeps and max(sleeps) >= 7.0)
-        # Batch (5 attempts) + first cue (5 attempts x 2 endpoints); remaining cues are not retried.
-        self.assertEqual(len(calls), 5 + 10)
+        # Each host is hit once, then skipped while cooling down; remaining cues are not retried.
+        self.assertEqual(len(calls), 3 + 1)
         with self.assertRaises(RuntimeError) as error:
             ensure_translation_complete(result)
         self.assertIn('VIDTRANS_TRANSLATION_PROXY', str(error.exception))
