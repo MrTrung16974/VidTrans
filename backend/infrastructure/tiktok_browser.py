@@ -43,7 +43,10 @@ class TikTokBrowserError(RuntimeError):
 
 def is_tiktok_url(url: str) -> bool:
     parsed = urllib.parse.urlsplit(url)
-    return parsed.scheme == "https" and parsed.hostname in {"www.tiktok.com", "tiktok.com"}
+    hostname = (parsed.hostname or "").rstrip(".").casefold()
+    return parsed.scheme == "https" and (
+        hostname == "tiktok.com" or hostname.endswith(".tiktok.com")
+    )
 
 
 def has_session(cookies: list[dict[str, Any]]) -> bool:
@@ -142,7 +145,20 @@ class TikTokBrowserManager:
 
     @staticmethod
     def _page_login_limited(page) -> bool:
-        return login_is_limited(page.locator("body").inner_text(timeout=2_000))
+        # TikTok renders some login and OTP challenges inside a cross-origin
+        # iframe. Reading only the top-level body misses the visible rate-limit
+        # message and leaves the login controls enabled, which encourages more
+        # retries and can extend the temporary lock.
+        for frame in page.frames:
+            try:
+                if login_is_limited(frame.locator("body").inner_text(timeout=2_000)):
+                    return True
+            except Exception:
+                # A challenge frame can be replaced while it is being read.
+                # Continue with the remaining frames instead of treating that
+                # transient navigation as a successful login check.
+                continue
+        return False
 
     def _read_session(self, browser):
         present = has_session(browser.contexts[0].cookies())

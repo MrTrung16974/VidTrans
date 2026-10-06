@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from application.tiktok_browser_routes import create_tiktok_browser_router
-from infrastructure.tiktok_browser import TikTokBrowserError, TikTokBrowserManager, has_session, is_tiktok_url
+from infrastructure.tiktok_browser import TikTokBrowserError, TikTokBrowserManager, has_session, is_tiktok_url, login_is_limited
 
 
 class TikTokBrowserTests(unittest.TestCase):
@@ -38,6 +38,19 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertFalse(has_session([{**cookie, 'name': 'csrf_token'}]))
         self.assertFalse(is_tiktok_url('https://www.tiktok.com.attacker.test/tiktokstudio/upload'))
         self.assertFalse(is_tiktok_url('http://www.tiktok.com/tiktokstudio/upload'))
+        self.assertTrue(is_tiktok_url('https://accounts.tiktok.com/login'))
+
+    def test_login_limit_detection_reads_challenge_iframe(self):
+        normal = MagicMock()
+        normal.locator.return_value.inner_text.return_value = 'Enter 6-digit code'
+        challenge = MagicMock()
+        challenge.locator.return_value.inner_text.return_value = (
+            'Maximum number of attempts reached. Try again later.'
+        )
+        page = MagicMock(frames=[normal, challenge])
+
+        self.assertTrue(self.manager._page_login_limited(page))
+        self.assertTrue(login_is_limited('Maximum number of attempts reached.'))
 
     def test_status_detects_qr_login_without_manual_check(self):
         response = MagicMock()
