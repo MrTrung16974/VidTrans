@@ -1,6 +1,7 @@
 """Bounded Google translation requests without shared mutable request state."""
 from __future__ import annotations
 
+import html
 import json
 import time
 import urllib.request
@@ -53,6 +54,7 @@ _JSON_ENDPOINTS = (
     ("google-com", "https://translate.google.com/translate_a/single", _GTX, _parse_single),
 )
 _RATE_LIMIT_COOLDOWN = 30.0
+_MYMEMORY_ENDPOINT = "https://api.mymemory.translated.net/get"
 
 
 def failure_code(error):
@@ -142,6 +144,42 @@ class GoogleVietnameseTranslator:
             errors.append("invalid_translation")
         return None
 
+    def _query_mymemory(self, text: str) -> str:
+        """Use an independent provider when Google rejects the server IP."""
+        if self._cooling("mymemory"):
+            wait = self._cooldown_until["mymemory"] - time.monotonic()
+            raise TranslationRateLimitedError(
+                "MyMemory giới hạn tần suất (http_429)", max(wait, 0.0)
+            )
+        if len(text.encode("utf-8")) > 500:
+            raise TranslationServiceError("MyMemory: query_too_long")
+        try:
+            payload = json.loads(self._get(
+                _MYMEMORY_ENDPOINT,
+                {"q": text, "langpair": "zh-CN|vi", "mt": "1"},
+            ))
+            status = int(payload.get("responseStatus", 0))
+            translated = html.unescape(
+                str(payload.get("responseData", {}).get("translatedText", ""))
+            ).strip()
+            if status == 429:
+                self._mark_rate_limited("mymemory", None)
+                raise TranslationRateLimitedError("MyMemory giới hạn tần suất (http_429)")
+            if status != 200 or not self._valid(text, translated):
+                raise TranslationServiceError(f"MyMemory: invalid_response_{status}")
+            return translated
+        except TranslationServiceError:
+            raise
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                self._mark_rate_limited("mymemory", _retry_after(exc))
+                raise TranslationRateLimitedError(
+                    "MyMemory giới hạn tần suất (http_429)", _retry_after(exc)
+                ) from exc
+            raise TranslationServiceError(f"MyMemory: http_{exc.code}") from exc
+        except Exception as exc:
+            raise TranslationServiceError(f"MyMemory: {failure_code(exc)}") from exc
+
     def translate_lines(self, lines: list[str]) -> list[str]:
         """Translate many single-line cues in one request; Google keeps line breaks."""
         if any("\n" in line for line in lines):
@@ -155,6 +193,14 @@ class GoogleVietnameseTranslator:
         translated = self._query_json("\n".join(lines), errors, valid)
         if translated is not None:
             return [line.strip() for line in translated.split("\n")]
+        try:
+            # This provider limits a request to 500 UTF-8 bytes and may not
+            # preserve newlines, so translate each complete cue separately.
+            return [self._query_mymemory(line) for line in lines]
+        except TranslationRateLimitedError:
+            raise
+        except TranslationServiceError as exc:
+            errors.append(str(exc))
         if all(code == "http_429" for code in errors):
             raise self._rate_limited(errors)
         if "invalid_translation" in errors:
@@ -184,6 +230,12 @@ class GoogleVietnameseTranslator:
                 errors.append(failure_code(exc))
                 if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
                     self._mark_rate_limited("mobile", _retry_after(exc))
+        try:
+            return self._query_mymemory(text)
+        except TranslationRateLimitedError:
+            raise
+        except TranslationServiceError as exc:
+            errors.append(str(exc))
         # Do not expose query text, provider response HTML or connection secrets.
         if all(code == "http_429" for code in errors):
             raise self._rate_limited(errors)

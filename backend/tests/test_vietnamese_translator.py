@@ -58,6 +58,33 @@ class RateLimitTests(unittest.TestCase):
         translator.translate_lines(['你好', '谢谢'])
         self.assertEqual(len(calls), 3)
 
+    def test_all_google_endpoints_429_falls_back_to_mymemory(self):
+        calls = []
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            if 'mymemory.translated.net' in request.full_url:
+                return io.BytesIO(json.dumps({
+                    'responseStatus': 200,
+                    'responseData': {'translatedText': 'Xin chào'},
+                }).encode())
+            self._http_429()
+        translator = GoogleVietnameseTranslator(opener=opener)
+        self.assertEqual(translator.translate('你好'), 'Xin chào')
+        self.assertTrue(any('mymemory.translated.net' in url for url in calls))
+
+    def test_batch_falls_back_to_complete_mymemory_cues(self):
+        def opener(request, timeout):
+            if 'mymemory.translated.net' not in request.full_url:
+                self._http_429()
+            source = request.full_url.split('q=', 1)[1].split('&', 1)[0]
+            translated = 'Xin chào' if '%E4%BD%A0%E5%A5%BD' in source else 'Cảm ơn'
+            return io.BytesIO(json.dumps({
+                'responseStatus': 200,
+                'responseData': {'translatedText': translated},
+            }).encode())
+        result = GoogleVietnameseTranslator(opener=opener).translate_lines(['你好', '谢谢'])
+        self.assertEqual(result, ['Xin chào', 'Cảm ơn'])
+
     def test_translate_lines_uses_one_request(self):
         calls = []
         def opener(request, timeout):
@@ -88,7 +115,7 @@ class RateLimitTests(unittest.TestCase):
         self.assertTrue(all(s['translation_status'] == 'source_fallback' for s in result))
         self.assertTrue(sleeps and max(sleeps) >= 7.0)
         # Each host is hit once, then skipped while cooling down; remaining cues are not retried.
-        self.assertEqual(len(calls), 3 + 1)
+        self.assertEqual(len(calls), 3 + 1 + 1)
         with self.assertRaises(RuntimeError) as error:
             ensure_translation_complete(result)
         self.assertIn('VIDTRANS_TRANSLATION_PROXY', str(error.exception))
