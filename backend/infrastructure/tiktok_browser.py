@@ -171,6 +171,50 @@ class TikTokBrowserManager:
         if self._login_limited:
             raise TikTokBrowserError(LOGIN_LIMIT_MESSAGE)
 
+    @staticmethod
+    def _reset_tiktok_login_state(context, page) -> None:
+        """Discard an account-bound OTP challenge before opening QR login.
+
+        TikTok keeps the verification modal in cookies and origin storage. A
+        plain navigation to ``loginType=qrCode`` can therefore leave the old
+        OTP screen mounted. The browser sidecar is dedicated to TikTok, so it
+        is safe to clear its context when the user explicitly chooses QR.
+        """
+        try:
+            cdp = context.new_cdp_session(page)
+            cdp.send("Network.enable")
+            cdp.send("Network.clearBrowserCookies")
+            cdp.send("Network.clearBrowserCache")
+            cdp.send(
+                "Storage.clearDataForOrigin",
+                {"origin": "https://www.tiktok.com", "storageTypes": "all"},
+            )
+            cdp.detach()
+        except Exception:
+            # Older Chromium builds may not expose every storage command.
+            # Continue with the Playwright/browser-side cleanup below.
+            pass
+        try:
+            page.evaluate(
+                """async () => {
+                    localStorage.clear();
+                    sessionStorage.clear();
+                    if (globalThis.caches) {
+                        for (const key of await caches.keys()) await caches.delete(key);
+                    }
+                    if (indexedDB.databases) {
+                        for (const db of await indexedDB.databases()) {
+                            if (db.name) indexedDB.deleteDatabase(db.name);
+                        }
+                    }
+                }"""
+            )
+        except Exception:
+            # Storage may be unavailable while TikTok replaces the challenge
+            # frame. Cookies are the authoritative reset and still proceed.
+            pass
+        context.clear_cookies()
+
     def status(self, *, refresh: bool = False) -> dict[str, Any]:
         available = False
         try:
@@ -246,8 +290,14 @@ class TikTokBrowserManager:
             try:
                 def open_login(browser):
                     page = self._page(browser)
-                    self._guard_login(page)
+                    # An OTP limit applies to the current email/phone challenge.
+                    # Keep QR recovery available so the user can leave that
+                    # challenge without submitting another code attempt.
+                    if method != "qr":
+                        self._guard_login(page)
                     if method == "qr":
+                        self._reset_tiktok_login_state(browser.contexts[0], page)
+                        page.goto("about:blank", wait_until="domcontentloaded", timeout=10_000)
                         url = "https://www.tiktok.com/login?loginType=qrCode"
                     elif method == "email":
                         url = "https://www.tiktok.com/login?loginType=phoneOrEmail"
@@ -255,6 +305,29 @@ class TikTokBrowserManager:
                         url = "https://www.tiktok.com/login"
                     page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                     page.bring_to_front()
+
+                    if method == "qr":
+                        # Some TikTok builds ignore loginType on the first
+                        # navigation. Select the rendered QR option when the
+                        # login chooser is shown.
+                        qr_selector = (
+                            "a[href*='loginType=qrCode'], "
+                            "[data-e2e='login-qr-code'], "
+                            "button:has-text('Use QR code'), "
+                            "a:has-text('Use QR code'), "
+                            "button:has-text('Sử dụng mã QR'), "
+                            "a:has-text('Sử dụng mã QR')"
+                        )
+                        try:
+                            qr = page.locator(qr_selector).first
+                            if qr.is_visible(timeout=5_000):
+                                qr.click()
+                                page.wait_for_timeout(1_000)
+                        except Exception:
+                            # The query parameter already opens QR on the
+                            # common layout, so absence of the chooser is fine.
+                            pass
+                        self._login_limited = self._page_login_limited(page)
 
                     if method == "email":
                         # Try to click the "Email / Phone / Username" tab if still on chooser page

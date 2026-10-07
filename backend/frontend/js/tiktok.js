@@ -34,9 +34,16 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokSetupStatus').textContent = result.available ? 'Trình duyệt sẵn sàng. Duyệt video tại khu vực Đăng TikTok.' : 'Kết nối tài khoản tại khu vực Đăng TikTok sau khi trình duyệt sẵn sàng.';
     $('#tiktokBrowserOpen').disabled = !result.available || busyStates.has(result.attempt?.state);
     $('#tiktokBrowserCheck').disabled = !result.available;
-    const loginDisabled = !result.available || Boolean(result.attempt) || result.login_state === 'rate_limited';
-    $('#tiktokBrowserLoginQr').disabled = loginDisabled;
-    $('#tiktokBrowserLoginEmail').disabled = loginDisabled;
+    const loginUnavailable = !result.available || Boolean(result.attempt);
+    const rateLimited = result.login_state === 'rate_limited';
+    // OTP throttling must block another email/phone submission, while QR
+    // remains available as TikTok's alternative login method.
+    $('#tiktokBrowserLoginQr').disabled = loginUnavailable;
+    $('#tiktokBrowserLoginEmail').disabled = loginUnavailable || rateLimited;
+    $('#tiktokEmailSubmit').disabled = loginUnavailable || rateLimited || emailSubmitting;
+    if (rateLimited) {
+      $('#tiktokEmailStatus').textContent = 'TikTok đang giới hạn OTP · hãy dùng QR hoặc thử lại sau';
+    }
     $('#tiktokBrowserLogout').disabled = !result.available || Boolean(result.attempt);
     const frame = $('#tiktokBrowserFrame');
     const external = $('#tiktokBrowserExternal');

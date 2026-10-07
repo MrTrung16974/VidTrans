@@ -24,15 +24,33 @@ class LoginRecoveryTests(unittest.TestCase):
                     manager.restart_login()
                 browser.assert_not_called()
 
-    def test_rate_limit_preserves_page_and_blocks_resubmission(self):
+    def test_rate_limit_blocks_email_but_allows_qr_recovery(self):
         with TemporaryDirectory() as directory:
             manager = TikTokBrowserManager(Path(directory))
             page = MagicMock()
+            page.frames = [page]
             page.locator.return_value.inner_text.return_value = "Maximum number of attempts reached. Try again later."
-            with patch.object(manager, '_page', return_value=page), patch.object(manager, '_with_browser', side_effect=lambda operation: operation(object())):
-                for operation in (lambda: manager.restart_login('qr'), lambda: manager.login_with_email('test@example.com', 'not-a-real-password')):
-                    with self.assertRaisesRegex(TikTokBrowserError, "giới hạn"):
-                        operation()
+            browser = MagicMock()
+            browser.contexts = [MagicMock()]
+            with patch.object(manager, '_page', return_value=page), patch.object(manager, '_with_browser', side_effect=lambda operation: operation(browser)), patch.object(manager, 'status', return_value={}):
+                manager.restart_login('qr')
+                browser.contexts[0].clear_cookies.assert_called_once_with()
+                self.assertEqual(
+                    [call.args[0] for call in page.goto.call_args_list],
+                    ['about:blank', 'https://www.tiktok.com/login?loginType=qrCode'],
+                )
+                cdp = browser.contexts[0].new_cdp_session.return_value
+                cdp.send.assert_any_call('Network.clearBrowserCookies')
+                cdp.send.assert_any_call('Network.clearBrowserCache')
+                cdp.send.assert_any_call(
+                    'Storage.clearDataForOrigin',
+                    {'origin': 'https://www.tiktok.com', 'storageTypes': 'all'},
+                )
+                page.reset_mock()
+                page.frames = [page]
+                page.locator.return_value.inner_text.return_value = "Maximum number of attempts reached. Try again later."
+                with self.assertRaisesRegex(TikTokBrowserError, "giới hạn"):
+                    manager.login_with_email('test@example.com', 'not-a-real-password')
                 page.goto.assert_not_called()
                 self.assertFalse(manager._browser_lock.locked())
 
@@ -42,6 +60,7 @@ class LoginRecoveryTests(unittest.TestCase):
             browser = MagicMock()
             page = MagicMock()
             page.url = 'https://www.tiktok.com/login'
+            page.frames = [page]
             browser.contexts[0].pages = [page]
             browser.contexts[0].cookies.return_value = []
             page.locator.return_value.inner_text.return_value = 'Too many attempts'
