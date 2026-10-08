@@ -43,7 +43,7 @@ class TikTokPublisherConfig:
     client_key: str = ""
     client_secret: str = ""
     redirect_uri: str = ""
-    scopes: tuple[str, ...] = ("video.publish",)
+    scopes: tuple[str, ...] = ("video.upload",)
     api_base: str = "https://open.tiktokapis.com"
     authorize_url: str = "https://www.tiktok.com/v2/auth/authorize/"
 
@@ -53,7 +53,7 @@ class TikTokPublisherConfig:
             part.strip()
             for part in os.environ.get(
                 "VIDTRANS_TIKTOK_SCOPES",
-                "video.publish",
+                "video.upload",
             ).split(",")
             if part.strip()
         )
@@ -144,13 +144,14 @@ class TikTokPublisher:
             "connected": connected,
             "open_id": token.get("open_id") if connected and token else None,
             "scope": token.get("scope", "") if connected and token else "",
+            "can_upload_draft": connected and "video.upload" in str(token.get("scope", "")).split(",") if token else False,
             "access_expires_at": token.get("expires_at") if connected and token else None,
             "message": self._status_message(connected),
         }
 
     def _status_message(self, connected: bool) -> str:
         if connected:
-            return "TikTok đã kết nối, sẵn sàng tự động đăng video"
+            return "TikTok đã kết nối"
         if not self.config.configured:
             return "Chưa cấu hình TikTok Developer App trên máy chủ"
         return "Chưa kết nối tài khoản TikTok"
@@ -278,6 +279,39 @@ class TikTokPublisher:
             "status_payload": status,
         }
 
+    def upload_draft(self, video_path: Path) -> dict[str, Any]:
+        """Upload a video to the creator inbox for completion in the TikTok app."""
+        if not video_path.is_file():
+            raise TikTokPublisherError("Không tìm thấy video đã dựng để gửi sang TikTok")
+        plan = create_upload_plan(video_path.stat().st_size)
+        token = self._valid_access_token(required_scope="video.upload")
+        initialized = self._post_json(
+            "/v2/post/publish/inbox/video/init/",
+            {"source_info": {
+                "source": "FILE_UPLOAD",
+                "video_size": plan.video_size,
+                "chunk_size": plan.chunk_size,
+                "total_chunk_count": plan.total_chunk_count,
+            }},
+            token,
+        )
+        data = initialized.get("data") or {}
+        publish_id = str(data.get("publish_id") or "")
+        upload_url = str(data.get("upload_url") or "")
+        if not publish_id or not upload_url:
+            raise TikTokAPIError("TikTok không trả về phiên upload bản nháp hợp lệ")
+        self._upload_file(video_path, upload_url, plan)
+        try:
+            status = self.fetch_status(publish_id)
+        except TikTokPublisherError as exc:
+            status = {"status": "SUBMITTED", "status_check_error": str(exc)}
+        return {
+            "publish_id": publish_id,
+            "mode": "INBOX_DRAFT",
+            "status": status.get("status") or "SUBMITTED",
+            "status_payload": status,
+        }
+
     def fetch_status(self, publish_id: str) -> dict[str, Any]:
         token = self._valid_access_token()
         payload = self._post_json(
@@ -316,7 +350,7 @@ class TikTokPublisher:
                     )
                 offset = end + 1
 
-    def _valid_access_token(self) -> str:
+    def _valid_access_token(self, required_scope: str | None = None) -> str:
         self._require_configured()
         with self._lock:
             token = self._load_token()
@@ -341,6 +375,11 @@ class TikTokPublisher:
                 )
                 token = self._normalize_token(refreshed)
                 self._save_token(token)
+            granted = {part.strip() for part in str(token.get("scope", "")).split(",") if part.strip()}
+            if required_scope and required_scope not in granted:
+                raise TikTokConfigurationError(
+                    f"Tài khoản chưa cấp quyền {required_scope}. Hãy kết nối TikTok lại."
+                )
             return str(token["access_token"])
 
     def _normalize_token(self, payload: dict[str, Any]) -> dict[str, Any]:

@@ -33,7 +33,7 @@ class FakeTikTokAPI:
                     "expires_in": 86400,
                     "refresh_expires_in": 31536000,
                     "open_id": "creator-id",
-                    "scope": "user.info.basic,video.publish",
+                    "scope": "user.info.basic,video.publish,video.upload",
                 }
             ).encode()
         if url.endswith("/creator_info/query/"):
@@ -87,12 +87,12 @@ class TikTokPublisherTests(unittest.TestCase):
         state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
         self.publisher.exchange_code("oauth-code", state)
 
-    def test_authorization_url_contains_required_publish_scope(self) -> None:
+    def test_authorization_url_contains_required_upload_scope(self) -> None:
         url = self.publisher.authorization_url()
         query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
 
         self.assertEqual(query["client_key"], ["client-key"])
-        self.assertIn("video.publish", query["scope"][0])
+        self.assertIn("video.upload", query["scope"][0])
         self.assertEqual(query["redirect_uri"], [self.config.redirect_uri])
         self.assertTrue(query["state"][0])
 
@@ -114,6 +114,20 @@ class TikTokPublisherTests(unittest.TestCase):
         self.assertEqual(upload_call[3], b"rendered-video")
         self.assertEqual(result["publish_id"], "publish-123")
         self.assertEqual(result["status"], "PROCESSING_UPLOAD")
+
+    def test_upload_draft_uses_inbox_endpoint_without_post_info(self) -> None:
+        self.connect()
+        video = Path(self.temporary.name) / "draft.mp4"
+        video.write_bytes(b"rendered-video")
+
+        result = self.publisher.upload_draft(video)
+
+        init_call = next(call for call in self.api.calls if "/inbox/video/init/" in call[1])
+        init_body = json.loads((init_call[3] or b"{}").decode())
+        self.assertNotIn("post_info", init_body)
+        self.assertEqual(init_body["source_info"]["source"], "FILE_UPLOAD")
+        self.assertEqual(result["mode"], "INBOX_DRAFT")
+        self.assertEqual(result["publish_id"], "publish-123")
 
     def test_rejects_privacy_level_not_available_to_creator(self) -> None:
         self.connect()

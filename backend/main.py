@@ -135,7 +135,7 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
 )
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
-app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR))
+app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR, TIKTOK_PUBLISHER))
 AUTH_MANAGER = AuthManager()
 ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
@@ -2055,10 +2055,10 @@ def tiktok_auth_callback(
         if error:
             raise TikTokPublisherError(error_description or error)
         TIKTOK_PUBLISHER.exchange_code(code, state)
-        return RedirectResponse(url="/?tiktok=connected#create", status_code=303)
+        return RedirectResponse(url="/?tiktok=connected#tiktok", status_code=303)
     except TikTokPublisherError as exc:
         message = quote_plus(str(exc))
-        return RedirectResponse(url=f"/?tiktok_error={message}#create", status_code=303)
+        return RedirectResponse(url=f"/?tiktok_error={message}#tiktok", status_code=303)
 
 
 @app.delete("/api/v1/tiktok-auth")

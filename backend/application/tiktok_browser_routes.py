@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -8,9 +10,11 @@ from fastapi import APIRouter, Form, HTTPException
 
 from pipeline.tiktok import LocalExtractiveTikTokProvider
 from infrastructure.tiktok_browser import TikTokBrowserError, TikTokBrowserManager
+from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherError
 
 
-def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir: Path) -> APIRouter:
+def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir: Path,
+                                 publisher: TikTokPublisher | None = None) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["TikTok Browser"])
     output_dir = output_dir.resolve()
 
@@ -116,5 +120,49 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
             raise HTTPException(422, "Hãy duyệt video, nội dung và tài khoản trước khi tải lên")
         _, video = ready_job(job_id)
         return call(lambda: manager.prepare(job_id, video, caption))
+
+    @router.post("/jobs/{job_id}/tiktok-upload-draft", status_code=202)
+    def upload_draft(job_id: str, caption: str = Form("", max_length=2200), reviewed: bool = Form(...)):
+        if publisher is None:
+            raise HTTPException(503, "TikTok Upload API chưa được cấu hình")
+        if not reviewed:
+            raise HTTPException(422, "Hãy duyệt video và caption trước khi gửi sang TikTok")
+        _, video = ready_job(job_id)
+        current = jobs.get(job_id) or {}
+        if current.get("tiktok_publish_status") in {"UPLOADING_DRAFT", "PROCESSING_UPLOAD"}:
+            raise HTTPException(409, "Video này đang được gửi sang ứng dụng TikTok")
+        auth = publisher.connection_status()
+        if not auth.get("can_upload_draft"):
+            raise HTTPException(409, "Hãy kết nối TikTok và cấp quyền video.upload trước")
+        jobs.update(job_id, tiktok_publish_status="UPLOADING_DRAFT", tiktok_publish_error=None,
+                    tiktok_publish_title=caption, tiktok_publish_mode="INBOX_DRAFT")
+
+        def run() -> None:
+            try:
+                result = publisher.upload_draft(video)
+                jobs.update(job_id, tiktok_publish_id=result["publish_id"],
+                            tiktok_publish_status=result["status"],
+                            tiktok_publish_detail=result.get("status_payload"),
+                            tiktok_publish_mode="INBOX_DRAFT")
+                status = result["status"]
+                # TikTok processes the upload asynchronously; poll until it reaches the inbox.
+                for _ in range(60):
+                    if status in {"SEND_TO_USER_INBOX", "PUBLISH_COMPLETE", "FAILED"}:
+                        break
+                    time.sleep(5)
+                    try:
+                        detail = publisher.fetch_status(result["publish_id"])
+                    except TikTokPublisherError:
+                        continue
+                    status = detail.get("status") or status
+                    jobs.update(job_id, tiktok_publish_status=status, tiktok_publish_detail=detail,
+                                tiktok_publish_error=detail.get("fail_reason") if status == "FAILED" else None)
+            except TikTokPublisherError as exc:
+                jobs.update(job_id, tiktok_publish_status="FAILED",
+                            tiktok_publish_error=str(exc), tiktok_publish_mode="INBOX_DRAFT")
+
+        threading.Thread(target=run, daemon=True, name=f"tiktok-draft-{job_id[:8]}").start()
+        return {"job_id": job_id, "status": "UPLOADING_DRAFT",
+                "message": "Đang gửi video sang hộp thư TikTok trên điện thoại"}
 
     return router
