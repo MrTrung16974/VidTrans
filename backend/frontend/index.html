@@ -170,14 +170,7 @@
         </section>
 
         <section id="tiktokView" class="view is-hidden">
-          <div class="page-heading"><div><span class="eyebrow">TikTok Upload API</span><h1>Gửi bản nháp sang điện thoại</h1><p>VidTrans tải video vào hộp thư TikTok; bạn mở ứng dụng TikTok để chỉnh sửa và đăng.</p></div><a class="button secondary" href="#jobs">← Chọn từ Tiến trình</a></div>
-          <section class="card tiktok-account-bar">
-            <span class="tiktok-account-mark" aria-hidden="true">♪</span>
-            <div class="tiktok-account-copy"><strong>Kết nối TikTok chính thức</strong><p id="tiktokApiStatus" role="status">Đang kiểm tra kết nối…</p></div>
-            <div class="tiktok-toolbar"><button id="tiktokApiConnect" class="button tiktok-button" type="button">Kết nối TikTok</button><button id="tiktokApiDisconnect" class="button secondary" type="button">Ngắt kết nối</button></div>
-          </section>
-          <details class="tiktok-browser-fallback">
-            <summary>Phương án dự phòng: TikTok Web trên VPS</summary>
+          <div class="page-heading"><div><span class="eyebrow">TikTok Studio</span><h1>Từ video đến bài đăng</h1><p>Duyệt video và caption tại đây, hoàn tất bài đăng trong TikTok Studio.</p></div><a class="button secondary" href="#jobs">← Chọn từ Tiến trình</a></div>
           <section class="card tiktok-account-bar">
             <span class="tiktok-account-mark" aria-hidden="true">♪</span>
             <div class="tiktok-account-copy"><strong>Tài khoản TikTok của bạn</strong><p id="tiktokBrowserStatus" role="status">Đang kiểm tra trình duyệt…</p></div>
@@ -198,7 +191,6 @@
             </form>
           </details>
           <p class="tiktok-consent">Nếu điện thoại báo "Couldn't log in", hãy thử <strong>Đăng nhập Email / SĐT</strong> bên trên, hoặc bấm "Đổi sang QR" để lấy mã QR mới.</p>
-          </details>
           <div class="tiktok-workspace">
             <section class="card tiktok-review-card">
               <div class="tiktok-section-title"><span>1</span><div><h2>Duyệt bài đăng</h2><p>Chọn video đã xử lý xong.</p></div></div>
@@ -216,14 +208,13 @@
                   <div><button id="tiktokApplyCaption" type="button" class="button secondary">Dùng caption này</button><button id="tiktokDismissCaption" type="button" class="tiktok-text-button">Giữ bản hiện tại</button></div>
                 </div>
                 <p id="tiktokPreviousAttempt" class="tiktok-notice is-hidden"></p>
-                <label class="tiktok-check"><input id="tiktokReviewConsent" type="checkbox" /><span>Tôi đã xem video và duyệt caption trước khi gửi sang TikTok.</span></label>
-                <button id="tiktokPrepareButton" class="button primary full" type="button" disabled>Gửi bản nháp sang TikTok app →</button>
-                <p class="fine-print">Caption sẽ được sao chép. Sau khi TikTok xử lý xong, mở thông báo trong ứng dụng và dán caption để hoàn tất bài đăng.</p>
+                <label class="tiktok-check"><input id="tiktokReviewConsent" type="checkbox" /><span>Tôi đã xem video, duyệt caption và kiểm tra đúng tài khoản trong TikTok Studio.</span></label>
+                <button id="tiktokPrepareButton" class="button primary full" type="button" disabled>Tải video và điền caption →</button>
+                <p class="fine-print">Thao tác này tải video lên TikTok. Bạn chọn quyền riêng tư, khai báo nội dung và bấm Đăng trong khung bên cạnh.</p>
               </div>
             </section>
             <section class="card tiktok-studio-card">
-              <div class="tiktok-studio-heading"><div class="tiktok-section-title"><span>2</span><div><h2>Hoàn tất trên điện thoại</h2><p>Mở thông báo TikTok để chỉnh sửa và đăng.</p></div></div><a id="tiktokBrowserExternal" class="tiktok-text-button is-hidden" target="_blank" rel="noopener">Mở TikTok Web ↗</a></div>
-              <div class="tiktok-attempt"><strong id="tiktokDraftUploadTitle">Chưa gửi video</strong><p id="tiktokDraftUploadStatus">Kết nối TikTok, chọn video và bấm “Gửi bản nháp”.</p></div>
+              <div class="tiktok-studio-heading"><div class="tiktok-section-title"><span>2</span><div><h2>Hoàn tất trên TikTok</h2><p>Đăng nhập, xác minh và đăng bài trực tiếp.</p></div></div><a id="tiktokBrowserExternal" class="tiktok-text-button is-hidden" target="_blank" rel="noopener">Mở rộng ↗</a></div>
               <div id="tiktokAttemptPanel" class="tiktok-attempt is-hidden" role="status"><strong id="tiktokAttemptTitle"></strong><p id="tiktokAttemptMessage"></p><button id="tiktokActiveDraft" class="tiktok-text-button" type="button">Xem nội dung đang chuẩn bị</button><div id="tiktokResolveControls" class="is-hidden"><label class="tiktok-check"><input id="tiktokResolveConsent" type="checkbox" /><span>Tôi đã kiểm tra và hoàn tất đăng hoặc hủy bài này trong TikTok Studio.</span></label><button id="tiktokResolveButton" type="button" class="button secondary" disabled>Kết thúc lượt chuẩn bị</button></div></div>
               <div class="tiktok-browser-stage"><div id="tiktokBrowserPlaceholder" class="tiktok-browser-placeholder"><span aria-hidden="true">♪</span><strong>Không gian TikTok của bạn</strong><p id="tiktokBrowserHelp">Bấm “Mở / đăng nhập TikTok” để bắt đầu.</p></div><iframe id="tiktokBrowserFrame" title="TikTok Studio — đăng nhập và hoàn tất bài đăng" class="is-hidden" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe></div>
               <p class="tiktok-studio-footnote">Nếu TikTok yêu cầu QR, OTP hoặc CAPTCHA, hãy hoàn tất ngay trong trình duyệt này. Trạng thái tải lên chưa phải xác nhận bài đã đăng.</p>
