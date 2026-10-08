@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import IntEnum, StrEnum
 
+from domain.languages import language_profile, validate_language_pair
+
 
 class ProcessingMode(IntEnum):
     SUBTITLES = 1
@@ -50,6 +52,8 @@ class ProcessingRequest:
 
     mode: ProcessingMode
     subtitle_source: SubtitleSource
+    source_language: str
+    target_language: str
     ocr: OcrOptions
     voice_mode: VoiceRoutingMode
     fallback_voice: VoiceType
@@ -72,6 +76,8 @@ class ProcessingRequest:
         auto_publish_tiktok: bool = False,
         tiktok_privacy_level: str = "SELF_ONLY",
         tiktok_publish_at: str | None = None,
+        source_language: str = "zh-CN",
+        target_language: str = "vi",
     ) -> "ProcessingRequest":
         try:
             resolved_mode = ProcessingMode(mode)
@@ -89,6 +95,12 @@ class ProcessingRequest:
             resolved_voice_type = VoiceType(voice_type)
         except ValueError as exc:
             raise ValueError("voice_type must be female or male") from exc
+        resolved_source_language, resolved_target_language = validate_language_pair(
+            source_language, target_language
+        )
+        if resolved_source is SubtitleSource.BURNED:
+            if resolved_source_language == "auto" or not language_profile(resolved_source_language).ocr_supported:
+                raise ValueError("burned subtitle OCR currently requires source_language=zh-CN")
         if not 80 <= tiktok_max_summary_chars <= 1500:
             raise ValueError("tiktok_max_summary_chars must be between 80 and 1500")
         if not 0 <= tiktok_hashtag_count <= 12:
@@ -125,6 +137,8 @@ class ProcessingRequest:
         return cls(
             mode=resolved_mode,
             subtitle_source=resolved_source,
+            source_language=resolved_source_language,
+            target_language=resolved_target_language,
             ocr=OcrOptions(
                 sample_fps=ocr_sample_fps,
                 roi_top=ocr_roi_top,

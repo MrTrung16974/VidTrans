@@ -29,6 +29,7 @@ from application.job_service import JobService
 from application.tiktok_browser_routes import create_tiktok_browser_router
 from infrastructure.tiktok_browser import TikTokBrowserManager
 from domain.models import ProcessingMode, ProcessingRequest
+from domain.languages import language_profile, languages_from_config, normalize_language
 
 from infrastructure.douyin_browser_auth import DouyinBrowserAuthManager
 from infrastructure.auth import (
@@ -501,6 +502,22 @@ def transcribe_chinese_video(model_name: str, video_path: Path, job_id: str | No
     return normalize_segments(ASR_SERVICE.transcribe_chinese(model_name, video_path, progress=progress))
 
 
+def transcribe_video(
+    model_name: str, video_path: Path, source_language: str, job_id: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None, float | None]:
+    progress = make_asr_progress_callback(job_id) if job_id else None
+    result = ASR_SERVICE.transcribe(
+        model_name, video_path, progress=progress, source_language=source_language
+    )
+    detected = result.detected_language
+    if detected:
+        try:
+            detected = normalize_language(detected)
+        except ValueError:
+            detected = None
+    return normalize_segments(result.segments), detected, result.language_probability
+
+
 def make_asr_progress_callback(job_id: str) -> Callable[[float, float | None], None]:
     """Report recognised audio time so a long transcription is visibly moving."""
 
@@ -566,8 +583,8 @@ async def tts_edge_sync(text: str, output_path: Path, voice_name: str, rate: str
     await communicate.save(str(output_path))
 
 
-def tts_gtts_sync(text: str, output_path: Path, slow: bool = False) -> None:
-    gTTS(text=text, lang="vi", slow=slow).save(str(output_path))
+def tts_gtts_sync(text: str, output_path: Path, slow: bool = False, language: str = "vi") -> None:
+    gTTS(text=text, lang=language_profile(language).gtts_code, slow=slow).save(str(output_path))
 
 
 def synthesize_tts_segments(
@@ -576,6 +593,7 @@ def synthesize_tts_segments(
     voice_type: str,
     speech_rate: float,
     job_id: str | None = None,
+    target_language: str = "vi",
 ) -> list[Path]:
     tts_dir = work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
@@ -641,14 +659,15 @@ def synthesize_tts_segments(
 
         output_path = tts_dir / f"{index:04d}.mp3"
         selected_voice_type = str(segment.get("voice_type", voice_type))
-        voice_name = VOICE_OPTIONS.get(selected_voice_type, VOICE_OPTIONS["female"])
+        profile = language_profile(target_language)
+        voice_name = profile.edge_voice(selected_voice_type)
         
         # Pass 1: Generate initial audio to gauge speaking duration
         try:
             asyncio.run(tts_edge_sync(text, output_path, voice_name, base_rate_string))
         except Exception as exc:
             logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
-            tts_gtts_sync(text, output_path, slow=speech_rate < 0.95)
+            tts_gtts_sync(text, output_path, slow=speech_rate < 0.95, language=target_language)
             
         cue_duration = max(0.25, float(segment["end"]) - float(segment["start"]) - 0.05)
 
@@ -1223,6 +1242,8 @@ def process_video(
     ocr_sample_fps: float,
     ocr_roi_top: float,
     ocr_roi_bottom: float,
+    source_language: str = "zh-CN",
+    target_language: str = "vi",
     generate_tiktok_post: bool = True,
     tiktok_max_summary_chars: int = 350,
     tiktok_hashtag_count: int = 6,
@@ -1234,10 +1255,12 @@ def process_video(
     work_dir = WORK_DIR / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
     subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
+    subtitle_style["font_name"] = language_profile(target_language).font_family
     try:
         ensure_job_active(job_id)
         ocr_segments: list[dict[str, Any]] = []
-        if subtitle_source in {"auto", "burned"} and not SETTINGS.paddle_ocr_enabled:
+        ocr_requested = subtitle_source in {"auto", "burned"} and source_language == "zh-CN"
+        if ocr_requested and not SETTINGS.paddle_ocr_enabled:
             message = "OCR is disabled on this Linux ARM64 runtime; using Whisper speech recognition"
             if subtitle_source == "burned":
                 raise RuntimeError(
@@ -1246,7 +1269,7 @@ def process_video(
                 )
             logger.warning(message)
             update_job(job_id, status="processing", step="transcribing", step_detail=message, progress=0.22)
-        elif subtitle_source in {"auto", "burned"}:
+        elif ocr_requested:
             update_job(job_id, status="processing", step="extracting-subtitles", progress=0.12)
             try:
                 with _ocr_slots:
@@ -1272,10 +1295,14 @@ def process_video(
         ensure_job_active(job_id)
         update_job(job_id, status="processing", step="transcribing", step_detail=None, progress=0.22)
         asr_segments: list[dict[str, Any]] = []
+        detected_language: str | None = None
+        detected_language_probability: float | None = None
         if has_audio_stream(video_path):
             with _whisper_slots:
                 ensure_job_active(job_id)
-                asr_segments = transcribe_chinese_video(whisper_model, video_path, job_id)
+                asr_segments, detected_language, detected_language_probability = transcribe_video(
+                    whisper_model, video_path, source_language, job_id
+                )
         elif not ocr_segments:
             raise RuntimeError(
                 "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
@@ -1288,8 +1315,8 @@ def process_video(
             segments = asr_segments
         if not segments:
             raise RuntimeError(
-                "No burned-in Chinese subtitles or audible Chinese speech could be detected. "
-                "Check the OCR subtitle region or try a larger Whisper model."
+                "Không nhận diện được phụ đề hoặc lời thoại nguồn. "
+                "Kiểm tra vùng OCR, ngôn ngữ nguồn hoặc thử Whisper model lớn hơn."
             )
 
         # Filter out non-meaningful segments (filler words, noise, hallucinations)
@@ -1316,8 +1343,17 @@ def process_video(
             skipped_cues=skipped_count,
         )
         ensure_job_active(job_id)
+        effective_source_language = (
+            detected_language if source_language == "auto" and detected_language else source_language
+        )
+        if effective_source_language == "auto":
+            raise RuntimeError("Không xác định được ngôn ngữ nguồn từ âm thanh")
+        if effective_source_language == target_language:
+            raise RuntimeError("Ngôn ngữ nhận diện trùng với ngôn ngữ đích")
         translated_segments = translate_segments(
             segments,
+            source_language=effective_source_language,
+            target_language=target_language,
             check_active=lambda: ensure_job_active(job_id),
             progress_callback=lambda completed, total: update_job(
                 job_id,
@@ -1341,15 +1377,19 @@ def process_video(
         # Publish diagnostics even on failure, before any TTS, rendering or posting.
         translation_path = OUTPUT_DIR / f"{job_id}.translation.json"
         translation_path.write_text(json.dumps({
-            "version": 3,
+            "version": 4,
             "source_method": "ocr" if ocr_segments else "speech",
-            "source_language": "zh", "target_language": "vi",
+            "source_language": effective_source_language,
+            "source_language_requested": source_language,
+            "detected_language": detected_language,
+            "detected_language_probability": detected_language_probability,
+            "target_language": target_language,
             "translation_complete": translation_fallback_cues == 0 and meaningful_count > 0,
             "review_cues": sum(1 for s in translated_segments if s.get("needs_review")),
             "segments": translated_segments,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         update_job(job_id, translation_file=translation_path.name)
-        ensure_translation_complete(translated_segments)
+        ensure_translation_complete(translated_segments, target_language=target_language)
         video_width, video_height = get_video_dimensions(video_path)
         translated_segments = apply_subtitle_layout(
             translated_segments,
@@ -1419,6 +1459,7 @@ def process_video(
                 voice_type,
                 speech_rate,
                 job_id=job_id,
+                target_language=target_language,
             )
             ensure_job_active(job_id)
             voice_track = build_voice_track(translated_segments, work_dir, video_duration)
@@ -1453,9 +1494,11 @@ def process_video(
         translation_path.write_text(
             json.dumps(
                 {
-                    "version": 3,
-                    "source_language": "zh",
-                    "target_language": "vi",
+                    "version": 4,
+                    "source_language": effective_source_language,
+                    "source_language_requested": source_language,
+                    "detected_language": detected_language,
+                    "target_language": target_language,
                     "translation_complete": True,
                     "source_method": "ocr" if ocr_segments else "speech",
                     "review_cues": sum(1 for segment in translated_segments if segment.get("needs_review")),
@@ -1774,6 +1817,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
         subtitle_style = resume_request.get("subtitle_style")
         if subtitle_style is not None and not isinstance(subtitle_style, dict):
             raise ValueError("Stored subtitle style is invalid")
+        source_language, target_language = languages_from_config(resume_request)
         process_video(
             job_id=job_id,
             video_path=video_path,
@@ -1788,6 +1832,8 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             music_volume=float(resume_request["music_volume"]),
             subtitle_style=subtitle_style,
             subtitle_source=str(resume_request["subtitle_source"]),
+            source_language=source_language,
+            target_language=target_language,
             ocr_sample_fps=float(resume_request["ocr_sample_fps"]),
             ocr_roi_top=float(resume_request["ocr_roi_top"]),
             ocr_roi_bottom=float(resume_request["ocr_roi_bottom"]),
@@ -2036,6 +2082,8 @@ async def process_video_endpoint(
     music_volume: float = Form(0.28),
     subtitle_style: str | None = Form(default=None),
     subtitle_source: str = Form("speech"),
+    source_language: str = Form("zh-CN"),
+    target_language: str = Form("vi"),
     ocr_sample_fps: float = Form(5.0),
     ocr_roi_top: float = Form(0.68),
     ocr_roi_bottom: float = Form(0.96),
@@ -2058,6 +2106,8 @@ async def process_video_endpoint(
             ocr_roi_bottom=ocr_roi_bottom,
             voice_mode=voice_mode,
             voice_type=voice_type,
+            source_language=source_language,
+            target_language=target_language,
             generate_tiktok_post=generate_tiktok_post,
             tiktok_max_summary_chars=tiktok_max_summary_chars,
             tiktok_hashtag_count=tiktok_hashtag_count,
@@ -2116,6 +2166,8 @@ async def process_video_endpoint(
         "music_volume": music_volume,
         "subtitle_style": style_payload,
         "subtitle_source": request.subtitle_source.value,
+        "source_language": request.source_language,
+        "target_language": request.target_language,
         "ocr_sample_fps": request.ocr.sample_fps,
         "ocr_roi_top": request.ocr.roi_top,
         "ocr_roi_bottom": request.ocr.roi_bottom,
@@ -2134,6 +2186,8 @@ async def process_video_endpoint(
         "mode": int(request.mode),
         "filename": file.filename,
         "subtitle_source": request.subtitle_source.value,
+        "source_language": request.source_language,
+        "target_language": request.target_language,
         "voice_routing": {
             "mode": request.voice_mode.value,
             "fallback_voice": request.fallback_voice.value,
@@ -2183,6 +2237,8 @@ async def create_batch_endpoint(
     music_volume: float = Form(0.28),
     subtitle_style: str | None = Form(default=None),
     subtitle_source: str = Form("speech"),
+    source_language: str = Form("zh-CN"),
+    target_language: str = Form("vi"),
     ocr_sample_fps: float = Form(5.0),
     ocr_roi_top: float = Form(0.68),
     ocr_roi_bottom: float = Form(0.96),
@@ -2240,6 +2296,8 @@ async def create_batch_endpoint(
             ocr_roi_bottom=ocr_roi_bottom,
             voice_mode=voice_mode,
             voice_type=voice_type,
+            source_language=source_language,
+            target_language=target_language,
             generate_tiktok_post=generate_tiktok_post,
             tiktok_max_summary_chars=tiktok_max_summary_chars,
             tiktok_hashtag_count=tiktok_hashtag_count,
@@ -2274,6 +2332,8 @@ async def create_batch_endpoint(
     batch_config = {
         "mode": int(request.mode),
         "subtitle_source": request.subtitle_source.value,
+        "source_language": request.source_language,
+        "target_language": request.target_language,
         "voice_mode": request.voice_mode.value,
         "voice_type": request.fallback_voice.value,
         "speech_rate": speech_rate,
@@ -2329,6 +2389,8 @@ async def create_batch_endpoint(
                 "mode": int(request.mode),
                 "filename": upload.filename,
                 "subtitle_source": request.subtitle_source.value,
+                "source_language": request.source_language,
+                "target_language": request.target_language,
                 "voice_routing": {
                     "mode": request.voice_mode.value,
                     "fallback_voice": request.fallback_voice.value,
@@ -2383,6 +2445,8 @@ async def create_batch_endpoint(
                 "source_url": source_url,
                 "source_platform": platform,
                 "subtitle_source": request.subtitle_source.value,
+                "source_language": request.source_language,
+                "target_language": request.target_language,
                 "voice_routing": {
                     "mode": request.voice_mode.value,
                     "fallback_voice": request.fallback_voice.value,

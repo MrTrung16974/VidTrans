@@ -12,7 +12,7 @@ const state = {
 const stepLabels = {
   queued: "Đang xếp hàng", starting: "Đang khởi động", "downloading-source": "Đang tải video nguồn",
   "source-ready": "Nguồn đã sẵn sàng",
-  "extracting-subtitles": "Đang đọc chữ Trung",
+  "extracting-subtitles": "Đang đọc phụ đề nguồn",
   transcribing: "Đang nhận diện giọng nói", translating: "Đang dịch sang tiếng Việt",
   summarizing: "Đang viết nội dung TikTok", "routing-voices": "Đang chọn giọng",
   tts: "Đang tạo giọng đọc", "mixing-audio": "Đang trộn âm thanh", rendering: "Đang dựng video", "publishing-tiktok": "Đang đăng lên TikTok",
@@ -313,7 +313,7 @@ function renderSourceLinks() {
 
 function subtitleStyle() {
   return {
-    font_name: "Noto Sans CJK SC",
+    font_name: "Noto Sans",
     font_size: 36,
     margin_v: 60,
     placement_mode: $("#placementMode").value,
@@ -342,11 +342,23 @@ function formatScheduledTime(value) {
 
 
 function updateFormSummary() {
-  const modes = { "1": "Vietsub", "2": "Vietsub + voice", "3": "Voice + nhạc" };
+  const modes = { "1": "Phụ đề", "2": "Phụ đề + voice", "3": "Voice + nhạc" };
+  const languageLabels = { auto: "Tự nhận diện", vi: "Việt", en: "Anh", "zh-CN": "Trung", ja: "Nhật", ko: "Hàn", th: "Thái", id: "Indonesia", es: "Tây Ban Nha" };
+  const previewTexts = { vi: "Tôi muốn trở thành phiên bản tốt nhất", en: "I want to become my best self", "zh-CN": "我想成为最好的自己", ja: "最高の自分になりたい", ko: "최고의 내가 되고 싶어요", th: "ฉันอยากเป็นตัวเองในแบบที่ดีที่สุด", id: "Saya ingin menjadi versi terbaik diri saya", es: "Quiero ser mi mejor versión" };
   const placements = { replace_original: "Thay chữ gốc", above_original: "Trên chữ gốc", bottom_safe: "Vùng an toàn" };
   const mode = $("#mode").value;
   const placement = $("#placementMode").value;
   $("#modeSummary").textContent = modes[mode];
+  const sourceLanguage = $("#sourceLanguage").value;
+  const targetLanguage = $("#targetLanguage").value;
+  $("#languageSummary").textContent = `${languageLabels[sourceLanguage]} → ${languageLabels[targetLanguage]}`;
+  $("#previewVietnamese").textContent = previewTexts[targetLanguage];
+  const subtitleSource = $("#subtitleSource");
+  const ocrAllowed = sourceLanguage === "zh-CN";
+  [...subtitleSource.options].forEach(option => {
+    if (option.value !== "speech") option.disabled = !ocrAllowed;
+  });
+  if (!ocrAllowed && subtitleSource.value !== "speech") subtitleSource.value = "speech";
   $("#placementSummary").textContent = placements[placement];
   $("#musicField").classList.toggle("is-hidden", mode !== "3");
   const voiceEnabled = mode === "2" || mode === "3";
@@ -360,8 +372,8 @@ function updateFormSummary() {
   musicVolumeField.classList.toggle("is-disabled", !musicEnabled);
   $$('input, select', musicVolumeField).forEach(control => { control.disabled = !musicEnabled; });
   const hints = {
-    "1": "Giữ nguyên âm thanh gốc, chỉ dịch và chèn phụ đề Việt. Nhanh nhất và không chạy TTS.",
-    "2": "Tạo giọng Việt đồng bộ từng câu; tự co tốc độ câu dài và có thể giữ tiếng gốc ở mức nhỏ.",
+    "1": "Giữ nguyên âm thanh gốc, chỉ dịch và chèn phụ đề theo ngôn ngữ đầu ra. Nhanh nhất và không chạy TTS.",
+    "2": "Tạo giọng đọc theo ngôn ngữ đầu ra, đồng bộ từng câu và có thể giữ tiếng gốc ở mức nhỏ.",
     "3": "Giống chế độ lồng tiếng, đồng thời lặp nhạc nền vừa đủ thời lượng và tự cân bằng âm lượng.",
   };
   $("#modeHint").textContent = hints[mode];
@@ -424,6 +436,9 @@ async function submitBatch(event) {
     return toast(sourceText ? "Không tìm thấy link TikTok/Douyin hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
+  if ($("#sourceLanguage").value !== "auto" && $("#sourceLanguage").value === $("#targetLanguage").value) {
+    return toast("Ngôn ngữ nguồn và đầu ra phải khác nhau", true);
+  }
   updateFormSummary();
   const form = event.currentTarget;
   const formData = new FormData(form);
@@ -731,7 +746,7 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
     toast("Đã xóa phiên đăng nhập Douyin");
   } catch (error) { toast(error.message, true); }
 });
-$("#mode").addEventListener("change", updateFormSummary);
+[$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource")].forEach(element => element.addEventListener("change", updateFormSummary));
 [$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#statusFilter").addEventListener("change", loadJobs);

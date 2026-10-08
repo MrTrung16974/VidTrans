@@ -82,21 +82,24 @@ mật khẩu mới.
    Douyin. Có thể trộn cả file lẫn link, tối đa tổng cộng 50 video mỗi batch. Link rút gọn như
    `https://v.douyin.com/...`, `https://vm.tiktok.com/...` được tự nhận diện.
 2. Đặt tên batch và chọn cấu hình dùng chung
-3. Upload **nhạc nền** nếu dùng mode 3 (mp3, wav, aac...)
-3. Chọn nguồn phụ đề Trung:
+3. Chọn ngôn ngữ nguồn (hoặc tự nhận diện) và ngôn ngữ đầu ra. Bản đầu hỗ trợ Việt,
+   Anh, Trung, Nhật, Hàn, Thái, Indonesia và Tây Ban Nha. OCR chữ đóng cứng hiện chỉ
+   bảo đảm cho nguồn tiếng Trung; các nguồn khác dùng Whisper.
+4. Upload **nhạc nền** nếu dùng mode 3 (mp3, wav, aac...)
+5. Chọn nguồn phụ đề:
    - `Whisper`: nhận diện hoàn toàn từ giọng nói, là lựa chọn mặc định trên Docker Apple Silicon
    - `Tự động`: ưu tiên OCR dòng chữ đã có trên video, dùng Whisper làm dự phòng
    - `OCR`: bắt buộc đọc phụ đề Trung đóng cứng trên hình
-4. Nếu dùng OCR, chỉnh vùng đọc theo tỉ lệ chiều cao video khi phụ đề không nằm gần đáy
-5. Chọn chế độ giọng đọc:
+6. Nếu dùng OCR, chỉnh vùng đọc theo tỉ lệ chiều cao video khi phụ đề không nằm gần đáy
+7. Chọn chế độ giọng đọc:
    - `Tự động theo cao độ giọng gốc`: chạy hoàn toàn local, dùng pitch của từng câu để chọn chất giọng TTS Nam/Nữ.
    - `Chọn thủ công`: dùng một chất giọng Nam hoặc Nữ cho toàn bộ video.
    - Trong chế độ tự động, `Giọng dự phòng` được dùng khi lời thoại quá ngắn, nhiễu hoặc pitch không đủ chắc chắn.
-6. Chọn cách đặt phụ đề: thay đúng vị trí chữ Trung, đặt phía trên chữ Trung hoặc vùng an toàn
-7. Chọn có tự động tạo nội dung TikTok hay không; có thể giới hạn độ dài tóm tắt và số hashtag.
+8. Chọn cách đặt phụ đề: thay đúng vị trí chữ nguồn, đặt phía trên chữ nguồn hoặc vùng an toàn
+9. Chọn có tự động tạo nội dung TikTok hay không; có thể giới hạn độ dài tóm tắt và số hashtag.
    Nếu đã kết nối TikTok, có thể bật tự động đăng video đầu ra bằng đúng tiêu đề vừa tạo.
-8. Bấm **Bắt đầu xử lý**, sau đó chuyển sang trang **Tiến trình**
-9. Hủy, retry, xóa hoặc tải toàn bộ kết quả ZIP cho từng video
+10. Bấm **Bắt đầu xử lý**, sau đó chuyển sang trang **Tiến trình**
+11. Hủy, retry, xóa hoặc tải toàn bộ kết quả ZIP cho từng video
 
 Lần OCR đầu tiên sẽ tải model nhận diện chữ Trung và có thể mất nhiều thời gian hơn các lần sau.
 Docker Compose lưu model này trong volume `paddle-models`.

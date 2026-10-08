@@ -1,13 +1,16 @@
-"""Bounded Google translation requests without shared mutable request state."""
+"""Bounded multilingual translation requests without shared mutable state."""
 from __future__ import annotations
 
 import html
 import json
+import re
 import time
 import urllib.request
 import urllib.error
 from urllib.parse import urlsplit
 from urllib.parse import urlencode
+
+from domain.languages import language_profile, validate_language_pair
 
 
 class TranslationServiceError(RuntimeError):
@@ -44,13 +47,13 @@ def _parse_dict_chrome(payload) -> str:
     return first if isinstance(first, str) else ""
 
 
-_GTX = {"client": "gtx", "sl": "zh-CN", "tl": "vi", "dt": "t"}
+_GTX = {"client": "gtx", "dt": "t"}
 # Separate Google hosts/clients are rate limited independently; on HTTP 429 the
 # next one is used instead of failing the whole job.
 _JSON_ENDPOINTS = (
     ("googleapis", "https://translate.googleapis.com/translate_a/single", _GTX, _parse_single),
     ("dict-chrome", "https://clients5.google.com/translate_a/t",
-     {"client": "dict-chrome-ex", "sl": "zh-CN", "tl": "vi"}, _parse_dict_chrome),
+     {"client": "dict-chrome-ex"}, _parse_dict_chrome),
     ("google-com", "https://translate.google.com/translate_a/single", _GTX, _parse_single),
 )
 _RATE_LIMIT_COOLDOWN = 30.0
@@ -70,10 +73,17 @@ def failure_code(error):
 class GoogleVietnameseTranslator:
     # Web translators do not promise to preserve custom HTML cue markers.
     supports_markers = False
-    name = "google-vi"
+    name = "google"
 
-    def __init__(self, *, timeout: float = 15, opener=None, min_interval: float | None = None):
+    def __init__(self, *, source_language: str = "zh-CN", target_language: str = "vi",
+                 timeout: float = 15, opener=None, min_interval: float | None = None):
         import os
+        self.source_language, self.target_language = validate_language_pair(source_language, target_language)
+        if self.source_language == "auto":
+            raise TranslationServiceError("translator requires a detected source language")
+        self.source_profile = language_profile(self.source_language)
+        self.target_profile = language_profile(self.target_language)
+        self.name = f"google-{self.source_language}-{self.target_language}"
         self.timeout = timeout
         # Space out requests so a long video does not trip Google's rate limit.
         if min_interval is None:
@@ -133,7 +143,12 @@ class GoogleVietnameseTranslator:
                 errors.append("http_429")
                 continue
             try:
-                translated = parse(json.loads(self._get(base, {**params, "q": text})))
+                translated = parse(json.loads(self._get(base, {
+                    **params,
+                    "sl": self.source_profile.google_code,
+                    "tl": self.target_profile.google_code,
+                    "q": text,
+                })))
             except Exception as exc:
                 errors.append(failure_code(exc))
                 if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
@@ -156,7 +171,7 @@ class GoogleVietnameseTranslator:
         try:
             payload = json.loads(self._get(
                 _MYMEMORY_ENDPOINT,
-                {"q": text, "langpair": "zh-CN|vi", "mt": "1"},
+                {"q": text, "langpair": f"{self.source_profile.mymemory_code}|{self.target_profile.mymemory_code}", "mt": "1"},
             ))
             status = int(payload.get("responseStatus", 0))
             translated = html.unescape(
@@ -219,7 +234,11 @@ class GoogleVietnameseTranslator:
             try:
                 from bs4 import BeautifulSoup
 
-                page = self._get("https://translate.google.com/m", {"sl": "zh-CN", "tl": "vi", "q": text})
+                page = self._get("https://translate.google.com/m", {
+                    "sl": self.source_profile.google_code,
+                    "tl": self.target_profile.google_code,
+                    "q": text,
+                })
                 soup = BeautifulSoup(page, "html.parser")
                 node = soup.select_one(".result-container, .t0")
                 translated = node.get_text(" ", strip=True) if node else ""
@@ -239,10 +258,19 @@ class GoogleVietnameseTranslator:
         # Do not expose query text, provider response HTML or connection secrets.
         if all(code == "http_429" for code in errors):
             raise self._rate_limited(errors)
-        raise TranslationServiceError("Google dịch không trả bản tiếng Việt hợp lệ (" + ", ".join(errors) + ")")
+        raise TranslationServiceError(
+            f"Dịch {self.source_language}→{self.target_language} không trả kết quả hợp lệ ("
+            + ", ".join(errors) + ")"
+        )
 
-    @staticmethod
-    def _valid(source: str, translated: str) -> bool:
-        from pipeline.translation import contains_han
+    def _valid(self, source: str, translated: str) -> bool:
+        source_value = source.strip()
+        result = translated.strip()
+        if not result or result.casefold() == source_value.casefold():
+            return False
+        contains_han = re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", result) is not None
+        source_has_han = re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", source_value) is not None
+        return not (source_has_han and contains_han and self.target_language not in {"zh-CN", "ja"})
 
-        return bool(translated.strip()) and translated.strip() != source.strip() and not contains_han(translated)
+
+MultilingualTranslator = GoogleVietnameseTranslator

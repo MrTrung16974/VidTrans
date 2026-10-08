@@ -84,6 +84,22 @@ class TranslationPipelineTests(unittest.TestCase):
         self.assertTrue(contains_han("Tên riêng 炭治郎"))
         self.assertFalse(contains_han("Tiếng Việt đầy đủ"))
 
+    def test_accepts_han_output_for_chinese_target(self) -> None:
+        class EnglishToChinese:
+            supports_markers = False
+            def translate(self, text: str) -> str:
+                return "你好世界"
+
+        translated = translate_segments(
+            [{"start": 0, "end": 1, "text": "Hello world"}],
+            EnglishToChinese(),
+            source_language="en",
+            target_language="zh-CN",
+            sleeper=lambda _: None,
+        )
+        self.assertEqual(translated[0]["text"], "你好世界")
+        self.assertEqual(translated[0]["target_language"], "zh-CN")
+
 
 if __name__ == "__main__":
     unittest.main()

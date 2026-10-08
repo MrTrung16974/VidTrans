@@ -77,8 +77,10 @@
                 <div class="step-heading"><span>2</span><div><h2>Cấu hình xử lý</h2><p>Áp dụng chung cho các video trong batch.</p></div></div>
                 <div class="field-grid">
                   <label class="field wide"><span>Tên batch</span><input name="batch_name" value="Batch video mới" maxlength="120" /></label>
-                  <label class="field"><span>Chế độ</span><select id="mode" name="mode"><option value="1">Chỉ Vietsub — giữ âm thanh gốc</option><option value="2">Vietsub + lồng tiếng Việt</option><option value="3">Vietsub + lồng tiếng + nhạc nền</option></select></label>
-                  <label class="field"><span>Nguồn phụ đề Trung</span><select name="subtitle_source"><option value="speech">Whisper — khuyến nghị</option><option value="auto">OCR trước, Whisper dự phòng</option><option value="burned">Chữ có sẵn trên video</option></select></label>
+                  <label class="field"><span>Chế độ</span><select id="mode" name="mode"><option value="1">Chỉ phụ đề — giữ âm thanh gốc</option><option value="2">Phụ đề + lồng tiếng</option><option value="3">Phụ đề + lồng tiếng + nhạc nền</option></select></label>
+                  <label class="field"><span>Ngôn ngữ nguồn</span><select id="sourceLanguage" name="source_language"><option value="auto">Tự nhận diện</option><option value="zh-CN" selected>Tiếng Trung</option><option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="ja">Tiếng Nhật</option><option value="ko">Tiếng Hàn</option><option value="th">Tiếng Thái</option><option value="id">Tiếng Indonesia</option><option value="es">Tiếng Tây Ban Nha</option></select></label>
+                  <label class="field"><span>Ngôn ngữ đầu ra</span><select id="targetLanguage" name="target_language"><option value="vi" selected>Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="zh-CN">Tiếng Trung</option><option value="ja">Tiếng Nhật</option><option value="ko">Tiếng Hàn</option><option value="th">Tiếng Thái</option><option value="id">Tiếng Indonesia</option><option value="es">Tiếng Tây Ban Nha</option></select></label>
+                  <label class="field"><span>Nguồn phụ đề</span><select id="subtitleSource" name="subtitle_source"><option value="speech">Whisper — khuyến nghị</option><option value="auto">OCR trước, Whisper dự phòng</option><option value="burned">Chữ có sẵn trên video</option></select></label>
                   <label class="field"><span>Whisper model</span><select name="whisper_model"><option value="base">Base — nhanh</option><option value="small" selected>Small — cân bằng</option><option value="medium">Medium — chính xác</option></select></label>
                   <label id="voiceModeField" class="field"><span>Chọn giọng</span><select name="voice_mode"><option value="auto">Tự động theo cao độ</option><option value="manual">Thủ công</option></select></label>
                   <label id="voiceTypeField" class="field"><span>Giọng dự phòng</span><select name="voice_type"><option value="female">Nữ</option><option value="male">Nam</option></select></label>
@@ -100,15 +102,15 @@
               </section>
 
               <section class="card step-card">
-                <div class="step-heading"><span>3</span><div><h2>Vị trí và cỡ phụ đề</h2><p>Tự bám và che chữ gốc khi OCR tìm được vị trí. Nếu chỉ nhận diện giọng nói, chữ đã có trên video vẫn còn.</p></div></div>
+                <div class="step-heading"><span>3</span><div><h2>Vị trí và cỡ phụ đề</h2><p>Tự bám và che chữ nguồn khi OCR tìm được vị trí. Nếu chỉ nhận diện giọng nói, chữ đã có trên video vẫn còn.</p></div></div>
                 <div class="subtitle-editor">
                   <div class="field-grid">
-                    <label class="field"><span>Cách đặt phụ đề</span><select id="placementMode"><option value="replace_original">Thay đúng vị trí chữ Trung</option><option value="above_original">Đặt ngay trên chữ Trung</option><option value="bottom_safe">Vùng an toàn phía dưới</option></select></label>
+                    <label class="field"><span>Cách đặt phụ đề</span><select id="placementMode"><option value="replace_original">Thay đúng vị trí chữ nguồn</option><option value="above_original">Đặt ngay trên chữ nguồn</option><option value="bottom_safe">Vùng an toàn phía dưới</option></select></label>
                     <label class="field checkbox-field"><input id="matchSourceSize" type="checkbox" checked /><span>Khớp cỡ chữ trên video</span></label>
                     <label class="field"><span>Cỡ chữ nhỏ nhất</span><input id="minFontSize" type="number" min="8" max="100" value="22" /></label>
                     <label class="field"><span>Cỡ chữ lớn nhất</span><input id="maxFontSize" type="number" min="12" max="200" value="72" /></label>
                     <label class="field"><span>Khoảng cách phía trên</span><input id="positionGap" type="number" min="0" max="300" value="14" /></label>
-                    <label class="field checkbox-field"><input id="maskOriginal" type="checkbox" checked /><span>Che chữ Trung khi thay thế</span></label>
+                    <label class="field checkbox-field"><input id="maskOriginal" type="checkbox" checked /><span>Che chữ nguồn khi thay thế</span></label>
                   </div>
                   <div class="subtitle-preview" aria-label="Minh họa vị trí phụ đề">
                     <div class="preview-glow"></div><div class="preview-person"></div>
@@ -139,7 +141,7 @@
             <aside class="workflow-sidebar">
               <section class="card sticky-card">
                 <span class="eyebrow">Tổng quan</span><h2>Sẵn sàng tạo batch</h2>
-                <dl class="summary-list"><div><dt>Số video</dt><dd id="fileCount">0</dd></div><div><dt>Chế độ</dt><dd id="modeSummary">Vietsub</dd></div><div><dt>Vị trí sub</dt><dd id="placementSummary">Thay chữ gốc</dd></div></dl>
+                <dl class="summary-list"><div><dt>Số video</dt><dd id="fileCount">0</dd></div><div><dt>Chế độ</dt><dd id="modeSummary">Phụ đề</dd></div><div><dt>Ngôn ngữ</dt><dd id="languageSummary">Trung → Việt</dd></div><div><dt>Vị trí sub</dt><dd id="placementSummary">Thay chữ gốc</dd></div></dl>
                 <input id="subtitleStyle" type="hidden" name="subtitle_style" />
                 <button id="submitButton" class="button primary full" type="submit">Bắt đầu xử lý</button>
                 <div id="uploadProgress" class="upload-progress is-hidden"><div><span>Đang tải batch</span><strong id="uploadPercent">0%</strong></div><div class="progress-track"><span id="uploadFill"></span></div></div>
@@ -274,6 +276,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261007-1"></script>
+    <script type="module" src="/js/app.js?v=20261008-1"></script>
   </body>
 </html>

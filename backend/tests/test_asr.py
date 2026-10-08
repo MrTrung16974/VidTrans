@@ -18,7 +18,9 @@ class FakeFasterModel:
 
     def transcribe(self, path, **options):
         self.calls.append(options)
-        return iter(self.results.pop(0)), SimpleNamespace(duration=10.0)
+        return iter(self.results.pop(0)), SimpleNamespace(
+            duration=10.0, language="ja", language_probability=0.93
+        )
 
 
 def service(model, **config):
@@ -51,6 +53,17 @@ class ASRServiceTests(unittest.TestCase):
         model = FakeFasterModel([[_segment(0.0, 1.0, "好")]])
         service(model, beam_size=2, vad=False).transcribe_chinese("small", Path("v.mp4"))
         self.assertEqual((model.calls[0]["beam_size"], model.calls[0]["vad_filter"]), (2, False))
+
+    def test_auto_language_is_not_forced_and_returns_detection(self):
+        model = FakeFasterModel([[_segment(0.0, 1.0, "こんにちは")]])
+        result = service(model).transcribe("small", Path("v.mp4"), source_language="auto")
+        self.assertIsNone(model.calls[0]["language"])
+        self.assertEqual((result.detected_language, result.language_probability), ("ja", 0.93))
+
+    def test_explicit_language_uses_catalog_whisper_code(self):
+        model = FakeFasterModel([[_segment(0.0, 1.0, "こんにちは")]])
+        service(model).transcribe("small", Path("v.mp4"), source_language="ja")
+        self.assertEqual(model.calls[0]["language"], "ja")
 
     def test_falls_back_to_openai_when_faster_whisper_missing(self):
         with patch("pipeline.asr.faster_whisper_available", return_value=False):

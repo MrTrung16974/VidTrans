@@ -1,4 +1,4 @@
-"""Chinese speech recognition with faster-whisper, falling back to openai-whisper.
+"""Multilingual speech recognition with faster-whisper, falling back to openai-whisper.
 
 faster-whisper (CTranslate2, int8) is several times faster than openai-whisper on
 CPU at comparable accuracy, and its Silero VAD skips music/silence that would
@@ -13,6 +13,8 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+from domain.languages import language_profile, normalize_language
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,13 @@ class ASRConfig:
         )
 
 
+@dataclass(frozen=True)
+class ASRResult:
+    segments: list[dict[str, Any]]
+    detected_language: str | None = None
+    language_probability: float | None = None
+
+
 def faster_whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
@@ -93,33 +102,48 @@ class ASRService:
                     self._models[key] = whisper.load_model(model_name)
             return self._models[key]
 
-    def transcribe_chinese(
+    def transcribe(
         self, model_name: str, media_path: Path, *, progress: ProgressCallback | None = None,
-    ) -> list[dict[str, Any]]:
+        source_language: str = "auto",
+    ) -> ASRResult:
         """Return raw Whisper-style segment dicts (start/end/text/words/avg_logprob)."""
+        source = normalize_language(source_language, allow_auto=True)
+        forced = None if source == "auto" else language_profile(source).whisper_code
         model = self.engine(model_name)
         attempts: list[dict[str, Any]] = [
             # Accurate pass: beam search, VAD, hallucination guard.
-            {"language": "zh", "beam": True, "vad": self.config.vad, "strict": True},
+            {"language": forced, "beam": True, "vad": self.config.vad, "strict": True},
             # VAD can drop speech buried under loud music; retry on the full audio.
-            {"language": "zh", "beam": False, "vad": False, "strict": False},
+            {"language": forced, "beam": False, "vad": False, "strict": False},
             {"language": None, "beam": False, "vad": False, "strict": False},
         ]
         for index, attempt in enumerate(attempts):
             if index == 1:
-                logger.warning("No transcript segments with forced zh, retrying with simpler whisper settings")
+                logger.warning("No transcript segments with requested language, retrying with simpler whisper settings")
             elif index == 2:
-                logger.warning("No transcript segments with forced zh, retrying with auto language detection")
+                logger.warning("No transcript segments with requested language, retrying with auto language detection")
             if self.config.engine == "faster":
-                segments = self._faster(model, media_path, attempt, progress)
+                result = self._faster_result(model, media_path, attempt, progress)
             else:
-                segments = self._openai(model, media_path, attempt)
-            if any((segment.get("text") or "").strip() for segment in segments):
-                return segments
-        return []
+                result = self._openai_result(model, media_path, attempt)
+            if any((segment.get("text") or "").strip() for segment in result.segments):
+                return result
+        return ASRResult([])
+
+    def transcribe_chinese(
+        self, model_name: str, media_path: Path, *, progress: ProgressCallback | None = None,
+    ) -> list[dict[str, Any]]:
+        """Backward-compatible wrapper for legacy callers."""
+        return self.transcribe(
+            model_name, media_path, progress=progress, source_language="zh-CN"
+        ).segments
 
     def _faster(self, model: Any, media_path: Path, attempt: dict[str, Any],
                 progress: ProgressCallback | None) -> list[dict[str, Any]]:
+        return self._faster_result(model, media_path, attempt, progress).segments
+
+    def _faster_result(self, model: Any, media_path: Path, attempt: dict[str, Any],
+                       progress: ProgressCallback | None) -> ASRResult:
         options: dict[str, Any] = {
             "language": attempt["language"],
             "task": "transcribe",
@@ -149,13 +173,24 @@ class ASRService:
             })
             if progress:
                 progress(float(segment.end), total)
-        return segments
+        return ASRResult(
+            segments,
+            detected_language=getattr(info, "language", None) or attempt["language"],
+            language_probability=getattr(info, "language_probability", None),
+        )
 
     def _openai(self, model: Any, media_path: Path, attempt: dict[str, Any]) -> list[dict[str, Any]]:
+        return self._openai_result(model, media_path, attempt).segments
+
+    def _openai_result(self, model: Any, media_path: Path, attempt: dict[str, Any]) -> ASRResult:
         options: dict[str, Any] = {"task": "transcribe", "fp16": False, "word_timestamps": True, "verbose": False}
         if attempt["language"]:
             options["language"] = attempt["language"]
         if attempt["strict"]:
             options.update(temperature=0, best_of=5, beam_size=self.config.beam_size,
                            condition_on_previous_text=True, hallucination_silence_threshold=1.0)
-        return list(model.transcribe(str(media_path), **options).get("segments", []))
+        payload = model.transcribe(str(media_path), **options)
+        return ASRResult(
+            list(payload.get("segments", [])),
+            detected_language=payload.get("language") or attempt["language"],
+        )

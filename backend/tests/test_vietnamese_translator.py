@@ -8,6 +8,14 @@ from pipeline.translation import translate_segments, ensure_translation_complete
 
 
 class TranslatorTests(unittest.TestCase):
+    def test_language_aware_result_validation(self):
+        vietnamese = GoogleVietnameseTranslator(opener=lambda *_args, **_kwargs: None)
+        chinese = GoogleVietnameseTranslator(source_language='en', target_language='zh-CN', opener=lambda *_args, **_kwargs: None)
+        japanese = GoogleVietnameseTranslator(source_language='en', target_language='ja', opener=lambda *_args, **_kwargs: None)
+        self.assertFalse(vietnamese._valid('你好世界', 'Xin chào 世界'))
+        self.assertTrue(chinese._valid('hello', '你好'))
+        self.assertTrue(japanese._valid('hello', '今日は'))
+
     def test_browser_proxy_not_used_for_translation(self):
         with patch.dict('os.environ', {'VIDTRANS_TIKTOK_PROXY': 'socks5://private:secret@host:123', 'VIDTRANS_TRANSLATION_PROXY': ''}), patch('urllib.request.build_opener') as build:
             GoogleVietnameseTranslator()
@@ -22,6 +30,18 @@ class TranslatorTests(unittest.TestCase):
     def test_all_response_fragments_are_kept(self):
         opener = lambda *a, **k: io.BytesIO(json.dumps([[['Xin chào. '], ['Cảm ơn.']]]).encode())
         self.assertEqual(GoogleVietnameseTranslator(opener=opener).translate('你好。谢谢。'), 'Xin chào. Cảm ơn.')
+
+    def test_provider_receives_dynamic_language_pair(self):
+        calls = []
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            return io.BytesIO(json.dumps([[['こんにちは']]]).encode())
+        translated = GoogleVietnameseTranslator(
+            source_language='en', target_language='ja', opener=opener
+        ).translate('hello')
+        self.assertEqual(translated, 'こんにちは')
+        self.assertIn('sl=en', calls[0])
+        self.assertIn('tl=ja', calls[0])
 
     def test_provider_diagnostic_retained_and_render_still_blocked(self):
         translator = GoogleVietnameseTranslator(opener=lambda *a, **k: None)

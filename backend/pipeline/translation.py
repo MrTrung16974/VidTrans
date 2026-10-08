@@ -154,7 +154,12 @@ class TranslationIncompleteError(RuntimeError):
     """Prevent rendering/dubbing source text as a successful translation."""
 
 
-def ensure_translation_complete(segments: Sequence[dict[str, Any]]) -> None:
+def ensure_translation_complete(
+    segments: Sequence[dict[str, Any]], *, target_language: str = "vi"
+) -> None:
+    from domain.languages import language_profile
+
+    target_label = language_profile(target_language).label_vi
     active = [s for s in segments if s.get("translation_status") != "skipped" and not s.get("skip_subtitle")]
     if not active:
         raise TranslationIncompleteError("Không có câu thoại đủ rõ để dịch. Kiểm tra nguồn hoặc dùng model nhận diện lớn hơn.")
@@ -162,7 +167,6 @@ def ensure_translation_complete(segments: Sequence[dict[str, Any]]) -> None:
         s for s in active
         if s.get("translation_status") in {"source_fallback", "failed"}
         or not _clean(str(s.get("text") or ""))
-        or contains_han(str(s.get("text") or ""))
     ]
     if failed:
         positions = ", ".join(f"{float(s['start']):.1f}s" for s in failed[:5])
@@ -172,8 +176,8 @@ def ensure_translation_complete(segments: Sequence[dict[str, Any]]) -> None:
         else:
             hint = "Kiểm tra kết nối dịch vụ dịch và thử lại; chi tiết có trong file bản dịch."
         raise TranslationIncompleteError(
-            f"Chưa dịch được {len(failed)}/{len(active)} câu sang tiếng Việt (tại {positions}). "
-            "Đã dừng trước khi lồng tiếng/xuất video để tránh chèn lại chữ Trung. " + hint
+            f"Chưa dịch được {len(failed)}/{len(active)} câu sang {target_label} (tại {positions}). "
+            "Đã dừng trước khi lồng tiếng/xuất video để tránh chèn lại nội dung nguồn. " + hint
         )
 
 
@@ -189,8 +193,6 @@ def _translate_with_retry(
         translated = _clean(translator.translate(text) or "")
         if not translated:
             raise ValueError("empty_translation")
-        if contains_han(translated):
-            raise ValueError("untranslated_chinese")
         if translated.casefold() == _clean(text).casefold():
             raise ValueError("unchanged_translation")
         return translated
@@ -274,7 +276,7 @@ def _parse_marked_batch(translated: str, indexes: Sequence[int]) -> dict[int, st
     for position, marker in enumerate(markers):
         end = markers[position + 1].start() if position + 1 < len(markers) else len(translated)
         value = _clean(translated[marker.end():end])
-        if not value or contains_han(value):
+        if not value:
             raise ValueError("invalid_batch_translation")
         parsed[int(marker.group(1))] = value
     return parsed
@@ -289,6 +291,8 @@ def translate_segments(
     sleeper: Callable[[float], None] = time.sleep,
     check_active: Callable[[], None] = lambda: None,
     progress_callback: Callable[[int, int], None] | None = None,
+    source_language: str = "zh-CN",
+    target_language: str = "vi",
 ) -> list[dict[str, Any]]:
     """Translate complete cues with bounded retries and stable timestamps.
 
@@ -300,8 +304,10 @@ def translate_segments(
     if max_batch_chars < 200 or retries < 1:
         raise ValueError("max_batch_chars must be >= 200 and retries must be >= 1")
     if translator is None:
-        from infrastructure.vietnamese_translator import GoogleVietnameseTranslator
-        translator = GoogleVietnameseTranslator()
+        from infrastructure.translator import MultilingualTranslator
+        translator = MultilingualTranslator(
+            source_language=source_language, target_language=target_language
+        )
 
     sources = [_clean(str(s.get("source_text") or s.get("text") or "")) for s in segments]
     active = [i for i, s in enumerate(segments) if not s.get("skip_subtitle") and sources[i]]
@@ -339,7 +345,7 @@ def translate_segments(
                     raise ValueError("missing_batch_lines")
                 for line, value in zip(lines, values):
                     value = _clean(value)
-                    if value and not contains_han(value) and value.casefold() != line.casefold():
+                    if value and value.casefold() != line.casefold():
                         cache[line] = (value, "translated", None)
             except Exception as exc:
                 check_active()
@@ -371,7 +377,7 @@ def translate_segments(
                     check_active()
                     # Retain structured failure, never silently mix translated/source fragments.
                     cause = exc.__cause__ or exc
-                    from infrastructure.vietnamese_translator import TranslationServiceError
+                    from infrastructure.translator import TranslationServiceError
                     reason = str(cause) if isinstance(cause, (ValueError, TranslationServiceError)) else type(cause).__name__
                     cache[source] = (source, "source_fallback", reason[:160])
                     if getattr(cause, "rate_limited", False):
@@ -391,7 +397,8 @@ def translate_segments(
             **segment, "start": float(segment["start"]), "end": float(segment["end"]),
             "source_text": sources[index], "text": text, "translation_status": status,
             "translation_provider": getattr(translator, "name", type(translator).__name__),
-            "target_language": "vi",
+            "source_language": source_language,
+            "target_language": target_language,
             "needs_review": bool(segment.get("needs_review")) or status == "source_fallback",
         }
         # An imported/retried JSON must not keep the old render_text.

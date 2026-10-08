@@ -17,7 +17,8 @@ RUN set -eux; \
                 ffmpeg \
                 libass9 \
                 fontconfig \
-                fonts-dejavu-core; then \
+                fonts-dejavu-core \
+                fonts-noto-core; then \
             break; \
         fi; \
         if [ "$attempt" -eq 5 ]; then exit 1; fi; \
