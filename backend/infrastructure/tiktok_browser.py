@@ -21,6 +21,23 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 STUDIO_URL = "https://www.tiktok.com/tiktokstudio/upload"
 BUSY_STATES = {"queued", "opening", "uploading"}
+UPLOAD_WAIT_SECONDS = 15 * 60
+UPLOAD_POLL_SECONDS = 2.0
+# Reads TikTok Studio's upload card. The Post button stays disabled until the
+# file is processed, so an enabled button (or an "Uploaded" label) means done.
+UPLOAD_PROGRESS_JS = """() => {
+    const text = document.body ? document.body.innerText : '';
+    const button = document.querySelector('[data-e2e="post_video_button"]')
+        || [...document.querySelectorAll('button')].find(b => /^(post|đăng)$/i.test(b.innerText.trim()));
+    const enabled = Boolean(button) && !button.disabled
+        && button.getAttribute('aria-disabled') !== 'true' && button.getAttribute('data-disabled') !== 'true';
+    const percent = (text.match(/(\\d{1,3})\\s*%/) || [])[1];
+    return {
+        done: enabled || /(^|\\s)(uploaded|đã tải lên)(\\s|$)/i.test(text),
+        failed: /(upload failed|couldn.t upload|tải lên không thành công|tải lên thất bại)/i.test(text),
+        percent: percent === undefined ? null : Number(percent),
+    };
+}"""
 
 
 LOGIN_LIMIT_MESSAGE = (
@@ -77,6 +94,11 @@ class TikTokBrowserManager:
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, state TEXT NOT NULL, caption TEXT NOT NULL, message TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_browser ON attempts(active) WHERE active=1")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(attempts)")}
+            if "file_sent" not in columns:
+                # Only attempts that handed the file to TikTok can cause a duplicate post.
+                db.execute("ALTER TABLE attempts ADD COLUMN file_sent INTEGER NOT NULL DEFAULT 0")
+                db.execute("UPDATE attempts SET file_sent=1 WHERE state IN ('uploading','awaiting_review')")
             db.execute("UPDATE attempts SET state='needs_review', message=? WHERE active=1 AND state IN ('queued','opening','uploading')", (
                 "Máy chủ đã khởi động lại. Kiểm tra bài trong TikTok Studio trước khi tiếp tục; hệ thống không tự tải lại.",
             ))
@@ -102,9 +124,10 @@ class TikTokBrowserManager:
             row = db.execute("SELECT * FROM attempts WHERE job_id=? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone()
         return dict(row) if row else None
 
-    def _update(self, attempt_id: str, state: str, message: str):
+    def _update(self, attempt_id: str, state: str, message: str, *, file_sent: bool = False):
         with self._db() as db:
-            db.execute("UPDATE attempts SET state=?, message=? WHERE id=? AND active=1", (state, message, attempt_id))
+            db.execute("UPDATE attempts SET state=?, message=?, file_sent=MAX(file_sent, ?) WHERE id=? AND active=1",
+                       (state, message, int(file_sent), attempt_id))
 
     # JavaScript injected into every page to remove Chromium automation fingerprints.
     # navigator.webdriver is the primary signal TikTok checks before allowing QR login.
@@ -530,7 +553,7 @@ class TikTokBrowserManager:
             attempt_id = uuid.uuid4().hex
             try:
                 with self._db() as db:
-                    db.execute("INSERT INTO attempts VALUES (?,?,?,?,?,1,?)", (
+                    db.execute("INSERT INTO attempts (id, job_id, state, caption, message, active, created_at) VALUES (?,?,?,?,?,1,?)", (
                         attempt_id, job_id, "queued", caption, "Đang chờ mở video trong TikTok Studio", time.time(),
                     ))
                 threading.Thread(target=self._run_prepare, args=(attempt_id, video_path.resolve(), caption), daemon=True).start()
@@ -564,15 +587,56 @@ class TikTokBrowserManager:
         inputs.first.wait_for(state="attached", timeout=20_000)
         if not is_tiktok_url(page.url) or not urllib.parse.urlsplit(page.url).path.startswith("/tiktokstudio/upload") or inputs.count() != 1:
             raise TikTokBrowserError("Không nhận diện được ô tải video TikTok")
-        self._update(attempt_id, "uploading", "Đang chuyển video sang TikTok. Hãy giữ nguyên trang trong lúc chuẩn bị")
+        # Marked before the transfer: a half-sent file may still create a draft on TikTok.
+        self._update(attempt_id, "uploading", "Đang chuyển video sang TikTok. Hãy giữ nguyên trang trong lúc chuẩn bị", file_sent=True)
         # Both containers mount outputs at the same absolute path; no public file URL.
-        inputs.set_input_files(str(video_path), timeout=30_000)
+        inputs.set_input_files(str(video_path), timeout=60_000)
         editor = page.locator('[contenteditable="true"][role="textbox"]:visible')
-        editor.first.wait_for(state="visible", timeout=45_000)
+        editor.first.wait_for(state="visible", timeout=60_000)
         if not is_tiktok_url(page.url) or editor.count() != 1:
             raise TikTokBrowserError("Không nhận diện được ô caption duy nhất")
-        editor.fill(caption, timeout=10_000)
-        self._update(attempt_id, "awaiting_review", "Đã chọn video và điền caption. Kiểm tra tiến độ tải, tài khoản, quyền riêng tư và bấm Đăng trong TikTok Studio")
+        uploaded = self._wait_for_upload(page, attempt_id)
+        # TikTok prefills the caption with the filename while processing, so the
+        # caption is written after the upload settles and then checked once.
+        self._fill_caption(editor, caption)
+        if uploaded:
+            message = "Video đã tải lên xong và caption đã được điền. Kiểm tra tài khoản, quyền riêng tư và bấm Đăng trong TikTok Studio"
+        else:
+            message = "Đã chọn video và điền caption nhưng TikTok vẫn đang xử lý. Chờ tải xong, kiểm tra caption và bấm Đăng trong TikTok Studio"
+        self._update(attempt_id, "awaiting_review", message)
+
+    def _wait_for_upload(self, page, attempt_id: str) -> bool:
+        deadline = time.monotonic() + UPLOAD_WAIT_SECONDS
+        last_percent = None
+        while time.monotonic() < deadline:
+            if not is_tiktok_url(page.url):
+                raise TikTokBrowserError("Trang TikTok đã chuyển hướng trong lúc tải video")
+            try:
+                progress = page.evaluate(UPLOAD_PROGRESS_JS) or {}
+            except Exception:
+                progress = {}
+            if progress.get("failed"):
+                raise TikTokBrowserError("TikTok báo tải video thất bại")
+            if progress.get("done"):
+                return True
+            percent = progress.get("percent")
+            if percent is not None and percent != last_percent:
+                last_percent = percent
+                self._update(attempt_id, "uploading", f"Đang tải video lên TikTok · {percent}%. Hãy giữ nguyên trang")
+            page.wait_for_timeout(UPLOAD_POLL_SECONDS * 1000)
+        return False
+
+    @staticmethod
+    def _fill_caption(editor, caption: str) -> None:
+        expected = " ".join(caption.split())
+        for _ in range(2):
+            editor.fill(caption, timeout=10_000)
+            try:
+                if " ".join(editor.inner_text(timeout=5_000).split()) == expected:
+                    return
+            except Exception:
+                return  # Unverifiable editor; the user reviews the caption before posting.
+        raise TikTokBrowserError("TikTok không giữ caption đã điền")
 
     def resolve(self, attempt_id: str) -> dict[str, Any]:
         with self._lock:

@@ -108,7 +108,7 @@ class TikTokBrowserTests(unittest.TestCase):
 
     def test_restart_does_not_resume_pending_upload(self):
         with self.manager._db() as db:
-            db.execute('INSERT INTO attempts VALUES (?,?,?,?,?,1,?)', ('a', 'job1', 'uploading', 'Caption', 'Uploading', time.time()))
+            db.execute('INSERT INTO attempts (id, job_id, state, caption, message, active, created_at) VALUES (?,?,?,?,?,1,?)', ('a', 'job1', 'uploading', 'Caption', 'Uploading', time.time()))
         restored = TikTokBrowserManager(self.root / 'state')
         self.assertEqual(restored.active_attempt()['state'], 'needs_review')
         with patch.object(restored, 'status', return_value={}):
@@ -133,6 +133,28 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertEqual(page.caption, 'Tiếng Việt #video')
         self.assertEqual(update.call_args.args[1], 'awaiting_review')
 
+    def test_caption_is_filled_after_tiktok_finishes_upload(self):
+        page = FakePage(progress=[{'percent': 40}, {'percent': 90}, {'done': True}])
+        with patch.object(self.manager, '_update') as update:
+            self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
+        self.assertEqual(page.waits, 2)
+        self.assertEqual(page.caption, 'Caption')
+        self.assertTrue(any(call.kwargs.get('file_sent') for call in update.call_args_list))
+        self.assertIn('tải lên xong', update.call_args.args[2])
+
+    def test_reported_upload_failure_needs_review(self):
+        page = FakePage(progress=[{'failed': True}])
+        with patch.object(self.manager, '_update'), self.assertRaises(TikTokBrowserError):
+            self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
+
+    def test_only_attempts_that_sent_the_file_are_flagged(self):
+        page = FakePage()
+        browser = FakeBrowser(page, authenticated=False)
+        self.manager._with_browser = lambda operation: operation(browser)
+        self.manager.prepare('job1', self.video, 'Caption')
+        self.wait_idle()
+        self.assertEqual(self.manager.latest_attempt('job1')['file_sent'], 0)
+
     def test_ambiguous_upload_input_fails_before_upload(self):
         page = FakePage(input_count=2)
         with self.assertRaises(TikTokBrowserError):
@@ -154,16 +176,20 @@ class FakeLocator:
     def count(self): return self.page.input_count if 'input[' in self.selector else 1
     def set_input_files(self, path, **kwargs): self.page.uploads.append(path)
     def fill(self, caption, **kwargs): self.page.caption = caption
+    def inner_text(self, **kwargs): return self.page.caption
     def click(self, **kwargs): raise AssertionError('Preparation must not click any publish control')
 
 
 class FakePage:
-    def __init__(self, input_count=1, redirect=None):
+    def __init__(self, input_count=1, redirect=None, progress=None):
         self.url = 'https://www.tiktok.com/tiktokstudio/upload'
         self.uploads, self.caption, self.input_count, self.redirect = [], '', input_count, redirect
+        self.progress, self.waits = list(progress or []), 0
     def bring_to_front(self): pass
     def goto(self, url, **kwargs): self.url = self.redirect or url
     def locator(self, selector): return FakeLocator(self, selector)
+    def evaluate(self, script): return self.progress.pop(0) if self.progress else {'done': True}
+    def wait_for_timeout(self, ms): self.waits += 1
 
 
 class FakeBrowser:

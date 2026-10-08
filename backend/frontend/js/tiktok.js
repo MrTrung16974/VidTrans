@@ -134,8 +134,15 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokCaption').value = edits.get(jobId) ?? data.caption;
       $('#tiktokDraftEmpty').classList.add('is-hidden');
       $('#tiktokDraftEditor').classList.remove('is-hidden');
-      $('#tiktokPreviousAttempt').classList.toggle('is-hidden', !data.latest_attempt);
-      $('#tiktokPreviousAttempt').textContent = 'Video này đã có lượt chuẩn bị trước. Kiểm tra tài khoản TikTok để tránh đăng trùng trước khi tải lại.';
+      // Warn only when an earlier, finished attempt actually handed the file to TikTok;
+      // the active attempt is already shown in the attempt panel.
+      const previous = data.latest_attempt;
+      const warn = Boolean(previous?.file_sent) && !previous.active;
+      $('#tiktokPreviousAttempt').classList.toggle('is-hidden', !warn);
+      if (warn) {
+        const when = new Date(previous.created_at * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+        $('#tiktokPreviousAttempt').textContent = `Video này đã được tải lên TikTok Studio lúc ${when}. Kiểm tra mục Bài đăng / Bản nháp trên TikTok để tránh đăng trùng trước khi tải lại.`;
+      }
     } catch (error) {
       if (version !== requestVersion) return;
       draft = null;
