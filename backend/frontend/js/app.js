@@ -1,4 +1,4 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20261007-1";
+import { createTikTokWorkspace } from "./tiktok.js?v=20261009-1";
 import { resolveDouyinFrameUrl } from "./browser-frame.js?v=20260920-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
