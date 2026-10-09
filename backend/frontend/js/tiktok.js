@@ -1,7 +1,7 @@
 import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20260914-1";
 export function createTikTokWorkspace({ requestJson, toast }) {
   const $ = selector => document.querySelector(selector);
-  let status = null, apiStatus = null, draft = null, timer = null, refreshing = false, loading = false, submitting = false;
+  let status = null, apiStatus = null, draft = null, timer = null, apiTimer = null, refreshing = false, loading = false, submitting = false;
   let suggestion = null, suggesting = false;
   let requestVersion = 0, locked = false, attemptId = null;
   let emailSubmitting = false;
@@ -23,7 +23,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   function controls() {
     const caption = $('#tiktokCaption').value;
     $('#tiktokCaptionCount').textContent = `${caption.length.toLocaleString('vi-VN')} / 2.200`;
-    $('#tiktokPrepareButton').disabled = locked || submitting || loading || !draft || !apiStatus?.can_upload_draft || !caption.trim() || caption.length > 2200 || !$('#tiktokReviewConsent').checked;
+    $('#tiktokPrepareButton').disabled = locked || submitting || loading || !draft || !status?.available || Boolean(status?.attempt) || !caption.trim() || caption.length > 2200 || !$('#tiktokReviewConsent').checked;
     $('#tiktokSuggestCaption').disabled = locked || loading || suggesting || !draft || Boolean(status?.attempt);
     $('#tiktokResolveButton').disabled = !$('#tiktokResolveConsent').checked;
   }
@@ -83,6 +83,14 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokResolveControls').classList.toggle('is-hidden', busyStates.has(attempt.state));
     }
     controls();
+    scheduleStatusRefresh();
+  }
+
+  function scheduleStatusRefresh() {
+    clearTimeout(timer);
+    if (locked || location.hash !== '#tiktok') return;
+    const delay = busyStates.has(status?.attempt?.state) ? 1200 : 5000;
+    timer = setTimeout(async () => { await refresh(); scheduleStatusRefresh(); }, delay);
   }
 
   async function refresh(check = false) {
@@ -107,17 +115,6 @@ export function createTikTokWorkspace({ requestJson, toast }) {
         : apiStatus.configured ? 'Cần kết nối và cấp quyền video.upload' : 'Máy chủ chưa cấu hình TikTok Developer App';
       $('#tiktokApiConnect').disabled = !apiStatus.configured || apiStatus.can_upload_draft;
       $('#tiktokApiDisconnect').disabled = !apiStatus.connected;
-      if (draft) {
-        const job = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}`);
-        const uploadState = job.tiktok_publish_status;
-        if (uploadState) {
-          const complete = ['SEND_TO_USER_INBOX', 'PUBLISH_COMPLETE'].includes(uploadState);
-          $('#tiktokDraftUploadTitle').textContent = complete ? 'Đã gửi tới TikTok' : uploadState === 'FAILED' ? 'Gửi thất bại' : 'TikTok đang xử lý video';
-          $('#tiktokDraftUploadStatus').textContent = complete
-            ? 'Mở thông báo trong ứng dụng TikTok trên điện thoại để chỉnh sửa và đăng.'
-            : job.tiktok_publish_error || `Trạng thái: ${uploadState}`;
-        }
-      }
     } catch (error) {
       apiStatus = null;
       $('#tiktokApiStatus').textContent = error.message;
@@ -189,16 +186,13 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       const body = new FormData();
       body.set('caption', $('#tiktokCaption').value);
       body.set('reviewed', 'true');
-      await requestJson(`/api/v1/jobs/${encodeURIComponent(current.job_id)}/tiktok-upload-draft`, { method: 'POST', body });
-      try { await navigator.clipboard.writeText($('#tiktokCaption').value); } catch {}
+      await requestJson(`/api/v1/jobs/${encodeURIComponent(current.job_id)}/tiktok-browser/prepare`, { method: 'POST', body });
       $('#tiktokReviewConsent').checked = false;
-      $('#tiktokDraftUploadTitle').textContent = 'Đang gửi video';
-      $('#tiktokDraftUploadStatus').textContent = 'VidTrans đang tải video lên TikTok. Không gửi lại trong lúc xử lý.';
-      toast('Đang gửi bản nháp sang TikTok. Caption đã được sao chép.');
+      await refresh();
+      toast('Đã nhận yêu cầu chuẩn bị. Theo dõi và hoàn tất trong TikTok Web.');
     } catch (error) {
       toast(error.message, true);
-      $('#tiktokDraftUploadTitle').textContent = 'Không gửi được video';
-      $('#tiktokDraftUploadStatus').textContent = error.message;
+      await refresh();
     } finally { submitting = false; controls(); }
   }
 
@@ -349,20 +343,23 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     refresh: () => { locked = false; return refresh(); }, openDraft,
     enter() {
       locked = false;
-      clearInterval(timer);
+      clearTimeout(timer); clearInterval(apiTimer);
       loadVideos(); refresh(); refreshApi();
       if (status) render(status);
-      timer = setInterval(() => { refresh(); refreshApi(); }, 5000);
+      scheduleStatusRefresh();
+      apiTimer = setInterval(refreshApi, 15000);
     },
     leave() {
-      clearInterval(timer); timer = null;
+      clearTimeout(timer); timer = null;
+      clearInterval(apiTimer); apiTimer = null;
       $('#tiktokVideoPreview').pause();
       $('#tiktokReviewConsent').checked = false;
       $('#tiktokBrowserFrame').removeAttribute('src');
     },
     lock() {
       locked = true; ++requestVersion; draft = null; status = null; edits.clear();
-      clearInterval(timer); timer = null;
+      clearTimeout(timer); timer = null;
+      clearInterval(apiTimer); apiTimer = null;
       $('#tiktokBrowserFrame').removeAttribute('src');
       $('#tiktokVideoPreview').pause();
       $('#tiktokVideoPreview').removeAttribute('src');

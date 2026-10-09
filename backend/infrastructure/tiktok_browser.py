@@ -567,6 +567,9 @@ class TikTokBrowserManager:
         try:
             self._update(attempt_id, "opening", "Đang mở trang tải video")
             self._with_browser(lambda browser: self._fill_upload(browser, attempt_id, video_path, caption))
+        except TikTokBrowserError as exc:
+            logger.info("TikTok preparation needs review: %s", exc)
+            self._update(attempt_id, "needs_review", str(exc))
         except Exception as exc:
             logger.warning("TikTok preparation stopped: %s", type(exc).__name__)
             self._update(attempt_id, "needs_review", "Chưa thể hoàn tất tự động. Mở TikTok Studio để kiểm tra đăng nhập, xác minh hoặc video đang tải. Không tự động thử lại.")
@@ -576,19 +579,38 @@ class TikTokBrowserManager:
     def _fill_upload(self, browser, attempt_id: str, video_path: Path, caption: str):
         page = self._page(browser)
         page.bring_to_front()
-        # Dismiss is Playwright's default for beforeunload, preserving manual drafts.
-        page.goto(STUDIO_URL, wait_until="domcontentloaded", timeout=30_000)
         if not has_session(browser.contexts[0].cookies()):
             self._session_present = False
             self._update(attempt_id, "needs_login", "Đăng nhập hoặc hoàn tất xác minh trong TikTok Studio, rồi kết thúc lượt này và chuẩn bị lại")
             return
         self._session_present = True
+
+        # Keep a clean Studio upload page warm between jobs. Reloading the page
+        # here adds several seconds on a VPS and can also trigger TikTok's
+        # before-unload prompt. A page is reused only when it is already on the
+        # exact upload route and exposes the file input; otherwise navigate once.
+        current_path = urllib.parse.urlsplit(page.url).path
         inputs = page.locator('input[type="file"]')
+        reuse_ready_page = (
+            is_tiktok_url(page.url)
+            and current_path.startswith("/tiktokstudio/upload")
+            and inputs.count() == 1
+        )
+        if not reuse_ready_page:
+            page.goto(STUDIO_URL, wait_until="domcontentloaded", timeout=30_000)
+            inputs = page.locator('input[type="file"]')
+
         inputs.first.wait_for(state="attached", timeout=20_000)
         if not is_tiktok_url(page.url) or not urllib.parse.urlsplit(page.url).path.startswith("/tiktokstudio/upload") or inputs.count() != 1:
             raise TikTokBrowserError("Không nhận diện được ô tải video TikTok")
         # Marked before the transfer: a half-sent file may still create a draft on TikTok.
-        self._update(attempt_id, "uploading", "Đang chuyển video sang TikTok. Hãy giữ nguyên trang trong lúc chuẩn bị", file_sent=True)
+        size_mb = video_path.stat().st_size / (1024 * 1024)
+        self._update(
+            attempt_id,
+            "uploading",
+            f"Đang chuyển {video_path.name} ({size_mb:.1f} MB) sang TikTok · không cần chọn file thủ công",
+            file_sent=True,
+        )
         # Both containers mount outputs at the same absolute path; no public file URL.
         inputs.set_input_files(str(video_path), timeout=60_000)
         editor = page.locator('[contenteditable="true"][role="textbox"]:visible')

@@ -106,6 +106,14 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertNotIn('sensitive browser details', str(restored.active_attempt()))
         self.assertEqual(restored.prepare('job1', self.video, 'Caption')['id'], first['id'])
 
+    def test_safe_upload_error_is_shown_to_user(self):
+        self.manager._with_browser = lambda operation: (_ for _ in ()).throw(
+            TikTokBrowserError('TikTok báo tải video thất bại')
+        )
+        self.manager.prepare('job1', self.video, 'Caption')
+        self.wait_idle()
+        self.assertEqual(self.manager.active_attempt()['message'], 'TikTok báo tải video thất bại')
+
     def test_restart_does_not_resume_pending_upload(self):
         with self.manager._db() as db:
             db.execute('INSERT INTO attempts (id, job_id, state, caption, message, active, created_at) VALUES (?,?,?,?,?,1,?)', ('a', 'job1', 'uploading', 'Caption', 'Uploading', time.time()))
@@ -130,8 +138,15 @@ class TikTokBrowserTests(unittest.TestCase):
         with patch.object(self.manager, '_update') as update:
             self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Tiếng Việt #video')
         self.assertEqual(page.uploads, [str(self.video)])
+        self.assertEqual(page.goto_calls, [])
         self.assertEqual(page.caption, 'Tiếng Việt #video')
         self.assertEqual(update.call_args.args[1], 'awaiting_review')
+
+    def test_preparation_navigates_once_when_studio_is_not_warm(self):
+        page = FakePage(initial_url='https://www.tiktok.com/')
+        self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
+        self.assertEqual(page.goto_calls, ['https://www.tiktok.com/tiktokstudio/upload'])
+        self.assertEqual(page.uploads, [str(self.video)])
 
     def test_caption_is_filled_after_tiktok_finishes_upload(self):
         page = FakePage(progress=[{'percent': 40}, {'percent': 90}, {'done': True}])
@@ -162,7 +177,7 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertEqual(page.uploads, [])
 
     def test_redirect_off_tiktok_refuses_file_upload(self):
-        page = FakePage(redirect='https://attacker.test/upload')
+        page = FakePage(initial_url='https://www.tiktok.com/', redirect='https://attacker.test/upload')
         with self.assertRaises(TikTokBrowserError):
             self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
         self.assertEqual(page.uploads, [])
@@ -181,12 +196,12 @@ class FakeLocator:
 
 
 class FakePage:
-    def __init__(self, input_count=1, redirect=None, progress=None):
-        self.url = 'https://www.tiktok.com/tiktokstudio/upload'
+    def __init__(self, input_count=1, redirect=None, progress=None, initial_url='https://www.tiktok.com/tiktokstudio/upload'):
+        self.url = initial_url
         self.uploads, self.caption, self.input_count, self.redirect = [], '', input_count, redirect
-        self.progress, self.waits = list(progress or []), 0
+        self.progress, self.waits, self.goto_calls = list(progress or []), 0, []
     def bring_to_front(self): pass
-    def goto(self, url, **kwargs): self.url = self.redirect or url
+    def goto(self, url, **kwargs): self.goto_calls.append(url); self.url = self.redirect or url
     def locator(self, selector): return FakeLocator(self, selector)
     def evaluate(self, script): return self.progress.pop(0) if self.progress else {'done': True}
     def wait_for_timeout(self, ms): self.waits += 1
