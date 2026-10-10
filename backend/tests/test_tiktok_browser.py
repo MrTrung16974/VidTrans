@@ -124,6 +124,16 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertIsNone(restored.active_attempt())
         self.assertEqual(restored.latest_attempt('job1')['state'], 'resolved')
 
+    def test_restart_marks_interrupted_publish_for_manual_review(self):
+        with self.manager._db() as db:
+            db.execute('INSERT INTO attempts (id, job_id, state, caption, message, active, created_at) VALUES (?,?,?,?,?,1,?)',
+                       ('publish-restart', 'job1', 'publishing', 'Caption', 'Publishing', time.time()))
+
+        restored = TikTokBrowserManager(self.root / 'state')
+
+        self.assertEqual(restored.active_attempt()['state'], 'needs_review')
+        self.assertIn('Kiểm tra bài', restored.active_attempt()['message'])
+
     def test_preparation_stops_for_login_before_selecting_file(self):
         manager = self.manager
         page = FakePage()
@@ -152,10 +162,18 @@ class TikTokBrowserTests(unittest.TestCase):
         page = FakePage(progress=[{'percent': 40}, {'percent': 90}, {'done': True}])
         with patch.object(self.manager, '_update') as update:
             self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
-        self.assertEqual(page.waits, 2)
+        self.assertEqual(page.upload_waits, 2)
         self.assertEqual(page.caption, 'Caption')
         self.assertTrue(any(call.kwargs.get('file_sent') for call in update.call_args_list))
         self.assertIn('tải lên xong', update.call_args.args[2])
+
+    def test_caption_is_refilled_when_tiktok_replaces_the_editor_value(self):
+        page = FakePage(caption_overwrites=[None, 'output_205deacd'])
+
+        self.manager._fill_caption(page, 'Caption mong muốn #video')
+
+        self.assertEqual(page.caption, 'Caption mong muốn #video')
+        self.assertEqual(page.caption_fill_count, 2)
 
     def test_reported_upload_failure_needs_review(self):
         page = FakePage(progress=[{'failed': True}])
@@ -182,6 +200,26 @@ class TikTokBrowserTests(unittest.TestCase):
             self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
         self.assertEqual(page.uploads, [])
 
+    def test_publish_clicks_post_once_after_review_state(self):
+        page = FakePage()
+        browser = FakeBrowser(page)
+        self.manager._with_browser = lambda operation: operation(browser)
+        with self.manager._db() as db:
+            db.execute('INSERT INTO attempts (id, job_id, state, caption, message, active, created_at) VALUES (?,?,?,?,?,1,?)',
+                       ('publish-1', 'job1', 'awaiting_review', 'Caption', 'Ready', time.time()))
+
+        result = self.manager.publish('publish-1')
+
+        self.assertEqual(page.post_clicks, 1)
+        self.assertEqual(result['attempt']['state'], 'publish_submitted')
+
+    def test_publish_rejects_attempt_that_is_not_ready(self):
+        with self.manager._db() as db:
+            db.execute('INSERT INTO attempts (id, job_id, state, caption, message, active, created_at) VALUES (?,?,?,?,?,1,?)',
+                       ('publish-2', 'job1', 'needs_review', 'Caption', 'Check', time.time()))
+        with self.assertRaises(TikTokBrowserError):
+            self.manager.publish('publish-2')
+
 
 class FakeLocator:
     def __init__(self, page, selector): self.page, self.selector = page, selector
@@ -190,21 +228,38 @@ class FakeLocator:
     def wait_for(self, **kwargs): pass
     def count(self): return self.page.input_count if 'input[' in self.selector else 1
     def set_input_files(self, path, **kwargs): self.page.uploads.append(path)
-    def fill(self, caption, **kwargs): self.page.caption = caption
+    def fill(self, caption, **kwargs):
+        self.page.caption = caption
+        self.page.caption_fill_count += 1
     def inner_text(self, **kwargs): return self.page.caption
-    def click(self, **kwargs): raise AssertionError('Preparation must not click any publish control')
+    def click(self, **kwargs):
+        if 'post_video_button' not in self.selector and self.selector != 'post-button':
+            raise AssertionError('Preparation must not click any publish control')
+        self.page.post_clicks += 1
+    def is_enabled(self): return self.page.post_enabled
 
 
 class FakePage:
-    def __init__(self, input_count=1, redirect=None, progress=None, initial_url='https://www.tiktok.com/tiktokstudio/upload'):
+    def __init__(self, input_count=1, redirect=None, progress=None, caption_overwrites=None,
+                 initial_url='https://www.tiktok.com/tiktokstudio/upload'):
         self.url = initial_url
         self.uploads, self.caption, self.input_count, self.redirect = [], '', input_count, redirect
-        self.progress, self.waits, self.goto_calls = list(progress or []), 0, []
+        self.progress, self.upload_waits, self.goto_calls = list(progress or []), 0, []
+        self.caption_overwrites = list(caption_overwrites or [])
+        self.caption_fill_count = 0
+        self.post_clicks, self.post_enabled = 0, True
     def bring_to_front(self): pass
     def goto(self, url, **kwargs): self.goto_calls.append(url); self.url = self.redirect or url
     def locator(self, selector): return FakeLocator(self, selector)
+    def get_by_role(self, role, name=None): return FakeLocator(self, 'post-button')
     def evaluate(self, script): return self.progress.pop(0) if self.progress else {'done': True}
-    def wait_for_timeout(self, ms): self.waits += 1
+    def wait_for_timeout(self, ms):
+        if self.caption_fill_count and self.caption_overwrites:
+            replacement = self.caption_overwrites.pop(0)
+            if replacement is not None:
+                self.caption = replacement
+        elif not self.caption_fill_count:
+            self.upload_waits += 1
 
 
 class FakeBrowser:
@@ -278,6 +333,14 @@ class TikTokBrowserRouteTests(unittest.TestCase):
             response = self.client.post('/api/v1/jobs/good/tiktok-browser/prepare', data={'caption':'caption','reviewed':'true','video_path':'/secret'})
             self.assertEqual(response.status_code, 202)
             prepare.assert_called_once_with('good', (self.output / 'video.mp4').resolve(), 'caption')
+
+    def test_publish_requires_review_and_delegates_to_manager(self):
+        with patch.object(self.manager, 'publish', return_value={'attempt': {'state': 'publish_submitted'}}) as publish:
+            rejected = self.client.post('/api/v1/tiktok-browser/attempts/a/publish', data={'reviewed': 'false'})
+            accepted = self.client.post('/api/v1/tiktok-browser/attempts/a/publish', data={'reviewed': 'true'})
+        self.assertEqual(rejected.status_code, 422)
+        self.assertEqual(accepted.status_code, 200)
+        publish.assert_called_once_with('a')
 
 
 if __name__ == '__main__': unittest.main()

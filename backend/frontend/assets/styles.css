@@ -442,6 +442,7 @@ a { color: inherit; text-decoration: none; }
 .tiktok-attempt > p { font-size: .79rem; line-height: 1.7; margin: 8px 0; }
 .tiktok-attempt .tiktok-check { margin-top: 12px; }
 .tiktok-attempt .button { font-size: .76rem; }
+.tiktok-attempt-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .tiktok-studio-card > .tiktok-attempt { position: relative; margin: 0 24px 22px; padding: 22px 22px 22px 66px; border: 1px solid #bfe0da; border-radius: 14px; background: linear-gradient(135deg,#edf8f5,#f9fcfb); }
 .tiktok-studio-card > .tiktok-attempt::before { content: '↗'; position: absolute; left: 20px; top: 20px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; color: #fff; background: linear-gradient(145deg,var(--teal),#24aaa3); box-shadow: 0 7px 16px rgba(24,126,122,.2); font-size: 1rem; font-weight: 900; }
 .tiktok-studio-card > .tiktok-attempt > p { margin-bottom: 0; color: #526273; }

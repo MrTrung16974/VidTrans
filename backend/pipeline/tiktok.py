@@ -5,7 +5,7 @@ import math
 import re
 import unicodedata
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, Sequence
 
@@ -89,6 +89,50 @@ _HASHTAG_PHRASES = (
     "cuộc sống", "cuộc đời", "tương lai", "thành công", "hạnh phúc",
 )
 
+# Each rule adds context without claiming access to live trend data. Triggers
+# are matched against reliable translated text; the CTA only invites a reply.
+_THEME_RULES = (
+    (
+        ("cuộc sống", "cuộc đời", "bản thân", "trưởng thành", "buông bỏ", "giới hạn", "mong đợi", "tương lai", "mục tiêu", "kiên trì"),
+        ("bài học cuộc sống", "phát triển bản thân"),
+        "Bạn nghĩ sao về góc nhìn này?",
+    ),
+    (
+        ("nấu ăn", "ẩm thực", "công thức", "món ăn", "nguyên liệu", "bữa ăn"),
+        ("món ngon mỗi ngày",),
+        "Bạn sẽ thử cách này chứ?",
+    ),
+    (
+        ("du lịch", "chuyến đi", "điểm đến", "khám phá"),
+        ("kinh nghiệm du lịch",),
+        "Bạn muốn trải nghiệm điều này cùng ai?",
+    ),
+    (
+        ("chăm sóc da", "trang điểm", "làm đẹp", "mỹ phẩm"),
+        ("bí quyết làm đẹp",),
+        "Bạn muốn xem thêm mẹo nào tiếp theo?",
+    ),
+    (
+        ("tập luyện", "thể thao", "bóng đá", "sức khỏe", "dinh dưỡng"),
+        ("sống khỏe",),
+        "Bạn đang duy trì thói quen nào?",
+    ),
+    (
+        ("gia đình", "tình yêu", "tình bạn", "hôn nhân", "cha mẹ"),
+        ("chuyện tình cảm",),
+        "Bạn đồng ý với điều này không?",
+    ),
+    (
+        ("học tập", "học tiếng trung", "công việc", "kinh doanh", "khởi nghiệp"),
+        ("học mỗi ngày",),
+        "Điều nào hữu ích nhất với bạn?",
+    ),
+)
+
+_DEFAULT_CTA = "Bạn thấy điều này thế nào?"
+_DISCOVERY_HASHTAG = "#xuhuong"
+_KEYPHRASE_BLOCK_WORDS = _STOP_WORDS | {"bằng", "cần", "giúp", "thật", "thực"}
+
 
 @dataclass(frozen=True)
 class TikTokPost:
@@ -99,7 +143,9 @@ class TikTokPost:
     keywords: list[str]
     hashtags: list[str]
     source_cues: int
-    generator: str = "local-extractive-v2"
+    relevance_hashtags: list[str] = field(default_factory=list)
+    discovery_hashtags: list[str] = field(default_factory=list)
+    generator: str = "local-extractive-v4"
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -169,6 +215,26 @@ def _ascii_hashtag(value: str) -> str:
     return f"#{value.lower()}" if value else ""
 
 
+def _rank_keyphrases(sentences: Sequence[_Sentence], limit: int = 3) -> list[str]:
+    counts: Counter[str] = Counter()
+    first_seen: dict[str, int] = {}
+    position = 0
+    for sentence in sentences:
+        run: list[str] = []
+        for token in _tokenize(sentence.text) + [""]:
+            if token and len(token) > 1 and token not in _KEYPHRASE_BLOCK_WORDS and not token.isdigit():
+                run.append(token)
+                continue
+            if 2 <= len(run) <= 4:
+                phrase = " ".join(run)
+                counts[phrase] += 1
+                first_seen.setdefault(phrase, position)
+                position += 1
+            run = []
+    ranked = sorted(counts, key=lambda phrase: (-counts[phrase], first_seen[phrase], phrase))
+    return [_ascii_hashtag(phrase) for phrase in ranked[:limit]]
+
+
 def _unique_sentences(segments: Sequence[dict[str, Any]]) -> list[_Sentence]:
     sentences: list[_Sentence] = []
     seen: set[str] = set()
@@ -192,7 +258,7 @@ def _unique_sentences(segments: Sequence[dict[str, Any]]) -> list[_Sentence]:
 class LocalExtractiveTikTokProvider:
     """Deterministic Vietnamese post generator without network dependencies."""
 
-    generator_name = "local-extractive-v2"
+    generator_name = "local-extractive-v4"
 
     def generate(
         self,
@@ -264,14 +330,31 @@ class LocalExtractiveTikTokProvider:
         # Match meaningful Vietnamese phrases, never isolated syllables such
         # as #quan or #trong, and never fill a quota with unrelated viral tags.
         source_text = " " + " ".join(_tokenize(" ".join(sentence.text for sentence in sentences))) + " "
-        hashtags = []
+        fixed_hashtags = []
         for phrase in _HASHTAG_PHRASES:
             if f" {phrase} " in source_text:
-                hashtags.append(_ascii_hashtag(phrase))
-        hashtags = list(dict.fromkeys(hashtags))[:min(hashtag_count, 5)]
+                fixed_hashtags.append(_ascii_hashtag(phrase))
+
+        matched_theme = None
+        theme_hashtags = []
+        for triggers, theme_tags, cta in _THEME_RULES:
+            if any(f" {trigger} " in source_text for trigger in triggers):
+                matched_theme = cta
+                theme_hashtags.extend(_ascii_hashtag(tag) for tag in theme_tags)
+                break
+
+        dynamic_hashtags = [] if fixed_hashtags or matched_theme else _rank_keyphrases(sentences)
+        relevance_candidates = fixed_hashtags + theme_hashtags + dynamic_hashtags
+        relevance_candidates = list(dict.fromkeys(tag for tag in relevance_candidates if tag))
+        hashtag_limit = min(hashtag_count, 5)
+        has_recognized_topic = bool(fixed_hashtags or matched_theme)
+        discovery_hashtags = [_DISCOVERY_HASHTAG] if has_recognized_topic and hashtag_limit >= 2 else []
+        relevance_limit = max(0, hashtag_limit - len(discovery_hashtags))
+        relevance_hashtags = relevance_candidates[:relevance_limit]
+        hashtags = relevance_hashtags + discovery_hashtags
 
         # Caption is its own short reading flow, not the four-sentence summary.
-        # Keep adjacent source context and do not invent clickbait or a CTA.
+        # Keep adjacent source context; the CTA invites discussion without claims.
         caption_limit = min(max_summary_chars, 350)
         opening = hook_sentence
         fitting = [sentence for sentence in sentences
@@ -280,7 +363,7 @@ class LocalExtractiveTikTokProvider:
         if len(_ensure_sentence_end(opening.text)) > caption_limit and fitting:
             opening = fitting[0]
         opening_text = _truncate_at_word(_ensure_sentence_end(opening.text), caption_limit)
-        caption_parts = [opening_text]
+        content_parts = [opening_text]
         for sentence in sentences:
             if sentence.index <= opening.index:
                 continue
@@ -289,11 +372,16 @@ class LocalExtractiveTikTokProvider:
                 continue
             detail = _ensure_sentence_end(sentence.text)
             if len(opening_text) + 2 + len(detail) <= caption_limit:
-                caption_parts.append(detail)
+                content_parts.append(detail)
             # Do not jump over context to assemble unrelated dialogue lines.
             break
         hook = _truncate_at_word(opening.text, 110)
         title = _truncate_at_word(opening.text, 80)
+        cta = matched_theme or _DEFAULT_CTA
+        content = " ".join(content_parts)
+        content_limit = max(1, caption_limit - len(cta) - 2)
+        content = _truncate_at_word(content, content_limit)
+        caption_parts = [content, cta]
         if hashtags:
             caption_parts.append(" ".join(hashtags))
         caption = "\n\n".join(caption_parts)
@@ -306,6 +394,8 @@ class LocalExtractiveTikTokProvider:
             keywords=keywords,
             hashtags=hashtags,
             source_cues=source_cues,
+            relevance_hashtags=relevance_hashtags,
+            discovery_hashtags=discovery_hashtags,
             generator=self.generator_name,
         )
 

@@ -72,6 +72,12 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
             raise HTTPException(422, "Cần kiểm tra bài trong TikTok Studio trước khi kết thúc")
         return call(lambda: manager.resolve(attempt_id))
 
+    @router.post("/tiktok-browser/attempts/{attempt_id}/publish")
+    def publish(attempt_id: str, reviewed: bool = Form(...)):
+        if not reviewed:
+            raise HTTPException(422, "Hãy kiểm tra video, caption và quyền riêng tư trước khi đăng")
+        return call(lambda: manager.publish(attempt_id))
+
     @router.get("/jobs/{job_id}/tiktok-draft")
     def draft(job_id: str):
         job, video = ready_job(job_id)

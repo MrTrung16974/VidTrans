@@ -17,15 +17,17 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       .catch(() => { if (checkedFrameUrl === url) frameProblem = 'Không kết nối được khung TikTok. Kiểm tra kết nối hoặc dùng “Mở rộng”.'; })
       .finally(() => { clearTimeout(timeout); frameChecking = false; if (status && !locked) render(status); });
   }
-  const busyStates = new Set(['queued', 'opening', 'uploading']);
-  const labels = { queued: 'Đang chuẩn bị', opening: 'Đang mở TikTok Studio', uploading: 'Đang chuyển video', awaiting_review: 'Chờ bạn hoàn tất trên TikTok', needs_login: 'Cần đăng nhập TikTok', needs_review: 'Cần bạn kiểm tra' };
+  const busyStates = new Set(['queued', 'opening', 'uploading', 'publishing']);
+  const labels = { queued: 'Đang chuẩn bị', opening: 'Đang mở TikTok Studio', uploading: 'Đang chuyển video', awaiting_review: 'Sẵn sàng đăng bài', publishing: 'Đang đăng bài', publish_submitted: 'Đã gửi yêu cầu đăng', needs_login: 'Cần đăng nhập TikTok', needs_review: 'Cần bạn kiểm tra' };
 
   function controls() {
     const caption = $('#tiktokCaption').value;
     $('#tiktokCaptionCount').textContent = `${caption.length.toLocaleString('vi-VN')} / 2.200`;
     $('#tiktokPrepareButton').disabled = locked || submitting || loading || !draft || !status?.available || Boolean(status?.attempt) || !caption.trim() || caption.length > 2200 || !$('#tiktokReviewConsent').checked;
     $('#tiktokSuggestCaption').disabled = locked || loading || suggesting || !draft || Boolean(status?.attempt);
-    $('#tiktokResolveButton').disabled = !$('#tiktokResolveConsent').checked;
+    const reviewed = $('#tiktokResolveConsent').checked;
+    $('#tiktokResolveButton').disabled = !reviewed || busyStates.has(status?.attempt?.state);
+    $('#tiktokPublishButton').disabled = !reviewed || status?.attempt?.state !== 'awaiting_review';
   }
 
   function render(result) {
@@ -80,6 +82,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     if (attempt) {
       $('#tiktokAttemptTitle').textContent = labels[attempt.state] || 'Kiểm tra TikTok Studio';
       $('#tiktokAttemptMessage').textContent = attempt.message;
+      $('#tiktokResolveButton').textContent = attempt.state === 'publish_submitted' ? 'Đã kiểm tra kết quả, kết thúc lượt' : 'Kết thúc không đăng';
       $('#tiktokResolveControls').classList.toggle('is-hidden', busyStates.has(attempt.state));
     }
     controls();
@@ -326,6 +329,16 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   });
   $('#tiktokActiveDraft').addEventListener('click', () => status?.attempt && openDraft(status.attempt.job_id));
   $('#tiktokResolveConsent').addEventListener('change', controls);
+  $('#tiktokPublishButton').addEventListener('click', async () => {
+    if (status?.attempt?.state !== 'awaiting_review' || !$('#tiktokResolveConsent').checked) return;
+    $('#tiktokPublishButton').disabled = true;
+    const body = new FormData(); body.set('reviewed', 'true');
+    try {
+      const result = await requestJson(`/api/v1/tiktok-browser/attempts/${status.attempt.id}/publish`, { method: 'POST', body });
+      render(result);
+      toast('Đã bấm Đăng trên TikTok. Kiểm tra thông báo kết quả trong khung TikTok Studio.');
+    } catch (error) { toast(error.message, true); await refresh(); }
+  });
   $('#tiktokResolveButton').addEventListener('click', async () => {
     if (!status?.attempt || !$('#tiktokResolveConsent').checked) return;
     $('#tiktokResolveButton').disabled = true;
@@ -335,7 +348,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       render(result);
       $('#tiktokReviewConsent').checked = false;
       if (draft) await openDraft(draft.job_id);
-      toast('Đã kết thúc lượt chuẩn bị. Trạng thái đăng bài được kiểm tra trên TikTok.');
+      toast('Đã kết thúc lượt chuẩn bị.');
     } catch (error) { toast(error.message, true); controls(); }
   });
 

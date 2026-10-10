@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -20,9 +21,12 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 STUDIO_URL = "https://www.tiktok.com/tiktokstudio/upload"
-BUSY_STATES = {"queued", "opening", "uploading"}
+BUSY_STATES = {"queued", "opening", "uploading", "publishing"}
 UPLOAD_WAIT_SECONDS = 15 * 60
 UPLOAD_POLL_SECONDS = 2.0
+CAPTION_SETTLE_SECONDS = 1.0
+CAPTION_FILL_ATTEMPTS = 3
+CAPTION_STABLE_CHECKS = 2
 # Reads TikTok Studio's upload card. The Post button stays disabled until the
 # file is processed, so an enabled button (or an "Uploaded" label) means done.
 UPLOAD_PROGRESS_JS = """() => {
@@ -99,7 +103,7 @@ class TikTokBrowserManager:
                 # Only attempts that handed the file to TikTok can cause a duplicate post.
                 db.execute("ALTER TABLE attempts ADD COLUMN file_sent INTEGER NOT NULL DEFAULT 0")
                 db.execute("UPDATE attempts SET file_sent=1 WHERE state IN ('uploading','awaiting_review')")
-            db.execute("UPDATE attempts SET state='needs_review', message=? WHERE active=1 AND state IN ('queued','opening','uploading')", (
+            db.execute("UPDATE attempts SET state='needs_review', message=? WHERE active=1 AND state IN ('queued','opening','uploading','publishing')", (
                 "Máy chủ đã khởi động lại. Kiểm tra bài trong TikTok Studio trước khi tiếp tục; hệ thống không tự tải lại.",
             ))
         self.db_path.chmod(0o600)
@@ -619,8 +623,9 @@ class TikTokBrowserManager:
             raise TikTokBrowserError("Không nhận diện được ô caption duy nhất")
         uploaded = self._wait_for_upload(page, attempt_id)
         # TikTok prefills the caption with the filename while processing, so the
-        # caption is written after the upload settles and then checked once.
-        self._fill_caption(editor, caption)
+        # caption is written after the upload settles. The editor can still be
+        # replaced by a late render, so reacquire and verify it after a pause.
+        self._fill_caption(page, caption)
         if uploaded:
             message = "Video đã tải lên xong và caption đã được điền. Kiểm tra tài khoản, quyền riêng tư và bấm Đăng trong TikTok Studio"
         else:
@@ -649,15 +654,27 @@ class TikTokBrowserManager:
         return False
 
     @staticmethod
-    def _fill_caption(editor, caption: str) -> None:
+    def _fill_caption(page, caption: str) -> None:
         expected = " ".join(caption.split())
-        for _ in range(2):
-            editor.fill(caption, timeout=10_000)
-            try:
-                if " ".join(editor.inner_text(timeout=5_000).split()) == expected:
-                    return
-            except Exception:
-                return  # Unverifiable editor; the user reviews the caption before posting.
+        selector = '[contenteditable="true"][role="textbox"]:visible'
+        for _ in range(CAPTION_FILL_ATTEMPTS):
+            editor = page.locator(selector)
+            if not is_tiktok_url(page.url) or editor.count() != 1:
+                raise TikTokBrowserError("Không nhận diện được ô caption duy nhất")
+            editor.first.fill(caption, timeout=10_000)
+            stable = True
+            for _ in range(CAPTION_STABLE_CHECKS):
+                page.wait_for_timeout(CAPTION_SETTLE_SECONDS * 1000)
+                try:
+                    current = page.locator(selector)
+                    if current.count() != 1 or " ".join(current.first.inner_text(timeout=5_000).split()) != expected:
+                        stable = False
+                        break
+                except Exception:
+                    stable = False
+                    break
+            if stable:
+                return
         raise TikTokBrowserError("TikTok không giữ caption đã điền")
 
     def resolve(self, attempt_id: str) -> dict[str, Any]:
@@ -672,3 +689,44 @@ class TikTokBrowserManager:
                     "Người dùng đã kết thúc lượt chuẩn bị; VidTrans không xác nhận trạng thái đăng bài", attempt_id,
                 ))
         return self.status()
+
+    def publish(self, attempt_id: str) -> dict[str, Any]:
+        with self._lock:
+            active = self.active_attempt()
+            if not active or active["id"] != attempt_id:
+                raise TikTokBrowserError("Lượt chuẩn bị này không còn hoạt động")
+            if active["state"] != "awaiting_review":
+                raise TikTokBrowserError("Chỉ có thể đăng sau khi video và caption đã chuẩn bị xong")
+            if not self._browser_lock.acquire(blocking=False):
+                raise TikTokBrowserError("Trình duyệt đang bận. Hãy thử lại sau")
+            self._update(attempt_id, "publishing", "Đang gửi yêu cầu đăng bài tới TikTok")
+        try:
+            self._with_browser(self._click_publish)
+            self._update(
+                attempt_id,
+                "publish_submitted",
+                "Đã bấm Đăng trên TikTok. Kiểm tra thông báo kết quả trong TikTok Studio rồi kết thúc lượt chuẩn bị",
+            )
+        except TikTokBrowserError:
+            self._update(attempt_id, "needs_review", "Chưa thể bấm Đăng. Kiểm tra nút Post và các yêu cầu còn thiếu trong TikTok Studio")
+            raise
+        except Exception as exc:
+            self._update(attempt_id, "needs_review", "Không xác định được TikTok đã nhận thao tác Đăng hay chưa. Kiểm tra bài trước khi thao tác tiếp")
+            raise TikTokBrowserError(
+                "Không xác định được TikTok đã nhận thao tác Đăng hay chưa. Kiểm tra bài trước khi thao tác tiếp"
+            ) from exc
+        finally:
+            self._browser_lock.release()
+        return self.status()
+
+    def _click_publish(self, browser) -> None:
+        page = self._page(browser)
+        page.bring_to_front()
+        if not is_tiktok_url(page.url) or not urllib.parse.urlsplit(page.url).path.startswith("/tiktokstudio/upload"):
+            raise TikTokBrowserError("TikTok Studio không còn ở trang đăng video")
+        button = page.locator('[data-e2e="post_video_button"]:visible')
+        if button.count() == 0:
+            button = page.get_by_role("button", name=re.compile(r"^(post|đăng)$", re.IGNORECASE))
+        if button.count() != 1 or not button.first.is_enabled():
+            raise TikTokBrowserError("Nút Post chưa sẵn sàng. Kiểm tra quyền riêng tư và các mục bắt buộc")
+        button.first.click(timeout=10_000)

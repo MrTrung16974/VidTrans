@@ -62,8 +62,10 @@ class TikTokSummaryTests(unittest.TestCase):
             rendered = text_path.read_text(encoding="utf-8")
 
         self.assertEqual(payload["version"], 1)
-        self.assertEqual(payload["generator"], "local-extractive-v2")
+        self.assertEqual(payload["generator"], "local-extractive-v4")
         self.assertEqual(payload["caption"], post.caption)
+        self.assertEqual(payload["relevance_hashtags"], post.relevance_hashtags)
+        self.assertEqual(payload["discovery_hashtags"], post.discovery_hashtags)
         self.assertIn(post.summary, rendered)
 
     def test_caption_is_short_and_does_not_repeat_the_hook(self):
@@ -72,6 +74,7 @@ class TikTokSummaryTests(unittest.TestCase):
         self.assertLessEqual(len(paragraphs), 3)
         self.assertEqual(len(paragraphs), len(set(paragraphs)))
         self.assertLessEqual(len("\n\n".join(p for p in paragraphs if not p.startswith("#"))), 350)
+        self.assertTrue(paragraphs[-2].endswith("?"))
 
     def test_tags_use_relevant_phrases_not_syllables_or_generic_tags(self):
         post = self.provider.generate([
@@ -83,11 +86,40 @@ class TikTokSummaryTests(unittest.TestCase):
         self.assertNotIn("#cho", post.hashtags)
         self.assertNotIn("#tiengtrung", post.hashtags)
         self.assertNotIn("#fyp", post.hashtags)
+        self.assertNotIn("#viral", post.hashtags)
+        self.assertNotIn("#chuyentinhcam", post.hashtags)
+        self.assertEqual(post.hashtags[-1], "#xuhuong")
         self.assertLessEqual(len(post.hashtags), 5)
 
     def test_unknown_topic_does_not_get_unrelated_hashtags(self):
         post = self.provider.generate([{"text": "Ốc vít cần được siết lại bằng dụng cụ chuyên dụng."}])
-        self.assertEqual(post.hashtags, [])
+        self.assertIn("#ocvit", post.relevance_hashtags)
+        self.assertIn("#dungcuchuyendung", post.relevance_hashtags)
+        self.assertNotIn("#cuchuyen", post.relevance_hashtags)
+        self.assertEqual(post.discovery_hashtags, [])
+        self.assertNotIn("#xuhuong", post.hashtags)
+        self.assertIn("Bạn thấy điều này thế nào?", post.caption)
+
+    def test_life_topic_gets_contextual_cta_and_discovery_mix(self):
+        post = self.provider.generate([
+            {"text": "Trưởng thành là hiểu giới hạn của bản thân."},
+            {"text": "Buông bỏ mong đợi không phù hợp giúp ta bước tiếp."},
+        ], hashtag_count=5)
+
+        self.assertIn("Bạn nghĩ sao về góc nhìn này?", post.caption)
+        self.assertIn("#baihoccuocsong", post.hashtags)
+        self.assertEqual(post.hashtags[-1], "#xuhuong")
+        self.assertEqual(post.discovery_hashtags, ["#xuhuong"])
+        self.assertNotIn("#xuhuong", post.relevance_hashtags)
+        self.assertNotIn("#thedap", post.relevance_hashtags)
+        self.assertLessEqual(len(post.hashtags), 5)
+
+    def test_single_hashtag_slot_prefers_topic_over_discovery(self):
+        post = self.provider.generate([
+            {"text": "Công thức nấu ăn này rất dễ thực hiện."},
+        ], hashtag_count=1)
+
+        self.assertEqual(post.hashtags, ["#nauan"])
 
     def test_review_flagged_content_does_not_enter_caption_or_tags(self):
         post = self.provider.generate([
