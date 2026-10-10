@@ -9,12 +9,16 @@
 
 `backend/infrastructure/tiktok_browser.py` lấy editor trước khi chờ upload hoàn tất, gọi `fill()` một lần và đọc lại ngay. TikTok Studio có thể render lại editor sau thời điểm đó; lần kiểm tra tức thời vẫn đúng nhưng caption sau đó bị giá trị mặc định là tên file ghi đè.
 
+Ảnh kiểm chứng ngày 2026-10-10 cho thấy bản sửa chờ hai nhịp vẫn chưa đủ: TikTok có thể giữ/khôi phục `output_<id>` sau khi trạng thái upload đã xanh. Vì vậy không thể coi `Uploaded` là thời điểm editor đã ổn định.
+
 ## Thiết kế
 
 - Sau khi upload hoàn tất, truyền `page` vào hàm điền caption để luôn truy vấn lại editor hiện tại.
 - Mỗi lần thử: xác nhận chỉ có một editor hiển thị, điền caption, chờ một nhịp render, rồi đọc lại.
 - Thử lại tối đa ba lần nếu TikTok thay đổi nội dung; không tải lại video và không bấm Đăng.
 - Nếu caption vẫn không ổn định, giữ trạng thái cần kiểm tra với lỗi hiện có.
+- Chờ một khoảng ổn định sau `Uploaded`, sau đó thao tác editor như người dùng: focus, chọn toàn bộ, xóa, nhập text bằng keyboard event và blur.
+- Theo dõi nội dung liên tục năm giây; nếu filename render lại thì điền lại tối đa ba lần.
 - Chỉ cho phép gọi API đăng khi attempt hiện tại ở trạng thái `awaiting_review` và người dùng gửi xác nhận `reviewed=true`.
 - Backend khóa trình duyệt, kiểm tra đúng trang TikTok và đúng một nút Post/Đăng đang bật rồi click một lần. Không retry click khi kết quả không chắc chắn để tránh đăng trùng.
 - Sau click, attempt chuyển sang `publish_submitted`; người dùng vẫn kiểm tra trạng thái cuối trên TikTok rồi kết thúc lượt.

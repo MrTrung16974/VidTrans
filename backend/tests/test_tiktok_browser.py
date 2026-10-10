@@ -168,12 +168,21 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertIn('tải lên xong', update.call_args.args[2])
 
     def test_caption_is_refilled_when_tiktok_replaces_the_editor_value(self):
-        page = FakePage(caption_overwrites=[None, 'output_205deacd'])
+        page = FakePage(caption_overwrites=[None, None, None, 'output_205deacd'])
 
         self.manager._fill_caption(page, 'Caption mong muốn #video')
 
         self.assertEqual(page.caption, 'Caption mong muốn #video')
         self.assertEqual(page.caption_fill_count, 2)
+
+    def test_caption_preserves_paragraphs_and_hashtags(self):
+        page = FakePage()
+        caption = "Hiểu rằng bạn không thể đáp ứng nhu cầu của người khác.\n\nRồi hãy ra đi thanh thản.\n\n#cuocsong #tuonglai"
+
+        self.manager._fill_caption(page, caption)
+
+        self.assertEqual(page.caption, caption)
+        self.assertEqual(page.caption_fill_count, 1)
 
     def test_reported_upload_failure_needs_review(self):
         page = FakePage(progress=[{'failed': True}])
@@ -228,15 +237,33 @@ class FakeLocator:
     def wait_for(self, **kwargs): pass
     def count(self): return self.page.input_count if 'input[' in self.selector else 1
     def set_input_files(self, path, **kwargs): self.page.uploads.append(path)
-    def fill(self, caption, **kwargs):
-        self.page.caption = caption
-        self.page.caption_fill_count += 1
     def inner_text(self, **kwargs): return self.page.caption
     def click(self, **kwargs):
+        if 'contenteditable' in self.selector:
+            self.page.editor_focused = True
+            return
         if 'post_video_button' not in self.selector and self.selector != 'post-button':
             raise AssertionError('Preparation must not click any publish control')
         self.page.post_clicks += 1
+    def press(self, key, **kwargs):
+        if key == 'Control+A':
+            self.page.editor_selected = True
+        elif key == 'Backspace' and self.page.editor_selected:
+            self.page.caption = ''
+        elif key == 'Tab':
+            self.page.editor_focused = False
     def is_enabled(self): return self.page.post_enabled
+
+
+class FakeKeyboard:
+    def __init__(self, page): self.page = page
+    def insert_text(self, text):
+        self.page.caption = text
+        self.page.caption_fill_count += 1
+        self.page.editor_selected = False
+    def press(self, key):
+        if key == 'Tab':
+            self.page.editor_focused = False
 
 
 class FakePage:
@@ -247,6 +274,8 @@ class FakePage:
         self.progress, self.upload_waits, self.goto_calls = list(progress or []), 0, []
         self.caption_overwrites = list(caption_overwrites or [])
         self.caption_fill_count = 0
+        self.editor_focused, self.editor_selected = False, False
+        self.keyboard = FakeKeyboard(self)
         self.post_clicks, self.post_enabled = 0, True
     def bring_to_front(self): pass
     def goto(self, url, **kwargs): self.goto_calls.append(url); self.url = self.redirect or url
@@ -258,7 +287,7 @@ class FakePage:
             replacement = self.caption_overwrites.pop(0)
             if replacement is not None:
                 self.caption = replacement
-        elif not self.caption_fill_count:
+        elif not self.caption_fill_count and ms == 2000:
             self.upload_waits += 1
 
 

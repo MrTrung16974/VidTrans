@@ -25,8 +25,9 @@ BUSY_STATES = {"queued", "opening", "uploading", "publishing"}
 UPLOAD_WAIT_SECONDS = 15 * 60
 UPLOAD_POLL_SECONDS = 2.0
 CAPTION_SETTLE_SECONDS = 1.0
+CAPTION_PREFILL_SETTLE_SECONDS = 3.0
 CAPTION_FILL_ATTEMPTS = 3
-CAPTION_STABLE_CHECKS = 2
+CAPTION_STABLE_CHECKS = 5
 # Reads TikTok Studio's upload card. The Post button stays disabled until the
 # file is processed, so an enabled button (or an "Uploaded" label) means done.
 UPLOAD_PROGRESS_JS = """() => {
@@ -623,8 +624,9 @@ class TikTokBrowserManager:
             raise TikTokBrowserError("Không nhận diện được ô caption duy nhất")
         uploaded = self._wait_for_upload(page, attempt_id)
         # TikTok prefills the caption with the filename while processing, so the
-        # caption is written after the upload settles. The editor can still be
-        # replaced by a late render, so reacquire and verify it after a pause.
+        # caption is written only after its final post-upload render has had time
+        # to run. The editor can still be replaced later, so verify it repeatedly.
+        page.wait_for_timeout(CAPTION_PREFILL_SETTLE_SECONDS * 1000)
         self._fill_caption(page, caption)
         if uploaded:
             message = "Video đã tải lên xong và caption đã được điền. Kiểm tra tài khoản, quyền riêng tư và bấm Đăng trong TikTok Studio"
@@ -661,7 +663,11 @@ class TikTokBrowserManager:
             editor = page.locator(selector)
             if not is_tiktok_url(page.url) or editor.count() != 1:
                 raise TikTokBrowserError("Không nhận diện được ô caption duy nhất")
-            editor.first.fill(caption, timeout=10_000)
+            editor.first.click(timeout=10_000)
+            editor.first.press("Control+A", timeout=5_000)
+            editor.first.press("Backspace", timeout=5_000)
+            page.keyboard.insert_text(caption)
+            page.keyboard.press("Tab")
             stable = True
             for _ in range(CAPTION_STABLE_CHECKS):
                 page.wait_for_timeout(CAPTION_SETTLE_SECONDS * 1000)
