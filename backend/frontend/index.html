@@ -170,8 +170,8 @@
         </section>
 
         <section id="tiktokView" class="view is-hidden">
-          <div class="page-heading"><div><span class="eyebrow">TikTok Studio</span><h1>Chuẩn bị bài đăng TikTok</h1><p>Duyệt video và caption, sau đó hoàn tất bài đăng trong TikTok Web.</p></div><a class="button secondary" href="#jobs">← Chọn từ Tiến trình</a></div>
-          <details class="tiktok-browser-fallback"><summary>Phương án dự phòng: TikTok Upload API chính thức</summary>
+          <div class="page-heading"><div><span class="eyebrow">TikTok Publishing</span><h1>Chuẩn bị bài đăng TikTok</h1><p>Duyệt video và caption, sau đó đăng ngay, đặt lịch hoặc gửi bản nháp.</p></div><a class="button secondary" href="#jobs">← Chọn từ Tiến trình</a></div>
+          <details class="tiktok-browser-fallback" open><summary>Kết nối TikTok API chính thức</summary>
           <section class="card tiktok-account-bar">
             <span class="tiktok-account-mark" aria-hidden="true">♪</span>
             <div class="tiktok-account-copy"><strong>Kết nối TikTok chính thức</strong><p id="tiktokApiStatus" role="status">Đang kiểm tra kết nối…</p></div>
@@ -180,7 +180,7 @@
           </details>
           <section class="card tiktok-account-bar">
             <span class="tiktok-account-mark" aria-hidden="true">♪</span>
-            <div class="tiktok-account-copy"><strong>Tài khoản TikTok của bạn</strong><p id="tiktokBrowserStatus" role="status">Đang kiểm tra trình duyệt…</p></div>
+            <div class="tiktok-account-copy"><strong>TikTok Studio dự phòng</strong><p id="tiktokBrowserStatus" role="status">Đang kiểm tra trình duyệt…</p></div>
             <div class="tiktok-toolbar"><button id="tiktokBrowserOpen" class="button tiktok-button" type="button">Mở / đăng nhập TikTok</button><button id="tiktokBrowserLoginQr" class="button secondary" type="button">Đổi sang QR</button><button id="tiktokBrowserLoginEmail" class="button secondary" type="button">Đăng nhập Email / SĐT</button><button id="tiktokBrowserCheck" class="button secondary" type="button">Kiểm tra phiên</button><button id="tiktokBrowserLogout" class="button secondary" type="button">Ngắt kết nối</button></div>
           </section>
           <details id="tiktokEmailLoginPanel" class="card tiktok-email-panel">
@@ -215,8 +215,15 @@
                   <div><button id="tiktokApplyCaption" type="button" class="button secondary">Dùng caption này</button><button id="tiktokDismissCaption" type="button" class="tiktok-text-button">Giữ bản hiện tại</button></div>
                 </div>
                 <p id="tiktokPreviousAttempt" class="tiktok-notice is-hidden"></p>
+                <div class="tiktok-publish-controls">
+                  <label class="field"><span>Hình thức</span><select id="tiktokPublishMode"><option value="DIRECT_NOW">Đăng ngay</option><option value="SCHEDULE">Đặt lịch bằng VidTrans</option><option value="INBOX_DRAFT">Gửi bản nháp tới TikTok</option></select></label>
+                  <label id="tiktokPrivacyField" class="field"><span>Quyền riêng tư</span><select id="tiktokPrivacy"><option value="SELF_ONLY">Chỉ mình tôi</option><option value="MUTUAL_FOLLOW_FRIENDS">Bạn bè</option><option value="FOLLOWER_OF_CREATOR">Người theo dõi</option><option value="PUBLIC_TO_EVERYONE">Mọi người</option></select></label>
+                  <label id="tiktokScheduleField" class="field is-hidden"><span>Thời gian đăng</span><input id="tiktokScheduleAt" type="datetime-local" /></label>
+                </div>
+                <div id="tiktokPublishStatus" class="tiktok-publish-status is-hidden" role="status"><strong id="tiktokPublishStatusTitle"></strong><p id="tiktokPublishStatusMessage"></p><button id="tiktokCancelSchedule" class="button secondary is-hidden" type="button">Hủy lịch</button></div>
                 <label class="tiktok-check"><input id="tiktokReviewConsent" type="checkbox" /><span>Tôi đã xem video, duyệt caption và kiểm tra đúng tài khoản TikTok.</span></label>
-                <button id="tiktokPrepareButton" class="button primary full" type="button" disabled>Tự động tải lên TikTok Web →</button>
+                <button id="tiktokOfficialPublish" class="button primary full" type="button" disabled>Đăng ngay qua TikTok API</button>
+                <button id="tiktokPrepareButton" class="button secondary full" type="button" disabled>Mở TikTok Studio dự phòng</button>
                 <p class="fine-print">VidTrans tự gắn file và điền caption, không mở hộp chọn file. Bạn chỉ cần kiểm tra quyền riêng tư rồi bấm Đăng.</p>
               </div>
             </section>

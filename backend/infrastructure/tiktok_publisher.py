@@ -53,7 +53,7 @@ class TikTokPublisherConfig:
             part.strip()
             for part in os.environ.get(
                 "VIDTRANS_TIKTOK_SCOPES",
-                "video.upload",
+                "video.upload,video.publish",
             ).split(",")
             if part.strip()
         )
@@ -145,6 +145,7 @@ class TikTokPublisher:
             "open_id": token.get("open_id") if connected and token else None,
             "scope": token.get("scope", "") if connected and token else "",
             "can_upload_draft": connected and "video.upload" in str(token.get("scope", "")).split(",") if token else False,
+            "can_direct_publish": connected and "video.publish" in str(token.get("scope", "")).split(",") if token else False,
             "access_expires_at": token.get("expires_at") if connected and token else None,
             "message": self._status_message(connected),
         }
@@ -217,12 +218,15 @@ class TikTokPublisher:
         disable_comment: bool = False,
         disable_duet: bool = False,
         disable_stitch: bool = False,
+        on_initialized: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         if privacy_level not in ALLOWED_PRIVACY_LEVELS:
             raise TikTokPublisherError("Mức quyền riêng tư TikTok không hợp lệ")
         if not video_path.is_file():
             raise TikTokPublisherError("Không tìm thấy video đã dựng để đăng TikTok")
-        title = " ".join((title or "").split()).strip()
+        # Keep the reviewed body/hashtag layout intact. TikTok accepts newlines
+        # in post_info.title, so only surrounding whitespace is removed.
+        title = (title or "").strip()
         if not title:
             raise TikTokPublisherError("Tiêu đề TikTok đã tạo đang rỗng")
         if len(title.encode("utf-16-le")) // 2 > 2200:
@@ -264,6 +268,9 @@ class TikTokPublisher:
         if not publish_id or not upload_url:
             raise TikTokAPIError("TikTok không trả về phiên upload video hợp lệ")
 
+        if on_initialized is not None:
+            on_initialized(publish_id)
+
         self._upload_file(video_path, upload_url, plan)
         try:
             status = self.fetch_status(publish_id)
@@ -279,7 +286,12 @@ class TikTokPublisher:
             "status_payload": status,
         }
 
-    def upload_draft(self, video_path: Path) -> dict[str, Any]:
+    def upload_draft(
+        self,
+        video_path: Path,
+        *,
+        on_initialized: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
         """Upload a video to the creator inbox for completion in the TikTok app."""
         if not video_path.is_file():
             raise TikTokPublisherError("Không tìm thấy video đã dựng để gửi sang TikTok")
@@ -300,6 +312,8 @@ class TikTokPublisher:
         upload_url = str(data.get("upload_url") or "")
         if not publish_id or not upload_url:
             raise TikTokAPIError("TikTok không trả về phiên upload bản nháp hợp lệ")
+        if on_initialized is not None:
+            on_initialized(publish_id)
         self._upload_file(video_path, upload_url, plan)
         try:
             status = self.fetch_status(publish_id)

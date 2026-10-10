@@ -27,6 +27,8 @@ from app.config import AppSettings
 from application.job_scheduler import JobScheduler
 from application.job_service import JobService
 from application.tiktok_browser_routes import create_tiktok_browser_router
+from application.tiktok_publish_routes import create_tiktok_publish_router
+from application.tiktok_publishing import TikTokPublishScheduler, TikTokPublishingService
 from infrastructure.tiktok_browser import TikTokBrowserManager
 from domain.models import ProcessingMode, ProcessingRequest
 from domain.languages import language_profile, languages_from_config, normalize_language
@@ -39,6 +41,7 @@ from infrastructure.auth import (
     LoginRateLimitError,
 )
 from infrastructure.job_store import SQLiteJobStore
+from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.social_video_downloader import (
     SocialVideoDownloadCancelled,
@@ -135,7 +138,10 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
 )
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
+TIKTOK_PUBLISH_STORE = SQLiteTikTokPublishStore(WORK_DIR / "jobs.sqlite3")
+TIKTOK_PUBLISHING = TikTokPublishingService(TIKTOK_PUBLISH_STORE, TIKTOK_PUBLISHER)
 app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR, TIKTOK_PUBLISHER))
+app.include_router(create_tiktok_publish_router(TIKTOK_PUBLISHING, JOB_SERVICE, OUTPUT_DIR))
 AUTH_MANAGER = AuthManager()
 ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
@@ -1883,6 +1889,9 @@ async def start_job_scheduler() -> None:
     )
     app.state.job_scheduler = scheduler
     await scheduler.start()
+    publish_scheduler = TikTokPublishScheduler(TIKTOK_PUBLISHING)
+    app.state.tiktok_publish_scheduler = publish_scheduler
+    await publish_scheduler.start()
 
 
 @app.on_event("shutdown")
@@ -1890,6 +1899,9 @@ async def stop_job_scheduler() -> None:
     scheduler = getattr(app.state, "job_scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
+    publish_scheduler = getattr(app.state, "tiktok_publish_scheduler", None)
+    if publish_scheduler is not None:
+        await publish_scheduler.stop()
 
 def notify_scheduler() -> None:
     scheduler = getattr(app.state, "job_scheduler", None)

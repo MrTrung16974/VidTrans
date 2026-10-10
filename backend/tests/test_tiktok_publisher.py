@@ -115,6 +115,24 @@ class TikTokPublisherTests(unittest.TestCase):
         self.assertEqual(result["publish_id"], "publish-123")
         self.assertEqual(result["status"], "PROCESSING_UPLOAD")
 
+    def test_publish_preserves_caption_line_breaks_and_checkpoints_remote_id(self) -> None:
+        self.connect()
+        video = Path(self.temporary.name) / "output.mp4"
+        video.write_bytes(b"rendered-video")
+        initialized = []
+
+        self.publisher.publish(
+            video,
+            "Nội dung chính\n\n#xuhuong #video",
+            privacy_level="SELF_ONLY",
+            on_initialized=initialized.append,
+        )
+
+        init_call = next(call for call in self.api.calls if call[1].endswith("/video/init/"))
+        init_body = json.loads((init_call[3] or b"{}").decode())
+        self.assertEqual(init_body["post_info"]["title"], "Nội dung chính\n\n#xuhuong #video")
+        self.assertEqual(initialized, ["publish-123"])
+
     def test_upload_draft_uses_inbox_endpoint_without_post_info(self) -> None:
         self.connect()
         video = Path(self.temporary.name) / "draft.mp4"
