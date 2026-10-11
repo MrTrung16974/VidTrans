@@ -254,31 +254,38 @@
         <section id="adminView" class="view is-hidden">
           <div class="page-heading">
             <div>
-              <span class="eyebrow">System operations</span>
-              <h1>Quản trị workflow n8n</h1>
-              <p>Theo dõi việc giao event upload, download, dịch và publish; chạy lại event lỗi khi n8n đã phục hồi.</p>
+              <span class="eyebrow">Admin workspace</span>
+              <h1>Quản trị người dùng</h1>
+              <p>Quản lý tài khoản, phân quyền truy cập, phê duyệt thành viên và trạng thái thanh toán.</p>
             </div>
-            <button id="refreshWorkflowEvents" class="button secondary" type="button">↻ Làm mới</button>
+            <button id="refreshAdminAccounts" class="button secondary" type="button">↻ Làm mới</button>
           </div>
-          <div id="workflowIntegrationState" class="admin-integration-state" role="status">Đang kiểm tra cấu hình n8n…</div>
-          <section class="admin-metrics" aria-label="Thống kê workflow event">
-            <article class="card admin-metric"><span>Chờ gửi</span><strong id="workflowPendingCount">0</strong></article>
-            <article class="card admin-metric"><span>Đang gửi</span><strong id="workflowSendingCount">0</strong></article>
-            <article class="card admin-metric"><span>Đã giao</span><strong id="workflowDeliveredCount">0</strong></article>
-            <article class="card admin-metric danger"><span>Cần xử lý</span><strong id="workflowDeadCount">0</strong></article>
+          <section class="admin-metrics" aria-label="Thống kê tài khoản">
+            <article class="card admin-metric"><span>Tổng tài khoản</span><strong id="adminTotalCount">0</strong></article>
+            <article class="card admin-metric"><span>Đã phê duyệt</span><strong id="adminApprovedCount">0</strong></article>
+            <article class="card admin-metric"><span>Chờ phê duyệt</span><strong id="adminPendingCount">0</strong></article>
+            <article class="card admin-metric danger"><span>Thanh toán cần xử lý</span><strong id="adminPaymentAttentionCount">0</strong></article>
           </section>
-          <section class="card admin-events-panel">
-            <div class="jobs-toolbar">
-              <div><strong>Nhật ký event</strong><small>Không hiển thị payload, URL nguồn, file hay secret.</small></div>
-              <select id="workflowStatusFilter" aria-label="Lọc trạng thái workflow event">
-                <option value="">Tất cả trạng thái</option>
-                <option value="pending">Chờ gửi</option>
-                <option value="sending">Đang gửi</option>
-                <option value="delivered">Đã giao</option>
-                <option value="dead">Cần xử lý</option>
+          <details class="card admin-create-panel">
+            <summary>+ Thêm tài khoản mới</summary>
+            <form id="adminCreateAccountForm" class="admin-create-form">
+              <label><span>Email</span><input name="email" type="email" maxlength="254" required placeholder="user@example.com" /></label>
+              <label><span>Tên hiển thị</span><input name="display_name" maxlength="120" required placeholder="Nguyễn Văn A" /></label>
+              <label><span>Vai trò</span><select name="role"><option value="viewer">Người xem</option><option value="editor">Biên tập viên</option><option value="admin">Quản trị viên</option></select></label>
+              <label><span>Gói dịch vụ</span><select name="plan"><option value="free">Free</option><option value="creator">Creator</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></label>
+              <button class="button primary" type="submit">Tạo tài khoản chờ duyệt</button>
+            </form>
+          </details>
+          <section class="card admin-accounts-panel">
+            <div class="jobs-toolbar admin-account-toolbar">
+              <div><strong>Danh sách người dùng</strong><small>Thay đổi chỉ được lưu khi bấm “Lưu”.</small></div>
+              <input id="adminUserSearch" type="search" maxlength="120" placeholder="Tìm tên hoặc email" aria-label="Tìm người dùng" />
+              <select id="adminApprovalFilter" aria-label="Lọc trạng thái phê duyệt">
+                <option value="">Tất cả phê duyệt</option><option value="pending">Chờ duyệt</option><option value="approved">Đã duyệt</option><option value="suspended">Tạm khóa</option><option value="rejected">Từ chối</option>
               </select>
             </div>
-            <div id="workflowEventsList" class="admin-events-list"><div class="empty-state"><strong>Đang tải event…</strong></div></div>
+            <div class="admin-account-head" aria-hidden="true"><span>Người dùng</span><span>Vai trò</span><span>Phê duyệt</span><span>Gói</span><span>Thanh toán</span><span></span></div>
+            <div id="adminAccountsList" class="admin-accounts-list"><div class="empty-state"><strong>Đang tải tài khoản…</strong></div></div>
           </section>
         </section>
       </main>

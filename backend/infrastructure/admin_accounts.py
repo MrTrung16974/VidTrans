@@ -164,8 +164,11 @@ class AdminAccountStore:
             current["email"], str(merged["display_name"]), str(merged["role"]),
             str(merged["approval_status"]), str(merged["plan"]), str(merged["payment_status"]),
         )
-        if current["role"] == "owner" and changes.get("role") not in {None, "owner"}:
-            raise AdminAccountError("Không thể hạ quyền owner bootstrap")
+        if current["role"] == "owner":
+            if changes.get("role") not in {None, "owner"}:
+                raise AdminAccountError("Không thể hạ quyền owner bootstrap")
+            if changes.get("approval_status") not in {None, "approved"}:
+                raise AdminAccountError("Không thể khóa owner bootstrap")
         provider_ref = merged.get("provider_customer_ref")
         if provider_ref is not None and len(str(provider_ref)) > 200:
             raise AdminAccountError("Mã khách hàng thanh toán quá dài")

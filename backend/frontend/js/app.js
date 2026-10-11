@@ -7,7 +7,7 @@ const state = {
   files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false,
-  workflowEvents: [], workflowSummary: null,
+  adminAccounts: [], adminAccountSummary: null, adminSearchTimer: null,
   auth: { enabled: false, configured: false, authenticated: false, username: null },
 };
 const stepLabels = {
@@ -122,7 +122,7 @@ async function startProtectedApplication() {
   state.pollTimer = setInterval(loadJobs, 2500);
   if (location.hash === "#douyin") startDouyinBrowserPolling();
   if (location.hash === "#tiktok") tiktokWorkspace.enter();
-  if (location.hash === "#admin") loadWorkflowEvents();
+  if (location.hash === "#admin") loadAdminAccounts();
 }
 
 async function bootstrapApplication() {
@@ -399,68 +399,90 @@ function showView() {
   if (view === "jobs" && state.appStarted) loadJobs();
   if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
   else stopDouyinBrowserPolling();
-  if (view === "admin" && state.appStarted) loadWorkflowEvents();
+  if (view === "admin" && state.appStarted) loadAdminAccounts();
 }
 
-function workflowStatusLabel(status) {
-  return ({ pending: "Chờ gửi", sending: "Đang gửi", delivered: "Đã giao", dead: "Cần xử lý" })[status] || status;
+const adminLabels = {
+  role: { owner: "Chủ sở hữu", admin: "Quản trị viên", editor: "Biên tập viên", viewer: "Người xem" },
+  approval: { pending: "Chờ duyệt", approved: "Đã duyệt", suspended: "Tạm khóa", rejected: "Từ chối" },
+  payment: { trial: "Dùng thử", active: "Đang hoạt động", past_due: "Quá hạn", cancelled: "Đã hủy", exempt: "Miễn thanh toán" },
+};
+
+function adminSelect(name, value, options, disabled = false) {
+  return `<select name="${name}" ${disabled ? "disabled" : ""}>${options.map(([key, label]) => `<option value="${key}" ${key === value ? "selected" : ""}>${label}</option>`).join("")}</select>`;
 }
 
-function renderWorkflowEvents() {
-  const summary = state.workflowSummary || { enabled: false, counts: {} };
-  const counts = summary.counts || {};
-  $("#workflowPendingCount").textContent = counts.pending || 0;
-  $("#workflowSendingCount").textContent = counts.sending || 0;
-  $("#workflowDeliveredCount").textContent = counts.delivered || 0;
-  $("#workflowDeadCount").textContent = counts.dead || 0;
-  const integration = $("#workflowIntegrationState");
-  integration.textContent = summary.enabled
-    ? "n8n đã được cấu hình · webhook ký HMAC · delivery at-least-once"
-    : "n8n chưa được cấu hình. Event mới sẽ không được tạo cho đến khi có webhook URL và secret.";
-  integration.classList.toggle("disabled", !summary.enabled);
-
-  const list = $("#workflowEventsList");
-  if (!state.workflowEvents.length) {
-    list.innerHTML = '<div class="empty-state"><strong>Chưa có workflow event phù hợp</strong></div>';
+function renderAdminAccounts() {
+  const summary = state.adminAccountSummary || {};
+  $("#adminTotalCount").textContent = summary.total || 0;
+  $("#adminApprovedCount").textContent = summary.approved || 0;
+  $("#adminPendingCount").textContent = summary.pending || 0;
+  $("#adminPaymentAttentionCount").textContent = summary.payment_attention || 0;
+  const list = $("#adminAccountsList");
+  if (!state.adminAccounts.length) {
+    list.innerHTML = '<div class="empty-state"><strong>Không có tài khoản phù hợp</strong></div>';
     return;
   }
-  list.innerHTML = state.workflowEvents.map(item => `
-    <article class="admin-event-row">
-      <div class="admin-event-main"><strong>${escapeHtml(item.event_type)}</strong><small>Job ${escapeHtml(item.aggregate_id)} · ${escapeHtml(new Date(item.created_at).toLocaleString("vi-VN"))}</small></div>
-      <span class="admin-event-attempts">${Number(item.attempts) || 0} lần gửi</span>
-      <span class="status-pill ${escapeHtml(item.status)}">${escapeHtml(workflowStatusLabel(item.status))}</span>
-      <div class="admin-event-error">${escapeHtml(item.last_error || "")}</div>
-      ${item.status === "dead" ? `<button class="button secondary" type="button" data-workflow-replay="${escapeHtml(item.event_id)}" ${summary.enabled ? "" : "disabled"}>Gửi lại</button>` : ""}
-    </article>
-  `).join("");
+  const roles = Object.entries(adminLabels.role);
+  const approvals = Object.entries(adminLabels.approval);
+  const payments = Object.entries(adminLabels.payment);
+  const plans = [["free", "Free"], ["creator", "Creator"], ["pro", "Pro"], ["enterprise", "Enterprise"]];
+  list.innerHTML = state.adminAccounts.map(item => `
+    <article class="admin-account-row" data-admin-account="${escapeHtml(item.user_id)}">
+      <div class="admin-account-user"><input name="display_name" maxlength="120" value="${escapeHtml(item.display_name)}" aria-label="Tên hiển thị" /><strong>${escapeHtml(item.email)}</strong><small>Tạo ${escapeHtml(new Date(item.created_at).toLocaleDateString("vi-VN"))}</small></div>
+      ${adminSelect("role", item.role, roles, item.role === "owner")}
+      ${adminSelect("approval_status", item.approval_status, approvals, item.role === "owner")}
+      ${adminSelect("plan", item.plan, plans)}
+      ${adminSelect("payment_status", item.payment_status, payments)}
+      <button class="button secondary" type="button" data-admin-save>Lưu</button>
+    </article>`).join("");
 }
 
-async function loadWorkflowEvents() {
+async function loadAdminAccounts() {
   try {
-    const status = $("#workflowStatusFilter")?.value || "";
-    const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
-    const [summary, events] = await Promise.all([
-      requestJson("/api/v1/admin/workflow-events/summary"),
-      requestJson(`/api/v1/admin/workflow-events${suffix}`),
+    const params = new URLSearchParams();
+    const query = $("#adminUserSearch")?.value.trim() || "";
+    const status = $("#adminApprovalFilter")?.value || "";
+    if (query) params.set("query", query);
+    if (status) params.set("status", status);
+    const [summary, accounts] = await Promise.all([
+      requestJson("/api/v1/admin/accounts/summary"),
+      requestJson(`/api/v1/admin/accounts${params.size ? `?${params}` : ""}`),
     ]);
-    state.workflowSummary = summary;
-    state.workflowEvents = events.items || [];
-    renderWorkflowEvents();
+    state.adminAccountSummary = summary;
+    state.adminAccounts = accounts.items || [];
+    renderAdminAccounts();
   } catch (error) {
-    $("#workflowEventsList").innerHTML = `<div class="empty-state error"><strong>${escapeHtml(error.message)}</strong></div>`;
+    $("#adminAccountsList").innerHTML = `<div class="empty-state error"><strong>${escapeHtml(error.message)}</strong></div>`;
   }
 }
 
-async function replayWorkflowEvent(eventId, button) {
+async function saveAdminAccount(row, button) {
   button.disabled = true;
   try {
-    await requestJson(`/api/v1/admin/workflow-events/${encodeURIComponent(eventId)}/replay`, { method: "POST" });
-    toast("Đã đưa event vào hàng đợi gửi lại");
-    await loadWorkflowEvents();
+    const formData = new FormData();
+    ["display_name", "role", "approval_status", "plan", "payment_status"].forEach(name => formData.set(name, row.querySelector(`[name="${name}"]`).value));
+    await requestJson(`/api/v1/admin/accounts/${encodeURIComponent(row.dataset.adminAccount)}`, { method: "POST", body: formData });
+    toast("Đã cập nhật tài khoản");
+    await loadAdminAccounts();
   } catch (error) {
     toast(error.message, true);
     button.disabled = false;
   }
+}
+
+async function createAdminAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    await requestJson("/api/v1/admin/accounts", { method: "POST", body: new FormData(form) });
+    form.reset();
+    toast("Đã tạo tài khoản chờ phê duyệt");
+    await loadAdminAccounts();
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
 }
 
 function uploadBatch(formData, { onProgress, onRequest } = {}) {
@@ -814,11 +836,13 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
 [$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource")].forEach(element => element.addEventListener("change", updateFormSummary));
 [$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
-$("#refreshWorkflowEvents").addEventListener("click", loadWorkflowEvents);
-$("#workflowStatusFilter").addEventListener("change", loadWorkflowEvents);
-$("#workflowEventsList").addEventListener("click", event => {
-  const button = event.target.closest("[data-workflow-replay]");
-  if (button) replayWorkflowEvent(button.dataset.workflowReplay, button);
+$("#refreshAdminAccounts").addEventListener("click", loadAdminAccounts);
+$("#adminApprovalFilter").addEventListener("change", loadAdminAccounts);
+$("#adminUserSearch").addEventListener("input", () => { clearTimeout(state.adminSearchTimer); state.adminSearchTimer = setTimeout(loadAdminAccounts, 300); });
+$("#adminCreateAccountForm").addEventListener("submit", createAdminAccount);
+$("#adminAccountsList").addEventListener("click", event => {
+  const button = event.target.closest("[data-admin-save]");
+  if (button) saveAdminAccount(button.closest("[data-admin-account]"), button);
 });
 $("#statusFilter").addEventListener("change", loadJobs);
 $("#jobSearch").addEventListener("input", () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadJobs, 300); });

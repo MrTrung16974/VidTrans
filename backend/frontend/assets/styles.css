@@ -504,31 +504,42 @@ a { color: inherit; text-decoration: none; }
 #tiktokPrepareButton { margin-top: 10px; }
 @media (max-width: 680px) { .tiktok-publish-controls { grid-template-columns: 1fr; } }
 
-.admin-integration-state { margin-bottom: 18px; padding: 13px 16px; border: 1px solid #bfe0da; border-radius: 12px; color: var(--teal); background: #f1f8f6; font-size: .82rem; font-weight: 700; }
-.admin-integration-state.disabled { border-color: #ead9b8; color: #875d21; background: #fff7e8; }
 .admin-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin-bottom: 18px; }
 .admin-metric { padding: 18px 20px; }
 .admin-metric span { display: block; color: var(--muted); font-size: .75rem; font-weight: 700; }
 .admin-metric strong { display: block; margin-top: 6px; color: var(--ink); font-size: 1.8rem; }
 .admin-metric.danger strong { color: #b54747; }
-.admin-events-panel { overflow: hidden; }
-.admin-events-panel .jobs-toolbar > div { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
-.admin-events-panel .jobs-toolbar small { color: var(--muted); font-size: .7rem; }
-.admin-events-list { min-height: 180px; }
-.admin-event-row { display: grid; grid-template-columns: minmax(220px,1.4fr) 95px 105px minmax(160px,1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
-.admin-event-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.admin-event-main strong { overflow: hidden; text-overflow: ellipsis; font-size: .82rem; }
-.admin-event-main small, .admin-event-attempts { color: var(--muted); font-size: .7rem; }
-.admin-event-error { overflow: hidden; color: #b54747; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
-.admin-event-row .button { min-height: 34px; padding: 6px 11px; font-size: .72rem; }
+.admin-create-panel { margin-bottom: 18px; padding: 0; overflow: hidden; }
+.admin-create-panel summary { padding: 16px 20px; color: var(--teal); cursor: pointer; font-size: .82rem; font-weight: 800; }
+.admin-create-form { display: grid; grid-template-columns: 1.4fr 1.2fr .8fr .8fr auto; align-items: end; gap: 12px; padding: 0 20px 20px; }
+.admin-create-form label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: .7rem; font-weight: 700; }
+.admin-create-form input, .admin-create-form select { min-width: 0; }
+.admin-accounts-panel { overflow: hidden; }
+.admin-account-toolbar { grid-template-columns: 1fr minmax(190px,260px) minmax(170px,210px); }
+.admin-account-toolbar > div { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+.admin-account-toolbar small { color: var(--muted); font-size: .7rem; }
+.admin-account-head, .admin-account-row { display: grid; grid-template-columns: minmax(220px,1.5fr) repeat(4,minmax(115px,.8fr)) 68px; align-items: center; gap: 10px; padding: 12px 16px; }
+.admin-account-head { color: var(--muted); border-bottom: 1px solid var(--line); background: #f8fafb; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
+.admin-accounts-list { min-height: 180px; }
+.admin-account-row { border-bottom: 1px solid var(--line); }
+.admin-account-row:last-child { border-bottom: 0; }
+.admin-account-user { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.admin-account-user input { padding: 6px 8px; font-weight: 750; }
+.admin-account-user strong { overflow: hidden; color: var(--teal); font-size: .72rem; text-overflow: ellipsis; }
+.admin-account-user small { color: var(--muted); font-size: .66rem; }
+.admin-account-row select { width: 100%; min-width: 0; padding: 8px; font-size: .72rem; }
+.admin-account-row .button { min-height: 34px; padding: 6px 10px; font-size: .72rem; }
 @media(max-width: 900px) {
   .admin-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .admin-event-row { grid-template-columns: minmax(180px,1fr) 95px 100px auto; }
-  .admin-event-error { grid-column: 1 / -1; }
+  .admin-create-form { grid-template-columns: 1fr 1fr; }
+  .admin-create-form .button { grid-column: 1 / -1; }
+  .admin-account-head { display: none; }
+  .admin-account-row { grid-template-columns: 1fr 1fr; padding: 16px; }
+  .admin-account-user { grid-column: 1 / -1; }
+  .admin-account-row .button { grid-column: 1 / -1; }
 }
 @media(max-width: 560px) {
   .admin-metrics { grid-template-columns: 1fr 1fr; gap: 9px; }
-  .admin-event-row { grid-template-columns: 1fr auto; }
-  .admin-event-attempts, .admin-event-row .status-pill { justify-self: start; }
-  .admin-event-error { grid-column: 1 / -1; }
+  .admin-create-form, .admin-account-toolbar, .admin-account-row { grid-template-columns: 1fr; }
+  .admin-create-form .button, .admin-account-user, .admin-account-row .button { grid-column: auto; }
 }

@@ -40,6 +40,7 @@ from infrastructure.auth import (
     InvalidTokenError,
     LoginRateLimitError,
 )
+from infrastructure.admin_accounts import AdminAccountError, AdminAccountStore
 from infrastructure.job_store import SQLiteJobStore
 from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
@@ -157,6 +158,10 @@ TIKTOK_PUBLISHING = TikTokPublishingService(TIKTOK_PUBLISH_STORE, TIKTOK_PUBLISH
 app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR, TIKTOK_PUBLISHER))
 app.include_router(create_tiktok_publish_router(TIKTOK_PUBLISHING, JOB_SERVICE, OUTPUT_DIR))
 AUTH_MANAGER = AuthManager()
+ADMIN_ACCOUNTS = AdminAccountStore(
+    WORK_DIR / "jobs.sqlite3",
+    AUTH_MANAGER.config.username if AUTH_MANAGER.config.enabled else "admin",
+)
 ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
@@ -1946,6 +1951,72 @@ def notify_workflow_dispatcher() -> None:
     dispatcher = getattr(app.state, "n8n_workflow_dispatcher", None)
     if dispatcher is not None:
         dispatcher.notify()
+
+
+def public_admin_account(account: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "user_id", "email", "display_name", "role", "approval_status", "plan",
+        "payment_status", "approved_at", "created_at", "updated_at",
+    }
+    return {key: account.get(key) for key in allowed}
+
+
+@app.get("/api/v1/admin/accounts/summary")
+def admin_account_summary() -> JSONResponse:
+    return JSONResponse(ADMIN_ACCOUNTS.summary(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/admin/accounts")
+def list_admin_accounts(
+    query: str = Query(default="", max_length=120),
+    status: str = Query(default="", max_length=32),
+) -> JSONResponse:
+    try:
+        items = [public_admin_account(item) for item in ADMIN_ACCOUNTS.list(query=query, status=status)]
+    except AdminAccountError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse({"items": items, "total": len(items)}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/v1/admin/accounts", status_code=201)
+def create_admin_account(
+    email: str = Form(..., max_length=254),
+    display_name: str = Form(..., max_length=120),
+    role: str = Form("viewer", max_length=32),
+    plan: str = Form("free", max_length=32),
+) -> JSONResponse:
+    try:
+        account = ADMIN_ACCOUNTS.create(
+            email=email, display_name=display_name, role=role, plan=plan,
+            approval_status="pending", payment_status="trial",
+        )
+    except AdminAccountError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(public_admin_account(account), status_code=201, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/v1/admin/accounts/{user_id}")
+def update_admin_account(
+    user_id: str,
+    display_name: str = Form(..., max_length=120),
+    role: str = Form(..., max_length=32),
+    approval_status: str = Form(..., max_length=32),
+    plan: str = Form(..., max_length=32),
+    payment_status: str = Form(..., max_length=32),
+) -> JSONResponse:
+    try:
+        account = ADMIN_ACCOUNTS.update(
+            user_id,
+            display_name=display_name,
+            role=role,
+            approval_status=approval_status,
+            plan=plan,
+            payment_status=payment_status,
+        )
+    except AdminAccountError as exc:
+        status_code = 404 if "Không tìm thấy" in str(exc) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return JSONResponse(public_admin_account(account), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/v1/admin/workflow-events/summary")
