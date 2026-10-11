@@ -53,14 +53,9 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
     @router.post("/tiktok-browser/login")
     def restart_login(method: str = "default"):
         """Navigate to TikTok login page.
-        method: default | qr | email
+        method: default | qr
         """
         return call(lambda: manager.restart_login(method=method))
-
-    @router.post("/tiktok-browser/login-email")
-    def login_with_email(email: str = Form(...), password: str = Form(...)):
-        """Automate email/password login. Password is never stored."""
-        return call(lambda: manager.login_with_email(email, password))
 
     @router.delete("/tiktok-browser/session")
     def logout():

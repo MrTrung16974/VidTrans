@@ -4,6 +4,7 @@ import json
 import mimetypes
 import os
 import secrets
+import re
 import threading
 import time
 import urllib.error
@@ -17,7 +18,9 @@ from typing import Any, Callable
 MIB = 1024 * 1024
 MAX_VIDEO_SIZE = 4 * 1024 * MIB
 MIN_CHUNK_SIZE = 5 * MIB
-MAX_CHUNK_SIZE = 64 * MIB
+# Smaller chunks avoid holding 64 MiB request bodies and recover much better on
+# slow VPS uplinks while remaining inside TikTok's 5-64 MiB requirement.
+MAX_CHUNK_SIZE = 16 * MIB
 ALLOWED_PRIVACY_LEVELS = {
     "PUBLIC_TO_EVERYONE",
     "MUTUAL_FOLLOW_FRIENDS",
@@ -106,7 +109,10 @@ def _default_request(
 ) -> tuple[int, bytes]:
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
+        # A 16 MiB chunk needs about nine minutes at 256 Kbit/s. Keep fast API
+        # calls bounded while allowing media PUTs to finish on slower uplinks.
+        timeout = 90 if body is None else max(90, min(900, len(body) // (32 * 1024)))
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
@@ -125,14 +131,15 @@ class TikTokPublisher:
     ) -> None:
         self.auth_dir = auth_dir
         self.token_path = auth_dir / "token.json"
+        self.accounts_dir = auth_dir / "accounts"
         self.config = config or TikTokPublisherConfig.from_env()
         self._requester = requester or _default_request
         self._clock = clock
-        self._states: dict[str, float] = {}
+        self._states: dict[str, tuple[float, str | None]] = {}
         self._lock = threading.RLock()
 
-    def connection_status(self) -> dict[str, Any]:
-        token = self._load_token()
+    def connection_status(self, account_id: str | None = None) -> dict[str, Any]:
+        token = self._load_token(account_id)
         now = self._clock()
         connected = bool(
             token
@@ -143,12 +150,34 @@ class TikTokPublisher:
             "configured": self.config.configured,
             "connected": connected,
             "open_id": token.get("open_id") if connected and token else None,
+            "account_id": self._token_account_id(token) if connected and token else None,
             "scope": token.get("scope", "") if connected and token else "",
             "can_upload_draft": connected and "video.upload" in str(token.get("scope", "")).split(",") if token else False,
             "can_direct_publish": connected and "video.publish" in str(token.get("scope", "")).split(",") if token else False,
             "access_expires_at": token.get("expires_at") if connected and token else None,
             "message": self._status_message(connected),
         }
+
+    def accounts(self) -> list[dict[str, Any]]:
+        """Return connected accounts without exposing OAuth credentials."""
+        candidates: list[dict[str, Any]] = []
+        legacy = self._load_token()
+        if legacy:
+            candidates.append(legacy)
+        try:
+            paths = sorted(self.accounts_dir.glob("*.json"))
+        except OSError:
+            paths = []
+        for path in paths:
+            token = self._read_token(path)
+            if token:
+                candidates.append(token)
+        unique: dict[str, dict[str, Any]] = {}
+        for token in candidates:
+            account_id = self._token_account_id(token)
+            if account_id:
+                unique[account_id] = self.connection_status(account_id)
+        return list(unique.values())
 
     def _status_message(self, connected: bool) -> str:
         if connected:
@@ -157,13 +186,13 @@ class TikTokPublisher:
             return "Chưa cấu hình TikTok Developer App trên máy chủ"
         return "Chưa kết nối tài khoản TikTok"
 
-    def authorization_url(self) -> str:
+    def authorization_url(self, account_id: str | None = None) -> str:
         self._require_configured()
         state = secrets.token_urlsafe(32)
         with self._lock:
             now = self._clock()
-            self._states = {key: expiry for key, expiry in self._states.items() if expiry > now}
-            self._states[state] = now + 600
+            self._states = {key: value for key, value in self._states.items() if value[0] > now}
+            self._states[state] = (now + 600, account_id)
         query = urllib.parse.urlencode(
             {
                 "client_key": self.config.client_key,
@@ -180,7 +209,8 @@ class TikTokPublisher:
         if not code:
             raise TikTokAPIError("TikTok không trả về mã xác thực")
         with self._lock:
-            expires_at = self._states.pop(state, 0)
+            state_value = self._states.pop(state, (0, None))
+        expires_at, requested_account = state_value
         if not state or expires_at <= self._clock():
             raise TikTokAPIError("Phiên kết nối TikTok không hợp lệ hoặc đã hết hạn")
         token = self._post_form(
@@ -193,15 +223,32 @@ class TikTokPublisher:
                 "redirect_uri": self.config.redirect_uri,
             },
         )
-        self._save_token(self._normalize_token(token))
-        return self.connection_status()
+        normalized = self._normalize_token(token)
+        account_id = self._token_account_id(normalized) or requested_account
+        if not account_id:
+            raise TikTokAPIError("TikTok không trả về định danh tài khoản")
+        previous = self._load_token()
+        previous_account_id = self._token_account_id(previous)
+        if previous and previous_account_id and previous_account_id != account_id:
+            # Migrate a pre-multi-account token before changing the active account.
+            self._save_token(previous, previous_account_id)
+        self._save_token(normalized, account_id)
+        # Preserve the original single-account contract as the active/default account.
+        self._save_token(normalized)
+        return self.connection_status(account_id)
 
-    def disconnect(self) -> None:
+    def disconnect(self, account_id: str | None = None) -> None:
         with self._lock:
-            self.token_path.unlink(missing_ok=True)
+            if account_id:
+                self._account_token_path(account_id).unlink(missing_ok=True)
+                legacy = self._load_token()
+                if legacy and self._token_account_id(legacy) == account_id:
+                    self.token_path.unlink(missing_ok=True)
+            else:
+                self.token_path.unlink(missing_ok=True)
 
-    def creator_info(self) -> dict[str, Any]:
-        token = self._valid_access_token()
+    def creator_info(self, account_id: str | None = None) -> dict[str, Any]:
+        token = self._valid_access_token(account_id=account_id)
         payload = self._post_json(
             "/v2/post/publish/creator_info/query/",
             {},
@@ -219,6 +266,8 @@ class TikTokPublisher:
         disable_duet: bool = False,
         disable_stitch: bool = False,
         on_initialized: Callable[[str], None] | None = None,
+        account_id: str | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, Any]:
         if privacy_level not in ALLOWED_PRIVACY_LEVELS:
             raise TikTokPublisherError("Mức quyền riêng tư TikTok không hợp lệ")
@@ -232,7 +281,7 @@ class TikTokPublisher:
         if len(title.encode("utf-16-le")) // 2 > 2200:
             raise TikTokPublisherError("Tiêu đề TikTok vượt quá giới hạn 2.200 ký tự")
 
-        creator = self.creator_info()
+        creator = self.creator_info(account_id)
         privacy_options = creator.get("privacy_level_options") or []
         if privacy_level not in privacy_options:
             raise TikTokPublisherError(
@@ -244,7 +293,7 @@ class TikTokPublisher:
         disable_stitch = bool(disable_stitch or creator.get("stitch_disabled"))
 
         plan = create_upload_plan(video_path.stat().st_size)
-        token = self._valid_access_token()
+        token = self._valid_access_token(account_id=account_id)
         init_payload = {
             "post_info": {
                 "title": title,
@@ -271,7 +320,7 @@ class TikTokPublisher:
         if on_initialized is not None:
             on_initialized(publish_id)
 
-        self._upload_file(video_path, upload_url, plan)
+        self._upload_file(video_path, upload_url, plan, on_progress=on_progress)
         try:
             status = self.fetch_status(publish_id)
         except TikTokPublisherError as exc:
@@ -291,12 +340,14 @@ class TikTokPublisher:
         video_path: Path,
         *,
         on_initialized: Callable[[str], None] | None = None,
+        account_id: str | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, Any]:
         """Upload a video to the creator inbox for completion in the TikTok app."""
         if not video_path.is_file():
             raise TikTokPublisherError("Không tìm thấy video đã dựng để gửi sang TikTok")
         plan = create_upload_plan(video_path.stat().st_size)
-        token = self._valid_access_token(required_scope="video.upload")
+        token = self._valid_access_token(required_scope="video.upload", account_id=account_id)
         initialized = self._post_json(
             "/v2/post/publish/inbox/video/init/",
             {"source_info": {
@@ -314,7 +365,7 @@ class TikTokPublisher:
             raise TikTokAPIError("TikTok không trả về phiên upload bản nháp hợp lệ")
         if on_initialized is not None:
             on_initialized(publish_id)
-        self._upload_file(video_path, upload_url, plan)
+        self._upload_file(video_path, upload_url, plan, on_progress=on_progress)
         try:
             status = self.fetch_status(publish_id)
         except TikTokPublisherError as exc:
@@ -326,8 +377,8 @@ class TikTokPublisher:
             "status_payload": status,
         }
 
-    def fetch_status(self, publish_id: str) -> dict[str, Any]:
-        token = self._valid_access_token()
+    def fetch_status(self, publish_id: str, account_id: str | None = None) -> dict[str, Any]:
+        token = self._valid_access_token(account_id=account_id)
         payload = self._post_json(
             "/v2/post/publish/status/fetch/",
             {"publish_id": publish_id},
@@ -335,7 +386,14 @@ class TikTokPublisher:
         )
         return dict(payload.get("data") or {})
 
-    def _upload_file(self, path: Path, upload_url: str, plan: UploadPlan) -> None:
+    def _upload_file(
+        self,
+        path: Path,
+        upload_url: str,
+        plan: UploadPlan,
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> None:
         content_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
         with path.open("rb") as source:
             offset = 0
@@ -363,18 +421,20 @@ class TikTokPublisher:
                         f"TikTok từ chối chunk upload ({status}, cần {expected}): {detail}"
                     )
                 offset = end + 1
+                if on_progress is not None:
+                    on_progress(offset, plan.video_size)
 
-    def _valid_access_token(self, required_scope: str | None = None) -> str:
+    def _valid_access_token(self, required_scope: str | None = None, account_id: str | None = None) -> str:
         self._require_configured()
         with self._lock:
-            token = self._load_token()
+            token = self._load_token(account_id)
             if not token:
                 raise TikTokConfigurationError("Chưa kết nối tài khoản TikTok")
             now = self._clock()
             if float(token.get("expires_at", 0)) <= now + 600:
                 refresh_token = str(token.get("refresh_token") or "")
                 if not refresh_token or float(token.get("refresh_expires_at", 0)) <= now:
-                    self.disconnect()
+                    self.disconnect(account_id)
                     raise TikTokConfigurationError(
                         "Phiên TikTok đã hết hạn. Hãy kết nối tài khoản lại."
                     )
@@ -388,7 +448,7 @@ class TikTokPublisher:
                     },
                 )
                 token = self._normalize_token(refreshed)
-                self._save_token(token)
+                self._save_token(token, account_id)
             granted = {part.strip() for part in str(token.get("scope", "")).split(",") if part.strip()}
             if required_scope and required_scope not in granted:
                 raise TikTokConfigurationError(
@@ -462,19 +522,35 @@ class TikTokPublisher:
                 "VIDTRANS_TIKTOK_CLIENT_SECRET và VIDTRANS_TIKTOK_REDIRECT_URI"
             )
 
-    def _load_token(self) -> dict[str, Any] | None:
+    @staticmethod
+    def _token_account_id(token: dict[str, Any] | None) -> str | None:
+        value = str((token or {}).get("open_id") or "").strip()
+        return value or None
+
+    def _account_token_path(self, account_id: str) -> Path:
+        account_id = account_id.strip()
+        if not account_id or not re.fullmatch(r"[A-Za-z0-9._~-]{1,128}", account_id):
+            raise TikTokConfigurationError("Định danh tài khoản TikTok không hợp lệ")
+        return self.accounts_dir / f"{account_id}.json"
+
+    @staticmethod
+    def _read_token(path: Path) -> dict[str, Any] | None:
         try:
-            payload = json.loads(self.token_path.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, json.JSONDecodeError):
             return None
         return payload if isinstance(payload, dict) else None
 
-    def _save_token(self, payload: dict[str, Any]) -> None:
-        self.auth_dir.mkdir(parents=True, exist_ok=True)
-        temporary = self.token_path.with_suffix(".tmp")
+    def _load_token(self, account_id: str | None = None) -> dict[str, Any] | None:
+        return self._read_token(self._account_token_path(account_id)) if account_id else self._read_token(self.token_path)
+
+    def _save_token(self, payload: dict[str, Any], account_id: str | None = None) -> None:
+        path = self._account_token_path(account_id) if account_id else self.token_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         try:
             temporary.chmod(0o600)
         except OSError:
             pass
-        temporary.replace(self.token_path)
+        temporary.replace(path)

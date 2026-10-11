@@ -162,7 +162,8 @@ class TikTokBrowserTests(unittest.TestCase):
         page = FakePage(progress=[{'percent': 40}, {'percent': 90}, {'done': True}])
         with patch.object(self.manager, '_update') as update:
             self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
-        self.assertEqual(page.upload_waits, 2)
+        # Two progress polls plus the three-second post-upload caption settle.
+        self.assertEqual(page.upload_waits, 3)
         self.assertEqual(page.caption, 'Caption')
         self.assertTrue(any(call.kwargs.get('file_sent') for call in update.call_args_list))
         self.assertIn('tải lên xong', update.call_args.args[2])
@@ -200,11 +201,10 @@ class TikTokBrowserTests(unittest.TestCase):
         self.wait_idle()
         self.assertEqual(self.manager.latest_attempt('job1')['file_sent'], 0)
 
-    def test_ambiguous_upload_input_fails_before_upload(self):
+    def test_multiple_media_inputs_use_first_video_input(self):
         page = FakePage(input_count=2)
-        with self.assertRaises(TikTokBrowserError):
-            self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
-        self.assertEqual(page.uploads, [])
+        self.manager._fill_upload(FakeBrowser(page), 'a', self.video, 'Caption')
+        self.assertEqual(page.uploads, [str(self.video)])
 
     def test_redirect_off_tiktok_refuses_file_upload(self):
         page = FakePage(initial_url='https://www.tiktok.com/', redirect='https://attacker.test/upload')
@@ -290,7 +290,7 @@ class FakePage:
             replacement = self.caption_overwrites.pop(0)
             if replacement is not None:
                 self.caption = replacement
-        elif not self.caption_fill_count and ms == 2000:
+        elif not self.caption_fill_count and ms == 3000:
             self.upload_waits += 1
 
 

@@ -34,6 +34,7 @@ class TikTokPublishingService:
         scheduled_for: str | None,
         timezone_name: str,
         idempotency_key: str,
+        account_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         if mode not in MODES:
             raise TikTokPublishingValidationError("Chế độ đăng TikTok không hợp lệ")
@@ -93,6 +94,7 @@ class TikTokPublishingService:
             "requested_at": utc_now(),
             "schedule_lag_seconds": None,
             "error": None,
+            "account_id": (account_id or "").strip() or None,
         }
         attempt, created = self.store.create(
             idempotency_key=idempotency_key,
@@ -122,16 +124,34 @@ class TikTokPublishingService:
         def checkpoint(publish_id: str) -> None:
             self.store.update(attempt_id, remote_publish_id=publish_id, status="UPLOADING")
 
+        last_progress = -1
+        def progress(uploaded: int, total: int) -> None:
+            nonlocal last_progress
+            percent = min(100, int(uploaded * 100 / total)) if total else 0
+            if percent == last_progress:
+                return
+            last_progress = percent
+            self.store.update(
+                attempt_id,
+                status="UPLOADING",
+                status_detail={"uploaded_bytes": uploaded, "total_bytes": total, "percent": percent},
+            )
+
         try:
             path = Path(str(attempt["video_path"]))
             if attempt["mode"] == "INBOX_DRAFT":
-                result = self.publisher.upload_draft(path, on_initialized=checkpoint)
+                result = self.publisher.upload_draft(
+                    path, on_initialized=checkpoint, account_id=attempt.get("account_id"),
+                    on_progress=progress,
+                )
             else:
                 result = self.publisher.publish(
                     path,
                     str(attempt["caption"]),
                     privacy_level=str(attempt["privacy_level"]),
                     on_initialized=checkpoint,
+                    account_id=attempt.get("account_id"),
+                    on_progress=progress,
                 )
             status = str(result.get("status") or "SUBMITTED")
             return self.store.update(
@@ -159,7 +179,7 @@ class TikTokPublishingService:
         if not publish_id:
             return attempt
         try:
-            detail = self.publisher.fetch_status(publish_id)
+            detail = self.publisher.fetch_status(publish_id, account_id=attempt.get("account_id"))
         except TikTokPublisherError as exc:
             return self.store.update(attempt_id, status="NEEDS_RECONCILIATION", error=str(exc))
         status = str(detail.get("status") or "SUBMITTED")

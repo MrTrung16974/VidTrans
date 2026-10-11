@@ -5,7 +5,6 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   let suggestion = null, suggesting = false;
   let requestVersion = 0, locked = false, attemptId = null;
   let publishAttempt = null, publishTimer = null, publishSubmitting = false, publishKey = null;
-  let emailSubmitting = false;
   const edits = new Map();
   let checkedFrameUrl = null, frameProblem = null, frameChecking = false;
   function checkFrame(url) {
@@ -45,15 +44,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokBrowserOpen').disabled = !result.available || busyStates.has(result.attempt?.state);
     $('#tiktokBrowserCheck').disabled = !result.available;
     const loginUnavailable = !result.available || Boolean(result.attempt);
-    const rateLimited = result.login_state === 'rate_limited';
-    // OTP throttling must block another email/phone submission, while QR
-    // remains available as TikTok's alternative login method.
     $('#tiktokBrowserLoginQr').disabled = loginUnavailable;
-    $('#tiktokBrowserLoginEmail').disabled = loginUnavailable || rateLimited;
-    $('#tiktokEmailSubmit').disabled = loginUnavailable || rateLimited || emailSubmitting;
-    if (rateLimited) {
-      $('#tiktokEmailStatus').textContent = 'TikTok đang giới hạn OTP · hãy dùng QR hoặc thử lại sau';
-    }
     $('#tiktokBrowserLogout').disabled = !result.available || Boolean(result.attempt);
     const frame = $('#tiktokBrowserFrame');
     const external = $('#tiktokBrowserExternal');
@@ -100,7 +91,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   function scheduleStatusRefresh() {
     clearTimeout(timer);
     if (locked || location.hash !== '#tiktok') return;
-    const delay = busyStates.has(status?.attempt?.state) ? 1200 : 5000;
+    const delay = busyStates.has(status?.attempt?.state) ? 3000 : 8000;
     timer = setTimeout(async () => { await refresh(); scheduleStatusRefresh(); }, delay);
   }
 
@@ -118,14 +109,24 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     } finally { refreshing = false; }
   }
 
-  async function refreshApi() {
+  async function refreshApi(accountId = '') {
     try {
-      apiStatus = await requestJson('/api/v1/tiktok-auth');
+      const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+      apiStatus = await requestJson(`/api/v1/tiktok-auth${suffix}`);
       $('#tiktokApiStatus').textContent = apiStatus.can_direct_publish
         ? 'Đã kết nối · sẵn sàng đăng trực tiếp và gửi bản nháp'
         : apiStatus.connected ? 'Cần kết nối lại và cấp quyền video.publish' : apiStatus.configured ? 'Cần kết nối TikTok' : 'Máy chủ chưa cấu hình TikTok Developer App';
-      $('#tiktokApiConnect').disabled = !apiStatus.configured || (apiStatus.can_direct_publish && apiStatus.can_upload_draft);
+      $('#tiktokApiConnect').disabled = !apiStatus.configured;
+      $('#tiktokApiConnect').textContent = (apiStatus.accounts || []).length ? 'Thêm tài khoản' : 'Kết nối TikTok';
       $('#tiktokApiDisconnect').disabled = !apiStatus.connected;
+      const accountSelect = $('#tiktokApiAccount');
+      const selected = accountSelect.value || apiStatus.account_id || '';
+      accountSelect.replaceChildren();
+      for (const account of apiStatus.accounts || []) {
+        accountSelect.add(new Option(account.open_id || account.account_id, account.account_id));
+      }
+      if ([...accountSelect.options].some(option => option.value === selected)) accountSelect.value = selected;
+      accountSelect.classList.toggle('is-hidden', accountSelect.options.length < 2);
     } catch (error) {
       apiStatus = null;
       $('#tiktokApiStatus').textContent = error.message;
@@ -199,11 +200,14 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     if (!message && publishAttempt.status === 'SCHEDULED_LOCAL') message = `VidTrans sẽ đăng lúc ${new Date(publishAttempt.scheduled_for).toLocaleString('vi-VN')}.`;
     if (!message && publishAttempt.status === 'SEND_TO_USER_INBOX') message = 'Mở ứng dụng TikTok để chỉnh sửa và hoàn tất bài đăng.';
     if (!message && publishAttempt.status === 'PUBLISH_COMPLETE') message = 'TikTok đã xác nhận bài đăng hoàn tất.';
+    if (!message && publishAttempt.status === 'UPLOADING' && publishAttempt.status_detail?.percent != null) {
+      message = `Đang tải video lên TikTok · ${publishAttempt.status_detail.percent}%`;
+    }
     if (!message) message = 'Trạng thái sẽ được cập nhật sau khi TikTok xử lý.';
     $('#tiktokPublishStatusMessage').textContent = message;
     $('#tiktokCancelSchedule').classList.toggle('is-hidden', publishAttempt.status !== 'SCHEDULED_LOCAL');
     clearTimeout(publishTimer);
-    if (!locked && publishBusy.has(publishAttempt.status)) publishTimer = setTimeout(() => refreshPublish(true), 3000);
+    if (!locked && publishBusy.has(publishAttempt.status)) publishTimer = setTimeout(() => refreshPublish(true), 5000);
     controls();
   }
 
@@ -244,6 +248,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     body.set('reviewed', 'true');
     body.set('idempotency_key', publishKey);
     body.set('timezone_name', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+    body.set('account_id', $('#tiktokApiAccount').value || apiStatus?.account_id || '');
     if (mode === 'SCHEDULE') body.set('scheduled_for', new Date($('#tiktokScheduleAt').value).toISOString());
     try {
       const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}/tiktok-publishes`, { method: 'POST', body });
@@ -257,6 +262,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   async function prepare() {
     if ($('#tiktokPrepareButton').disabled) return;
     submitting = true;
+    $('#tiktokVideoPreview').pause();
     const current = draft;
     controls();
     try {
@@ -280,8 +286,17 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     } catch (error) { toast(error.message, true); }
   });
   $('#tiktokApiDisconnect').addEventListener('click', async () => {
-    try { await requestJson('/api/v1/tiktok-auth', { method: 'DELETE' }); await refreshApi(); }
+    try {
+      const accountId = $('#tiktokApiAccount').value || apiStatus?.account_id || '';
+      const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+      const result = await requestJson(`/api/v1/tiktok-auth${suffix}`, { method: 'DELETE' });
+      await refreshApi(result.accounts?.[0]?.account_id || '');
+    }
     catch (error) { toast(error.message, true); }
+  });
+  $('#tiktokApiAccount').addEventListener('change', event => {
+    $('#tiktokReviewConsent').checked = false; publishKey = null;
+    refreshApi(event.target.value);
   });
 
   async function browserAction(path, method = 'POST') {
@@ -301,60 +316,6 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokBrowserLoginQr').disabled = true;
     await browserAction('login?method=qr');
     await refresh();
-  });
-  $('#tiktokBrowserLoginEmail').addEventListener('click', async () => {
-    // Toggle the email panel open and focus the email field
-    const panel = $('#tiktokEmailLoginPanel');
-    panel.open = true;
-    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    setTimeout(() => $('#tiktokLoginEmail').focus(), 300);
-  });
-  $('#tiktokEmailLoginForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (emailSubmitting) return;
-    const email = $('#tiktokLoginEmail').value.trim();
-    const password = $('#tiktokLoginPassword').value;
-    if (!email || !password) return;
-    emailSubmitting = true;
-    const statusEl = $('#tiktokEmailStatus');
-    const submitBtn = $('#tiktokEmailSubmit');
-    submitBtn.disabled = true;
-    statusEl.textContent = 'Đang đăng nhập…';
-    try {
-      const body = new FormData();
-      body.set('email', email);
-      body.set('password', password);
-      const result = await requestJson('/api/v1/tiktok-browser/login-email', { method: 'POST', body });
-      render(result);
-      const state = result.login_state || '';
-      if (state === 'success') {
-        statusEl.textContent = '✓ Đăng nhập thành công';
-        $('#tiktokLoginPassword').value = '';          // clear password immediately
-        $('#tiktokEmailLoginPanel').open = false;       // collapse form
-        toast('Đã đăng nhập TikTok bằng email thành công!');
-      } else if (state === 'rate_limited') {
-        statusEl.textContent = 'TikTok đang giới hạn xác minh';
-        toast(result.message, true);
-      } else if (state === 'captcha_required') {
-        statusEl.textContent = '⚠ Cần xác minh thêm';
-        toast(result.message, true);
-      } else if (state === 'failed') {
-        statusEl.textContent = '✗ Đăng nhập thất bại';
-        toast(result.message, true);
-      } else {
-        statusEl.textContent = '⏳ Đang chờ xác nhận';
-        toast(result.message);
-      }
-      await refresh();
-    } catch (error) {
-      statusEl.textContent = '✗ Lỗi';
-      toast(error.message, true);
-    } finally {
-      emailSubmitting = false;
-      submitBtn.disabled = false;
-      // Always clear the password after the attempt
-      $('#tiktokLoginPassword').value = '';
-    }
   });
   $('#tiktokBrowserLogout').addEventListener('click', () => {
     if (confirm('Xóa phiên đăng nhập TikTok của trình duyệt này?')) browserAction('session', 'DELETE');
@@ -445,7 +406,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       loadVideos(); refresh(); refreshApi();
       if (status) render(status);
       scheduleStatusRefresh();
-      apiTimer = setInterval(refreshApi, 15000);
+      apiTimer = setInterval(refreshApi, 60000);
     },
     leave() {
       clearTimeout(timer); timer = null;

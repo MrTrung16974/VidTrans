@@ -16,27 +16,31 @@ class FakePublisher:
         self.calls = []
         self.fail_after_init = fail_after_init
 
-    def publish(self, path, caption, *, privacy_level, on_initialized):
-        self.calls.append(("publish", path, caption, privacy_level))
+    def publish(self, path, caption, *, privacy_level, on_initialized, account_id=None, on_progress=None):
+        self.calls.append(("publish", path, caption, privacy_level, account_id))
         on_initialized("remote-123")
         if self.fail_after_init:
             raise RuntimeError("network timeout")
+        if on_progress:
+            on_progress(5, 5)
         return {
             "publish_id": "remote-123",
             "status": "PROCESSING_UPLOAD",
             "status_payload": {"status": "PROCESSING_UPLOAD"},
         }
 
-    def upload_draft(self, path, *, on_initialized):
-        self.calls.append(("draft", path))
+    def upload_draft(self, path, *, on_initialized, account_id=None, on_progress=None):
+        self.calls.append(("draft", path, account_id))
         on_initialized("draft-123")
+        if on_progress:
+            on_progress(5, 5)
         return {
             "publish_id": "draft-123",
             "status": "SEND_TO_USER_INBOX",
             "status_payload": {"status": "SEND_TO_USER_INBOX"},
         }
 
-    def fetch_status(self, publish_id):
+    def fetch_status(self, publish_id, account_id=None):
         return {"status": "PUBLISH_COMPLETE", "publish_id": publish_id}
 
 
@@ -96,6 +100,14 @@ class TikTokPublishingTests(unittest.TestCase):
         self.assertEqual(self.publisher.calls[0][2], "Dòng một\n\n#xuhuong #video")
         self.assertEqual(result["remote_publish_id"], "remote-123")
         self.assertEqual(result["status"], "PROCESSING_UPLOAD")
+
+    def test_publish_attempt_keeps_selected_account(self):
+        attempt, _ = self.create(account_id="creator-two")
+
+        self.service.run(attempt["attempt_id"])
+
+        self.assertEqual(attempt["account_id"], "creator-two")
+        self.assertEqual(self.publisher.calls[0][4], "creator-two")
 
     def test_failure_after_remote_init_requires_reconciliation(self):
         publisher = FakePublisher(fail_after_init=True)

@@ -25,6 +25,7 @@ def create_tiktok_publish_router(service: TikTokPublishingService, jobs, output_
             "attempt_id", "job_id", "mode", "status", "scheduled_for",
             "remote_publish_id", "created_at", "updated_at", "timezone",
             "privacy_level", "error", "status_detail", "schedule_lag_seconds",
+            "account_id",
         }
         return {key: value for key, value in attempt.items() if key in allowed}
 
@@ -49,6 +50,7 @@ def create_tiktok_publish_router(service: TikTokPublishingService, jobs, output_
         timezone_name: str = Form("UTC", max_length=64),
         idempotency_key: str = Form(..., min_length=8, max_length=128),
         reviewed: bool = Form(...),
+        account_id: str = Form("", max_length=128),
     ):
         if not reviewed:
             raise HTTPException(422, "Hãy duyệt video, caption và tài khoản trước khi đăng")
@@ -63,6 +65,7 @@ def create_tiktok_publish_router(service: TikTokPublishingService, jobs, output_
                 scheduled_for=scheduled_for,
                 timezone_name=timezone_name,
                 idempotency_key=idempotency_key,
+                account_id=account_id or None,
             )
         except TikTokPublishingValidationError as exc:
             raise HTTPException(422, str(exc)) from exc

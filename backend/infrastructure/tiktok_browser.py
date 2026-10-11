@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 STUDIO_URL = "https://www.tiktok.com/tiktokstudio/upload"
 BUSY_STATES = {"queued", "opening", "uploading", "publishing"}
 UPLOAD_WAIT_SECONDS = 15 * 60
-UPLOAD_POLL_SECONDS = 2.0
+UPLOAD_POLL_SECONDS = 3.0
 CAPTION_SETTLE_SECONDS = 1.0
 CAPTION_PREFILL_SETTLE_SECONDS = 3.0
 CAPTION_FILL_ATTEMPTS = 3
@@ -331,8 +331,6 @@ class TikTokBrowserManager:
                         self._reset_tiktok_login_state(browser.contexts[0], page)
                         page.goto("about:blank", wait_until="domcontentloaded", timeout=10_000)
                         url = "https://www.tiktok.com/login?loginType=qrCode"
-                    elif method == "email":
-                        url = "https://www.tiktok.com/login?loginType=phoneOrEmail"
                     else:
                         url = "https://www.tiktok.com/login"
                     page.goto(url, wait_until="domcontentloaded", timeout=30_000)
@@ -361,22 +359,6 @@ class TikTokBrowserManager:
                             pass
                         self._login_limited = self._page_login_limited(page)
 
-                    if method == "email":
-                        # Try to click the "Email / Phone / Username" tab if still on chooser page
-                        try:
-                            tab_selector = (
-                                "a[href*='loginType=phoneOrEmail'], "
-                                "[data-e2e='login-phone-email-tab'], "
-                                "button:has-text('phone'), "
-                                "a:has-text('phone')"
-                            )
-                            tab = page.locator(tab_selector).first
-                            if tab.is_visible(timeout=3_000):
-                                tab.click()
-                                page.wait_for_load_state("domcontentloaded", timeout=10_000)
-                        except Exception:
-                            pass  # Non-fatal — the page URL already has loginType=phoneOrEmail
-
                 self._with_browser(open_login)
             except TikTokBrowserError:
                 raise
@@ -387,139 +369,6 @@ class TikTokBrowserManager:
             finally:
                 self._browser_lock.release()
         return self.status(refresh=True)
-
-    def login_with_email(self, email: str, password: str) -> dict[str, Any]:
-        """Automate TikTok login with email/phone + password via Playwright.
-
-        This method is designed for VPS deployments where QR code scanning is
-        blocked by TikTok's IP policies.  It:
-
-        1. Navigates to the email/phone login page.
-        2. Fills in the identifier and password fields.
-        3. Clicks the login button.
-        4. Waits up to 20 s for a session cookie to appear.
-        5. Returns status; if a CAPTCHA or 2FA screen appears the user must
-           complete it manually in the VNC browser — the method returns
-           ``login_pending`` status so the frontend can prompt accordingly.
-        """
-        if not email or not password:
-            raise TikTokBrowserError("Email/số điện thoại và mật khẩu không được để trống")
-        with self._lock:
-            if self.active_attempt():
-                raise TikTokBrowserError("Hãy kết thúc lượt chuẩn bị bài hiện tại trước khi đăng nhập lại")
-            if not self._browser_lock.acquire(blocking=False):
-                raise TikTokBrowserError("Trình duyệt đang bận. Hãy thử lại sau")
-            login_result: dict[str, Any] = {}
-            try:
-                def do_login(browser):
-                    page = self._page(browser)
-                    self._guard_login(page)
-                    page.goto(
-                        "https://www.tiktok.com/login?loginType=phoneOrEmail",
-                        wait_until="domcontentloaded",
-                        timeout=30_000,
-                    )
-                    page.bring_to_front()
-
-                    # --- Step 1: Switch to Email sub-tab if we are on a phone tab ---
-                    try:
-                        email_tab = page.locator(
-                            "a:has-text('Email'), [data-e2e='login-email-tab'], "
-                            "button:has-text('Email')"
-                        ).first
-                        if email_tab.is_visible(timeout=3_000):
-                            email_tab.click()
-                            page.wait_for_timeout(600)
-                    except Exception:
-                        pass
-
-                    # --- Step 2: Fill email/phone ---
-                    identifier_input = page.locator(
-                        "input[name='email'], input[type='email'], "
-                        "input[placeholder*='mail'], input[placeholder*='phone'], "
-                        "input[placeholder*='Email'], "
-                        "[data-e2e='login-email-or-phone-input'] input, "
-                        "[data-e2e='login-user-input'] input"
-                    ).first
-                    identifier_input.wait_for(state="visible", timeout=10_000)
-                    identifier_input.fill("")
-                    identifier_input.type(email, delay=80)
-                    page.wait_for_timeout(400)
-
-                    # --- Step 3: Fill password ---
-                    password_input = page.locator(
-                        "input[type='password'], [data-e2e='login-password'] input"
-                    ).first
-                    password_input.wait_for(state="visible", timeout=8_000)
-                    password_input.fill("")
-                    password_input.type(password, delay=60)
-                    page.wait_for_timeout(400)
-
-                    # --- Step 4: Submit ---
-                    login_btn = page.locator(
-                        "button[type='submit'], [data-e2e='login-button'], "
-                        "button:has-text('Log in'), button:has-text('Đăng nhập')"
-                    ).first
-                    login_btn.wait_for(state="visible", timeout=5_000)
-                    login_btn.click()
-
-                    # --- Step 5: Wait for session cookie or error ---
-                    deadline = time.monotonic() + 20
-                    session_found = False
-                    while time.monotonic() < deadline:
-                        cookies = browser.contexts[0].cookies()
-                        if has_session(cookies):
-                            session_found = True
-                            break
-                        if self._page_login_limited(page):
-                            self._login_limited = True
-                            break
-                        page.wait_for_timeout(800)
-
-                    login_result["session_found"] = session_found
-                    login_result["current_url"] = page.url
-
-                self._with_browser(do_login)
-            except TikTokBrowserError:
-                raise
-            except Exception as exc:
-                raise TikTokBrowserError(
-                    f"Không thể tự động điền thông tin đăng nhập: {exc}. "
-                    "Hãy đăng nhập thủ công trong cửa sổ trình duyệt bên dưới."
-                ) from exc
-            finally:
-                self._browser_lock.release()
-
-        current_url = login_result.get("current_url", "")
-        session_found = login_result.get("session_found", False)
-
-        base = self.status(refresh=True)
-        if session_found:
-            self._session_present = True
-            base["message"] = "Đăng nhập email thành công · Đã tìm thấy phiên TikTok"
-            base["login_state"] = "success"
-        elif self._login_limited:
-            base["message"] = LOGIN_LIMIT_MESSAGE
-            base["login_state"] = "rate_limited"
-        elif "captcha" in current_url.lower() or "verify" in current_url.lower():
-            base["message"] = (
-                "TikTok yêu cầu xác minh thêm (CAPTCHA/2FA). "
-                "Hoàn tất thủ công trong cửa sổ trình duyệt bên dưới, rồi bấm 'Kiểm tra phiên'."
-            )
-            base["login_state"] = "captcha_required"
-        elif "login" in current_url:
-            base["message"] = (
-                "TikTok chưa xác nhận đăng nhập. Kiểm tra thông báo trong khung trình duyệt "
-                "và hoàn tất xác minh nếu được yêu cầu; không gửi lại liên tục."
-            )
-            base["login_state"] = "failed"
-        else:
-            base["message"] = (
-                "Đang chờ xác nhận phiên. Bấm 'Kiểm tra phiên' sau vài giây, "
-                "hoặc hoàn tất CAPTCHA thủ công nếu cần."
-            )
-            base["login_state"] = "pending"
-        return base
 
     def logout(self):
         with self._lock:
@@ -599,18 +448,18 @@ class TikTokBrowserManager:
         # before-unload prompt. A page is reused only when it is already on the
         # exact upload route and exposes the file input; otherwise navigate once.
         current_path = urllib.parse.urlsplit(page.url).path
-        inputs = page.locator('input[type="file"]')
+        inputs = self._video_inputs(page)
         reuse_ready_page = (
             is_tiktok_url(page.url)
             and current_path.startswith("/tiktokstudio/upload")
-            and inputs.count() == 1
+            and inputs.count() > 0
         )
         if not reuse_ready_page:
             page.goto(STUDIO_URL, wait_until="domcontentloaded", timeout=30_000)
-            inputs = page.locator('input[type="file"]')
+            inputs = self._video_inputs(page)
 
         inputs.first.wait_for(state="attached", timeout=20_000)
-        if not is_tiktok_url(page.url) or not urllib.parse.urlsplit(page.url).path.startswith("/tiktokstudio/upload") or inputs.count() != 1:
+        if not is_tiktok_url(page.url) or not urllib.parse.urlsplit(page.url).path.startswith("/tiktokstudio/upload") or inputs.count() == 0:
             raise TikTokBrowserError("Không nhận diện được ô tải video TikTok")
         # Marked before the transfer: a half-sent file may still create a draft on TikTok.
         size_mb = video_path.stat().st_size / (1024 * 1024)
@@ -621,7 +470,7 @@ class TikTokBrowserManager:
             file_sent=True,
         )
         # Both containers mount outputs at the same absolute path; no public file URL.
-        inputs.set_input_files(str(video_path), timeout=60_000)
+        inputs.first.set_input_files(str(video_path), timeout=120_000)
         editor = page.locator('[contenteditable="true"][role="textbox"]:visible')
         editor.first.wait_for(state="visible", timeout=60_000)
         if not is_tiktok_url(page.url) or editor.count() != 1:
@@ -641,6 +490,7 @@ class TikTokBrowserManager:
     def _wait_for_upload(self, page, attempt_id: str) -> bool:
         deadline = time.monotonic() + UPLOAD_WAIT_SECONDS
         last_percent = None
+        last_reported_at = 0.0
         while time.monotonic() < deadline:
             if not is_tiktok_url(page.url):
                 raise TikTokBrowserError("Trang TikTok đã chuyển hướng trong lúc tải video")
@@ -653,11 +503,22 @@ class TikTokBrowserManager:
             if progress.get("done"):
                 return True
             percent = progress.get("percent")
-            if percent is not None and percent != last_percent:
+            now = time.monotonic()
+            should_report = percent is not None and (
+                last_percent is None or percent >= last_percent + 5 or now - last_reported_at >= 10
+            )
+            if should_report:
                 last_percent = percent
+                last_reported_at = now
                 self._update(attempt_id, "uploading", f"Đang tải video lên TikTok · {percent}%. Hãy giữ nguyên trang")
             page.wait_for_timeout(UPLOAD_POLL_SECONDS * 1000)
         return False
+
+    @staticmethod
+    def _video_inputs(page):
+        """Prefer TikTok's video input while tolerating extra hidden media inputs."""
+        inputs = page.locator('input[type="file"][accept*="video"]')
+        return inputs if inputs.count() else page.locator('input[type="file"]')
 
     @staticmethod
     def _fill_caption(page, caption: str) -> None:

@@ -24,7 +24,7 @@ class LoginRecoveryTests(unittest.TestCase):
                     manager.restart_login()
                 browser.assert_not_called()
 
-    def test_rate_limit_blocks_email_but_allows_qr_recovery(self):
+    def test_qr_recovery_clears_rate_limited_login_state(self):
         with TemporaryDirectory() as directory:
             manager = TikTokBrowserManager(Path(directory))
             page = MagicMock()
@@ -46,12 +46,6 @@ class LoginRecoveryTests(unittest.TestCase):
                     'Storage.clearDataForOrigin',
                     {'origin': 'https://www.tiktok.com', 'storageTypes': 'all'},
                 )
-                page.reset_mock()
-                page.frames = [page]
-                page.locator.return_value.inner_text.return_value = "Maximum number of attempts reached. Try again later."
-                with self.assertRaisesRegex(TikTokBrowserError, "giới hạn"):
-                    manager.login_with_email('test@example.com', 'not-a-real-password')
-                page.goto.assert_not_called()
                 self.assertFalse(manager._browser_lock.locked())
 
     def test_read_only_check_clears_limit_when_notice_disappears(self):

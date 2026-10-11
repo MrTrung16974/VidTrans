@@ -2132,8 +2132,10 @@ def logout_douyin() -> JSONResponse:
 
 
 @app.get("/api/v1/tiktok-auth")
-def get_tiktok_auth_status() -> JSONResponse:
-    return JSONResponse(TIKTOK_PUBLISHER.connection_status())
+def get_tiktok_auth_status(account_id: str = Query(default="")) -> JSONResponse:
+    status = TIKTOK_PUBLISHER.connection_status(account_id or None)
+    status["accounts"] = TIKTOK_PUBLISHER.accounts()
+    return JSONResponse(status)
 
 
 @app.get("/api/v1/tiktok-auth/connect")
@@ -2162,9 +2164,11 @@ def tiktok_auth_callback(
 
 
 @app.delete("/api/v1/tiktok-auth")
-def disconnect_tiktok() -> JSONResponse:
-    TIKTOK_PUBLISHER.disconnect()
-    return JSONResponse(TIKTOK_PUBLISHER.connection_status())
+def disconnect_tiktok(account_id: str = Query(default="")) -> JSONResponse:
+    TIKTOK_PUBLISHER.disconnect(account_id or None)
+    status = TIKTOK_PUBLISHER.connection_status()
+    status["accounts"] = TIKTOK_PUBLISHER.accounts()
+    return JSONResponse(status)
 
 
 @app.post("/process-video")

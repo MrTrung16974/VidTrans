@@ -133,6 +133,18 @@ class TikTokPublisherTests(unittest.TestCase):
         self.assertEqual(init_body["post_info"]["title"], "Nội dung chính\n\n#xuhuong #video")
         self.assertEqual(initialized, ["publish-123"])
 
+    def test_publish_reports_uploaded_bytes(self) -> None:
+        self.connect()
+        video = Path(self.temporary.name) / "progress.mp4"
+        video.write_bytes(b"rendered-video")
+        progress = []
+
+        self.publisher.publish(
+            video, "Caption", privacy_level="SELF_ONLY", on_progress=lambda sent, total: progress.append((sent, total))
+        )
+
+        self.assertEqual(progress, [(len(b"rendered-video"), len(b"rendered-video"))])
+
     def test_upload_draft_uses_inbox_endpoint_without_post_info(self) -> None:
         self.connect()
         video = Path(self.temporary.name) / "draft.mp4"
@@ -169,6 +181,33 @@ class TikTokPublisherTests(unittest.TestCase):
         self.assertTrue(status["connected"])
         self.assertNotIn("access_token", status)
         self.assertNotIn("refresh_token", status)
+
+    def test_connected_account_is_saved_and_can_be_selected(self) -> None:
+        self.connect()
+
+        accounts = self.publisher.accounts()
+        selected = self.publisher.connection_status("creator-id")
+
+        self.assertEqual([account["account_id"] for account in accounts], ["creator-id"])
+        self.assertTrue(selected["connected"])
+        self.assertNotIn("access_token", accounts[0])
+
+    def test_account_id_cannot_escape_auth_directory(self) -> None:
+        with self.assertRaisesRegex(TikTokPublisherError, "không hợp lệ"):
+            self.publisher.connection_status("../token")
+
+    def test_connecting_another_account_preserves_legacy_account(self) -> None:
+        previous = {
+            "access_token": "old-access", "refresh_token": "old-refresh",
+            "expires_at": 2000, "refresh_expires_at": 3000,
+            "open_id": "creator-old", "scope": "video.publish,video.upload",
+        }
+        self.publisher._save_token(previous)
+
+        self.connect()
+
+        account_ids = {account["account_id"] for account in self.publisher.accounts()}
+        self.assertEqual(account_ids, {"creator-old", "creator-id"})
 
 
 if __name__ == "__main__":
