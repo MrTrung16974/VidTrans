@@ -7,6 +7,7 @@ const state = {
   files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false,
+  workflowEvents: [], workflowSummary: null,
   auth: { enabled: false, configured: false, authenticated: false, username: null },
 };
 const stepLabels = {
@@ -121,6 +122,7 @@ async function startProtectedApplication() {
   state.pollTimer = setInterval(loadJobs, 2500);
   if (location.hash === "#douyin") startDouyinBrowserPolling();
   if (location.hash === "#tiktok") tiktokWorkspace.enter();
+  if (location.hash === "#admin") loadWorkflowEvents();
 }
 
 async function bootstrapApplication() {
@@ -385,17 +387,80 @@ function updateFormSummary() {
 }
 
 function showView() {
-  const view = location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : "create";
+  const view = location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : "create";
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
   $("#tiktokView").classList.toggle("is-hidden", view !== "tiktok");
   if (view === "tiktok" && state.appStarted) tiktokWorkspace.enter();
   else tiktokWorkspace.leave();
   $("#douyinView").classList.toggle("is-hidden", view !== "douyin");
+  $("#adminView").classList.toggle("is-hidden", view !== "admin");
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
   if (view === "jobs" && state.appStarted) loadJobs();
   if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
   else stopDouyinBrowserPolling();
+  if (view === "admin" && state.appStarted) loadWorkflowEvents();
+}
+
+function workflowStatusLabel(status) {
+  return ({ pending: "Chờ gửi", sending: "Đang gửi", delivered: "Đã giao", dead: "Cần xử lý" })[status] || status;
+}
+
+function renderWorkflowEvents() {
+  const summary = state.workflowSummary || { enabled: false, counts: {} };
+  const counts = summary.counts || {};
+  $("#workflowPendingCount").textContent = counts.pending || 0;
+  $("#workflowSendingCount").textContent = counts.sending || 0;
+  $("#workflowDeliveredCount").textContent = counts.delivered || 0;
+  $("#workflowDeadCount").textContent = counts.dead || 0;
+  const integration = $("#workflowIntegrationState");
+  integration.textContent = summary.enabled
+    ? "n8n đã được cấu hình · webhook ký HMAC · delivery at-least-once"
+    : "n8n chưa được cấu hình. Event mới sẽ không được tạo cho đến khi có webhook URL và secret.";
+  integration.classList.toggle("disabled", !summary.enabled);
+
+  const list = $("#workflowEventsList");
+  if (!state.workflowEvents.length) {
+    list.innerHTML = '<div class="empty-state"><strong>Chưa có workflow event phù hợp</strong></div>';
+    return;
+  }
+  list.innerHTML = state.workflowEvents.map(item => `
+    <article class="admin-event-row">
+      <div class="admin-event-main"><strong>${escapeHtml(item.event_type)}</strong><small>Job ${escapeHtml(item.aggregate_id)} · ${escapeHtml(new Date(item.created_at).toLocaleString("vi-VN"))}</small></div>
+      <span class="admin-event-attempts">${Number(item.attempts) || 0} lần gửi</span>
+      <span class="status-pill ${escapeHtml(item.status)}">${escapeHtml(workflowStatusLabel(item.status))}</span>
+      <div class="admin-event-error">${escapeHtml(item.last_error || "")}</div>
+      ${item.status === "dead" ? `<button class="button secondary" type="button" data-workflow-replay="${escapeHtml(item.event_id)}" ${summary.enabled ? "" : "disabled"}>Gửi lại</button>` : ""}
+    </article>
+  `).join("");
+}
+
+async function loadWorkflowEvents() {
+  try {
+    const status = $("#workflowStatusFilter")?.value || "";
+    const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
+    const [summary, events] = await Promise.all([
+      requestJson("/api/v1/admin/workflow-events/summary"),
+      requestJson(`/api/v1/admin/workflow-events${suffix}`),
+    ]);
+    state.workflowSummary = summary;
+    state.workflowEvents = events.items || [];
+    renderWorkflowEvents();
+  } catch (error) {
+    $("#workflowEventsList").innerHTML = `<div class="empty-state error"><strong>${escapeHtml(error.message)}</strong></div>`;
+  }
+}
+
+async function replayWorkflowEvent(eventId, button) {
+  button.disabled = true;
+  try {
+    await requestJson(`/api/v1/admin/workflow-events/${encodeURIComponent(eventId)}/replay`, { method: "POST" });
+    toast("Đã đưa event vào hàng đợi gửi lại");
+    await loadWorkflowEvents();
+  } catch (error) {
+    toast(error.message, true);
+    button.disabled = false;
+  }
 }
 
 function uploadBatch(formData, { onProgress, onRequest } = {}) {
@@ -749,6 +814,12 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
 [$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource")].forEach(element => element.addEventListener("change", updateFormSummary));
 [$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
+$("#refreshWorkflowEvents").addEventListener("click", loadWorkflowEvents);
+$("#workflowStatusFilter").addEventListener("change", loadWorkflowEvents);
+$("#workflowEventsList").addEventListener("click", event => {
+  const button = event.target.closest("[data-workflow-replay]");
+  if (button) replayWorkflowEvent(button.dataset.workflowReplay, button);
+});
 $("#statusFilter").addEventListener("change", loadJobs);
 $("#jobSearch").addEventListener("input", () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadJobs, 300); });
 $("#jobsList").addEventListener("click", event => {

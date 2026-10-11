@@ -501,3 +501,32 @@ a { color: inherit; text-decoration: none; }
 .tiktok-publish-status p { margin: 6px 0 10px; color: #526273; font-size: .76rem; line-height: 1.6; }
 #tiktokPrepareButton { margin-top: 10px; }
 @media (max-width: 680px) { .tiktok-publish-controls { grid-template-columns: 1fr; } }
+
+.admin-integration-state { margin-bottom: 18px; padding: 13px 16px; border: 1px solid #bfe0da; border-radius: 12px; color: var(--teal); background: #f1f8f6; font-size: .82rem; font-weight: 700; }
+.admin-integration-state.disabled { border-color: #ead9b8; color: #875d21; background: #fff7e8; }
+.admin-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin-bottom: 18px; }
+.admin-metric { padding: 18px 20px; }
+.admin-metric span { display: block; color: var(--muted); font-size: .75rem; font-weight: 700; }
+.admin-metric strong { display: block; margin-top: 6px; color: var(--ink); font-size: 1.8rem; }
+.admin-metric.danger strong { color: #b54747; }
+.admin-events-panel { overflow: hidden; }
+.admin-events-panel .jobs-toolbar > div { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+.admin-events-panel .jobs-toolbar small { color: var(--muted); font-size: .7rem; }
+.admin-events-list { min-height: 180px; }
+.admin-event-row { display: grid; grid-template-columns: minmax(220px,1.4fr) 95px 105px minmax(160px,1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.admin-event-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.admin-event-main strong { overflow: hidden; text-overflow: ellipsis; font-size: .82rem; }
+.admin-event-main small, .admin-event-attempts { color: var(--muted); font-size: .7rem; }
+.admin-event-error { overflow: hidden; color: #b54747; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.admin-event-row .button { min-height: 34px; padding: 6px 11px; font-size: .72rem; }
+@media(max-width: 900px) {
+  .admin-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .admin-event-row { grid-template-columns: minmax(180px,1fr) 95px 100px auto; }
+  .admin-event-error { grid-column: 1 / -1; }
+}
+@media(max-width: 560px) {
+  .admin-metrics { grid-template-columns: 1fr 1fr; gap: 9px; }
+  .admin-event-row { grid-template-columns: 1fr auto; }
+  .admin-event-attempts, .admin-event-row .status-pill { justify-self: start; }
+  .admin-event-error { grid-column: 1 / -1; }
+}

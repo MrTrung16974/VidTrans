@@ -196,6 +196,11 @@ VIDTRANS_WORKER_CONCURRENCY=2
 VIDTRANS_WHISPER_CONCURRENCY=1
 VIDTRANS_OCR_CONCURRENCY=1
 VIDTRANS_RECOVER_INTERRUPTED_JOBS=1
+# Tùy chọn: phát event upload/download/dịch/publish sang n8n
+VIDTRANS_N8N_WEBHOOK_URL=https://n8n.example.com/webhook/vidtrans
+VIDTRANS_N8N_WEBHOOK_SECRET=...
+VIDTRANS_N8N_TIMEOUT_SECONDS=5
+VIDTRANS_N8N_MAX_ATTEMPTS=8
 # TikTok Developer App (chỉ cần khi dùng tự động đăng):
 VIDTRANS_TIKTOK_CLIENT_KEY=...
 VIDTRANS_TIKTOK_CLIENT_SECRET=...
@@ -213,6 +218,10 @@ VIDTRANS_AUTH_COOKIE_SECURE=1
 # Tùy chọn, chỉ cần cho video yêu cầu đăng nhập/giới hạn vùng:
 VIDTRANS_YTDLP_COOKIE_FILE=/app/secrets/yt-dlp-cookies.txt
 ```
+
+Xem [hướng dẫn tích hợp n8n](docs/n8n-integration.md) để cấu hình chữ ký HMAC,
+deduplicate event và workflow đề xuất. File video không đi qua n8n; webhook chỉ nhận metadata.
+Stack n8n + PostgreSQL dành cho local/dev nằm tại [deploy/n8n/README.md](deploy/n8n/README.md).
 
 Tăng `VIDTRANS_WORKER_CONCURRENCY` chỉ khi máy đủ CPU/RAM. Trên GPU hoặc máy có RAM hạn chế,
 nên giữ Whisper/OCR ở một slot.

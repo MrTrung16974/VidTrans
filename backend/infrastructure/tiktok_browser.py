@@ -27,7 +27,11 @@ UPLOAD_POLL_SECONDS = 2.0
 CAPTION_SETTLE_SECONDS = 1.0
 CAPTION_PREFILL_SETTLE_SECONDS = 3.0
 CAPTION_FILL_ATTEMPTS = 3
-CAPTION_STABLE_CHECKS = 5
+# TikTok Studio can restore the filename well after the upload card turns green.
+# Five seconds was not enough in production (the editor was replaced after the
+# backend had already reported success), so keep ownership of the browser long
+# enough to observe the late post-processing render before asking for review.
+CAPTION_STABLE_CHECKS = 15
 # Reads TikTok Studio's upload card. The Post button stays disabled until the
 # file is processed, so an enabled button (or an "Uploaded" label) means done.
 UPLOAD_PROGRESS_JS = """() => {

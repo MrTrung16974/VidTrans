@@ -9,7 +9,7 @@
     <title>VidTrans Studio</title>
     <link rel="icon" type="image/svg+xml" href="/assets/vidtrans-mark.svg?v=20260901-1" />
     <link rel="shortcut icon" href="/assets/vidtrans-mark.svg?v=20260901-1" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261009-1" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261011-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -23,6 +23,7 @@
           <a href="#jobs" data-view-link="jobs">Tiến trình <span id="runningBadge" class="nav-badge">0</span></a>
           <a href="#tiktok" data-view-link="tiktok">Đăng TikTok</a>
           <a href="#douyin" data-view-link="douyin">Douyin</a>
+          <a href="#admin" data-view-link="admin">Admin</a>
         </nav>
         <div class="topbar-actions">
           <div id="systemState" class="system-state"><span></span> Hệ thống sẵn sàng</div>
@@ -263,6 +264,37 @@
             </div>
           </section>
         </section>
+
+        <section id="adminView" class="view is-hidden">
+          <div class="page-heading">
+            <div>
+              <span class="eyebrow">System operations</span>
+              <h1>Quản trị workflow n8n</h1>
+              <p>Theo dõi việc giao event upload, download, dịch và publish; chạy lại event lỗi khi n8n đã phục hồi.</p>
+            </div>
+            <button id="refreshWorkflowEvents" class="button secondary" type="button">↻ Làm mới</button>
+          </div>
+          <div id="workflowIntegrationState" class="admin-integration-state" role="status">Đang kiểm tra cấu hình n8n…</div>
+          <section class="admin-metrics" aria-label="Thống kê workflow event">
+            <article class="card admin-metric"><span>Chờ gửi</span><strong id="workflowPendingCount">0</strong></article>
+            <article class="card admin-metric"><span>Đang gửi</span><strong id="workflowSendingCount">0</strong></article>
+            <article class="card admin-metric"><span>Đã giao</span><strong id="workflowDeliveredCount">0</strong></article>
+            <article class="card admin-metric danger"><span>Cần xử lý</span><strong id="workflowDeadCount">0</strong></article>
+          </section>
+          <section class="card admin-events-panel">
+            <div class="jobs-toolbar">
+              <div><strong>Nhật ký event</strong><small>Không hiển thị payload, URL nguồn, file hay secret.</small></div>
+              <select id="workflowStatusFilter" aria-label="Lọc trạng thái workflow event">
+                <option value="">Tất cả trạng thái</option>
+                <option value="pending">Chờ gửi</option>
+                <option value="sending">Đang gửi</option>
+                <option value="delivered">Đã giao</option>
+                <option value="dead">Cần xử lý</option>
+              </select>
+            </div>
+            <div id="workflowEventsList" class="admin-events-list"><div class="empty-state"><strong>Đang tải event…</strong></div></div>
+          </section>
+        </section>
       </main>
     </div>
 
@@ -290,6 +322,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261009-2"></script>
+    <script type="module" src="/js/app.js?v=20261011-1"></script>
   </body>
 </html>

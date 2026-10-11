@@ -43,6 +43,13 @@ from infrastructure.auth import (
 from infrastructure.job_store import SQLiteJobStore
 from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
+from infrastructure.workflow_events import (
+    N8nWebhookClient,
+    N8nWebhookConfig,
+    N8nWorkflowDispatcher,
+    WorkflowEventSink,
+    WorkflowEventStore,
+)
 from infrastructure.social_video_downloader import (
     SocialVideoDownloadCancelled,
     SocialVideoDownloader,
@@ -125,6 +132,13 @@ app.add_middleware(
 )
 
 JOB_SERVICE = JobService(SQLiteJobStore(WORK_DIR / "jobs.sqlite3"))
+N8N_WORKFLOW_CONFIG = N8nWebhookConfig.from_env()
+WORKFLOW_EVENT_STORE = WorkflowEventStore(WORK_DIR / "jobs.sqlite3")
+WORKFLOW_EVENTS = WorkflowEventSink(WORKFLOW_EVENT_STORE)
+N8N_WORKFLOW_DISPATCHER = N8nWorkflowDispatcher(
+    WORKFLOW_EVENT_STORE,
+    N8nWebhookClient(N8N_WORKFLOW_CONFIG),
+)
 TIKTOK_SUMMARY_PROVIDER = LocalExtractiveTikTokProvider()
 _social_cookie_value = os.environ.get("VIDTRANS_YTDLP_COOKIE_FILE", "").strip()
 DOUYIN_BROWSER_AUTH = DouyinBrowserAuthManager(WORK_DIR / "douyin-auth" / "douyin.cookies.txt")
@@ -554,7 +568,20 @@ def update_job(job_id: str, **fields: Any) -> None:
             fields.pop("status")
         elif fields.get("status") == "completed":
             raise JobCancelled("Job đã được yêu cầu hủy trước khi hoàn tất")
-    JOB_SERVICE.update(job_id, **fields)
+    updated = JOB_SERVICE.update(job_id, **fields)
+    if N8N_WORKFLOW_CONFIG.enabled:
+        WORKFLOW_EVENTS.emit_transition(job_id, current, updated)
+        notify_workflow_dispatcher()
+
+
+def emit_workflow_event(event_type: str, job_id: str, job: dict[str, Any] | None = None) -> None:
+    if not N8N_WORKFLOW_CONFIG.enabled:
+        return
+    current = job or JOB_SERVICE.get(job_id)
+    if current is None:
+        return
+    WORKFLOW_EVENTS.emit(event_type, job_id, current)
+    notify_workflow_dispatcher()
 
 
 def ensure_job_active(job_id: str) -> None:
@@ -1396,6 +1423,7 @@ def process_video(
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         update_job(job_id, translation_file=translation_path.name)
         ensure_translation_complete(translated_segments, target_language=target_language)
+        update_job(job_id, step="translation-ready", progress=0.46)
         video_width, video_height = get_video_dimensions(video_path)
         translated_segments = apply_subtitle_layout(
             translated_segments,
@@ -1892,6 +1920,8 @@ async def start_job_scheduler() -> None:
     publish_scheduler = TikTokPublishScheduler(TIKTOK_PUBLISHING)
     app.state.tiktok_publish_scheduler = publish_scheduler
     await publish_scheduler.start()
+    app.state.n8n_workflow_dispatcher = N8N_WORKFLOW_DISPATCHER
+    await N8N_WORKFLOW_DISPATCHER.start()
 
 
 @app.on_event("shutdown")
@@ -1902,11 +1932,69 @@ async def stop_job_scheduler() -> None:
     publish_scheduler = getattr(app.state, "tiktok_publish_scheduler", None)
     if publish_scheduler is not None:
         await publish_scheduler.stop()
+    workflow_dispatcher = getattr(app.state, "n8n_workflow_dispatcher", None)
+    if workflow_dispatcher is not None:
+        await workflow_dispatcher.stop()
 
 def notify_scheduler() -> None:
     scheduler = getattr(app.state, "job_scheduler", None)
     if scheduler is not None:
         scheduler.notify()
+
+
+def notify_workflow_dispatcher() -> None:
+    dispatcher = getattr(app.state, "n8n_workflow_dispatcher", None)
+    if dispatcher is not None:
+        dispatcher.notify()
+
+
+@app.get("/api/v1/admin/workflow-events/summary")
+def workflow_event_summary() -> JSONResponse:
+    return JSONResponse(
+        {
+            "enabled": N8N_WORKFLOW_CONFIG.enabled,
+            "webhook_configured": bool(N8N_WORKFLOW_CONFIG.webhook_url),
+            "counts": WORKFLOW_EVENT_STORE.summary(),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/v1/admin/workflow-events")
+def list_workflow_events(
+    status: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> JSONResponse:
+    try:
+        items, total = WORKFLOW_EVENT_STORE.list_events(
+            status=status or None,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse(
+        {"items": items, "total": total, "limit": limit, "offset": offset},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/v1/admin/workflow-events/{event_id}/replay")
+def replay_workflow_event(event_id: str) -> JSONResponse:
+    if not N8N_WORKFLOW_CONFIG.enabled:
+        raise HTTPException(status_code=409, detail="Tích hợp n8n chưa được cấu hình")
+    current = WORKFLOW_EVENT_STORE.get(event_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy workflow event")
+    if not WORKFLOW_EVENT_STORE.replay_dead(event_id):
+        raise HTTPException(status_code=409, detail="Chỉ event dead mới có thể chạy lại")
+    notify_workflow_dispatcher()
+    return JSONResponse(
+        {"event_id": event_id, "status": "pending"},
+        status_code=202,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def validate_tiktok_auto_publish(request: ProcessingRequest) -> None:
@@ -2191,7 +2279,7 @@ async def process_video_endpoint(
         "tiktok_publish_at": request.tiktok.publish_at,
     }
 
-    JOB_SERVICE.create(job_id, {
+    created_job = JOB_SERVICE.create(job_id, {
         "status": "queued",
         "step": "queued",
         "progress": 0.0,
@@ -2219,6 +2307,7 @@ async def process_video_endpoint(
             "roi_bottom": request.ocr.roi_bottom,
         },
     })
+    emit_workflow_event("source.uploaded", job_id, created_job)
     notify_scheduler()
 
     return JSONResponse(
@@ -2391,7 +2480,7 @@ async def create_batch_endpoint(
     created_jobs: list[dict[str, Any]] = []
     for job_id, upload, video_path in prepared_uploads:
         resume_request = {**batch_config, "video_path": str(video_path)}
-        JOB_SERVICE.create(
+        created_job = JOB_SERVICE.create(
             job_id,
             {
                 "status": "queued",
@@ -2424,6 +2513,8 @@ async def create_batch_endpoint(
             },
         )
         JOB_SERVICE.attach_to_batch(job_id, batch_id)
+        created_job = {**created_job, "batch_id": batch_id}
+        emit_workflow_event("source.uploaded", job_id, created_job)
         created_jobs.append({"job_id": job_id, "filename": upload.filename, "status": "queued"})
 
     for source_url in source_urls:

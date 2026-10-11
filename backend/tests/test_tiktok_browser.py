@@ -168,7 +168,10 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertIn('tải lên xong', update.call_args.args[2])
 
     def test_caption_is_refilled_when_tiktok_replaces_the_editor_value(self):
-        page = FakePage(caption_overwrites=[None, None, None, 'output_205deacd'])
+        # TikTok may restore the generated filename several seconds after the
+        # upload is already shown as complete. Keep checking long enough to
+        # catch that late editor replacement, then fill the reviewed caption.
+        page = FakePage(caption_overwrites=[None] * 9 + ['output_205deacd'])
 
         self.manager._fill_caption(page, 'Caption mong muốn #video')
 
