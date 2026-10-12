@@ -9,98 +9,384 @@
     <title>VidTrans Studio</title>
     <link rel="icon" type="image/svg+xml" href="/assets/vidtrans-mark.svg?v=20260901-1" />
     <link rel="shortcut icon" href="/assets/vidtrans-mark.svg?v=20260901-1" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261012-4" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261012-17" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <a class="brand" href="#create" aria-label="VidTrans Studio">
-          <span class="brand-mark"><img src="/assets/vidtrans-mark.svg" alt="" /></span>
-          <span><strong>VidTrans</strong><small>Creator Studio</small></span>
+          <span class="brand-mark"><img src="/assets/vidtrans-mark.svg" alt="VidTrans logo" /></span>
+          <span class="brand-copy"><strong>VidTrans</strong><small>Creator Studio</small></span>
         </a>
-        <button id="navToggle" class="nav-toggle" type="button" aria-expanded="false" aria-controls="mainNavigation" aria-label="Mở menu"><span></span><span></span><span></span></button>
         <nav id="mainNavigation" class="nav-tabs" aria-label="Điều hướng chính">
-          <a href="#create" data-view-link="create"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span>Tạo quy trình</span></a>
-          <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge">0</b></a>
+          <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span>Tạo quy trình</span></a>
+          <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
           <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span>Đăng TikTok</span></a>
           <a href="#douyin" data-view-link="douyin" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span>Douyin</span></a>
           <a href="#billing" data-view-link="billing"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16v11H4zM4 10h16M15 15h2"/></svg></i><span>Thanh toán</span></a>
           <a href="#admin" data-view-link="admin" data-admin-only><i aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M6 19c.5-3.2 2.5-5 6-5s5.5 1.8 6 5M19 5v4M17 7h4"/></svg></i><span>Quản trị</span></a>
         </nav>
         <div class="topbar-actions">
-          <div id="systemState" class="system-state"><span></span> Hệ thống sẵn sàng</div>
+          <div id="systemState" class="system-state" role="status" title="Hệ thống sẵn sàng"><span class="system-dot" aria-hidden="true"></span><span class="system-text">Hệ thống sẵn sàng</span></div>
           <div id="userMenu" class="user-menu is-hidden">
-            <button id="userMenuButton" class="user-menu-button" type="button" aria-expanded="false"><span id="userAvatar">A</span><span><strong id="userMenuName">Tài khoản</strong><small id="userMenuRole">Quản trị viên</small></span><i aria-hidden="true">⌄</i></button>
+            <button id="userMenuButton" class="user-menu-button" type="button" aria-expanded="false"><span id="userAvatar">A</span><span class="user-menu-copy"><strong id="userMenuName">Tài khoản</strong><small id="userMenuRole">Quản trị viên</small></span><i aria-hidden="true" class="user-menu-chevron">⌄</i></button>
             <div class="user-menu-popover">
               <a href="#billing">Gói dịch vụ & thanh toán</a>
               <button id="appLogoutButton" class="auth-logout" type="button">Đăng xuất</button>
             </div>
           </div>
+          <button id="navToggle" class="nav-toggle" type="button" aria-expanded="false" aria-controls="mainNavigation" aria-label="Mở menu"><span></span><span></span><span></span></button>
         </div>
       </header>
 
       <main>
         <section id="createView" class="view">
-          <div class="page-heading">
-            <div>
-              <span class="eyebrow">Batch processing</span>
-              <h1>Dịch nhiều video trong một quy trình</h1>
-              <p>Chọn video, cấu hình một lần rồi để hàng đợi xử lý dưới nền.</p>
+          <div class="page-heading create-page-heading">
+            <div class="create-heading-copy">
+              <div class="create-badge-row">
+                <span class="eyebrow-chip">⚡ Studio Tự Động Hóa</span>
+                <span class="eyebrow-note">Dịch video AI & Lồng tiếng</span>
+              </div>
+              <h1>Cấu hình một lần, xử lý cả batch</h1>
+              <p>Thêm video từ thiết bị hoặc link Douyin/TikTok, chọn ngôn ngữ và phụ đề để hệ thống tự động xử lý dưới nền.</p>
             </div>
-            <a class="button secondary" href="#jobs">Xem tiến trình</a>
+            <div class="create-heading-actions">
+              <div class="heading-status-chip">
+                <span class="status-ping"></span>
+                <span>Hàng đợi sẵn sàng</span>
+              </div>
+              <a class="button secondary view-jobs-cta" href="#jobs">
+                <span>Xem tiến trình</span>
+                <b>→</b>
+              </a>
+            </div>
           </div>
+
+          <nav class="workflow-steps-nav" aria-label="Các bước tạo quy trình">
+            <a href="#workflow-source" class="is-active" data-step-nav="1">
+              <span class="step-nav-badge">1</span>
+              <div><strong>Nguồn video</strong><small>File hoặc link</small></div>
+            </a>
+            <a href="#workflow-config" data-step-nav="2">
+              <span class="step-nav-badge">2</span>
+              <div><strong>Cấu hình xử lý</strong><small>Chế độ, ngôn ngữ, giọng</small></div>
+            </a>
+            <a href="#workflow-subtitle" data-step-nav="3">
+              <span class="step-nav-badge">3</span>
+              <div><strong>Vị trí phụ đề</strong><small>Cỡ chữ & xem trước</small></div>
+            </a>
+            <a href="#workflow-publish" data-step-nav="4">
+              <span class="step-nav-badge">4</span>
+              <div><strong>Nội dung đăng</strong><small>Caption & hashtag</small></div>
+            </a>
+          </nav>
 
           <form id="batchForm" class="workflow-grid">
             <div class="workflow-main">
-              <section class="card step-card">
-                <div class="step-heading"><span>1</span><div><h2>Thêm video nguồn</h2><p>Tải file lên hoặc dán link TikTok/Douyin, tối đa tổng cộng 50 video.</p></div></div>
-                <label id="dropZone" class="drop-zone">
-                  <input id="files" type="file" name="files" accept="video/*" multiple />
-                  <span class="drop-icon">＋</span>
-                  <strong>Kéo video vào đây hoặc bấm để chọn</strong>
-                  <small>MP4, MOV, MKV và các định dạng FFmpeg hỗ trợ</small>
-                </label>
-                <div class="source-divider"><span>hoặc tải trực tiếp từ mạng xã hội</span></div>
-                <label class="link-source-field" for="sourceLinks">
-                  <span class="link-source-icon">↗</span>
-                  <span class="link-source-copy"><strong>Link TikTok / Douyin</strong><small>Dán URL hoặc nguyên đoạn chia sẻ; hệ thống tự tách link và tải dưới nền.</small></span>
-                  <textarea id="sourceLinks" name="source_links" rows="4" maxlength="12000" placeholder="Ví dụ: 7.17 Ymq:/ ... https://v.douyin.com/GXgZS-F73fI/ 复制此链接..."></textarea>
-                </label>
-                <div class="douyin-auth-card">
-                  <span class="douyin-auth-icon">DY</span>
-                  <span class="douyin-auth-copy"><strong>Đăng nhập Douyin</strong><small id="douyinAuthStatus">Đang kiểm tra phiên đăng nhập…</small></span>
-                  <div class="douyin-auth-actions">
-                    <a class="button secondary" href="#douyin">Mở trình duyệt</a>
-                    <button id="douyinLogoutButton" class="button secondary is-hidden" type="button">Đăng xuất</button>
+              <!-- BƯỚC 1: THÊM VIDEO NGUỒN -->
+              <section id="workflow-source" class="card step-card source-step-card">
+                <div class="step-heading">
+                  <span class="step-badge">1</span>
+                  <div>
+                    <h2>Thêm video nguồn</h2>
+                    <p>Tải file từ máy tính hoặc dán liên kết TikTok / Douyin — tối đa 50 video mỗi batch.</p>
                   </div>
                 </div>
-                <label class="cookie-source-field">
-                  <span><strong>Hoặc dùng Cookies.txt</strong><small>Phương án dự phòng nếu không đăng nhập bằng trình duyệt.</small></span>
-                  <input type="file" name="source_cookies" accept=".txt,text/plain" />
-                </label>
+
+                <div class="source-options-grid">
+                  <label id="dropZone" class="drop-zone">
+                    <input id="files" type="file" name="files" accept="video/*" multiple />
+                    <span class="source-option-kicker">Từ thiết bị</span>
+                    <span class="drop-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                    </span>
+                    <strong>Kéo thả video vào đây hoặc bấm chọn file</strong>
+                    <small>Hỗ trợ MP4, MOV, MKV · Tối đa 50 video</small>
+                  </label>
+
+                  <label class="link-source-field" for="sourceLinks">
+                    <div class="link-source-top">
+                      <span class="link-source-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                        </svg>
+                      </span>
+                      <div class="link-source-copy">
+                        <span class="source-option-kicker">Mạng xã hội</span>
+                        <strong>Dán link TikTok / Douyin</strong>
+                        <small>Hỗ trợ link web hoặc đoạn chia sẻ từ ứng dụng</small>
+                      </div>
+                    </div>
+                    <textarea id="sourceLinks" name="source_links" rows="4" maxlength="12000" placeholder="Ví dụ: https://v.douyin.com/xxx/ hoặc https://www.tiktok.com/@user/video/... (mỗi link một dòng)"></textarea>
+                  </label>
+                </div>
+
+                <div class="source-auth-row">
+                  <div class="douyin-auth-card">
+                    <span class="douyin-auth-icon">DY</span>
+                    <div class="douyin-auth-copy">
+                      <strong>Đăng nhập Douyin</strong>
+                      <small id="douyinAuthStatus">Đang kiểm tra phiên đăng nhập…</small>
+                    </div>
+                    <div class="douyin-auth-actions">
+                      <a class="button secondary small-btn" href="#douyin">Mở trình duyệt</a>
+                      <button id="douyinLogoutButton" class="button secondary small-btn is-hidden" type="button">Đăng xuất</button>
+                    </div>
+                  </div>
+
+                  <label class="cookie-source-field">
+                    <div class="cookie-label-wrap">
+                      <span class="cookie-icon">🍪</span>
+                      <div>
+                        <strong>Cookies.txt dự phòng</strong>
+                        <small>Dùng file cookie nếu không đăng nhập trình duyệt tích hợp.</small>
+                      </div>
+                    </div>
+                    <input type="file" name="source_cookies" accept=".txt,text/plain" />
+                  </label>
+                </div>
+
                 <div id="linkList" class="file-list link-list" aria-live="polite"></div>
                 <div id="fileList" class="file-list" aria-live="polite"></div>
               </section>
 
-              <section class="card step-card">
-                <div class="step-heading"><span>2</span><div><h2>Cấu hình xử lý</h2><p>Áp dụng chung cho các video trong batch.</p></div></div>
-                <div class="field-grid">
-                  <label class="field wide"><span>Tên batch</span><input name="batch_name" value="Batch video mới" maxlength="120" /></label>
-                  <label class="field"><span>Chế độ</span><select id="mode" name="mode"><option value="1">Chỉ phụ đề — giữ âm thanh gốc</option><option value="2">Phụ đề + lồng tiếng</option><option value="3">Phụ đề + lồng tiếng + nhạc nền</option></select></label>
-                  <label class="field"><span>Ngôn ngữ nguồn</span><select id="sourceLanguage" name="source_language"><option value="auto">Tự nhận diện</option><option value="zh-CN" selected>Tiếng Trung</option><option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="ja">Tiếng Nhật</option><option value="ko">Tiếng Hàn</option><option value="th">Tiếng Thái</option><option value="id">Tiếng Indonesia</option><option value="es">Tiếng Tây Ban Nha</option></select></label>
-                  <label class="field"><span>Ngôn ngữ đầu ra</span><select id="targetLanguage" name="target_language"><option value="vi" selected>Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="zh-CN">Tiếng Trung</option><option value="ja">Tiếng Nhật</option><option value="ko">Tiếng Hàn</option><option value="th">Tiếng Thái</option><option value="id">Tiếng Indonesia</option><option value="es">Tiếng Tây Ban Nha</option></select></label>
-                  <label class="field"><span>Nguồn phụ đề</span><select id="subtitleSource" name="subtitle_source"><option value="speech">Whisper — khuyến nghị</option><option value="auto">OCR trước, Whisper dự phòng</option><option value="burned">Chữ có sẵn trên video</option></select></label>
-                  <label class="field"><span>Whisper model</span><select name="whisper_model"><option value="base">Base — nhanh</option><option value="small" selected>Small — cân bằng</option><option value="medium">Medium — chính xác</option></select></label>
-                  <label id="voiceModeField" class="field"><span>Chọn giọng</span><select name="voice_mode"><option value="auto">Tự động theo cao độ</option><option value="manual">Thủ công</option></select></label>
-                  <label id="voiceTypeField" class="field"><span>Giọng dự phòng</span><select name="voice_type"><option value="female">Nữ</option><option value="male">Nam</option></select></label>
-                  <label id="voiceStyleField" class="field"><span>Kiểu giọng đọc</span><select name="voice_style"><option value="natural">Tự nhiên — cân bằng</option><option value="warm">Ấm áp — chậm và trầm nhẹ</option><option value="bright">Tươi sáng — cao và rõ</option><option value="deep">Trầm — chắc và chậm vừa</option><option value="energetic">Năng động — nhanh và sáng</option></select></label>
-                  <label id="speechRateField" class="field"><span>Tốc độ đọc</span><input type="number" name="speech_rate" min="0.75" max="1.5" step="0.01" value="1" /></label>
-                  <label id="originalVolumeField" class="field"><span>Âm lượng tiếng gốc</span><input type="number" name="original_audio_volume" min="0" max="1" step="0.01" value="0.18" /></label>
-                  <label id="musicVolumeField" class="field"><span>Âm lượng nhạc nền</span><input type="number" name="music_volume" min="0" max="1" step="0.01" value="0.20" /></label>
-                  <label id="originalAudioField" class="field checkbox-field"><input type="checkbox" name="keep_original_audio" value="true" checked /><span>Giữ tiếng gốc ở mức nhỏ</span></label>
-                  <label id="musicField" class="field wide is-hidden"><span>Nhạc nền dùng chung</span><input type="file" name="background_music" accept="audio/*" /></label>
-                  <p id="modeHint" class="mode-hint wide"></p>
+              <!-- BƯỚC 2: CẤU HÌNH XỬ LÝ -->
+              <section id="workflow-config" class="card step-card config-step-card">
+                <div class="step-heading">
+                  <span class="step-badge">2</span>
+                  <div>
+                    <h2>Cấu hình xử lý</h2>
+                    <p>Áp dụng chung cho mọi video trong batch.</p>
+                  </div>
                 </div>
+
+                <div class="config-stack">
+                  <!-- Tên Batch -->
+                  <div class="batch-name-card">
+                    <label class="field wide">
+                      <span class="field-label-group">
+                        <span class="field-title">Tên batch quy trình</span>
+                        <small class="field-hint">Tên định danh giúp tìm lại trong lịch sử tiến trình</small>
+                      </span>
+                      <div class="input-with-icon">
+                        <span class="input-icon">📁</span>
+                        <input name="batch_name" value="Batch video mới" maxlength="120" placeholder="Nhập tên đại diện cho batch video..." />
+                      </div>
+                    </label>
+                  </div>
+
+                  <!-- Chế độ xử lý dạng thẻ trực quan -->
+                  <div class="field-cluster mode-cluster">
+                    <div class="cluster-header">
+                      <span class="cluster-badge">CHẾ ĐỘ XỬ LÝ</span>
+                      <h3>Phương thức xử lý video</h3>
+                      <p>Chọn cách thức phụ đề, lồng tiếng và nhạc nền phù hợp với mục tiêu của bạn.</p>
+                    </div>
+
+                    <div class="mode-cards" role="radiogroup" aria-label="Chế độ xử lý">
+                      <button type="button" class="mode-card is-selected" data-mode-card="1" aria-checked="true">
+                        <div class="mode-card-header">
+                          <span class="mode-card-icon mode-icon-sub">💬</span>
+                          <span class="mode-card-pill">Tốc độ cao</span>
+                        </div>
+                        <strong class="mode-card-title">Chỉ phụ đề</strong>
+                        <p class="mode-card-desc">Giữ âm thanh gốc 100%, nhận diện giọng nói và chèn phụ đề tiếng Việt chính xác.</p>
+                      </button>
+
+                      <button type="button" class="mode-card" data-mode-card="2" aria-checked="false">
+                        <div class="mode-card-header">
+                          <span class="mode-card-icon mode-icon-voice">🎙️</span>
+                          <span class="mode-card-pill featured">Phổ biến</span>
+                        </div>
+                        <strong class="mode-card-title">Phụ đề + Lồng tiếng AI</strong>
+                        <p class="mode-card-desc">Dịch phụ đề kết hợp thuyết minh AI tiếng Việt tự nhiên, tự đồng bộ theo từng câu.</p>
+                      </button>
+
+                      <button type="button" class="mode-card" data-mode-card="3" aria-checked="false">
+                        <div class="mode-card-header">
+                          <span class="mode-card-icon mode-icon-music">🎵</span>
+                          <span class="mode-card-pill">Studio Pro</span>
+                        </div>
+                        <strong class="mode-card-title">Voice + Nhạc nền</strong>
+                        <p class="mode-card-desc">Lồng tiếng AI kèm ghép nhạc nền tự động cân bằng âm lượng, dựng hoàn chỉnh.</p>
+                      </button>
+                    </div>
+
+                    <!-- Native Select hidden or synced for robust form submission -->
+                    <div class="mode-select-fallback">
+                      <label class="field wide">
+                        <span>Chế độ (Đồng bộ)</span>
+                        <select id="mode" name="mode">
+                          <option value="1" selected>Chỉ phụ đề — giữ âm thanh gốc</option>
+                          <option value="2">Phụ đề + lồng tiếng</option>
+                          <option value="3">Phụ đề + lồng tiếng + nhạc nền</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <p id="modeHint" class="mode-hint wide"></p>
+                  </div>
+
+                  <!-- Ngôn ngữ và Nhận diện -->
+                  <div class="field-cluster">
+                    <div class="cluster-header">
+                      <span class="cluster-badge">NGÔN NGỮ & AI</span>
+                      <h3>Ngôn ngữ và nhận diện</h3>
+                    </div>
+
+                    <div class="language-bridge-panel">
+                      <div class="language-flow-card">
+                        <label class="field">
+                          <span class="field-label-group"><span>Ngôn ngữ nguồn (Video)</span></span>
+                          <select id="sourceLanguage" name="source_language">
+                            <option value="auto">Tự nhận diện</option>
+                            <option value="zh-CN" selected>Tiếng Trung</option>
+                            <option value="vi">Tiếng Việt</option>
+                            <option value="en">Tiếng Anh</option>
+                            <option value="ja">Tiếng Nhật</option>
+                            <option value="ko">Tiếng Hàn</option>
+                            <option value="th">Tiếng Thái</option>
+                            <option value="id">Tiếng Indonesia</option>
+                            <option value="es">Tiếng Tây Ban Nha</option>
+                          </select>
+                        </label>
+
+                        <div class="language-flow-arrow" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                          </svg>
+                        </div>
+
+                        <label class="field">
+                          <span class="field-label-group"><span>Ngôn ngữ đầu ra (Dịch sang)</span></span>
+                          <select id="targetLanguage" name="target_language">
+                            <option value="vi" selected>Tiếng Việt</option>
+                            <option value="en">Tiếng Anh</option>
+                            <option value="zh-CN">Tiếng Trung</option>
+                            <option value="ja">Tiếng Nhật</option>
+                            <option value="ko">Tiếng Hàn</option>
+                            <option value="th">Tiếng Thái</option>
+                            <option value="id">Tiếng Indonesia</option>
+                            <option value="es">Tiếng Tây Ban Nha</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <div class="field-grid processing-grid recognition-grid">
+                        <label class="field">
+                          <span class="field-label-group"><span>Nguồn phụ đề</span></span>
+                          <select id="subtitleSource" name="subtitle_source">
+                            <option value="speech">Whisper — khuyến nghị</option>
+                            <option value="auto">OCR trước, Whisper dự phòng</option>
+                            <option value="burned">Chữ có sẵn trên video</option>
+                          </select>
+                        </label>
+                        <label class="field">
+                          <span class="field-label-group"><span>Whisper model</span></span>
+                          <select name="whisper_model">
+                            <option value="base">Base — nhanh</option>
+                            <option value="small" selected>Small — cân bằng</option>
+                            <option value="medium">Medium — chính xác</option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Giọng đọc & Âm thanh -->
+                  <div id="voiceAudioCluster" class="field-cluster voice-audio-cluster">
+                    <div class="cluster-header">
+                      <span class="cluster-badge">ÂM THANH & GIỌNG ĐỌC</span>
+                      <div class="cluster-title-wrap">
+                        <h3>Giọng đọc & Âm thanh</h3>
+                        <p class="cluster-subtitle">Cấu hình giọng đọc tiếng Việt và bộ trộn âm thanh khi lồng tiếng.</p>
+                      </div>
+                    </div>
+
+                    <div id="mode1VoiceNotice" class="voice-inactive-notice">
+                      <span class="notice-icon">💡</span>
+                      <div class="notice-copy">
+                        <strong>Chế độ "Chỉ phụ đề" đang giữ âm thanh gốc</strong>
+                        <p>Để thêm giọng đọc thuyết minh AI tiếng Việt và ghép nhạc nền, hãy chọn chế độ <b>"Phụ đề + Lồng tiếng AI"</b>.</p>
+                      </div>
+                      <button type="button" class="button secondary small-btn" id="switchToDubbingBtn">Bật lồng tiếng AI ➔</button>
+                    </div>
+
+                    <div class="voice-audio-sections">
+                      <div class="sub-cluster">
+                        <div class="sub-cluster-title">
+                          <span class="sub-cluster-icon">🗣️</span>
+                          <strong>Cấu hình giọng đọc AI</strong>
+                        </div>
+                        <div class="field-grid processing-grid">
+                          <label id="voiceModeField" class="field">
+                            <span>Chọn giọng</span>
+                            <select name="voice_mode">
+                              <option value="auto">Tự động theo cao độ</option>
+                              <option value="manual">Thủ công</option>
+                            </select>
+                          </label>
+                          <label id="voiceTypeField" class="field">
+                            <span>Giọng dự phòng</span>
+                            <select name="voice_type">
+                              <option value="female">Nữ</option>
+                              <option value="male">Nam</option>
+                            </select>
+                          </label>
+                          <label id="voiceStyleField" class="field">
+                            <span>Kiểu giọng đọc</span>
+                            <select name="voice_style">
+                              <option value="natural">Tự nhiên — cân bằng</option>
+                              <option value="warm">Ấm áp — chậm và trầm nhẹ</option>
+                              <option value="bright">Tươi sáng — cao và rõ</option>
+                              <option value="deep">Trầm — chắc và chậm vừa</option>
+                              <option value="energetic">Năng động — nhanh và sáng</option>
+                            </select>
+                          </label>
+                          <label id="speechRateField" class="field">
+                            <span>Tốc độ đọc</span>
+                            <input type="number" name="speech_rate" min="0.75" max="1.5" step="0.01" value="1" />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div class="sub-cluster">
+                        <div class="sub-cluster-title">
+                          <span class="sub-cluster-icon">🎛️</span>
+                          <strong>Bộ trộn âm thanh (Audio Mixer)</strong>
+                        </div>
+                        <div class="field-grid processing-grid">
+                          <label id="originalVolumeField" class="field">
+                            <span>Âm lượng tiếng gốc</span>
+                            <input type="number" name="original_audio_volume" min="0" max="1" step="0.01" value="0.18" />
+                          </label>
+                          <label id="musicVolumeField" class="field">
+                            <span>Âm lượng nhạc nền</span>
+                            <input type="number" name="music_volume" min="0" max="1" step="0.01" value="0.20" />
+                          </label>
+                          <label id="originalAudioField" class="field checkbox-field wide">
+                            <input type="checkbox" name="keep_original_audio" value="true" checked />
+                            <span>Giữ tiếng gốc ở mức nhỏ</span>
+                          </label>
+                          <label id="musicField" class="field wide is-hidden">
+                            <span>Nhạc nền dùng chung</span>
+                            <input type="file" name="background_music" accept="audio/*" />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <details class="advanced">
                   <summary>Thiết lập OCR nâng cao</summary>
                   <div class="field-grid details-body">
@@ -111,213 +397,800 @@
                 </details>
               </section>
 
-              <section class="card step-card">
-                <div class="step-heading"><span>3</span><div><h2>Vị trí và cỡ phụ đề</h2><p>Tự bám và che chữ nguồn khi OCR tìm được vị trí. Nếu chỉ nhận diện giọng nói, chữ đã có trên video vẫn còn.</p></div></div>
+              <!-- BƯỚC 3: VỊ TRÍ VÀ CỠ PHỤ ĐỀ -->
+              <section id="workflow-subtitle" class="card step-card subtitle-step-card">
+                <div class="step-heading">
+                  <span class="step-badge">3</span>
+                  <div>
+                    <h2>Vị trí và cỡ phụ đề</h2>
+                    <p>OCR sẽ bám và che chữ nguồn khi tìm được vị trí. Nếu chỉ nhận diện giọng nói, chữ sẵn trên video vẫn còn.</p>
+                  </div>
+                </div>
                 <div class="subtitle-editor">
-                  <div class="field-grid">
-                    <label class="field"><span>Cách đặt phụ đề</span><select id="placementMode"><option value="replace_original">Thay đúng vị trí chữ nguồn</option><option value="above_original">Đặt ngay trên chữ nguồn</option><option value="bottom_safe">Vùng an toàn phía dưới</option></select></label>
-                    <label class="field checkbox-field"><input id="matchSourceSize" type="checkbox" checked /><span>Khớp cỡ chữ trên video</span></label>
+                  <div class="field-grid subtitle-controls-grid">
+                    <label class="field wide">
+                      <span>Cách đặt phụ đề</span>
+                      <select id="placementMode">
+                        <option value="replace_original">Thay đúng vị trí chữ nguồn</option>
+                        <option value="above_original">Đặt ngay trên chữ nguồn</option>
+                        <option value="bottom_safe">Vùng an toàn phía dưới</option>
+                      </select>
+                    </label>
                     <label class="field"><span>Cỡ chữ nhỏ nhất</span><input id="minFontSize" type="number" min="8" max="100" value="22" /></label>
                     <label class="field"><span>Cỡ chữ lớn nhất</span><input id="maxFontSize" type="number" min="12" max="200" value="72" /></label>
-                    <label class="field"><span>Khoảng cách phía trên</span><input id="positionGap" type="number" min="0" max="300" value="14" /></label>
+                    <label class="field wide"><span>Khoảng cách phía trên</span><input id="positionGap" type="number" min="0" max="300" value="14" /></label>
+                    <label class="field checkbox-field"><input id="matchSourceSize" type="checkbox" checked /><span>Khớp cỡ chữ trên video</span></label>
                     <label class="field checkbox-field"><input id="maskOriginal" type="checkbox" checked /><span>Che chữ nguồn khi thay thế</span></label>
                   </div>
-                  <div class="subtitle-preview" aria-label="Minh họa vị trí phụ đề">
-                    <div class="preview-glow"></div><div class="preview-person"></div>
-                    <div id="previewVietnamese" class="preview-vietnamese">Tôi muốn trở thành phiên bản tốt nhất</div>
-                    <div id="previewChinese" class="preview-chinese">我愿意把自己变成什么样子</div>
+
+                  <div class="subtitle-preview-shell">
+                    <div class="subtitle-preview" aria-label="Minh họa vị trí phụ đề">
+                      <div class="preview-glow"></div>
+                      <div class="preview-person"></div>
+                      <div class="preview-badge-pill">16:9 Live Preview</div>
+                      <div id="previewVietnamese" class="preview-vietnamese">Tôi muốn trở thành phiên bản tốt nhất</div>
+                      <div id="previewChinese" class="preview-chinese">我愿意把自己变成什么样子</div>
+                    </div>
+                    <small>Minh họa vị trí trên khung 16:9</small>
                   </div>
                 </div>
               </section>
 
-              <section class="card step-card tiktok-setup-card">
-                <div class="step-heading"><span>4</span><div><h2>Chuẩn bị nội dung TikTok</h2><p>Tạo caption và hashtag để bạn duyệt cùng video sau khi xử lý.</p></div></div>
-                <div class="tiktok-flow" aria-label="Quy trình đăng TikTok">
-                  <div><span>01</span><strong>Tạo video</strong><small>Dịch và dựng hoàn chỉnh</small></div>
-                  <div><span>02</span><strong>Duyệt nội dung</strong><small>Xem video, sửa caption</small></div>
-                  <div><span>03</span><strong>Đăng trên TikTok</strong><small>Bạn kiểm tra và bấm Đăng</small></div>
+              <!-- BƯỚC 4: NỘI DUNG TIKTOK -->
+              <section id="workflow-publish" class="card step-card tiktok-setup-card publish-step-card">
+                <div class="step-heading">
+                  <span class="step-badge">4</span>
+                  <div>
+                    <h2>Chuẩn bị nội dung đăng</h2>
+                    <p>Caption và hashtag được gợi ý để bạn duyệt cùng video sau khi xử lý.</p>
+                  </div>
                 </div>
-                <div class="field-grid">
-                  <label class="field"><span>Gợi ý nội dung đăng</span><select id="generateTikTokPost" name="generate_tiktok_post"><option value="true">Tạo caption và hashtag</option><option value="false">Tôi sẽ tự viết</option></select></label>
+
+                <div class="tiktok-flow" aria-label="Quy trình đăng TikTok">
+                  <div class="tiktok-flow-item">
+                    <span class="tiktok-flow-num">1</span>
+                    <strong>Tạo video</strong>
+                    <small>Dịch và dựng</small>
+                  </div>
+                  <div class="tiktok-flow-arrow">➔</div>
+                  <div class="tiktok-flow-item">
+                    <span class="tiktok-flow-num">2</span>
+                    <strong>Duyệt nội dung</strong>
+                    <small>Sửa caption</small>
+                  </div>
+                  <div class="tiktok-flow-arrow">➔</div>
+                  <div class="tiktok-flow-item">
+                    <span class="tiktok-flow-num">3</span>
+                    <strong>Đăng TikTok</strong>
+                    <small>Bạn bấm Đăng</small>
+                  </div>
+                </div>
+
+                <div class="field-grid processing-grid">
+                  <label class="field">
+                    <span>Gợi ý nội dung đăng</span>
+                    <select id="generateTikTokPost" name="generate_tiktok_post">
+                      <option value="true">Tạo caption và hashtag</option>
+                      <option value="false">Tôi sẽ tự viết</option>
+                    </select>
+                  </label>
                   <label class="field"><span>Độ dài tóm tắt tối đa</span><input type="number" name="tiktok_max_summary_chars" min="80" max="1500" step="10" value="350" /></label>
                   <label class="field"><span>Số hashtag tối đa</span><input type="number" name="tiktok_hashtag_count" min="0" max="5" value="5" /></label>
                   <input type="hidden" name="auto_publish_tiktok" value="false" />
                 </div>
-                <div class="tiktok-connect-strip"><div><strong>TikTok Studio</strong><p id="tiktokSetupStatus">Đăng nhập trực tiếp bằng tài khoản TikTok của bạn.</p></div><a class="button secondary" href="#tiktok">Mở khu vực đăng →</a></div>
+
+                <div class="tiktok-connect-strip">
+                  <div class="tiktok-connect-left">
+                    <span class="tiktok-connect-icon">♪</span>
+                    <div>
+                      <strong>TikTok Studio</strong>
+                      <p id="tiktokSetupStatus">Đăng nhập trực tiếp bằng tài khoản TikTok của bạn.</p>
+                    </div>
+                  </div>
+                  <a class="button secondary small-btn" href="#tiktok">Mở khu vực đăng →</a>
+                </div>
                 <p class="fine-print">Sau khi video hoàn tất, chọn “Duyệt đăng” trong Tiến trình. Bắt đầu xử lý chỉ tạo video và nội dung gợi ý.</p>
               </section>
             </div>
 
+            <!-- ASIDE: TỔNG QUAN STICKY -->
             <aside class="workflow-sidebar">
               <section class="card sticky-card">
-                <span class="eyebrow">Tổng quan</span><h2>Sẵn sàng tạo batch</h2>
-                <dl class="summary-list"><div><dt>Số video</dt><dd id="fileCount">0</dd></div><div><dt>Chế độ</dt><dd id="modeSummary">Phụ đề</dd></div><div><dt>Ngôn ngữ</dt><dd id="languageSummary">Trung → Việt</dd></div><div><dt>Vị trí sub</dt><dd id="placementSummary">Thay chữ gốc</dd></div></dl>
+                <div class="summary-heading">
+                  <span class="summary-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </span>
+                  <div>
+                    <span class="eyebrow">TỔNG QUAN BATCH</span>
+                    <h2>Sẵn sàng tạo batch</h2>
+                  </div>
+                </div>
+
+                <dl class="summary-list">
+                  <div><dt>Số video</dt><dd><b id="fileCount" class="summary-count">0</b> video</dd></div>
+                  <div><dt>Chế độ</dt><dd id="modeSummary" class="summary-mode">Phụ đề</dd></div>
+                  <div><dt>Ngôn ngữ</dt><dd id="languageSummary">Trung → Việt</dd></div>
+                  <div><dt>Vị trí sub</dt><dd id="placementSummary">Thay chữ gốc</dd></div>
+                </dl>
+
                 <input id="subtitleStyle" type="hidden" name="subtitle_style" />
-                <button id="submitButton" class="button primary full" type="submit">Bắt đầu xử lý</button>
-                <div id="uploadProgress" class="upload-progress is-hidden"><div><span>Đang tải batch</span><strong id="uploadPercent">0%</strong></div><div class="progress-track"><span id="uploadFill"></span></div></div>
-                <p class="fine-print">Video tiếp tục chạy dưới nền khi bạn chuyển trang hoặc đóng trình duyệt.</p>
+
+                <button id="submitButton" class="button primary create-submit" type="submit">
+                  <span>Bắt đầu xử lý</span>
+                  <b>→</b>
+                </button>
+
+                <div id="uploadProgress" class="upload-progress is-hidden">
+                  <div class="upload-progress-info">
+                    <span>Đang tải batch</span>
+                    <strong id="uploadPercent">0%</strong>
+                  </div>
+                  <div class="progress-track"><span id="uploadFill"></span></div>
+                </div>
+
+                <p class="summary-assurance">
+                  <span class="assurance-icon">✓</span>
+                  <span>Video tiếp tục chạy dưới nền khi bạn chuyển trang hoặc đóng trình duyệt.</span>
+                </p>
               </section>
             </aside>
           </form>
         </section>
 
         <section id="jobsView" class="view is-hidden">
-          <div class="page-heading"><div><span class="eyebrow">Background jobs</span><h1>Quản lý tiến trình</h1><p>Theo dõi, hủy, chạy lại và tải kết quả của mọi video.</p></div><a class="button primary" href="#create">＋ Batch mới</a></div>
-          <div class="metric-grid"><article><span>Đang chờ / đặt lịch</span><strong id="queuedMetric">0</strong></article><article><span>Đang chạy</span><strong id="processingMetric">0</strong></article><article><span>Hoàn tất</span><strong id="completedMetric">0</strong></article><article><span>Cần chú ý</span><strong id="failedMetric">0</strong></article></div>
+          <div class="jobs-header">
+            <div class="jobs-header-copy">
+              <div class="jobs-eyebrow">
+                <span class="live-pulse-dot" aria-hidden="true"></span>
+                <span>Background Jobs · Thời gian thực</span>
+              </div>
+              <h1>Quản lý tiến trình</h1>
+              <p>Theo dõi tiến trình AI, tải video & tài nguyên, hoặc duyệt đăng trực tiếp lên kênh TikTok.</p>
+            </div>
+            <div class="jobs-header-actions">
+              <a class="button primary new-batch-btn" href="#create">
+                <span class="btn-icon">＋</span>
+                <span>Batch mới</span>
+              </a>
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card metric-queued">
+              <div class="metric-top">
+                <span class="metric-title">Đang chờ / Đặt lịch</span>
+                <span class="metric-badge queued-badge" aria-hidden="true">⏱</span>
+              </div>
+              <strong id="queuedMetric" class="metric-value">0</strong>
+              <small class="metric-desc">Trong hàng đợi xử lý</small>
+            </article>
+
+            <article class="metric-card metric-processing">
+              <div class="metric-top">
+                <span class="metric-title">Đang chạy</span>
+                <span class="metric-badge processing-badge" aria-hidden="true">⚡</span>
+              </div>
+              <strong id="processingMetric" class="metric-value">0</strong>
+              <small class="metric-desc">Dịch, lồng tiếng & ghép sub</small>
+            </article>
+
+            <article class="metric-card metric-completed">
+              <div class="metric-top">
+                <span class="metric-title">Hoàn tất</span>
+                <span class="metric-badge completed-badge" aria-hidden="true">✓</span>
+              </div>
+              <strong id="completedMetric" class="metric-value">0</strong>
+              <small class="metric-desc">Sẵn sàng xuất hoặc duyệt đăng</small>
+            </article>
+
+            <article class="metric-card metric-failed">
+              <div class="metric-top">
+                <span class="metric-title">Cần chú ý</span>
+                <span class="metric-badge failed-badge" aria-hidden="true">⚠</span>
+              </div>
+              <strong id="failedMetric" class="metric-value">0</strong>
+              <small class="metric-desc">Tiến trình lỗi hoặc đã hủy</small>
+            </article>
+          </div>
+
           <section class="card jobs-panel">
-            <div class="jobs-toolbar"><div class="search-box"><span>⌕</span><input id="jobSearch" type="search" placeholder="Tìm theo tên video..." /></div><select id="statusFilter" aria-label="Lọc trạng thái"><option value="">Tất cả trạng thái</option><option value="queued">Đang chờ</option><option value="scheduled">Đã đặt lịch</option><option value="processing">Đang chạy</option><option value="cancelling">Đang hủy</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã hủy</option></select><button id="refreshJobs" class="icon-button" type="button" title="Làm mới">↻</button></div>
+            <div class="jobs-toolbar">
+              <div class="search-box">
+                <span class="search-icon" aria-hidden="true">⌕</span>
+                <input id="jobSearch" type="search" placeholder="Tìm theo tên video, ID batch..." aria-label="Tìm kiếm video" />
+              </div>
+              <div class="filter-select-wrap">
+                <select id="statusFilter" aria-label="Lọc trạng thái">
+                  <option value="">Tất cả trạng thái</option>
+                  <option value="queued">Đang chờ</option>
+                  <option value="scheduled">Đã đặt lịch</option>
+                  <option value="processing">Đang chạy</option>
+                  <option value="cancelling">Đang hủy</option>
+                  <option value="completed">Hoàn tất</option>
+                  <option value="failed">Thất bại</option>
+                  <option value="cancelled">Đã hủy</option>
+                </select>
+              </div>
+              <button id="refreshJobs" class="icon-button refresh-btn" type="button" title="Làm mới danh sách tiến trình">
+                <span class="refresh-symbol" aria-hidden="true">↻</span>
+              </button>
+            </div>
+
             <div class="bulk-actions">
-              <label class="select-all"><input id="selectAllJobs" type="checkbox" /><span>Chọn tất cả</span></label>
-              <strong id="selectedJobsCount">Chưa chọn job</strong>
+              <div class="bulk-select-group">
+                <label class="select-all">
+                  <input id="selectAllJobs" type="checkbox" />
+                  <span>Chọn tất cả</span>
+                </label>
+                <span id="selectedJobsCount" class="selected-count-badge">Chưa chọn job</span>
+              </div>
               <div class="bulk-buttons">
                 <button id="bulkCancel" data-bulk-action="cancel" type="button" disabled>Hủy</button>
                 <button id="bulkRetry" data-bulk-action="retry" type="button" disabled>Chạy lại</button>
                 <button id="bulkDelete" data-bulk-action="delete" class="danger" type="button" disabled>Xóa</button>
               </div>
             </div>
-            <div id="jobsList" class="jobs-list"><div class="empty-state"><strong>Đang tải tiến trình…</strong></div></div>
+
+            <div class="jobs-table-header" aria-hidden="true">
+              <span class="col-head col-select"></span>
+              <span class="col-head col-video">Video & Nguồn</span>
+              <span class="col-head col-status">Trạng thái</span>
+              <span class="col-head col-progress">Tiến độ & Chi tiết</span>
+              <span class="col-head col-actions">Thao tác</span>
+            </div>
+
+            <div id="jobsList" class="jobs-list">
+              <div class="empty-state">
+                <div class="empty-icon">⏳</div>
+                <strong>Đang tải tiến trình…</strong>
+              </div>
+            </div>
           </section>
         </section>
 
         <section id="tiktokView" class="view is-hidden">
-          <div class="page-heading"><div><span class="eyebrow">TikTok Publishing</span><h1>Chuẩn bị bài đăng TikTok</h1><p>Duyệt video và caption, sau đó đăng ngay, đặt lịch hoặc gửi bản nháp.</p></div><a class="button secondary" href="#jobs">← Chọn từ Tiến trình</a></div>
-          <details class="tiktok-browser-fallback" open><summary>Kết nối TikTok API chính thức</summary>
-          <section class="card tiktok-account-bar">
-            <span class="tiktok-account-mark" aria-hidden="true">♪</span>
-            <div class="tiktok-account-copy"><strong>Kết nối TikTok chính thức</strong><p id="tiktokApiStatus" role="status">Đang kiểm tra kết nối…</p><select id="tiktokApiAccount" class="is-hidden" aria-label="Tài khoản TikTok dùng để đăng"></select></div>
-            <div class="tiktok-toolbar"><button id="tiktokApiConnect" class="button tiktok-button" type="button">Kết nối TikTok</button><button id="tiktokApiDisconnect" class="button secondary" type="button">Ngắt kết nối</button></div>
-          </section>
-          </details>
-          <section class="card tiktok-account-bar">
-            <span class="tiktok-account-mark" aria-hidden="true">♪</span>
-            <div class="tiktok-account-copy"><strong>TikTok Studio dự phòng</strong><p id="tiktokBrowserStatus" role="status">Đang kiểm tra trình duyệt…</p></div>
-            <div class="tiktok-toolbar"><button id="tiktokBrowserOpen" class="button tiktok-button" type="button">Mở / đăng nhập TikTok</button><button id="tiktokBrowserLoginQr" class="button secondary" type="button">Đổi sang QR</button><button id="tiktokBrowserCheck" class="button secondary" type="button">Kiểm tra phiên</button><button id="tiktokBrowserLogout" class="button secondary" type="button">Ngắt kết nối</button></div>
-          </section>
-          <p class="tiktok-consent">Nếu mã QR hết hạn hoặc đăng nhập không thành công, bấm <strong>Đổi sang QR</strong> để lấy mã mới.</p>
+          <div class="tiktok-header">
+            <div class="tiktok-header-copy">
+              <div class="tiktok-eyebrow">
+                <span class="tiktok-dot" aria-hidden="true">♪</span>
+                <span>TIKTOK PUBLISHING HUB · ĐĂNG BÀI CHUYÊN NGHIỆP</span>
+              </div>
+              <h1>Chuẩn bị bài đăng TikTok</h1>
+              <p>Duyệt video thành phẩm, tinh chỉnh caption & hashtag, sau đó đăng trực tiếp hoặc mở TikTok Studio.</p>
+            </div>
+            <div class="tiktok-header-actions">
+              <a class="button secondary back-to-jobs-btn" href="#jobs">
+                <span>←</span>
+                <span>Chọn từ Tiến trình</span>
+              </a>
+            </div>
+          </div>
+
+          <!-- Connection Hub (2 Channels) -->
+          <div class="tiktok-connection-hub">
+            <!-- Channel 1: Official API -->
+            <article class="card tiktok-channel-card channel-official">
+              <div class="channel-main">
+                <div class="channel-badge-wrap">
+                  <span class="tiktok-channel-icon" aria-hidden="true">♪</span>
+                </div>
+                <div class="channel-meta">
+                  <div class="channel-title-row">
+                    <strong>TikTok API Chính thức</strong>
+                    <span class="channel-pill pill-official">API OAuth2</span>
+                  </div>
+                  <p id="tiktokApiStatus" class="channel-status" role="status">Đang kiểm tra kết nối…</p>
+                  <select id="tiktokApiAccount" class="is-hidden select-account" aria-label="Tài khoản TikTok dùng để đăng"></select>
+                </div>
+              </div>
+              <div class="channel-actions">
+                <button id="tiktokApiConnect" class="button primary tiktok-btn" type="button">Kết nối TikTok</button>
+                <button id="tiktokApiDisconnect" class="button secondary small-btn" type="button">Ngắt kết nối</button>
+              </div>
+            </article>
+
+            <!-- Channel 2: Studio Fallback / QR -->
+            <article class="card tiktok-channel-card channel-studio">
+              <div class="channel-main">
+                <div class="channel-badge-wrap studio-badge-wrap">
+                  <span class="tiktok-channel-icon studio-icon" aria-hidden="true">🖥</span>
+                </div>
+                <div class="channel-meta">
+                  <div class="channel-title-row">
+                    <strong>TikTok Studio Dự phòng</strong>
+                    <span class="channel-pill pill-studio">Trình duyệt / QR</span>
+                  </div>
+                  <p id="tiktokBrowserStatus" class="channel-status" role="status">Đang kiểm tra trình duyệt…</p>
+                </div>
+              </div>
+              <div class="channel-actions">
+                <button id="tiktokBrowserOpen" class="button primary tiktok-btn" type="button">Mở / đăng nhập TikTok</button>
+                <button id="tiktokBrowserLoginQr" class="button secondary small-btn" type="button" title="Đổi sang mã QR đăng nhập">Đổi sang QR</button>
+                <button id="tiktokBrowserCheck" class="button secondary small-btn" type="button" title="Kiểm tra trạng thái phiên">Kiểm tra phiên</button>
+                <button id="tiktokBrowserLogout" class="button secondary small-btn" type="button" title="Đăng xuất phiên trình duyệt">Ngắt kết nối</button>
+              </div>
+            </article>
+          </div>
+
+          <!-- Helper tip strip -->
+          <div class="tiktok-tip-bar">
+            <span class="tip-icon" aria-hidden="true">💡</span>
+            <span>Nếu mã QR hết hạn hoặc đăng nhập chưa nhận phiên, bấm <strong>Đổi sang QR</strong> để làm mới mã. Phiên Chromium được lưu giữ tự động.</span>
+          </div>
+
+          <!-- 2-Column Workspace -->
           <div class="tiktok-workspace">
+            <!-- Column 1: Review & Draft -->
             <section class="card tiktok-review-card">
-              <div class="tiktok-section-title"><span>1</span><div><h2>Duyệt bài đăng</h2><p>Chọn video đã xử lý xong.</p></div></div>
-              <label class="field"><span>Video của bạn</span><select id="tiktokJobSelect"><option value="">Chọn video đã hoàn tất…</option></select></label>
-              <div id="tiktokDraftEmpty" class="tiktok-empty"><span aria-hidden="true">▷</span><strong>Video sẵn sàng, nội dung chỉn chu</strong><p>Chọn video ở trên hoặc bấm “Duyệt đăng” trong Tiến trình để bắt đầu.</p><a href="#jobs" class="button secondary">Xem video đã tạo</a></div>
+              <div class="workspace-card-heading">
+                <div class="step-badge">01</div>
+                <div>
+                  <h2>Duyệt bài đăng & Soạn Caption</h2>
+                  <p>Chọn video đã xử lý xong và tinh chỉnh nội dung trước khi xuất bản.</p>
+                </div>
+              </div>
+
+              <div class="field video-selector-field">
+                <label for="tiktokJobSelect" class="field-label-group">
+                  <span class="field-title">Video đã hoàn tất</span>
+                  <span class="field-hint">Chọn từ danh sách tiến trình</span>
+                </label>
+                <select id="tiktokJobSelect">
+                  <option value="">Chọn video đã hoàn tất…</option>
+                </select>
+              </div>
+
+              <div id="tiktokDraftEmpty" class="tiktok-empty">
+                <div class="empty-video-icon" aria-hidden="true">🎬</div>
+                <strong>Chưa chọn video để đăng</strong>
+                <p>Chọn một video đã xử lý ở trên hoặc bấm “Duyệt đăng” ngay trong danh sách Tiến trình để bắt đầu.</p>
+                <a href="#jobs" class="button secondary small-btn">Xem danh sách video đã tạo</a>
+              </div>
+
               <div id="tiktokDraftEditor" class="is-hidden">
-                <video id="tiktokVideoPreview" controls playsinline preload="metadata" aria-label="Xem trước video sẽ đăng"></video>
-                <p id="tiktokDraftName" class="tiktok-filename"></p>
-                <label class="field" for="tiktokCaption">Caption và hashtag</label>
-                <textarea id="tiktokCaption" rows="6" maxlength="2200" placeholder="Viết nội dung cho video của bạn…" aria-describedby="tiktokCaptionCount"></textarea>
-                <div class="tiktok-caption-meta"><button id="tiktokSuggestCaption" type="button" class="tiktok-text-button">✦ Gợi ý caption</button><button id="tiktokCopyCaption" type="button" class="tiktok-text-button">Sao chép caption</button><span id="tiktokCaptionCount">0 / 2.200</span></div>
-                <div id="tiktokCaptionSuggestion" class="tiktok-caption-suggestion is-hidden" aria-live="polite">
-                  <strong>Gợi ý từ bản dịch</strong><p id="tiktokCaptionSuggestionText"></p>
-                  <small>Đọc lại để bảo đảm đúng ý video trước khi sử dụng.</small>
-                  <div><button id="tiktokApplyCaption" type="button" class="button secondary">Dùng caption này</button><button id="tiktokDismissCaption" type="button" class="tiktok-text-button">Giữ bản hiện tại</button></div>
+                <div class="video-preview-wrapper">
+                  <video id="tiktokVideoPreview" controls playsinline preload="metadata" aria-label="Xem trước video sẽ đăng"></video>
+                  <p id="tiktokDraftName" class="tiktok-filename"></p>
                 </div>
+
+                <div class="caption-editor-section">
+                  <div class="caption-header-row">
+                    <label class="field-title" for="tiktokCaption">Caption và Hashtag</label>
+                    <span id="tiktokCaptionCount" class="char-count-pill">0 / 2.200</span>
+                  </div>
+                  <textarea id="tiktokCaption" rows="6" maxlength="2200" placeholder="Viết nội dung thu hút, thêm hashtag #viral #trend cho video của bạn…" aria-describedby="tiktokCaptionCount"></textarea>
+                  
+                  <div class="tiktok-caption-meta">
+                    <button id="tiktokSuggestCaption" type="button" class="ai-suggest-btn">
+                      <span class="sparkle-icon">✦</span> Gợi ý caption bằng AI
+                    </button>
+                    <button id="tiktokCopyCaption" type="button" class="copy-caption-btn">
+                      <span>📋</span> Sao chép caption
+                    </button>
+                  </div>
+
+                  <div id="tiktokCaptionSuggestion" class="tiktok-caption-suggestion is-hidden" aria-live="polite">
+                    <div class="suggestion-header">
+                      <span class="suggestion-icon">💡</span>
+                      <strong>Gợi ý từ bản dịch AI</strong>
+                    </div>
+                    <p id="tiktokCaptionSuggestionText"></p>
+                    <small>Đọc lại để bảo đảm chuẩn ý và đúng văn phong trước khi áp dụng.</small>
+                    <div class="suggestion-actions">
+                      <button id="tiktokApplyCaption" type="button" class="button primary small-btn">Dùng caption này</button>
+                      <button id="tiktokDismissCaption" type="button" class="button secondary small-btn">Giữ bản hiện tại</button>
+                    </div>
+                  </div>
+                </div>
+
                 <p id="tiktokPreviousAttempt" class="tiktok-notice is-hidden"></p>
+
                 <div class="tiktok-publish-controls">
-                  <label class="field"><span>Hình thức</span><select id="tiktokPublishMode"><option value="DIRECT_NOW">Đăng ngay</option><option value="SCHEDULE">Đặt lịch bằng VidTrans</option><option value="INBOX_DRAFT">Gửi bản nháp tới TikTok</option></select></label>
-                  <label id="tiktokPrivacyField" class="field"><span>Quyền riêng tư</span><select id="tiktokPrivacy"><option value="SELF_ONLY">Chỉ mình tôi</option><option value="MUTUAL_FOLLOW_FRIENDS">Bạn bè</option><option value="FOLLOWER_OF_CREATOR">Người theo dõi</option><option value="PUBLIC_TO_EVERYONE">Mọi người</option></select></label>
-                  <label id="tiktokScheduleField" class="field is-hidden"><span>Thời gian đăng</span><input id="tiktokScheduleAt" type="datetime-local" /></label>
+                  <label class="field">
+                    <span class="field-title">Hình thức đăng</span>
+                    <select id="tiktokPublishMode">
+                      <option value="DIRECT_NOW">Đăng ngay</option>
+                      <option value="SCHEDULE">Đặt lịch bằng VidTrans</option>
+                      <option value="INBOX_DRAFT">Gửi bản nháp tới TikTok</option>
+                    </select>
+                  </label>
+                  <label id="tiktokPrivacyField" class="field">
+                    <span class="field-title">Quyền riêng tư</span>
+                    <select id="tiktokPrivacy">
+                      <option value="SELF_ONLY">Chỉ mình tôi (Private)</option>
+                      <option value="MUTUAL_FOLLOW_FRIENDS">Bạn bè (Friends)</option>
+                      <option value="FOLLOWER_OF_CREATOR">Người theo dõi (Followers)</option>
+                      <option value="PUBLIC_TO_EVERYONE">Mọi người (Public)</option>
+                    </select>
+                  </label>
+                  <label id="tiktokScheduleField" class="field is-hidden">
+                    <span class="field-title">Thời gian đăng</span>
+                    <input id="tiktokScheduleAt" type="datetime-local" />
+                  </label>
                 </div>
-                <div id="tiktokPublishStatus" class="tiktok-publish-status is-hidden" role="status"><strong id="tiktokPublishStatusTitle"></strong><p id="tiktokPublishStatusMessage"></p><button id="tiktokCancelSchedule" class="button secondary is-hidden" type="button">Hủy lịch</button></div>
-                <label class="tiktok-check"><input id="tiktokReviewConsent" type="checkbox" /><span>Tôi đã xem video, duyệt caption và kiểm tra đúng tài khoản TikTok.</span></label>
-                <button id="tiktokOfficialPublish" class="button primary full" type="button" disabled>Đăng ngay qua TikTok API</button>
-                <button id="tiktokPrepareButton" class="button secondary full" type="button" disabled>Mở TikTok Studio dự phòng</button>
-                <p class="fine-print">VidTrans tự gắn file và điền caption, không mở hộp chọn file. Bạn chỉ cần kiểm tra quyền riêng tư rồi bấm Đăng.</p>
+
+                <div id="tiktokPublishStatus" class="tiktok-publish-status is-hidden" role="status">
+                  <strong id="tiktokPublishStatusTitle"></strong>
+                  <p id="tiktokPublishStatusMessage"></p>
+                  <button id="tiktokCancelSchedule" class="button secondary is-hidden" type="button">Hủy lịch</button>
+                </div>
+
+                <label class="tiktok-check">
+                  <input id="tiktokReviewConsent" type="checkbox" />
+                  <span>Tôi đã xem video, duyệt caption và xác nhận đúng tài khoản TikTok sẽ đăng.</span>
+                </label>
+
+                <div class="publish-cta-group">
+                  <button id="tiktokOfficialPublish" class="button primary full publish-official-btn" type="button" disabled>
+                    <span class="tiktok-note-symbol">♪</span>
+                    <span>Đăng ngay qua TikTok API</span>
+                  </button>
+                  <button id="tiktokPrepareButton" class="button secondary full publish-studio-btn" type="button" disabled>
+                    <span>Mở TikTok Studio dự phòng</span>
+                  </button>
+                </div>
+
+                <p class="fine-print">VidTrans tự động gắn file và điền caption vào trường nhập liệu. Bạn chỉ cần kiểm tra quyền riêng tư rồi bấm Đăng.</p>
               </div>
             </section>
+
+            <!-- Column 2: Studio / Interactive Stage -->
             <section class="card tiktok-studio-card">
-              <div class="tiktok-studio-heading"><div class="tiktok-section-title"><span>2</span><div><h2>Hoàn tất trên TikTok</h2><p>Kiểm tra video, quyền riêng tư và bấm Đăng.</p></div></div><a id="tiktokBrowserExternal" class="tiktok-text-button is-hidden" target="_blank" rel="noopener">Mở rộng ↗</a></div>
-              <div id="tiktokAttemptPanel" class="tiktok-attempt is-hidden" role="status"><strong id="tiktokAttemptTitle"></strong><p id="tiktokAttemptMessage"></p><button id="tiktokActiveDraft" class="tiktok-text-button" type="button">Xem nội dung đang chuẩn bị</button><div id="tiktokResolveControls" class="is-hidden"><label class="tiktok-check"><input id="tiktokResolveConsent" type="checkbox" /><span>Tôi đã kiểm tra video, caption, tài khoản và quyền riêng tư.</span></label><div class="tiktok-attempt-actions"><button id="tiktokPublishButton" type="button" class="button primary" disabled>Đăng bài ngay</button><button id="tiktokResolveButton" type="button" class="button secondary" disabled>Kết thúc không đăng</button></div></div></div>
-              <div class="tiktok-browser-stage"><div id="tiktokBrowserPlaceholder" class="tiktok-browser-placeholder"><span aria-hidden="true">♪</span><strong>Không gian TikTok của bạn</strong><p id="tiktokBrowserHelp">Bấm “Mở / đăng nhập TikTok” để bắt đầu.</p></div><iframe id="tiktokBrowserFrame" title="TikTok Studio — đăng nhập và hoàn tất bài đăng" class="is-hidden" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe></div>
-              <p class="tiktok-studio-footnote">Nếu TikTok yêu cầu QR, OTP hoặc CAPTCHA, hãy hoàn tất ngay trong trình duyệt này. Trạng thái tải lên chưa phải xác nhận bài đã đăng.</p>
+              <div class="workspace-card-heading studio-head">
+                <div class="step-badge step-studio">02</div>
+                <div class="studio-heading-text">
+                  <h2>Hoàn tất trên TikTok Studio</h2>
+                  <p>Tương tác trực tiếp trên trình duyệt ảo để xác nhận và đăng bài.</p>
+                </div>
+                <a id="tiktokBrowserExternal" class="button secondary small-btn external-browser-link is-hidden" target="_blank" rel="noopener">
+                  <span>Mở rộng</span> ↗
+                </a>
+              </div>
+
+              <div id="tiktokAttemptPanel" class="tiktok-attempt is-hidden" role="status">
+                <strong id="tiktokAttemptTitle"></strong>
+                <p id="tiktokAttemptMessage"></p>
+                <button id="tiktokActiveDraft" class="tiktok-text-button" type="button">Xem nội dung đang chuẩn bị</button>
+                <div id="tiktokResolveControls" class="is-hidden">
+                  <label class="tiktok-check">
+                    <input id="tiktokResolveConsent" type="checkbox" />
+                    <span>Tôi đã kiểm tra video, caption, tài khoản và quyền riêng tư.</span>
+                  </label>
+                  <div class="tiktok-attempt-actions">
+                    <button id="tiktokPublishButton" type="button" class="button primary" disabled>Đăng bài ngay</button>
+                    <button id="tiktokResolveButton" type="button" class="button secondary" disabled>Kết thúc không đăng</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Mock Browser Window Wrapper -->
+              <div class="browser-window-mock">
+                <div class="browser-window-bar">
+                  <div class="traffic-lights">
+                    <span class="light red"></span>
+                    <span class="light yellow"></span>
+                    <span class="light green"></span>
+                  </div>
+                  <div class="browser-address-bar">
+                    <span class="lock-icon">🔒</span>
+                    <span class="address-text">tiktok.com/creator-center/upload</span>
+                  </div>
+                  <div class="browser-bar-spacer"></div>
+                </div>
+
+                <div class="tiktok-browser-stage">
+                  <div id="tiktokBrowserPlaceholder" class="tiktok-browser-placeholder">
+                    <div class="placeholder-icon-wrap" aria-hidden="true">♪</div>
+                    <strong>Không gian TikTok Studio của bạn</strong>
+                    <p id="tiktokBrowserHelp">Bấm “Mở / đăng nhập TikTok” ở trên để khởi động trình duyệt ảo.</p>
+                  </div>
+                  <iframe id="tiktokBrowserFrame" title="TikTok Studio — đăng nhập và hoàn tất bài đăng" class="is-hidden" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe>
+                </div>
+              </div>
+
+              <p class="tiktok-studio-footnote">
+                <span class="footnote-shield">🛡️</span>
+                <span>Nếu TikTok yêu cầu QR, OTP hoặc CAPTCHA, hãy thao tác ngay trong khung trình duyệt này. Trạng thái tải lên chưa phải xác nhận bài đã đăng.</span>
+              </p>
             </section>
           </div>
         </section>
 
         <section id="douyinView" class="view is-hidden">
-          <div class="page-heading douyin-browser-heading">
-            <div>
-              <span class="eyebrow">Interactive browser</span>
+          <div class="douyin-header">
+            <div class="douyin-header-copy">
+              <div class="douyin-eyebrow">
+                <span class="live-pulse-dot" aria-hidden="true"></span>
+                <span>INTERACTIVE CLOUD BROWSER · PHIÊN CHROMIUM TRỰC TIẾP</span>
+              </div>
               <h1>Đăng nhập Douyin trong một tab</h1>
-              <p>Thao tác trực tiếp như trình duyệt thật: quét QR, nhập OTP lớp hai và bấm xác nhận ngay trên Douyin.</p>
+              <p>Thao tác trực tiếp như trình duyệt thật: quét mã QR, nhập OTP lớp hai và xác nhận phiên để tải video chất lượng gốc không watermark.</p>
             </div>
-            <a class="button secondary" href="#create">Quay lại tạo video</a>
+            <div class="douyin-header-actions">
+              <a class="button secondary back-to-create-btn" href="#create">
+                <span>←</span>
+                <span>Quay lại tạo video</span>
+              </a>
+            </div>
           </div>
+
           <section class="card douyin-browser-card">
             <div class="douyin-browser-topbar">
               <div class="douyin-browser-state">
                 <span id="douyinBrowserIndicator" class="browser-state-dot"></span>
-                <div><strong id="douyinBrowserStatus">Đang kết nối Chromium…</strong><small id="douyinBrowserHelp">Phiên trình duyệt được giữ lại khi container restart.</small></div>
+                <div>
+                  <strong id="douyinBrowserStatus">Đang kết nối Chromium…</strong>
+                  <small id="douyinBrowserHelp">Phiên trình duyệt được giữ lại khi container restart.</small>
+                </div>
               </div>
               <div class="douyin-browser-actions">
-                <button id="douyinBrowserSync" class="button primary" type="button">Đã đăng nhập — Đồng bộ</button>
-                <button id="douyinBrowserReload" class="button secondary" type="button">↻ Tải lại</button>
-                <button id="douyinBrowserLogout" class="button secondary" type="button">Đăng xuất</button>
+                <button id="douyinBrowserSync" class="button primary sync-btn" type="button">
+                  <span class="btn-icon">⟳</span>
+                  <span>Đã đăng nhập — Đồng bộ</span>
+                </button>
+                <button id="douyinBrowserReload" class="button secondary reload-btn" type="button" title="Tải lại trang web Douyin">
+                  <span>↻</span>
+                  <span>Tải lại</span>
+                </button>
+                <button id="douyinBrowserLogout" class="button secondary logout-btn" type="button" title="Đăng xuất phiên hiện tại và xóa cookie">
+                  <span>✕</span>
+                  <span>Đăng xuất</span>
+                </button>
               </div>
             </div>
-            <div class="douyin-browser-stage">
-              <div id="douyinBrowserLoading" class="douyin-browser-loading"><span></span><strong>Đang mở trình duyệt Douyin…</strong></div>
-              <iframe id="douyinBrowserFrame" title="Trình duyệt đăng nhập Douyin trực tiếp" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe>
+
+            <!-- Modern Browser Window Wrapper -->
+            <div class="douyin-window-mock">
+              <div class="douyin-window-bar">
+                <div class="traffic-lights">
+                  <span class="light red"></span>
+                  <span class="light yellow"></span>
+                  <span class="light green"></span>
+                </div>
+                <div class="browser-address-bar">
+                  <span class="lock-icon">🔒</span>
+                  <span class="address-text">https://www.douyin.com</span>
+                </div>
+                <div class="browser-status-chip">
+                  <span class="chip-dot">●</span>
+                  <span>Isolated Sandbox</span>
+                </div>
+              </div>
+
+              <div class="douyin-browser-stage">
+                <div id="douyinBrowserLoading" class="douyin-browser-loading">
+                  <span class="browser-spinner"></span>
+                  <strong>Đang mở trình duyệt Douyin…</strong>
+                  <small>Đang kết nối luồng hiển thị VNC thời gian thực</small>
+                </div>
+                <iframe id="douyinBrowserFrame" title="Trình duyệt đăng nhập Douyin trực tiếp" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe>
+              </div>
+            </div>
+
+            <div class="douyin-browser-footer">
+              <span class="footer-tip-icon" aria-hidden="true">💡</span>
+              <p>Mẹo: Quét mã QR bằng ứng dụng Douyin trên điện thoại hoặc đăng nhập bằng SĐT + SMS OTP. Sau khi màn hình Douyin hiện trang cá nhân, bấm <strong>Đã đăng nhập — Đồng bộ</strong> để hệ thống tự động lưu cookie tải video.</p>
             </div>
           </section>
         </section>
 
         <section id="adminView" class="view admin-view is-hidden">
-          <div class="page-heading admin-page-heading">
-            <div>
-              <span class="eyebrow">Admin workspace</span>
+          <div class="admin-header">
+            <div class="admin-header-copy">
+              <div class="admin-eyebrow">
+                <span class="live-pulse-dot" aria-hidden="true"></span>
+                <span>ADMIN WORKSPACE · QUẢN TRỊ TÀI KHOẢN & PHÂN QUYỀN</span>
+              </div>
               <h1>Quản trị người dùng</h1>
-              <p>Quản lý tài khoản, phân quyền truy cập, phê duyệt thành viên và trạng thái thanh toán.</p>
+              <p>Quản lý tài khoản thành viên, phân quyền vai trò, phê duyệt truy cập và kiểm soát trạng thái thanh toán hệ thống.</p>
             </div>
-            <button id="refreshAdminAccounts" class="button secondary admin-refresh" type="button"><span aria-hidden="true">↻</span> Làm mới</button>
+            <div class="admin-header-actions">
+              <button id="refreshAdminAccounts" class="button secondary admin-refresh-btn" type="button" title="Làm mới dữ liệu tài khoản">
+                <span class="refresh-symbol" aria-hidden="true">↻</span>
+                <span>Làm mới dữ liệu</span>
+              </button>
+            </div>
           </div>
+
           <section class="admin-metrics" aria-label="Thống kê tài khoản">
-            <article class="card admin-metric total"><div><span>Tổng tài khoản</span><strong id="adminTotalCount">0</strong></div><i aria-hidden="true">U</i></article>
-            <article class="card admin-metric approved"><div><span>Đã phê duyệt</span><strong id="adminApprovedCount">0</strong></div><i aria-hidden="true">✓</i></article>
-            <article class="card admin-metric pending"><div><span>Chờ phê duyệt</span><strong id="adminPendingCount">0</strong></div><i aria-hidden="true">◷</i></article>
-            <article class="card admin-metric danger"><div><span>Thanh toán cần xử lý</span><strong id="adminPaymentAttentionCount">0</strong></div><i aria-hidden="true">!</i></article>
+            <article class="card admin-metric total">
+              <div class="metric-info">
+                <span>Tổng tài khoản</span>
+                <strong id="adminTotalCount">0</strong>
+              </div>
+              <div class="admin-metric-icon" aria-hidden="true">👥</div>
+            </article>
+            <article class="card admin-metric approved">
+              <div class="metric-info">
+                <span>Đã phê duyệt</span>
+                <strong id="adminApprovedCount">0</strong>
+              </div>
+              <div class="admin-metric-icon" aria-hidden="true">✓</div>
+            </article>
+            <article class="card admin-metric pending">
+              <div class="metric-info">
+                <span>Chờ phê duyệt</span>
+                <strong id="adminPendingCount">0</strong>
+              </div>
+              <div class="admin-metric-icon" aria-hidden="true">⏳</div>
+            </article>
+            <article class="card admin-metric danger">
+              <div class="metric-info">
+                <span>Thanh toán cần xử lý</span>
+                <strong id="adminPaymentAttentionCount">0</strong>
+              </div>
+              <div class="admin-metric-icon" aria-hidden="true">⚠️</div>
+            </article>
           </section>
+
           <details class="card admin-create-panel">
-            <summary><span class="admin-summary-icon" aria-hidden="true">＋</span><span><strong>Thêm tài khoản mới</strong><small>Tạo thành viên và thiết lập quyền truy cập ban đầu</small></span><i aria-hidden="true">⌄</i></summary>
+            <summary>
+              <div class="summary-left">
+                <span class="admin-summary-icon" aria-hidden="true">＋</span>
+                <div>
+                  <strong>Thêm tài khoản mới</strong>
+                  <small>Tạo thành viên và thiết lập quyền truy cập ban đầu</small>
+                </div>
+              </div>
+              <span class="summary-toggle-pill">
+                <span>Mở biểu mẫu</span>
+                <i aria-hidden="true">⌄</i>
+              </span>
+            </summary>
             <form id="adminCreateAccountForm" class="admin-create-form">
-              <label><span>Email</span><input name="email" type="email" maxlength="254" required placeholder="user@example.com" /></label>
-              <label><span>Tên hiển thị</span><input name="display_name" maxlength="120" required placeholder="Nguyễn Văn A" /></label>
-              <label><span>Mật khẩu tạm</span><input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password" placeholder="Tối thiểu 12 ký tự" /></label>
-              <label><span>Vai trò</span><select name="role"><option value="viewer">Người xem</option><option value="editor">Biên tập viên</option><option value="admin">Quản trị viên</option></select></label>
-              <label><span>Gói dịch vụ</span><select name="plan"><option value="free">Free</option><option value="creator">Creator</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></label>
-              <button class="button primary" type="submit">Tạo tài khoản chờ duyệt</button>
+              <label>
+                <span>Email đăng nhập</span>
+                <input name="email" type="email" maxlength="254" required placeholder="user@example.com" />
+              </label>
+              <label>
+                <span>Tên hiển thị</span>
+                <input name="display_name" maxlength="120" required placeholder="Nguyễn Văn A" />
+              </label>
+              <label>
+                <span>Mật khẩu tạm</span>
+                <input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password" placeholder="Tối thiểu 12 ký tự" />
+              </label>
+              <label>
+                <span>Vai trò</span>
+                <select name="role">
+                  <option value="viewer">Người xem</option>
+                  <option value="editor">Biên tập viên</option>
+                  <option value="admin">Quản trị viên</option>
+                </select>
+              </label>
+              <label>
+                <span>Gói dịch vụ</span>
+                <select name="plan">
+                  <option value="free">Free</option>
+                  <option value="creator">Creator</option>
+                  <option value="pro">Pro</option>
+                  <option value="enterprise">Enterprise</option>
+                </select>
+              </label>
+              <button class="button primary admin-create-submit" type="submit">
+                <span>＋ Tạo tài khoản</span>
+              </button>
             </form>
           </details>
+
           <section class="card admin-accounts-panel">
             <div class="jobs-toolbar admin-account-toolbar">
-              <div class="admin-list-title"><strong>Danh sách người dùng</strong><small>Thay đổi chỉ được lưu khi bấm “Lưu”.</small></div>
-              <label class="admin-search"><span aria-hidden="true">⌕</span><input id="adminUserSearch" type="search" maxlength="120" placeholder="Tìm tên hoặc email" aria-label="Tìm người dùng" /></label>
-              <select id="adminApprovalFilter" aria-label="Lọc trạng thái phê duyệt">
-                <option value="">Tất cả phê duyệt</option><option value="pending">Chờ duyệt</option><option value="approved">Đã duyệt</option><option value="suspended">Tạm khóa</option><option value="rejected">Từ chối</option>
-              </select>
+              <div class="admin-list-title">
+                <strong>Danh sách người dùng</strong>
+                <small>Thay đổi vai trò và phân quyền chỉ được lưu khi bấm “Lưu”.</small>
+              </div>
+              <label class="admin-search">
+                <span aria-hidden="true">⌕</span>
+                <input id="adminUserSearch" type="search" maxlength="120" placeholder="Tìm theo tên hoặc email…" aria-label="Tìm người dùng" />
+              </label>
+              <div class="admin-filter-wrap">
+                <select id="adminApprovalFilter" aria-label="Lọc trạng thái phê duyệt">
+                  <option value="">Tất cả phê duyệt</option>
+                  <option value="pending">Chờ duyệt</option>
+                  <option value="approved">Đã duyệt</option>
+                  <option value="suspended">Tạm khóa</option>
+                  <option value="rejected">Từ chối</option>
+                </select>
+              </div>
             </div>
-            <div class="admin-account-head" aria-hidden="true"><span>Người dùng</span><span>Vai trò</span><span>Phê duyệt</span><span>Gói dịch vụ</span><span>Thanh toán</span><span></span></div>
-            <div id="adminAccountsList" class="admin-accounts-list"><div class="empty-state"><strong>Đang tải tài khoản…</strong></div></div>
+            <div class="admin-account-head" aria-hidden="true">
+              <span>Người dùng</span>
+              <span>Vai trò</span>
+              <span>Phê duyệt</span>
+              <span>Gói dịch vụ</span>
+              <span>Thanh toán</span>
+              <span class="col-action-title">Hành động</span>
+            </div>
+            <div id="adminAccountsList" class="admin-accounts-list">
+              <div class="empty-state"><strong>Đang tải tài khoản…</strong></div>
+            </div>
           </section>
         </section>
 
         <section id="billingView" class="view billing-view is-hidden">
-          <div class="page-heading billing-heading">
-            <div><span class="eyebrow">Billing & subscription</span><h1>Gói dịch vụ phù hợp với bạn</h1><p>Nâng cấp dung lượng xử lý và quản lý lịch sử thanh toán trong cùng một nơi.</p></div>
-            <div class="billing-current"><span>Gói hiện tại</span><strong id="billingCurrentPlan">—</strong><small id="billingPaymentStatus">Đang tải…</small></div>
+          <div class="billing-header">
+            <div class="billing-header-copy">
+              <div class="billing-eyebrow">
+                <span class="billing-sparkle" aria-hidden="true">✦</span>
+                <span>BILLING & SUBSCRIPTION · GÓI DỊCH VỤ & THANH TOÁN</span>
+              </div>
+              <h1>Gói dịch vụ phù hợp với bạn</h1>
+              <p>Nâng cấp dung lượng xử lý, mở rộng tính năng và quản lý lịch sử thanh toán minh bạch trong cùng một nơi.</p>
+            </div>
+            <div class="billing-current-card">
+              <div class="current-plan-header">
+                <span class="plan-status-dot" aria-hidden="true"></span>
+                <span class="current-plan-kicker">GÓI ĐANG KÍCH HOẠT</span>
+              </div>
+              <div class="current-plan-body">
+                <strong id="billingCurrentPlan">—</strong>
+                <span id="billingPaymentStatus" class="current-payment-badge">Đang tải…</span>
+              </div>
+            </div>
           </div>
+
           <div id="billingNotice" class="billing-notice is-hidden" role="status"></div>
-          <section id="billingPlans" class="billing-plans" aria-label="Các gói dịch vụ"><div class="empty-state"><strong>Đang tải bảng giá…</strong></div></section>
+
+          <section id="billingPlans" class="billing-plans" aria-label="Các gói dịch vụ">
+            <div class="empty-state"><strong>Đang tải bảng giá…</strong></div>
+          </section>
+
           <section class="card payment-checkout">
-            <div class="payment-checkout-copy"><span class="eyebrow">Thanh toán an toàn</span><h2>Chọn phương thức thanh toán</h2><p>Giao dịch chỉ được xác nhận sau khi VidTrans nhận kết quả hợp lệ từ nhà cung cấp hoặc được quản trị viên đối soát.</p></div>
+            <div class="payment-checkout-copy">
+              <span class="eyebrow-chip">THANH TOÁN AN TOÀN & TỰ ĐỘNG</span>
+              <h2>Chọn phương thức thanh toán</h2>
+              <p>Giao dịch chỉ được xác nhận sau khi VidTrans nhận kết quả hợp lệ từ nhà cung cấp hoặc được quản trị viên đối soát.</p>
+              <div class="checkout-guarantees">
+                <div class="guarantee-item">
+                  <span class="guarantee-icon" aria-hidden="true">⚡</span>
+                  <div>
+                    <strong>Kích hoạt tức thì</strong>
+                    <small>Hệ thống tự động mở khóa sau khi chuyển khoản thành công</small>
+                  </div>
+                </div>
+                <div class="guarantee-item">
+                  <span class="guarantee-icon" aria-hidden="true">🛡️</span>
+                  <div>
+                    <strong>Bảo mật giao dịch</strong>
+                    <small>Chuẩn mã hóa SSL và đối soát trực tiếp VietQR</small>
+                  </div>
+                </div>
+              </div>
+            </div>
             <form id="paymentForm" class="payment-form">
-              <label><span>Gói muốn nâng cấp</span><select id="paymentPlan" name="plan"><option value="creator">Creator</option><option value="pro">Pro</option></select></label>
-              <fieldset id="paymentProviders"><legend>Phương thức</legend></fieldset>
-              <button id="createPaymentButton" class="button primary" type="submit">Tạo yêu cầu thanh toán</button>
+              <label class="form-field-wrap">
+                <span>Gói muốn nâng cấp</span>
+                <select id="paymentPlan" name="plan">
+                  <option value="creator">Creator (300 phút/tháng)</option>
+                  <option value="pro">Pro (1000 phút/tháng)</option>
+                </select>
+              </label>
+              <fieldset id="paymentProviders" class="providers-fieldset">
+                <legend>Phương thức</legend>
+              </fieldset>
+              <button id="createPaymentButton" class="button primary checkout-submit-btn" type="submit">
+                <span class="btn-lock" aria-hidden="true">🔒</span>
+                <span>Tạo yêu cầu thanh toán</span>
+              </button>
             </form>
             <div id="paymentInstructions" class="payment-instructions is-hidden"></div>
           </section>
+
           <section class="card billing-history">
-            <div><h2>Lịch sử thanh toán</h2><p>Theo dõi trạng thái các yêu cầu gần đây.</p></div>
-            <div id="billingOrders" class="billing-orders"><div class="empty-state"><strong>Chưa có giao dịch</strong></div></div>
+            <div class="billing-history-header">
+              <div class="history-title-wrap">
+                <span class="history-icon" aria-hidden="true">🕒</span>
+                <div>
+                  <h2>Lịch sử thanh toán</h2>
+                  <p>Theo dõi trạng thái các yêu cầu thanh toán và hóa đơn gần đây.</p>
+                </div>
+              </div>
+            </div>
+            <div id="billingOrders" class="billing-orders">
+              <div class="empty-state"><strong>Chưa có giao dịch</strong></div>
+            </div>
           </section>
         </section>
       </main>
@@ -347,6 +1220,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261012-5"></script>
+    <script type="module" src="/js/app.js?v=20261012-10"></script>
   </body>
 </html>

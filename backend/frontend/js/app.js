@@ -398,12 +398,52 @@ function updateFormSummary() {
     "3": "Giống chế độ lồng tiếng, đồng thời lặp nhạc nền vừa đủ thời lượng và tự cân bằng âm lượng.",
   };
   $("#modeHint").textContent = hints[mode];
+  $$(".mode-card").forEach(card => {
+    const isSelected = card.dataset.modeCard === mode;
+    card.classList.toggle("is-selected", isSelected);
+    card.setAttribute("aria-checked", String(isSelected));
+  });
+  const voiceNotice = $("#mode1VoiceNotice");
+  if (voiceNotice) voiceNotice.classList.toggle("is-hidden", voiceEnabled);
+  const voiceCluster = $("#voiceAudioCluster");
+  if (voiceCluster) voiceCluster.classList.toggle("mode-sub-only", !voiceEnabled);
   $("#subtitleStyle").value = JSON.stringify(subtitleStyle());
   const preview = $(".subtitle-preview");
   preview.classList.remove("mode-replace", "mode-above", "mode-bottom");
   preview.classList.add(placement === "replace_original" ? "mode-replace" : placement === "above_original" ? "mode-above" : "mode-bottom");
   $("#previewVietnamese").style.fontSize = $("#matchSourceSize").checked ? "17px" : "21px";
 }
+
+function initWorkflowModeCards() {
+  $$(".mode-card").forEach(card => {
+    card.addEventListener("click", () => {
+      const targetMode = card.dataset.modeCard;
+      if (targetMode) {
+        $("#mode").value = targetMode;
+        updateFormSummary();
+      }
+    });
+  });
+  $("#switchToDubbingBtn")?.addEventListener("click", () => {
+    $("#mode").value = "2";
+    updateFormSummary();
+  });
+}
+
+function bindWorkflowStepNav() {
+  const links = $$(".workflow-steps-nav a");
+  const sections = links.map(link => $(link.getAttribute("href"))).filter(Boolean);
+  if (!sections.length) return;
+  const setActive = id => links.forEach(link => link.classList.toggle("is-active", link.getAttribute("href") === `#${id}`));
+  const observer = new IntersectionObserver(entries => {
+    const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    if (visible) setActive(visible.target.id);
+  }, { rootMargin: "-18% 0px -62% 0px", threshold: [0.15, 0.4, 0.7] });
+  sections.forEach(section => observer.observe(section));
+  links.forEach(link => link.addEventListener("click", () => setActive(link.getAttribute("href").slice(1))));
+}
+
+let activeView = null;
 
 function showView() {
   let view = location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : "create";
@@ -425,6 +465,10 @@ function showView() {
   if (view === "billing" && state.appStarted) loadBilling();
   $("#mainNavigation").classList.remove("open");
   $("#navToggle").setAttribute("aria-expanded", "false");
+  if (activeView !== view) {
+    activeView = view;
+    window.scrollTo(0, 0);
+  }
 }
 
 const billingLabels = {
@@ -440,20 +484,88 @@ function renderBilling(data) {
   const account = data.account;
   $("#billingCurrentPlan").textContent = String(account.plan || "free").toUpperCase();
   $("#billingPaymentStatus").textContent = billingLabels.payment[account.payment_status] || account.payment_status;
-  $("#billingPlans").innerHTML = data.plans.map(plan => `
-    <article class="card billing-plan ${plan.key === account.plan ? "current" : ""} ${plan.key === "pro" ? "featured" : ""}">
-      <div><span>${plan.key === account.plan ? "Gói hiện tại" : plan.key === "pro" ? "Phổ biến" : "VidTrans"}</span><h2>${escapeHtml(plan.name)}</h2><p>${plan.minutes == null ? "Thiết kế riêng theo nhu cầu đội nhóm" : `${plan.minutes} phút video mỗi tháng`}</p></div>
-      <strong>${money(plan.amount)}${plan.amount ? "<small>/tháng</small>" : ""}</strong>
-      <ul><li>✓ Xử lý video và phụ đề</li><li>✓ Lưu kết quả bảo mật</li><li>${plan.key === "free" ? "—" : "✓"} Hỗ trợ ưu tiên</li></ul>
-      ${plan.amount ? `<button class="button ${plan.key === "pro" ? "primary" : "secondary"}" type="button" data-select-plan="${plan.key}" ${plan.key === account.plan ? "disabled" : ""}>${plan.key === account.plan ? "Đang sử dụng" : "Chọn gói"}</button>` : `<a class="button secondary" href="mailto:support@vidtrans.local">Liên hệ tư vấn</a>`}
-    </article>`).join("");
-  $("#paymentProviders").innerHTML = `<legend>Phương thức</legend>${Object.entries(data.providers).map(([key, available]) => `
-    <label class="payment-method ${available ? "" : "disabled"}"><input type="radio" name="provider" value="${key}" ${key === "bank" && available ? "checked" : ""} ${available ? "" : "disabled"}/><span class="payment-logo">${key === "bank" ? "QR" : key === "momo" ? "M" : "Z"}</span><span><strong>${key === "bank" ? "Chuyển khoản ngân hàng" : key === "momo" ? "Ví MoMo" : "ZaloPay"}</strong><small>${escapeHtml(data.provider_notes[key])}</small></span>${available ? "" : "<i>Chưa khả dụng</i>"}</label>`).join("")}`;
+
+  const planBadges = {
+    free: { icon: "🌱", label: "Gói Khởi động" },
+    creator: { icon: "⚡", label: "Nhà sáng tạo" },
+    pro: { icon: "🚀", label: "Phổ biến nhất" },
+    enterprise: { icon: "🏢", label: "Doanh nghiệp" },
+  };
+
+  $("#billingPlans").innerHTML = data.plans.map(plan => {
+    const isCurrent = plan.key === account.plan;
+    const isFeatured = plan.key === "pro";
+    const badgeText = isCurrent ? "Gói hiện tại" : isFeatured ? "Phổ biến" : "VidTrans";
+    const planMeta = planBadges[plan.key] || { icon: "✦", label: "VidTrans" };
+
+    return `
+      <article class="card billing-plan ${isCurrent ? "current" : ""} ${isFeatured ? "featured" : ""}">
+        <div class="plan-card-header">
+          <div class="plan-badge-row">
+            <span class="plan-badge ${isCurrent ? "badge-current" : isFeatured ? "badge-featured" : "badge-standard"}">
+              ${isCurrent ? '<span class="status-pulse-dot" aria-hidden="true"></span>' : isFeatured ? '<span class="star-icon" aria-hidden="true">★</span>' : ""}
+              <span>${badgeText}</span>
+            </span>
+            <span class="plan-icon" aria-hidden="true">${planMeta.icon}</span>
+          </div>
+          <h2>${escapeHtml(plan.name)}</h2>
+          <p>${plan.minutes == null ? "Thiết kế riêng theo quy mô và khối lượng đội ngũ" : `<strong>${plan.minutes} phút</strong> video mỗi tháng`}</p>
+        </div>
+        <div class="plan-price-wrap">
+          <strong class="plan-price">${money(plan.amount)}${plan.amount ? "<small>/tháng</small>" : ""}</strong>
+        </div>
+        <ul class="plan-features">
+          <li><span class="feature-icon check">✓</span><span>Xử lý video đa luồng & phụ đề AI</span></li>
+          <li><span class="feature-icon check">✓</span><span>Lưu trữ kết quả đám mây an toàn</span></li>
+          <li>${plan.key === "free" ? '<span class="feature-icon dash">—</span><span class="feature-muted">Hỗ trợ ưu tiên 24/7</span>' : '<span class="feature-icon check">✓</span><span>Hỗ trợ ưu tiên chuyên sâu 24/7</span>'}</li>
+        </ul>
+        <div class="plan-card-action">
+          ${plan.amount ? `
+            <button class="button ${isFeatured ? "primary" : isCurrent ? "secondary current-plan-btn" : "secondary"}" type="button" data-select-plan="${plan.key}" ${isCurrent ? "disabled" : ""}>
+              ${isCurrent ? "✓ Đang kích hoạt" : "Chọn gói"}
+            </button>` : `
+            <a class="button secondary enterprise-btn" href="mailto:support@vidtrans.local">
+              <span>Liên hệ tư vấn</span>
+              <span>→</span>
+            </a>`}
+        </div>
+      </article>`;
+  }).join("");
+
+  $("#paymentProviders").innerHTML = `<legend>Phương thức thanh toán</legend><div class="payment-methods-grid">${Object.entries(data.providers).map(([key, available]) => `
+    <label class="payment-method ${available ? "" : "disabled"}">
+      <input type="radio" name="provider" value="${key}" ${key === "bank" && available ? "checked" : ""} ${available ? "" : "disabled"}/>
+      <span class="payment-logo payment-logo-${key}">
+        ${key === "bank" ? "🏦" : key === "momo" ? "M" : "Z"}
+      </span>
+      <span class="payment-meta">
+        <strong>${key === "bank" ? "Chuyển khoản Ngân hàng (VietQR)" : key === "momo" ? "Ví điện tử MoMo" : "Ví ZaloPay"}</strong>
+        <small>${escapeHtml(data.provider_notes[key])}</small>
+      </span>
+      ${available ? '<span class="method-check" aria-hidden="true">●</span>' : '<i class="method-unavailable">Chưa khả dụng</i>'}
+    </label>`).join("")}</div>`;
+
   renderBillingOrders(data.orders || []);
 }
 
 function renderBillingOrders(orders) {
-  $("#billingOrders").innerHTML = orders.length ? orders.map(order => `<article><span><strong>${escapeHtml(order.transfer_content)}</strong><small>${escapeHtml(new Date(order.created_at).toLocaleString("vi-VN"))}</small></span><span><b>${money(order.amount)}</b><em class="order-${order.status}">${billingLabels.order[order.status] || order.status}</em></span></article>`).join("") : '<div class="empty-state"><strong>Chưa có giao dịch</strong><span>Đơn thanh toán mới sẽ xuất hiện tại đây.</span></div>';
+  $("#billingOrders").innerHTML = orders.length ? orders.map(order => `
+    <article class="billing-order-item">
+      <div class="order-main">
+        <span class="order-icon" aria-hidden="true">🧾</span>
+        <div class="order-info">
+          <strong class="order-code">${escapeHtml(order.transfer_content)}</strong>
+          <small class="order-date">${escapeHtml(new Date(order.created_at).toLocaleString("vi-VN"))}</small>
+        </div>
+      </div>
+      <div class="order-amount-status">
+        <b class="order-amount">${money(order.amount)}</b>
+        <span class="order-status-badge order-${order.status}">
+          <span class="status-dot-mini" aria-hidden="true"></span>
+          <span>${billingLabels.order[order.status] || order.status}</span>
+        </span>
+      </div>
+    </article>`).join("") : '<div class="empty-state"><div><div class="empty-icon">💳</div><strong>Chưa có giao dịch</strong><br><small>Đơn thanh toán mới sẽ xuất hiện tại đây sau khi bạn tạo yêu cầu.</small></div></div>';
 }
 
 async function loadBilling() {
@@ -480,7 +592,30 @@ async function createPayment(event) {
       return;
     }
     const instructions = $("#paymentInstructions");
-    instructions.innerHTML = `<div class="bank-qr"><img src="${escapeHtml(order.bank.qr_url)}" alt="Mã QR chuyển khoản ${escapeHtml(order.bank.name)}" loading="eager"/><small>Mở ứng dụng ngân hàng và quét mã</small></div><div class="bank-transfer-detail"><span>Yêu cầu thanh toán đã tạo</span><h3>${money(order.amount)}</h3><dl><div><dt>Ngân hàng</dt><dd>${escapeHtml(order.bank.name)}</dd></div><div><dt>Số tài khoản</dt><dd>${escapeHtml(order.bank.account_no)}</dd></div><div><dt>Chủ tài khoản</dt><dd>${escapeHtml(order.bank.account_name)}</dd></div><div><dt>Nội dung bắt buộc</dt><dd>${escapeHtml(order.transfer_content)}</dd></div></dl><p>QR đã điền đúng số tiền và nội dung. Gói sẽ tự kích hoạt khi dịch vụ đối soát gửi xác nhận hợp lệ; quản trị viên vẫn có thể xác nhận thủ công.</p></div>`;
+    instructions.innerHTML = `
+      <div class="bank-qr-wrap">
+        <div class="bank-qr-frame">
+          <img src="${escapeHtml(order.bank.qr_url)}" alt="Mã QR chuyển khoản ${escapeHtml(order.bank.name)}" loading="eager"/>
+        </div>
+        <small class="bank-qr-caption">Quét mã bằng App ngân hàng bất kỳ (VietQR 24/7)</small>
+      </div>
+      <div class="bank-transfer-detail">
+        <div class="detail-kicker">
+          <span class="live-pulse-dot" aria-hidden="true"></span>
+          <span>Yêu cầu thanh toán đã tạo thành công</span>
+        </div>
+        <h3 class="transfer-total">${money(order.amount)}</h3>
+        <dl class="transfer-specs">
+          <div><dt>Ngân hàng thụ hưởng</dt><dd>${escapeHtml(order.bank.name)}</dd></div>
+          <div><dt>Số tài khoản</dt><dd class="copyable-value">${escapeHtml(order.bank.account_no)}</dd></div>
+          <div><dt>Tên chủ tài khoản</dt><dd>${escapeHtml(order.bank.account_name)}</dd></div>
+          <div><dt>Nội dung chuyển khoản (bắt buộc)</dt><dd class="copyable-value highlight-content">${escapeHtml(order.transfer_content)}</dd></div>
+        </dl>
+        <div class="transfer-note-box">
+          <span class="note-icon" aria-hidden="true">💡</span>
+          <p>Mã QR đã chứa đúng số tiền và cú pháp. Hệ thống đối soát tự động kích hoạt tài khoản ngay khi nhận tiền (thường từ 30s đến 2 phút).</p>
+        </div>
+      </div>`;
     instructions.classList.remove("is-hidden");
     toast("Đã tạo yêu cầu thanh toán");
     await loadBilling();
@@ -495,7 +630,13 @@ const adminLabels = {
 };
 
 function adminSelect(name, value, options, label, disabled = false) {
-  return `<label class="admin-account-field ${name === "approval_status" ? `status-${value}` : ""}"><span>${label}</span><select name="${name}" aria-label="${label}" ${disabled ? "disabled" : ""}>${options.map(([key, optionLabel]) => `<option value="${key}" ${key === value ? "selected" : ""}>${optionLabel}</option>`).join("")}</select></label>`;
+  const extraClass = name === "approval_status" ? ` status-${value}` : name === "role" ? ` role-${value}` : name === "plan" ? ` plan-${value}` : "";
+  return `<label class="admin-account-field field-${name}${extraClass}">
+    <span class="field-label-inline">${label}</span>
+    <select name="${name}" aria-label="${label}" ${disabled ? "disabled" : ""}>
+      ${options.map(([key, optionLabel]) => `<option value="${key}" ${key === value ? "selected" : ""}>${optionLabel}</option>`).join("")}
+    </select>
+  </label>`;
 }
 
 function renderAdminAccounts() {
@@ -506,7 +647,7 @@ function renderAdminAccounts() {
   $("#adminPaymentAttentionCount").textContent = summary.payment_attention || 0;
   const list = $("#adminAccountsList");
   if (!state.adminAccounts.length) {
-    list.innerHTML = '<div class="empty-state"><strong>Không có tài khoản phù hợp</strong></div>';
+    list.innerHTML = '<div class="empty-state"><div><div class="empty-icon">👥</div><strong>Không có tài khoản phù hợp</strong><br><small>Thử thay đổi bộ lọc phê duyệt hoặc từ khóa tìm kiếm.</small></div></div>';
     return;
   }
   const roles = Object.entries(adminLabels.role);
@@ -515,12 +656,26 @@ function renderAdminAccounts() {
   const plans = [["free", "Free"], ["creator", "Creator"], ["pro", "Pro"], ["enterprise", "Enterprise"]];
   list.innerHTML = state.adminAccounts.map(item => `
     <article class="admin-account-row" data-admin-account="${escapeHtml(item.user_id)}">
-      <div class="admin-account-user"><span class="admin-avatar" aria-hidden="true">${escapeHtml((item.display_name || item.email || "U").trim().charAt(0).toUpperCase())}</span><div><input name="display_name" maxlength="120" value="${escapeHtml(item.display_name)}" aria-label="Tên hiển thị" /><strong>${escapeHtml(item.email)}</strong><small>Tham gia ${escapeHtml(new Date(item.created_at).toLocaleDateString("vi-VN"))}</small></div></div>
+      <div class="admin-account-user">
+        <span class="admin-avatar avatar-${escapeHtml(item.role)}" aria-hidden="true">${escapeHtml((item.display_name || item.email || "U").trim().charAt(0).toUpperCase())}</span>
+        <div class="user-meta-stack">
+          <div class="name-edit-wrap">
+            <input name="display_name" maxlength="120" value="${escapeHtml(item.display_name)}" aria-label="Tên hiển thị" title="Bấm để chỉnh sửa tên hiển thị" />
+          </div>
+          <strong class="user-email" title="${escapeHtml(item.email)}">${escapeHtml(item.email)}</strong>
+          <small class="user-join-date">Tham gia ${escapeHtml(new Date(item.created_at).toLocaleDateString("vi-VN"))}</small>
+        </div>
+      </div>
       ${adminSelect("role", item.role, roles, "Vai trò", item.role === "owner")}
       ${adminSelect("approval_status", item.approval_status, approvals, "Phê duyệt", item.role === "owner")}
       ${adminSelect("plan", item.plan, plans, "Gói dịch vụ")}
       ${adminSelect("payment_status", item.payment_status, payments, "Thanh toán")}
-      <button class="button secondary" type="button" data-admin-save>Lưu</button>
+      <div class="admin-action-cell">
+        <button class="button secondary btn-admin-save" type="button" data-admin-save title="Lưu thay đổi tài khoản này">
+          <span class="save-icon" aria-hidden="true">✓</span>
+          <span>Lưu</span>
+        </button>
+      </div>
     </article>`).join("");
 }
 
@@ -679,17 +834,27 @@ function jobActions(job) {
   let downloads = "";
   if (job.video_url) {
     const videoName = job.output_video || `${job.job_id}.mp4`;
-    downloads += `<button type="button" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Chọn nơi lưu video">Video</button>`;
+    downloads += `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Tải video MP4 hoàn tất"><span class="btn-icon">⬇</span><span>Video</span></button>`;
   }
   if (job.download_all_url) {
     const zipName = `${job.job_id}.artifacts.zip`;
-    downloads += (downloads ? " " : "") + `<button type="button" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Chọn nơi lưu toàn bộ kết quả">ZIP</button>`;
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)"><span class="btn-icon">📦</span><span>ZIP</span></button>`;
   }
-  const cancel = ["queued", "scheduled", "processing", "cancelling"].includes(job.status) ? `<button data-action="cancel" data-job="${job.job_id}" title="Hủy">Hủy</button>` : "";
-  const retry = terminal ? `<button data-action="retry" data-job="${job.job_id}" title="Chạy lại">Chạy lại</button>` : "";
-  const remove = terminal ? `<button data-action="delete" data-job="${job.job_id}" title="Xóa">Xóa</button>` : "";
-  const refreshTikTok = job.tiktok_publish_id && !["PUBLISH_COMPLETE", "FAILED"].includes(job.tiktok_publish_status) ? `<button data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok">TikTok</button>` : "";
-  const review = job.status === "completed" && job.video_url ? `<button data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="tiktok-review-action">Duyệt đăng</button>` : "";
+  const cancel = ["queued", "scheduled", "processing", "cancelling"].includes(job.status)
+    ? `<button type="button" class="btn-job-action btn-cancel" data-action="cancel" data-job="${job.job_id}" title="Hủy tiến trình"><span class="btn-icon">✕</span><span>Hủy</span></button>`
+    : "";
+  const retry = terminal
+    ? `<button type="button" class="btn-job-action btn-retry" data-action="retry" data-job="${job.job_id}" title="Chạy lại video này"><span class="btn-icon">↺</span><span>Chạy lại</span></button>`
+    : "";
+  const remove = terminal
+    ? `<button type="button" class="btn-job-action btn-delete" data-action="delete" data-job="${job.job_id}" title="Xóa video và dữ liệu liên quan"><span class="btn-icon">🗑</span><span>Xóa</span></button>`
+    : "";
+  const refreshTikTok = job.tiktok_publish_id && !["PUBLISH_COMPLETE", "FAILED"].includes(job.tiktok_publish_status)
+    ? `<button type="button" class="btn-job-action" data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok"><span class="btn-icon">♪</span><span>TikTok</span></button>`
+    : "";
+  const review = job.status === "completed" && job.video_url
+    ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Duyệt bài và đăng video lên TikTok"><span class="btn-icon">♪</span><span>Duyệt đăng</span></button>`
+    : "";
   return review + downloads + refreshTikTok + cancel + retry + remove;
 }
 
@@ -706,7 +871,7 @@ function updateJobSelectionUI() {
   selectAll.checked = visibleIds.length > 0 && selectedVisible.length === visibleIds.length;
   selectAll.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleIds.length;
   selectAll.disabled = visibleIds.length === 0;
-  $("#selectedJobsCount").textContent = selectedVisible.length ? `Đã chọn ${selectedVisible.length} job` : "Chưa chọn job";
+  $("#selectedJobsCount").textContent = selectedVisible.length ? `Đã chọn ${selectedVisible.length} tiến trình` : "Chưa chọn job";
   const counts = {
     cancel: eligibleJobs("cancel").length,
     retry: eligibleJobs("retry").length,
@@ -730,12 +895,12 @@ function renderPendingUpload(upload) {
   const statusClass = active ? "processing" : "failed";
   const statusText = active ? (progress >= 100 ? "Đang tạo job" : "Đang upload") : upload.status === "cancelled" ? "Đã hủy" : "Upload lỗi";
   const action = active
-    ? `<button data-upload-cancel="${escapeHtml(upload.id)}" type="button">Hủy upload</button>`
-    : `<button data-upload-dismiss="${escapeHtml(upload.id)}" type="button">Ẩn</button>`;
+    ? `<button class="btn-job-action btn-cancel" data-upload-cancel="${escapeHtml(upload.id)}" type="button"><span class="btn-icon">✕</span><span>Hủy upload</span></button>`
+    : `<button class="btn-job-action" data-upload-dismiss="${escapeHtml(upload.id)}" type="button"><span>Ẩn</span></button>`;
   return `<article class="job-row upload-row" data-upload-row="${escapeHtml(upload.id)}">
     <span class="job-select upload-indicator" aria-hidden="true">↑</span>
-    <div class="job-file"><span class="job-file-icon">UP</span><div><strong title="${escapeHtml(sourceSummary)}">${escapeHtml(upload.batchName)}</strong><small>${escapeHtml(sourceSummary)}</small></div></div>
-    <span class="status-pill status-${statusClass}">${statusText}</span>
+    <div class="job-file"><span class="job-file-icon upload-icon">UP</span><div><strong title="${escapeHtml(sourceSummary)}">${escapeHtml(upload.batchName)}</strong><small>${escapeHtml(sourceSummary)}</small></div></div>
+    <span class="status-pill status-${statusClass}"><span class="status-dot"></span><span>${statusText}</span></span>
     <div class="job-progress"><div class="progress-track"><span style="width:${progress}%"></span></div><small>${progress}%</small></div>
     <div class="job-step"><strong>${progress >= 100 && active ? "Đang tạo tiến trình" : "Đang tải batch"}</strong><small title="${escapeHtml(upload.detail)}">${escapeHtml(upload.detail)}</small></div>
     <div class="job-actions">${action}</div>
@@ -745,7 +910,7 @@ function renderPendingUpload(upload) {
 function renderJobs(jobs) {
   const pendingHtml = state.pendingUploads.map(renderPendingUpload).join("");
   if (!jobs.length && !pendingHtml) {
-    $("#jobsList").innerHTML = '<div class="empty-state"><div><strong>Chưa có tiến trình phù hợp</strong><br><small>Tạo batch mới hoặc thay đổi bộ lọc.</small></div></div>';
+    $("#jobsList").innerHTML = '<div class="empty-state"><div><div class="empty-icon">📂</div><strong>Chưa có tiến trình phù hợp</strong><br><small>Tạo batch mới hoặc thay đổi bộ lọc trạng thái để xem video.</small></div></div>';
     updateJobSelectionUI();
     return;
   }
@@ -760,10 +925,19 @@ function renderJobs(jobs) {
       : job.tiktok_publish_status
         ? `TikTok: ${job.tiktok_publish_status}${job.tiktok_publish_title ? ` · ${job.tiktok_publish_title}` : ""}`
         : (job.error || job.step_detail || "");
+    const batchBadge = job.batch_id ? `<span class="batch-tag">${escapeHtml(job.batch_id)}</span>` : `<span class="single-tag">Video đơn</span>`;
     return `<article class="job-row${selected ? " selected" : ""}" data-job-row="${escapeHtml(job.job_id)}">
       <label class="job-select" title="Chọn job"><input type="checkbox" data-job-select="${escapeHtml(job.job_id)}" ${selected ? "checked" : ""} aria-label="Chọn ${escapeHtml(job.filename || job.job_id)}" /></label>
-      <div class="job-file"><span class="job-file-icon">VID</span><div><strong title="${escapeHtml(job.filename || job.job_id)}">${escapeHtml(job.filename || job.job_id)}</strong><small>${escapeHtml(job.batch_id || "Video đơn")}${queue}</small></div></div>
-      <span class="status-pill status-${escapeHtml(job.status)}">${statusLabels[job.status] || escapeHtml(job.status)}</span>
+      <div class="job-file">
+        <div class="job-file-icon video-icon-badge" aria-hidden="true">
+          <span class="play-triangle">▶</span>
+        </div>
+        <div class="job-file-meta">
+          <strong title="${escapeHtml(job.filename || job.job_id)}">${escapeHtml(job.filename || job.job_id)}</strong>
+          <small>${batchBadge}${queue}</small>
+        </div>
+      </div>
+      <span class="status-pill status-${escapeHtml(job.status)}"><span class="status-dot"></span><span>${statusLabels[job.status] || escapeHtml(job.status)}</span></span>
       <div class="job-progress"><div class="progress-track"><span style="width:${progress}%"></span></div><small>${progress}%</small></div>
       <div class="job-step"><strong>${escapeHtml(stepLabels[job.step] || job.step || "Đang cập nhật")}</strong><small title="${escapeHtml(detail)}">${escapeHtml(detail)}</small></div>
       <div class="job-actions">${jobActions(job)}</div>
@@ -778,15 +952,33 @@ function renderJobDashboard() {
   const counts = state.jobs.reduce((result, job) => ({ ...result, [job.status]: (result[job.status] || 0) + 1 }), {});
   const activeUploads = state.pendingUploads.filter(upload => upload.status === "uploading").length;
   const failedUploads = state.pendingUploads.filter(upload => upload.status !== "uploading").length;
-  $("#queuedMetric").textContent = (counts.queued || 0) + (counts.scheduled || 0);
-  $("#processingMetric").textContent = (counts.processing || 0) + (counts.cancelling || 0) + activeUploads;
-  $("#completedMetric").textContent = counts.completed || 0;
-  $("#failedMetric").textContent = (counts.failed || 0) + (counts.cancelled || 0) + failedUploads;
-  $("#runningBadge").textContent = String((counts.queued || 0) + (counts.scheduled || 0) + (counts.processing || 0) + (counts.cancelling || 0) + activeUploads);
+  const queuedCount = (counts.queued || 0) + (counts.scheduled || 0);
+  const processingCount = (counts.processing || 0) + (counts.cancelling || 0) + activeUploads;
+  const completedCount = counts.completed || 0;
+  const failedCount = (counts.failed || 0) + (counts.cancelled || 0) + failedUploads;
+
+  const queuedEl = $("#queuedMetric");
+  if (queuedEl) queuedEl.textContent = String(queuedCount);
+  const processingEl = $("#processingMetric");
+  if (processingEl) processingEl.textContent = String(processingCount);
+  const completedEl = $("#completedMetric");
+  if (completedEl) completedEl.textContent = String(completedCount);
+  const failedEl = $("#failedMetric");
+  if (failedEl) failedEl.textContent = String(failedCount);
+
+  const runningCount = queuedCount + processingCount;
+  const runningBadge = $("#runningBadge");
+  if (runningBadge) {
+    runningBadge.textContent = String(runningCount);
+    runningBadge.classList.toggle("has-active", runningCount > 0);
+    runningBadge.classList.toggle("is-zero", runningCount === 0);
+  }
 }
 
 async function loadJobs() {
   if (!state.appStarted) return;
+  const refreshButton = $("#refreshJobs");
+  if (refreshButton) refreshButton.classList.add("is-refreshing");
   const params = new URLSearchParams({ limit: "100" });
   const status = $("#statusFilter").value;
   const search = $("#jobSearch").value.trim();
@@ -803,6 +995,10 @@ async function loadJobs() {
     renderJobDashboard();
   } catch (error) {
     toast(error.message, true);
+  } finally {
+    if (refreshButton) {
+      setTimeout(() => refreshButton.classList.remove("is-refreshing"), 400);
+    }
   }
 }
 
@@ -1011,9 +1207,11 @@ window.addEventListener("beforeunload", event => {
   event.returnValue = "";
 });
 const tiktokWorkspace = createTikTokWorkspace({ requestJson, toast });
+initWorkflowModeCards();
 updateFormSummary();
 renderFiles();
 showView();
+bindWorkflowStepNav();
 const oauthParams = new URLSearchParams(location.search);
 if (oauthParams.get("tiktok") === "connected") toast("Đã kết nối tài khoản TikTok thành công");
 if (oauthParams.get("tiktok_error")) toast(oauthParams.get("tiktok_error"), true);
