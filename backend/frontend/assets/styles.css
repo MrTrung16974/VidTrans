@@ -92,6 +92,9 @@ a { color: inherit; text-decoration: none; }
 @keyframes popoverIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .user-menu-popover a, .user-menu-popover button { width: 100%; min-height: 38px; display: flex; align-items: center; border: 0; border-radius: 9px; padding: 8px 12px; color: #475467; background: transparent; font-size: .78rem; font-weight: 700; text-align: left; transition: all .15s; }
 .user-menu-popover a:hover, .user-menu-popover button:hover, .user-menu-popover a.active { color: var(--brand-dark); background: #fff7ed; }
+.user-menu-popover-header { padding: 8px 12px 10px; border-bottom: 1px solid #f1f5f9; margin-bottom: 4px; }
+.user-menu-popover-header strong { display: block; font-size: 0.82rem; font-weight: 750; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-menu-popover-header small { display: block; font-size: 0.68rem; color: #64748b; margin-top: 2px; }
 .auth-logout { min-height: 34px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 11px; color: #475467; background: rgba(255,255,255,.9); cursor: pointer; font-size: .74rem; font-weight: 800; }
 .auth-logout:hover { border-color: var(--brand); color: var(--brand-dark); }
 
@@ -857,12 +860,9 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media(max-width: 520px) {
-  .admin-metrics { grid-template-columns: 1fr; }
-  .admin-account-row { grid-template-columns: 1fr; }
+  .admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .admin-account-row { grid-template-columns: 1fr; margin: 8px 0; padding: 12px; }
 }
-
-.nav-toggle { display: none; width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 11px; background: #fff; cursor: pointer; }
-.nav-toggle span { display: block; width: 18px; height: 2px; margin: 4px auto; border-radius: 2px; background: var(--ink); }
 
 /* ========================================================
    BILLING & SUBSCRIPTIONS (#billingView) Modern SaaS Redesign
@@ -1316,8 +1316,32 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media(max-width: 768px) {
-  .user-menu-button strong, .user-menu-button small, .user-menu-chevron { display: none; }
-  .user-menu-button { padding: 4px; border-radius: 50%; }
+  .user-menu-copy,
+  .user-menu-chevron {
+    display: none !important;
+  }
+  .user-menu-button {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 50% !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+  }
+  .user-menu-button #userAvatar {
+    width: 36px !important;
+    height: 36px !important;
+    margin: 0 !important;
+    border-radius: 50% !important;
+    box-shadow: 0 2px 8px rgba(23, 107, 104, 0.28) !important;
+  }
   .payment-checkout { grid-template-columns: 1fr; }
   .payment-instructions { grid-column: auto; }
   .payment-instructions dl { grid-template-columns: 1fr 1fr; }
@@ -1371,14 +1395,653 @@ a { color: inherit; text-decoration: none; }
   .tiktok-publish-controls { grid-template-columns: 1fr; }
 }
 
-@media(max-width: 520px) {
-  .metric-grid { grid-template-columns: 1fr; }
-  .metric-value { font-size: 1.8rem; }
-  .bulk-actions { flex-direction: column; align-items: flex-start; gap: 10px; }
-  .bulk-buttons { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); }
-  .bulk-buttons button { text-align: center; }
-  .tiktok-browser-stage { height: 440px; }
-  .channel-actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
-  .channel-actions .tiktok-btn { grid-column: 1 / -1; }
+/* ========================================================
+   COMPREHENSIVE MOBILE RESPONSIVE SYSTEM (Phone Viewports <= 640px)
+   Covers: Jobs, Create, TikTok, Douyin, Billing, Admin & App Shell
+   ======================================================== */
+@media(max-width: 640px) {
+  /* 0. App Shell & Navigation */
+  .app-shell {
+    padding: 0 max(12px, env(safe-area-inset-right)) calc(54px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+  .topbar {
+    height: 60px;
+    padding: 0 2px;
+  }
+  .brand strong { font-size: 0.95rem; }
+  .brand small { display: none; }
+  .brand-mark { width: 30px; height: 30px; flex: 0 0 30px; }
+  .topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .system-state {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+  }
+  .system-state .system-text { display: none; }
+  .user-menu {
+    flex-shrink: 0;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .user-menu-copy,
+  .user-menu-chevron {
+    display: none !important;
+  }
+  .user-menu-button {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 50% !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+  }
+  .user-menu-button #userAvatar {
+    width: 36px !important;
+    height: 36px !important;
+    margin: 0 !important;
+    border-radius: 50% !important;
+    box-shadow: 0 2px 8px rgba(23, 107, 104, 0.3) !important;
+  }
+  .user-menu.open .user-menu-button #userAvatar {
+    box-shadow: 0 0 0 3px rgba(239, 107, 58, 0.35) !important;
+  }
+  .user-menu-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: -6px;
+    width: 220px;
+    border-radius: 16px;
+  }
+  .nav-toggle {
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #ffffff;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+    transition: all .16s ease;
+  }
+  .nav-toggle span {
+    display: block;
+    width: 16px;
+    height: 2px;
+    margin: 0 !important;
+    border-radius: 2px;
+    background: #334155;
+    transition: all .2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .nav-toggle[aria-expanded="true"] {
+    background: #fff7ed;
+    border-color: var(--brand);
+  }
+  .nav-toggle[aria-expanded="true"] span:nth-child(1) {
+    transform: translateY(6px) rotate(45deg);
+  }
+  .nav-toggle[aria-expanded="true"] span:nth-child(2) {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+  .nav-toggle[aria-expanded="true"] span:nth-child(3) {
+    transform: translateY(-6px) rotate(-45deg);
+  }
+  .nav-tabs {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 10px;
+    right: 10px;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 10px;
+    border-radius: 16px;
+  }
+  .nav-tabs a {
+    min-height: 44px;
+    height: 44px;
+    font-size: 0.86rem;
+    padding: 0 12px;
+    border-radius: 10px;
+  }
+  .page-heading {
+    padding: 22px 0 14px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .page-heading h1 {
+    font-size: clamp(1.6rem, 7.5vw, 2.1rem);
+    line-height: 1.15;
+    margin: 2px 0 6px;
+  }
+  .page-heading p {
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  /* 1. Jobs View (#jobsView) */
+  .jobs-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .jobs-header-actions { width: 100%; }
+  .new-batch-btn {
+    width: 100%;
+    justify-content: center;
+    min-height: 42px;
+    font-size: 0.86rem;
+    border-radius: 11px;
+  }
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .metric-card {
+    padding: 12px 14px;
+    border-radius: 14px;
+    min-height: 80px;
+  }
+  .metric-title { font-size: 0.72rem; }
+  .metric-value {
+    font-size: 1.55rem;
+    line-height: 1.1;
+    margin: 4px 0 2px;
+  }
+  .metric-desc { font-size: 0.68rem; line-height: 1.35; }
+  .metric-badge { width: 24px; height: 24px; font-size: 0.75rem; border-radius: 7px; }
+
+  .jobs-panel { border-radius: 16px; }
+  .jobs-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 42px;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .jobs-toolbar .search-box { grid-column: 1; }
+  .jobs-toolbar .search-box input {
+    min-height: 42px;
+    font-size: 0.82rem;
+    padding-left: 36px;
+  }
+  .jobs-toolbar .refresh-btn {
+    grid-column: 2;
+    width: 42px;
+    height: 42px;
+    min-height: 42px;
+  }
+  .jobs-toolbar .filter-select-wrap {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .jobs-toolbar .filter-select-wrap select {
+    min-height: 42px;
+    font-size: 0.82rem;
+    width: 100%;
+  }
+
+  .bulk-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .bulk-select-group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+  .bulk-buttons {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .bulk-buttons button {
+    min-height: 38px;
+    height: 38px;
+    padding: 0 4px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-align: center;
+    border-radius: 9px;
+  }
+
+  .job-row {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 8px 10px;
+    padding: 12px 12px;
+    border-radius: 14px;
+  }
+  .job-select {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    padding-top: 3px;
+    min-height: unset;
+  }
+  .job-file {
+    grid-column: 2;
+    grid-row: 1;
+    gap: 10px;
+    min-width: 0;
+    align-items: flex-start;
+  }
+  .video-icon-badge, .upload-icon {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    border-radius: 9px;
+  }
+  .job-file-meta { min-width: 0; flex: 1; }
+  .job-file-meta strong {
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1.35;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    word-break: break-word;
+  }
+  .status-pill {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: start;
+    font-size: 0.68rem;
+    padding: 2px 8px;
+    margin-top: -2px;
+  }
+  .job-progress {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin-top: 2px;
+  }
+  .job-step {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    display: block;
+    margin-top: 2px;
+  }
+  .job-step strong { font-size: 0.72rem; }
+  .job-step small { font-size: 0.68rem; }
+  .job-actions {
+    grid-column: 1 / -1;
+    grid-row: 5;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px dashed #e2e8f0;
+  }
+  .job-actions .tiktok-review-action {
+    flex: 1 0 100% !important;
+    min-height: 38px;
+    height: 38px;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 750;
+    border-radius: 9px;
+    background: #0f172a;
+    color: #ffffff;
+    border-color: #0f172a;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+  }
+  .job-actions .btn-job-action:not(.tiktok-review-action) {
+    flex: 1 1 calc(25% - 6px);
+    min-width: 0;
+    min-height: 34px;
+    height: 34px;
+    padding: 0 4px;
+    font-size: 0.72rem;
+    font-weight: 650;
+    justify-content: center;
+    border-radius: 8px;
+  }
+  .upload-row .job-actions button {
+    width: 100%;
+    flex: 1 0 100%;
+    min-height: 36px;
+  }
+
+  /* 2. Create View (#createView) */
+  .create-page-heading { padding: 20px 0 12px; }
+  .create-heading-actions { display: none; }
+  .workflow-steps-nav {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    margin: 0 0 16px;
+    padding: 6px;
+    border-radius: 14px;
+  }
+  .workflow-steps-nav a {
+    min-height: 44px;
+    padding: 6px 8px;
+    gap: 8px;
+    border-radius: 10px;
+  }
+  .workflow-steps-nav strong { font-size: 0.76rem; }
+  .workflow-steps-nav small { display: none; }
+  .step-nav-badge { width: 24px; height: 24px; flex: 0 0 24px; font-size: 0.7rem; border-radius: 7px; }
+
+  #createView .step-card { padding: 16px 14px; border-radius: 16px; }
+  .source-options-grid { grid-template-columns: 1fr; gap: 12px; }
+  .drop-zone { min-height: 140px; padding: 18px 12px; border-radius: 14px; }
+  .link-source-field {
+    grid-template-columns: 36px minmax(0, 1fr);
+    padding: 12px;
+    gap: 8px 10px;
+    border-radius: 14px;
+  }
+  .link-source-icon { width: 36px; height: 36px; font-size: 1rem; border-radius: 10px; }
+  .link-source-copy strong { font-size: 0.84rem; }
+  .link-source-copy small { font-size: 0.72rem; }
+  .cookie-source-field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .cookie-source-field input { width: 100%; max-width: 100%; }
+  .douyin-auth-card, .tiktok-auth-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px;
+    border-radius: 14px;
+  }
+  .douyin-auth-icon, .tiktok-auth-icon { width: 36px; height: 36px; font-size: 1rem; border-radius: 10px; }
+  .douyin-auth-actions, .tiktok-auth-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+  .douyin-auth-actions .button, .tiktok-auth-actions .button {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+  }
+  .mode-cards { grid-template-columns: 1fr; gap: 10px; }
+  .mode-card { padding: 14px; border-radius: 14px; }
+  .language-flow-card { grid-template-columns: 1fr; gap: 8px; padding: 12px; }
+  .language-flow-arrow { margin: 0 auto; transform: rotate(90deg); }
+  .recognition-grid { grid-template-columns: 1fr; gap: 10px; }
+  .processing-grid { grid-template-columns: 1fr; gap: 10px; }
+  .voice-audio-sections { grid-template-columns: 1fr; gap: 12px; }
+  .subtitle-editor { grid-template-columns: 1fr; gap: 14px; }
+  .subtitle-controls-grid { grid-template-columns: 1fr; gap: 10px; }
+  .subtitle-preview { aspect-ratio: 16 / 9; max-height: 220px; border-radius: 12px; }
+  .tiktok-flow { grid-template-columns: 1fr; gap: 8px; padding: 12px; border-radius: 14px; }
+  .tiktok-flow-arrow { display: none; }
+  .tiktok-connect-strip {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 12px;
+    border-radius: 13px;
+  }
+  .tiktok-connect-strip .button { width: 100%; min-height: 40px; justify-content: center; }
+  #createView .workflow-sidebar { order: 99; margin-top: 8px; }
+  #createView .sticky-card { position: static; border-radius: 16px; }
+  #createView .sticky-card .summary-list {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    padding: 8px 10px;
+    margin: 10px 12px;
+  }
+  #createView .sticky-card .summary-list div {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 4px 6px;
+    border: 0;
+  }
+  #createView .sticky-card .summary-list dt { font-size: 0.68rem; }
+  #createView .sticky-card .summary-list dd { font-size: 0.76rem; max-width: 100%; text-align: left; }
+  #createView .create-submit {
+    width: calc(100% - 24px) !important;
+    margin: 8px 12px 0 !important;
+    min-height: 48px;
+    border-radius: 12px;
+  }
+  #createView .summary-assurance {
+    width: calc(100% - 24px) !important;
+    margin: 10px 12px 14px !important;
+  }
+
+  /* 3. TikTok View (#tiktokView) */
+  .tiktok-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .tiktok-header-actions { width: 100%; }
+  .back-to-jobs-btn { width: 100%; justify-content: center; min-height: 40px; }
+  .tiktok-connection-hub { grid-template-columns: 1fr; gap: 12px; }
+  .tiktok-channel-card { padding: 16px; border-radius: 16px; }
+  .channel-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .channel-actions .tiktok-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 40px;
+  }
+  .channel-actions .button.small-btn {
+    min-height: 36px;
+    padding: 0 8px;
+    font-size: 0.74rem;
+    justify-content: center;
+  }
+  .tiktok-tip-bar { padding: 10px 12px; font-size: 0.72rem; border-radius: 12px; }
+  .tiktok-workspace { grid-template-columns: 1fr; gap: 16px; }
+  .tiktok-review-card, .tiktok-studio-card { padding: 16px; border-radius: 16px; }
+  #tiktokVideoPreview { height: 200px; border-radius: 10px; }
+  .tiktok-caption-meta {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .ai-suggest-btn, .copy-caption-btn { width: 100%; justify-content: center; min-height: 38px; }
+  .suggestion-actions { flex-direction: column; gap: 6px; }
+  .suggestion-actions button { width: 100%; min-height: 38px; justify-content: center; }
+  .tiktok-publish-controls { grid-template-columns: 1fr; gap: 10px; }
+  .publish-cta-group button { min-height: 44px; width: 100%; }
+  .browser-window-bar { padding: 8px 10px; gap: 8px; }
+  .traffic-lights { display: none; }
+  .browser-address-bar {
+    max-width: 100%;
+    width: 100%;
+    font-size: 0.68rem;
+    padding: 4px 8px;
+  }
+  .browser-bar-spacer { display: none; }
+  .tiktok-browser-stage { height: 380px; min-height: 320px; }
+  .tiktok-studio-footnote { font-size: 0.7rem; padding: 4px 0; }
+
+  /* 4. Douyin View (#douyinView) */
+  .douyin-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .douyin-header-actions { width: 100%; }
+  .back-to-create-btn { width: 100%; justify-content: center; min-height: 40px; }
+  .douyin-browser-card { border-radius: 16px; }
+  .douyin-browser-topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px;
+  }
+  .douyin-browser-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+  .douyin-browser-actions .sync-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 42px;
+    justify-content: center;
+  }
+  .douyin-browser-actions .reload-btn, .douyin-browser-actions .logout-btn {
+    min-height: 38px;
+    justify-content: center;
+  }
+  .douyin-window-bar { padding: 8px 10px; gap: 8px; }
+  .traffic-lights { display: none; }
+  .browser-status-chip { display: none; }
+  .browser-address-bar {
+    max-width: 100%;
+    width: 100%;
+    font-size: 0.68rem;
+    padding: 4px 8px;
+  }
+  .douyin-browser-stage { height: 52vh; min-height: 360px; }
+  .douyin-browser-footer { padding: 12px 14px; font-size: 0.74rem; }
+
+  /* 5. Admin View (#adminView) */
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .admin-header-actions { width: 100%; }
+  .admin-refresh-btn { width: 100%; justify-content: center; min-height: 40px; }
+  .admin-metrics {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px;
+  }
+  .admin-metric {
+    padding: 12px 14px;
+    min-height: 80px;
+    border-radius: 14px;
+  }
+  .metric-info strong { font-size: 1.55rem; }
+  .admin-metric-icon { width: 36px; height: 36px; font-size: 1.05rem; border-radius: 10px; }
+  .admin-create-panel summary { padding: 12px 14px; min-height: 56px; }
+  .admin-create-form { grid-template-columns: 1fr; gap: 10px; padding: 14px; }
+  .admin-create-submit { width: 100%; min-height: 42px; justify-content: center; }
+  .admin-account-toolbar { grid-template-columns: 1fr; gap: 10px; padding: 14px; }
+  .admin-account-head { display: none; }
+  .admin-account-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 14px;
+    margin: 8px 0;
+    border: 1px solid #e2e8f0;
+  }
+  .admin-account-field {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .field-label-inline {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 750;
+    color: #64748b;
+    text-transform: uppercase;
+  }
+  .admin-action-cell { width: 100%; margin-top: 4px; }
+  .btn-admin-save { width: 100%; min-height: 42px; justify-content: center; }
+
+  /* 6. Billing View (#billingView) */
+  .billing-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .billing-current-card {
+    width: 100%;
+    min-width: 0;
+    padding: 14px 16px;
+    border-radius: 14px;
+  }
+  .billing-plans { grid-template-columns: 1fr; gap: 16px; }
+  .billing-plan { padding: 20px 18px; border-radius: 18px; }
+  .payment-checkout { grid-template-columns: 1fr; gap: 20px; padding: 18px 16px; border-radius: 18px; }
+  .payment-method { padding: 10px 12px; min-height: 56px; border-radius: 12px; }
+  .payment-logo { width: 36px; height: 36px; font-size: 1rem; }
+  .payment-instructions {
+    grid-template-columns: 1fr;
+    gap: 20px;
+    padding: 18px 16px;
+    border-radius: 16px;
+    text-align: center;
+  }
+  .bank-qr-frame { width: 180px; margin: 0 auto; }
+  .transfer-specs { grid-template-columns: 1fr; gap: 8px; }
+  .transfer-specs div { padding: 10px 12px; text-align: left; }
+  .transfer-total { font-size: 1.6rem; text-align: center; }
+  .billing-order-item { flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 14px; }
+  .order-amount-status { width: 100%; justify-content: space-between; }
 }
+
+/* ========================================================
+   ULTRA-COMPACT SCREENS (Phone Viewports <= 380px)
+   iPhone SE, Galaxy A0x, small Android screens
+   ======================================================== */
+@media(max-width: 380px) {
+  .app-shell {
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+  .job-actions .btn-job-action:not(.tiktok-review-action) {
+    flex: 1 1 calc(50% - 6px);
+  }
+  .metric-grid { gap: 6px; }
+  .metric-card { padding: 10px 12px; }
+  .metric-value { font-size: 1.35rem; }
+  .admin-metrics { gap: 6px; }
+  .admin-metric { padding: 10px 12px; }
+  .admin-metric strong { font-size: 1.35rem; }
+  .workflow-steps-nav a { padding: 5px 6px; gap: 6px; }
+  .workflow-steps-nav strong { font-size: 0.72rem; }
+}
+
 

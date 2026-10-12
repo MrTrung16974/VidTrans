@@ -127,6 +127,10 @@ function applyPermissions() {
   $$('[data-min-role="editor"]').forEach(element => element.classList.toggle("is-hidden", role === "viewer"));
   $("#userMenuName").textContent = state.auth.username || "Tài khoản";
   $("#userMenuRole").textContent = roleLabel(role);
+  const popoverName = $("#userPopoverName");
+  if (popoverName) popoverName.textContent = state.auth.username || "Tài khoản";
+  const popoverRole = $("#userPopoverRole");
+  if (popoverRole) popoverRole.textContent = roleLabel(role);
   $("#userAvatar").textContent = (state.auth.username || "U").charAt(0).toUpperCase();
   $("#appLogoutButton").classList.toggle("is-hidden", !state.auth.enabled);
   $("#userMenu").classList.remove("is-hidden");
@@ -1091,10 +1095,14 @@ $("#appLogoutButton").addEventListener("click", async () => {
   }
 });
 $("#navToggle").addEventListener("click", () => {
+  $("#userMenu").classList.remove("open");
+  $("#userMenuButton").setAttribute("aria-expanded", "false");
   const open = $("#mainNavigation").classList.toggle("open");
   $("#navToggle").setAttribute("aria-expanded", String(open));
 });
 $("#userMenuButton").addEventListener("click", () => {
+  $("#mainNavigation").classList.remove("open");
+  $("#navToggle").setAttribute("aria-expanded", "false");
   const open = $("#userMenu").classList.toggle("open");
   $("#userMenuButton").setAttribute("aria-expanded", String(open));
 });
@@ -1103,7 +1111,7 @@ document.addEventListener("click", event => {
     $("#userMenu").classList.remove("open");
     $("#userMenuButton").setAttribute("aria-expanded", "false");
   }
-  if (!$("#mainNavigation").contains(event.target) && !$("#navToggle").contains(event.target)) {
+  if (event.target.closest("#mainNavigation a") || (!$("#mainNavigation").contains(event.target) && !$("#navToggle").contains(event.target))) {
     $("#mainNavigation").classList.remove("open");
     $("#navToggle").setAttribute("aria-expanded", "false");
   }

@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261012-21" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261012-23" />
   </head>
   <body>
     <div class="app-shell">
@@ -33,6 +33,10 @@
           <div id="userMenu" class="user-menu is-hidden">
             <button id="userMenuButton" class="user-menu-button" type="button" aria-expanded="false"><span id="userAvatar">A</span><span class="user-menu-copy"><strong id="userMenuName">Tài khoản</strong><small id="userMenuRole">Quản trị viên</small></span><i aria-hidden="true" class="user-menu-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></i></button>
             <div class="user-menu-popover">
+              <div class="user-menu-popover-header">
+                <strong id="userPopoverName">Tài khoản</strong>
+                <small id="userPopoverRole">Quản trị viên</small>
+              </div>
               <a href="#billing" data-view-link="billing">Gói dịch vụ & thanh toán</a>
               <button id="appLogoutButton" class="auth-logout" type="button">Đăng xuất</button>
             </div>
@@ -1232,6 +1236,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261012-12"></script>
+    <script type="module" src="/js/app.js?v=20261012-13"></script>
   </body>
 </html>
