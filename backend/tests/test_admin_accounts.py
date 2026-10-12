@@ -36,6 +36,16 @@ class AdminAccountStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(AdminAccountError, "Email đã tồn tại"):
             self.store.create(email="CREATOR@example.com", display_name="Trùng")
 
+    def test_password_hash_is_stored_but_can_be_set_without_affecting_public_fields(self) -> None:
+        account = self.store.create(
+            email="viewer@example.com", display_name="Viewer", password_hash="synthetic-hash"
+        )
+        stored = self.store.get_by_email("VIEWER@example.com")
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["password_hash"], "synthetic-hash")
+        self.store.set_password_hash(account["user_id"], "new-synthetic-hash")
+        self.assertEqual(self.store.get(account["user_id"])["password_hash"], "new-synthetic-hash")
+
     def test_updates_access_approval_plan_and_payment_state(self) -> None:
         account = self.store.create(email="user@example.com", display_name="User")
         updated = self.store.update(

@@ -8,7 +8,8 @@ const state = {
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false,
   adminAccounts: [], adminAccountSummary: null, adminSearchTimer: null,
-  auth: { enabled: false, configured: false, authenticated: false, username: null },
+  billing: null,
+  auth: { enabled: false, configured: false, authenticated: false, username: null, role: "owner", user_id: null },
 };
 const stepLabels = {
   queued: "Đang xếp hàng", starting: "Đang khởi động", "downloading-source": "Đang tải video nguồn",
@@ -72,7 +73,7 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   state.douyinBrowserPollTimer = null;
   state.appStarted = false;
   state.auth.authenticated = false;
-  $("#appLogoutButton").classList.add("is-hidden");
+  $("#userMenu").classList.add("is-hidden");
   $("#authGate").classList.remove("is-hidden");
   const authMessage = $("#authMessage");
   authMessage.textContent = message;
@@ -90,10 +91,14 @@ async function requestJson(url, options = {}) {
 
 async function refreshApplicationAuth() {
   const status = await requestJson("/api/v1/auth/status");
+  if (!status.enabled) {
+    const account = await requestJson("/api/v1/me");
+    Object.assign(status, { authenticated: true, username: account.email, role: account.role, user_id: account.user_id });
+  }
   state.auth = status;
   if (!status.enabled) {
     $("#authGate").classList.add("is-hidden");
-    $("#appLogoutButton").classList.add("is-hidden");
+    applyPermissions();
     return true;
   }
   if (!status.configured) {
@@ -108,10 +113,23 @@ async function refreshApplicationAuth() {
     return false;
   }
   $("#authGate").classList.add("is-hidden");
-  const logout = $("#appLogoutButton");
-  logout.textContent = `${status.username} · Đăng xuất`;
-  logout.classList.remove("is-hidden");
+  applyPermissions();
   return true;
+}
+
+function roleLabel(role) {
+  return ({ owner: "Chủ sở hữu", admin: "Quản trị viên", editor: "Biên tập viên", viewer: "Người xem" })[role] || "Thành viên";
+}
+
+function applyPermissions() {
+  const role = state.auth.role || "viewer";
+  $$('[data-admin-only]').forEach(element => element.classList.toggle("is-hidden", !["owner", "admin"].includes(role)));
+  $$('[data-min-role="editor"]').forEach(element => element.classList.toggle("is-hidden", role === "viewer"));
+  $("#userMenuName").textContent = state.auth.username || "Tài khoản";
+  $("#userMenuRole").textContent = roleLabel(role);
+  $("#userAvatar").textContent = (state.auth.username || "U").charAt(0).toUpperCase();
+  $("#appLogoutButton").classList.toggle("is-hidden", !state.auth.enabled);
+  $("#userMenu").classList.remove("is-hidden");
 }
 
 async function startProtectedApplication() {
@@ -123,6 +141,7 @@ async function startProtectedApplication() {
   if (location.hash === "#douyin") startDouyinBrowserPolling();
   if (location.hash === "#tiktok") tiktokWorkspace.enter();
   if (location.hash === "#admin") loadAdminAccounts();
+  if (location.hash === "#billing") loadBilling();
 }
 
 async function bootstrapApplication() {
@@ -387,7 +406,9 @@ function updateFormSummary() {
 }
 
 function showView() {
-  const view = location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : "create";
+  let view = location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : "create";
+  if (view === "admin" && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
+  if (["tiktok", "douyin"].includes(view) && state.auth.role === "viewer") view = "jobs";
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
   $("#tiktokView").classList.toggle("is-hidden", view !== "tiktok");
@@ -395,11 +416,76 @@ function showView() {
   else tiktokWorkspace.leave();
   $("#douyinView").classList.toggle("is-hidden", view !== "douyin");
   $("#adminView").classList.toggle("is-hidden", view !== "admin");
+  $("#billingView").classList.toggle("is-hidden", view !== "billing");
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
   if (view === "jobs" && state.appStarted) loadJobs();
   if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
   else stopDouyinBrowserPolling();
   if (view === "admin" && state.appStarted) loadAdminAccounts();
+  if (view === "billing" && state.appStarted) loadBilling();
+  $("#mainNavigation").classList.remove("open");
+  $("#navToggle").setAttribute("aria-expanded", "false");
+}
+
+const billingLabels = {
+  payment: { trial: "Đang dùng thử", active: "Đang hoạt động", past_due: "Cần thanh toán", cancelled: "Đã hủy", exempt: "Miễn thanh toán" },
+  order: { pending: "Chờ thanh toán", paid: "Đã thanh toán", failed: "Thất bại", expired: "Hết hạn", cancelled: "Đã hủy" },
+};
+
+function money(value) {
+  return value == null ? "Liên hệ" : new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value);
+}
+
+function renderBilling(data) {
+  const account = data.account;
+  $("#billingCurrentPlan").textContent = String(account.plan || "free").toUpperCase();
+  $("#billingPaymentStatus").textContent = billingLabels.payment[account.payment_status] || account.payment_status;
+  $("#billingPlans").innerHTML = data.plans.map(plan => `
+    <article class="card billing-plan ${plan.key === account.plan ? "current" : ""} ${plan.key === "pro" ? "featured" : ""}">
+      <div><span>${plan.key === account.plan ? "Gói hiện tại" : plan.key === "pro" ? "Phổ biến" : "VidTrans"}</span><h2>${escapeHtml(plan.name)}</h2><p>${plan.minutes == null ? "Thiết kế riêng theo nhu cầu đội nhóm" : `${plan.minutes} phút video mỗi tháng`}</p></div>
+      <strong>${money(plan.amount)}${plan.amount ? "<small>/tháng</small>" : ""}</strong>
+      <ul><li>✓ Xử lý video và phụ đề</li><li>✓ Lưu kết quả bảo mật</li><li>${plan.key === "free" ? "—" : "✓"} Hỗ trợ ưu tiên</li></ul>
+      ${plan.amount ? `<button class="button ${plan.key === "pro" ? "primary" : "secondary"}" type="button" data-select-plan="${plan.key}" ${plan.key === account.plan ? "disabled" : ""}>${plan.key === account.plan ? "Đang sử dụng" : "Chọn gói"}</button>` : `<a class="button secondary" href="mailto:support@vidtrans.local">Liên hệ tư vấn</a>`}
+    </article>`).join("");
+  $("#paymentProviders").innerHTML = `<legend>Phương thức</legend>${Object.entries(data.providers).map(([key, available]) => `
+    <label class="payment-method ${available ? "" : "disabled"}"><input type="radio" name="provider" value="${key}" ${key === "bank" && available ? "checked" : ""} ${available ? "" : "disabled"}/><span class="payment-logo">${key === "bank" ? "QR" : key === "momo" ? "M" : "Z"}</span><span><strong>${key === "bank" ? "Chuyển khoản ngân hàng" : key === "momo" ? "Ví MoMo" : "ZaloPay"}</strong><small>${escapeHtml(data.provider_notes[key])}</small></span>${available ? "" : "<i>Chưa khả dụng</i>"}</label>`).join("")}`;
+  renderBillingOrders(data.orders || []);
+}
+
+function renderBillingOrders(orders) {
+  $("#billingOrders").innerHTML = orders.length ? orders.map(order => `<article><span><strong>${escapeHtml(order.transfer_content)}</strong><small>${escapeHtml(new Date(order.created_at).toLocaleString("vi-VN"))}</small></span><span><b>${money(order.amount)}</b><em class="order-${order.status}">${billingLabels.order[order.status] || order.status}</em></span></article>`).join("") : '<div class="empty-state"><strong>Chưa có giao dịch</strong><span>Đơn thanh toán mới sẽ xuất hiện tại đây.</span></div>';
+}
+
+async function loadBilling() {
+  try {
+    state.billing = await requestJson("/api/v1/billing/overview");
+    renderBilling(state.billing);
+  } catch (error) { toast(error.message, true); }
+}
+
+async function createPayment(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const provider = form.querySelector('[name="provider"]:checked');
+  if (!provider) return toast("Chưa có phương thức thanh toán khả dụng", true);
+  const button = $("#createPaymentButton");
+  button.disabled = true;
+  try {
+    const body = new FormData();
+    body.set("plan", $("#paymentPlan").value);
+    body.set("provider", provider.value);
+    const order = await requestJson("/api/v1/billing/orders", { method: "POST", body });
+    if (order.checkout_url) {
+      window.location.assign(order.checkout_url);
+      return;
+    }
+    const instructions = $("#paymentInstructions");
+    instructions.innerHTML = `<span>Yêu cầu thanh toán đã tạo</span><h3>${money(order.amount)}</h3><dl><div><dt>Ngân hàng / BIN</dt><dd>${escapeHtml(order.bank.bin)}</dd></div><div><dt>Số tài khoản</dt><dd>${escapeHtml(order.bank.account_no)}</dd></div><div><dt>Chủ tài khoản</dt><dd>${escapeHtml(order.bank.account_name)}</dd></div><div><dt>Nội dung</dt><dd>${escapeHtml(order.transfer_content)}</dd></div></dl><p>Vui lòng chuyển đúng số tiền và nội dung. Gói sẽ được kích hoạt sau khi quản trị viên đối soát.</p>`;
+    instructions.classList.remove("is-hidden");
+    toast("Đã tạo yêu cầu thanh toán");
+    await loadBilling();
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
 }
 
 const adminLabels = {
@@ -408,8 +494,8 @@ const adminLabels = {
   payment: { trial: "Dùng thử", active: "Đang hoạt động", past_due: "Quá hạn", cancelled: "Đã hủy", exempt: "Miễn thanh toán" },
 };
 
-function adminSelect(name, value, options, disabled = false) {
-  return `<select name="${name}" ${disabled ? "disabled" : ""}>${options.map(([key, label]) => `<option value="${key}" ${key === value ? "selected" : ""}>${label}</option>`).join("")}</select>`;
+function adminSelect(name, value, options, label, disabled = false) {
+  return `<label class="admin-account-field ${name === "approval_status" ? `status-${value}` : ""}"><span>${label}</span><select name="${name}" aria-label="${label}" ${disabled ? "disabled" : ""}>${options.map(([key, optionLabel]) => `<option value="${key}" ${key === value ? "selected" : ""}>${optionLabel}</option>`).join("")}</select></label>`;
 }
 
 function renderAdminAccounts() {
@@ -429,11 +515,11 @@ function renderAdminAccounts() {
   const plans = [["free", "Free"], ["creator", "Creator"], ["pro", "Pro"], ["enterprise", "Enterprise"]];
   list.innerHTML = state.adminAccounts.map(item => `
     <article class="admin-account-row" data-admin-account="${escapeHtml(item.user_id)}">
-      <div class="admin-account-user"><input name="display_name" maxlength="120" value="${escapeHtml(item.display_name)}" aria-label="Tên hiển thị" /><strong>${escapeHtml(item.email)}</strong><small>Tạo ${escapeHtml(new Date(item.created_at).toLocaleDateString("vi-VN"))}</small></div>
-      ${adminSelect("role", item.role, roles, item.role === "owner")}
-      ${adminSelect("approval_status", item.approval_status, approvals, item.role === "owner")}
-      ${adminSelect("plan", item.plan, plans)}
-      ${adminSelect("payment_status", item.payment_status, payments)}
+      <div class="admin-account-user"><span class="admin-avatar" aria-hidden="true">${escapeHtml((item.display_name || item.email || "U").trim().charAt(0).toUpperCase())}</span><div><input name="display_name" maxlength="120" value="${escapeHtml(item.display_name)}" aria-label="Tên hiển thị" /><strong>${escapeHtml(item.email)}</strong><small>Tham gia ${escapeHtml(new Date(item.created_at).toLocaleDateString("vi-VN"))}</small></div></div>
+      ${adminSelect("role", item.role, roles, "Vai trò", item.role === "owner")}
+      ${adminSelect("approval_status", item.approval_status, approvals, "Phê duyệt", item.role === "owner")}
+      ${adminSelect("plan", item.plan, plans, "Gói dịch vụ")}
+      ${adminSelect("payment_status", item.payment_status, payments, "Thanh toán")}
       <button class="button secondary" type="button" data-admin-save>Lưu</button>
     </article>`).join("");
 }
@@ -804,6 +890,21 @@ $("#appLogoutButton").addEventListener("click", async () => {
   } catch (error) {
     toast(error.message, true);
   }
+});
+$("#navToggle").addEventListener("click", () => {
+  const open = $("#mainNavigation").classList.toggle("open");
+  $("#navToggle").setAttribute("aria-expanded", String(open));
+});
+$("#userMenuButton").addEventListener("click", () => {
+  const open = $("#userMenu").classList.toggle("open");
+  $("#userMenuButton").setAttribute("aria-expanded", String(open));
+});
+$("#paymentForm").addEventListener("submit", createPayment);
+$("#billingPlans").addEventListener("click", event => {
+  const button = event.target.closest("[data-select-plan]");
+  if (!button) return;
+  $("#paymentPlan").value = button.dataset.selectPlan;
+  $("#paymentForm").scrollIntoView({ behavior: "smooth", block: "center" });
 });
 
 $("#files").addEventListener("change", event => addFiles(event.target.files));

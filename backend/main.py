@@ -39,8 +39,16 @@ from infrastructure.auth import (
     AuthManager,
     InvalidTokenError,
     LoginRateLimitError,
+    hash_password,
 )
 from infrastructure.admin_accounts import AdminAccountError, AdminAccountStore
+from infrastructure.payments import (
+    PLAN_CATALOG,
+    PaymentConfig,
+    PaymentError,
+    PaymentGatewayClient,
+    PaymentOrderStore,
+)
 from infrastructure.job_store import SQLiteJobStore
 from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
@@ -161,7 +169,11 @@ AUTH_MANAGER = AuthManager()
 ADMIN_ACCOUNTS = AdminAccountStore(
     WORK_DIR / "jobs.sqlite3",
     AUTH_MANAGER.config.username if AUTH_MANAGER.config.enabled else "admin",
+    AUTH_MANAGER.config.password_hash if AUTH_MANAGER.config.enabled else "",
 )
+PAYMENT_CONFIG = PaymentConfig.from_env()
+PAYMENT_ORDERS = PaymentOrderStore(WORK_DIR / "jobs.sqlite3")
+PAYMENT_GATEWAY = PaymentGatewayClient(PAYMENT_CONFIG)
 ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
@@ -176,6 +188,8 @@ PUBLIC_AUTH_PATHS = {
     "/api/v1/auth/status",
     "/api/v1/auth/token",
     "/api/v1/tiktok-auth/callback",
+    "/api/v1/billing/callbacks/momo",
+    "/api/v1/billing/callbacks/zalopay",
 }
 SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -238,6 +252,25 @@ async def authenticate_request(request: Request, call_next: Callable[..., Any]):
         request.state.auth_claims = AUTH_MANAGER.verify_token(token)
     except (AuthConfigurationError, InvalidTokenError):
         return unauthorized_response()
+    try:
+        account = ADMIN_ACCOUNTS.get(str(request.state.auth_claims["user_id"]))
+    except AdminAccountError:
+        return unauthorized_response()
+    if account["approval_status"] != "approved":
+        return JSONResponse({"detail": "Tài khoản chưa được phê duyệt hoặc đã bị khóa"}, status_code=403)
+    request.state.account = account
+    if request.url.path.startswith("/api/v1/admin/") and account["role"] not in {"owner", "admin"}:
+        return JSONResponse({"detail": "Bạn không có quyền quản trị"}, status_code=403)
+    if (
+        account["role"] == "viewer"
+        and request.method.upper() not in SAFE_HTTP_METHODS
+        and request.url.path not in {"/api/v1/billing/orders", "/api/v1/auth/session"}
+    ):
+        return JSONResponse(
+            {"detail": "Tài khoản Người xem không có quyền thay đổi dữ liệu"},
+            status_code=403,
+            headers={"Cache-Control": "no-store"},
+        )
     if (
         from_cookie
         and request.method.upper() not in SAFE_HTTP_METHODS
@@ -256,6 +289,24 @@ async def authenticate_request(request: Request, call_next: Callable[..., Any]):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def current_account(request: Request) -> dict[str, Any]:
+    account = getattr(request.state, "account", None)
+    if account is not None:
+        return account
+    # Authentication-disabled mode is local development only.
+    owner = ADMIN_ACCOUNTS.list(query="admin@local.vidtrans")
+    if not owner:
+        raise HTTPException(status_code=401, detail="Không xác định được tài khoản hiện tại")
+    return owner[0]
+
+
+def require_roles(request: Request, *roles: str) -> dict[str, Any]:
+    account = current_account(request)
+    if account["role"] not in roles:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này")
+    return account
 
 
 def ff_escape_path(path: Path) -> str:
@@ -1962,15 +2013,18 @@ def public_admin_account(account: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.get("/api/v1/admin/accounts/summary")
-def admin_account_summary() -> JSONResponse:
+def admin_account_summary(request: Request) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     return JSONResponse(ADMIN_ACCOUNTS.summary(), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/v1/admin/accounts")
 def list_admin_accounts(
+    request: Request,
     query: str = Query(default="", max_length=120),
     status: str = Query(default="", max_length=32),
 ) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     try:
         items = [public_admin_account(item) for item in ADMIN_ACCOUNTS.list(query=query, status=status)]
     except AdminAccountError as exc:
@@ -1980,15 +2034,18 @@ def list_admin_accounts(
 
 @app.post("/api/v1/admin/accounts", status_code=201)
 def create_admin_account(
+    request: Request,
     email: str = Form(..., max_length=254),
     display_name: str = Form(..., max_length=120),
+    password: str = Form(..., min_length=12, max_length=256),
     role: str = Form("viewer", max_length=32),
     plan: str = Form("free", max_length=32),
 ) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     try:
         account = ADMIN_ACCOUNTS.create(
             email=email, display_name=display_name, role=role, plan=plan,
-            approval_status="pending", payment_status="trial",
+            approval_status="pending", payment_status="trial", password_hash=hash_password(password),
         )
     except AdminAccountError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1997,6 +2054,7 @@ def create_admin_account(
 
 @app.post("/api/v1/admin/accounts/{user_id}")
 def update_admin_account(
+    request: Request,
     user_id: str,
     display_name: str = Form(..., max_length=120),
     role: str = Form(..., max_length=32),
@@ -2004,6 +2062,7 @@ def update_admin_account(
     plan: str = Form(..., max_length=32),
     payment_status: str = Form(..., max_length=32),
 ) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     try:
         account = ADMIN_ACCOUNTS.update(
             user_id,
@@ -2085,11 +2144,143 @@ def validate_tiktok_auto_publish(request: ProcessingRequest) -> None:
         )
 
 
+@app.get("/api/v1/me")
+def get_current_user(request: Request) -> JSONResponse:
+    account = current_account(request)
+    return JSONResponse(public_admin_account(account), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/billing/overview")
+def billing_overview(request: Request) -> JSONResponse:
+    account = current_account(request)
+    providers = PAYMENT_CONFIG.availability()
+    return JSONResponse(
+        {
+            "account": public_admin_account(account),
+            "plans": [{"key": key, **value} for key, value in PLAN_CATALOG.items()],
+            "providers": providers,
+            "provider_notes": {
+                "bank": "Chuyển khoản/VietQR — chờ quản trị viên đối soát",
+                "momo": "MoMo — cần merchant sandbox và callback HTTPS",
+                "zalopay": "ZaloPay — cần merchant sandbox và callback HTTPS",
+            },
+            "orders": PAYMENT_ORDERS.list_for_user(account["user_id"]),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/v1/billing/orders", status_code=201)
+def create_payment_order(
+    request: Request,
+    plan: str = Form(..., max_length=32),
+    provider: str = Form(..., max_length=32),
+) -> JSONResponse:
+    account = current_account(request)
+    if not PAYMENT_CONFIG.availability().get(provider, False):
+        raise HTTPException(status_code=409, detail="Phương thức thanh toán chưa được cấu hình")
+    try:
+        order = PAYMENT_ORDERS.create(user_id=account["user_id"], provider=provider, plan=plan)
+    except PaymentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if provider == "bank":
+        order["bank"] = {
+            "bin": PAYMENT_CONFIG.bank_bin,
+            "account_no": PAYMENT_CONFIG.bank_account_no,
+            "account_name": PAYMENT_CONFIG.bank_account_name,
+        }
+    else:
+        try:
+            gateway = (
+                PAYMENT_GATEWAY.create_momo(order)
+                if provider == "momo"
+                else PAYMENT_GATEWAY.create_zalopay(order, account["user_id"])
+            )
+            PAYMENT_ORDERS.set_provider_order_ref(order["order_id"], gateway["provider_order_ref"])
+            order["checkout_url"] = gateway["checkout_url"]
+        except PaymentError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse(order, status_code=201, headers={"Cache-Control": "no-store"})
+
+
+def activate_paid_order(order: dict[str, Any]) -> None:
+    ADMIN_ACCOUNTS.update(order["user_id"], plan=order["plan"], payment_status="active")
+
+
+@app.post("/api/v1/billing/callbacks/momo")
+async def momo_payment_callback(request: Request) -> Response:
+    payload = await request.json()
+    if not isinstance(payload, dict) or not PAYMENT_GATEWAY.verify_momo_callback(payload):
+        raise HTTPException(status_code=400, detail="Chữ ký MoMo không hợp lệ")
+    try:
+        order = PAYMENT_ORDERS.get(str(payload.get("orderId", "")))
+        if order["provider"] != "momo" or int(payload.get("amount", -1)) != order["amount"]:
+            raise PaymentError("Thông tin đơn MoMo không khớp")
+        if int(payload.get("resultCode", -1)) == 0:
+            order, applied = PAYMENT_ORDERS.mark_paid(
+                order["order_id"],
+                event_key=f"momo:{payload.get('transId')}:{order['order_id']}",
+                payload=json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+                provider_transaction_ref=str(payload.get("transId", "")),
+            )
+            if applied:
+                activate_paid_order(order)
+    except (PaymentError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/billing/callbacks/zalopay")
+async def zalopay_payment_callback(request: Request) -> JSONResponse:
+    payload = await request.json()
+    data = payload.get("data", "") if isinstance(payload, dict) else ""
+    mac = payload.get("mac", "") if isinstance(payload, dict) else ""
+    if not isinstance(data, str) or not PAYMENT_GATEWAY.verify_zalopay_callback(data, str(mac)):
+        return JSONResponse({"return_code": 2, "return_message": "Invalid"})
+    try:
+        callback = json.loads(data)
+        order = PAYMENT_ORDERS.get_by_provider_ref("zalopay", str(callback.get("app_trans_id", "")))
+        if int(callback.get("amount", -1)) != order["amount"]:
+            raise PaymentError("Thông tin đơn ZaloPay không khớp")
+        order, applied = PAYMENT_ORDERS.mark_paid(
+            order["order_id"],
+            event_key=f"zalopay:{callback.get('zp_trans_id')}:{order['order_id']}",
+            payload=data.encode("utf-8"),
+            provider_transaction_ref=str(callback.get("zp_trans_id", "")),
+        )
+        if applied:
+            activate_paid_order(order)
+    except (PaymentError, TypeError, ValueError, json.JSONDecodeError):
+        return JSONResponse({"return_code": 2, "return_message": "Invalid"})
+    return JSONResponse({"return_code": 1, "return_message": "Success"})
+
+
+@app.post("/api/v1/admin/billing/orders/{order_id}/confirm")
+def confirm_bank_payment(request: Request, order_id: str) -> JSONResponse:
+    actor = require_roles(request, "owner", "admin")
+    try:
+        order = PAYMENT_ORDERS.get(order_id)
+        if order["provider"] != "bank":
+            raise PaymentError("Chỉ đơn chuyển khoản được xác nhận thủ công")
+        updated, _ = PAYMENT_ORDERS.mark_paid(
+            order_id,
+            event_key=f"bank-confirm:{order_id}",
+            payload=f"confirmed-by:{actor['user_id']}".encode("utf-8"),
+            provider_transaction_ref="manual-bank-confirmation",
+        )
+        ADMIN_ACCOUNTS.update(updated["user_id"], plan=updated["plan"], payment_status="active")
+    except PaymentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(updated, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/v1/auth/status")
 def get_auth_status(request: Request) -> JSONResponse:
     payload = AUTH_MANAGER.status()
     payload["authenticated"] = False
     payload["username"] = None
+    payload["role"] = None
+    payload["user_id"] = None
     if AUTH_MANAGER.config.configured:
         token, _, malformed_header = request_access_token(request)
         if token and not malformed_header:
@@ -2097,6 +2288,8 @@ def get_auth_status(request: Request) -> JSONResponse:
                 claims = AUTH_MANAGER.verify_token(token)
                 payload["authenticated"] = True
                 payload["username"] = claims["sub"]
+                payload["role"] = claims["role"]
+                payload["user_id"] = claims["user_id"]
             except (AuthConfigurationError, InvalidTokenError):
                 pass
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
@@ -2108,8 +2301,18 @@ def create_auth_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
 ) -> JSONResponse:
     client_id = auth_client_id(request)
+    account = ADMIN_ACCOUNTS.get_by_email(form_data.username)
+    if account is None and form_data.username == AUTH_MANAGER.config.username:
+        account = ADMIN_ACCOUNTS.get_by_email(
+            form_data.username if "@" in form_data.username else f"{form_data.username}@local.vidtrans"
+        )
     try:
-        authenticated = AUTH_MANAGER.authenticate(form_data.username, form_data.password, client_id)
+        if account and account.get("password_hash"):
+            authenticated = AUTH_MANAGER.authenticate_password(
+                form_data.password, str(account["password_hash"]), client_id
+            )
+        else:
+            authenticated = AUTH_MANAGER.authenticate(form_data.username, form_data.password, client_id)
     except AuthConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LoginRateLimitError as exc:
@@ -2120,13 +2323,19 @@ def create_auth_token(
             detail="Tên đăng nhập hoặc mật khẩu không đúng",
             headers={"WWW-Authenticate": 'Bearer scope="admin"'},
         )
-    token, expires_in = AUTH_MANAGER.issue_token(form_data.username)
+    if account is None or account["approval_status"] != "approved":
+        raise HTTPException(status_code=403, detail="Tài khoản chưa được phê duyệt hoặc đã bị khóa")
+    scope = "admin" if account["role"] in {"owner", "admin"} else "user"
+    token, expires_in = AUTH_MANAGER.issue_token(
+        account["email"], user_id=account["user_id"], role=account["role"], scope=scope
+    )
     response = JSONResponse(
         {
             "access_token": token,
             "token_type": "bearer",
             "expires_in": expires_in,
-            "scope": "admin",
+            "scope": scope,
+            "role": account["role"],
         },
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )

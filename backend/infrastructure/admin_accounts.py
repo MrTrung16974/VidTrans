@@ -29,12 +29,12 @@ class AdminAccountStore:
     never enter this store.
     """
 
-    def __init__(self, database_path: Path, bootstrap_username: str = "") -> None:
+    def __init__(self, database_path: Path, bootstrap_username: str = "", bootstrap_password_hash: str = "") -> None:
         self.database_path = Path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
         if bootstrap_username.strip():
-            self.ensure_owner(bootstrap_username.strip())
+            self.ensure_owner(bootstrap_username.strip(), bootstrap_password_hash)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=30)
@@ -72,6 +72,9 @@ class AdminAccountStore:
                     updated_at TEXT NOT NULL
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(admin_accounts)").fetchall()}
+            if "password_hash" not in columns:
+                db.execute("ALTER TABLE admin_accounts ADD COLUMN password_hash TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_admin_accounts_status ON admin_accounts(approval_status, payment_status)")
 
     @staticmethod
@@ -97,7 +100,7 @@ class AdminAccountStore:
             raise AdminAccountError("Trạng thái thanh toán không hợp lệ")
         return email, display_name
 
-    def ensure_owner(self, username: str) -> None:
+    def ensure_owner(self, username: str, password_hash: str = "") -> None:
         email = username if "@" in username else f"{username}@local.vidtrans"
         now = utc_now()
         with self._db() as db:
@@ -108,10 +111,15 @@ class AdminAccountStore:
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
             """, (uuid.uuid4().hex, email.lower(), username, "owner", "approved", "enterprise",
                   "exempt", None, now, now, now))
+            if password_hash:
+                db.execute(
+                    "UPDATE admin_accounts SET password_hash=? WHERE email=? AND (password_hash IS NULL OR password_hash='')",
+                    (password_hash, email.lower()),
+                )
 
     def create(self, *, email: str, display_name: str, role: str = "viewer",
                approval_status: str = "pending", plan: str = "free",
-               payment_status: str = "trial") -> dict[str, Any]:
+               payment_status: str = "trial", password_hash: str | None = None) -> dict[str, Any]:
         email, display_name = self._validate(email, display_name, role, approval_status, plan, payment_status)
         now = utc_now()
         user_id = uuid.uuid4().hex
@@ -120,10 +128,10 @@ class AdminAccountStore:
                 db.execute("""
                     INSERT INTO admin_accounts(
                         user_id,email,display_name,role,approval_status,plan,payment_status,
-                        approved_at,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                        approved_at,created_at,updated_at,password_hash
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """, (user_id, email, display_name, role, approval_status, plan, payment_status,
-                      now if approval_status == "approved" else None, now, now))
+                      now if approval_status == "approved" else None, now, now, password_hash))
         except sqlite3.IntegrityError as exc:
             raise AdminAccountError("Email đã tồn tại") from exc
         return self.get(user_id)
@@ -134,6 +142,22 @@ class AdminAccountStore:
         if row is None:
             raise AdminAccountError("Không tìm thấy người dùng")
         return self._row(row)
+
+    def get_by_email(self, email: str) -> dict[str, Any] | None:
+        with self._db() as db:
+            row = db.execute("SELECT * FROM admin_accounts WHERE email=? COLLATE NOCASE", (email.strip(),)).fetchone()
+        return self._row(row) if row is not None else None
+
+    def set_password_hash(self, user_id: str, password_hash: str) -> None:
+        if not password_hash:
+            raise AdminAccountError("Mật khẩu chưa được thiết lập")
+        with self._db() as db:
+            result = db.execute(
+                "UPDATE admin_accounts SET password_hash=?,updated_at=? WHERE user_id=?",
+                (password_hash, utc_now(), user_id),
+            )
+        if result.rowcount != 1:
+            raise AdminAccountError("Không tìm thấy người dùng")
 
     def list(self, *, query: str = "", status: str = "") -> list[dict[str, Any]]:
         where, values = [], []

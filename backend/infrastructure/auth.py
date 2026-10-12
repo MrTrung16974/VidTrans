@@ -177,13 +177,33 @@ class AuthManager:
         self._record_failed_login(client_id)
         return False
 
-    def issue_token(self, subject: str | None = None) -> tuple[str, int]:
+    def authenticate_password(self, password: str, encoded: str, client_id: str) -> bool:
+        """Verify an account password while sharing the global login rate limit."""
+        self._require_configured()
+        self._check_rate_limit(client_id)
+        if verify_password(password, encoded):
+            with self._lock:
+                self._failed_logins.pop(client_id, None)
+            return True
+        self._record_failed_login(client_id)
+        return False
+
+    def issue_token(
+        self,
+        subject: str | None = None,
+        *,
+        user_id: str | None = None,
+        role: str = "owner",
+        scope: str = "admin",
+    ) -> tuple[str, int]:
         self._require_configured()
         now = int(self._clock())
         ttl_seconds = self.config.token_ttl_minutes * 60
         payload = {
             "sub": subject or self.config.username,
-            "scope": "admin",
+            "scope": scope,
+            "role": role,
+            "user_id": user_id or subject or self.config.username,
             "iat": now,
             "nbf": now,
             "exp": now + ttl_seconds,
@@ -242,8 +262,14 @@ class AuthManager:
             raise InvalidTokenError("JWT có thời điểm phát hành không hợp lệ")
         if payload.get("iss") != self.config.issuer or payload.get("aud") != self.config.audience:
             raise InvalidTokenError("JWT không dành cho VidTrans")
-        if payload.get("sub") != self.config.username or payload.get("scope") != "admin":
-            raise InvalidTokenError("JWT không có quyền quản trị")
+        if not isinstance(payload.get("sub"), str) or not payload["sub"].strip():
+            raise InvalidTokenError("JWT thiếu chủ thể hợp lệ")
+        if payload.get("scope") not in {"admin", "user"}:
+            raise InvalidTokenError("JWT không có scope hợp lệ")
+        if payload.get("role") not in {"owner", "admin", "editor", "viewer"}:
+            raise InvalidTokenError("JWT không có vai trò hợp lệ")
+        if not isinstance(payload.get("user_id"), str) or not payload["user_id"]:
+            raise InvalidTokenError("JWT thiếu user_id hợp lệ")
         return payload
 
     def _require_configured(self) -> None:

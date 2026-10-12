@@ -9,7 +9,7 @@
     <title>VidTrans Studio</title>
     <link rel="icon" type="image/svg+xml" href="/assets/vidtrans-mark.svg?v=20260901-1" />
     <link rel="shortcut icon" href="/assets/vidtrans-mark.svg?v=20260901-1" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261011-2" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261012-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -18,16 +18,24 @@
           <span class="brand-mark"><img src="/assets/vidtrans-mark.svg" alt="" /></span>
           <span><strong>VidTrans</strong><small>Creator Studio</small></span>
         </a>
-        <nav class="nav-tabs" aria-label="Điều hướng chính">
-          <a href="#create" data-view-link="create">Tạo quy trình</a>
-          <a href="#jobs" data-view-link="jobs">Tiến trình <span id="runningBadge" class="nav-badge">0</span></a>
-          <a href="#tiktok" data-view-link="tiktok">Đăng TikTok</a>
-          <a href="#douyin" data-view-link="douyin">Douyin</a>
-          <a href="#admin" data-view-link="admin">Admin</a>
+        <button id="navToggle" class="nav-toggle" type="button" aria-expanded="false" aria-controls="mainNavigation" aria-label="Mở menu"><span></span><span></span><span></span></button>
+        <nav id="mainNavigation" class="nav-tabs" aria-label="Điều hướng chính">
+          <a href="#create" data-view-link="create"><i aria-hidden="true">＋</i><span>Tạo quy trình</span></a>
+          <a href="#jobs" data-view-link="jobs"><i aria-hidden="true">◫</i><span>Tiến trình</span><b id="runningBadge" class="nav-badge">0</b></a>
+          <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true">♪</i><span>Đăng TikTok</span></a>
+          <a href="#douyin" data-view-link="douyin" data-min-role="editor"><i aria-hidden="true">D</i><span>Douyin</span></a>
+          <a href="#billing" data-view-link="billing"><i aria-hidden="true">₫</i><span>Thanh toán</span></a>
+          <a href="#admin" data-view-link="admin" data-admin-only><i aria-hidden="true">⚙</i><span>Quản trị</span></a>
         </nav>
         <div class="topbar-actions">
           <div id="systemState" class="system-state"><span></span> Hệ thống sẵn sàng</div>
-          <button id="appLogoutButton" class="auth-logout is-hidden" type="button">Đăng xuất</button>
+          <div id="userMenu" class="user-menu is-hidden">
+            <button id="userMenuButton" class="user-menu-button" type="button" aria-expanded="false"><span id="userAvatar">A</span><span><strong id="userMenuName">Tài khoản</strong><small id="userMenuRole">Quản trị viên</small></span><i aria-hidden="true">⌄</i></button>
+            <div class="user-menu-popover">
+              <a href="#billing">Gói dịch vụ & thanh toán</a>
+              <button id="appLogoutButton" class="auth-logout" type="button">Đăng xuất</button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -251,26 +259,27 @@
           </section>
         </section>
 
-        <section id="adminView" class="view is-hidden">
-          <div class="page-heading">
+        <section id="adminView" class="view admin-view is-hidden">
+          <div class="page-heading admin-page-heading">
             <div>
               <span class="eyebrow">Admin workspace</span>
               <h1>Quản trị người dùng</h1>
               <p>Quản lý tài khoản, phân quyền truy cập, phê duyệt thành viên và trạng thái thanh toán.</p>
             </div>
-            <button id="refreshAdminAccounts" class="button secondary" type="button">↻ Làm mới</button>
+            <button id="refreshAdminAccounts" class="button secondary admin-refresh" type="button"><span aria-hidden="true">↻</span> Làm mới</button>
           </div>
           <section class="admin-metrics" aria-label="Thống kê tài khoản">
-            <article class="card admin-metric"><span>Tổng tài khoản</span><strong id="adminTotalCount">0</strong></article>
-            <article class="card admin-metric"><span>Đã phê duyệt</span><strong id="adminApprovedCount">0</strong></article>
-            <article class="card admin-metric"><span>Chờ phê duyệt</span><strong id="adminPendingCount">0</strong></article>
-            <article class="card admin-metric danger"><span>Thanh toán cần xử lý</span><strong id="adminPaymentAttentionCount">0</strong></article>
+            <article class="card admin-metric total"><div><span>Tổng tài khoản</span><strong id="adminTotalCount">0</strong></div><i aria-hidden="true">U</i></article>
+            <article class="card admin-metric approved"><div><span>Đã phê duyệt</span><strong id="adminApprovedCount">0</strong></div><i aria-hidden="true">✓</i></article>
+            <article class="card admin-metric pending"><div><span>Chờ phê duyệt</span><strong id="adminPendingCount">0</strong></div><i aria-hidden="true">◷</i></article>
+            <article class="card admin-metric danger"><div><span>Thanh toán cần xử lý</span><strong id="adminPaymentAttentionCount">0</strong></div><i aria-hidden="true">!</i></article>
           </section>
           <details class="card admin-create-panel">
-            <summary>+ Thêm tài khoản mới</summary>
+            <summary><span class="admin-summary-icon" aria-hidden="true">＋</span><span><strong>Thêm tài khoản mới</strong><small>Tạo thành viên và thiết lập quyền truy cập ban đầu</small></span><i aria-hidden="true">⌄</i></summary>
             <form id="adminCreateAccountForm" class="admin-create-form">
               <label><span>Email</span><input name="email" type="email" maxlength="254" required placeholder="user@example.com" /></label>
               <label><span>Tên hiển thị</span><input name="display_name" maxlength="120" required placeholder="Nguyễn Văn A" /></label>
+              <label><span>Mật khẩu tạm</span><input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password" placeholder="Tối thiểu 12 ký tự" /></label>
               <label><span>Vai trò</span><select name="role"><option value="viewer">Người xem</option><option value="editor">Biên tập viên</option><option value="admin">Quản trị viên</option></select></label>
               <label><span>Gói dịch vụ</span><select name="plan"><option value="free">Free</option><option value="creator">Creator</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></label>
               <button class="button primary" type="submit">Tạo tài khoản chờ duyệt</button>
@@ -278,14 +287,36 @@
           </details>
           <section class="card admin-accounts-panel">
             <div class="jobs-toolbar admin-account-toolbar">
-              <div><strong>Danh sách người dùng</strong><small>Thay đổi chỉ được lưu khi bấm “Lưu”.</small></div>
-              <input id="adminUserSearch" type="search" maxlength="120" placeholder="Tìm tên hoặc email" aria-label="Tìm người dùng" />
+              <div class="admin-list-title"><strong>Danh sách người dùng</strong><small>Thay đổi chỉ được lưu khi bấm “Lưu”.</small></div>
+              <label class="admin-search"><span aria-hidden="true">⌕</span><input id="adminUserSearch" type="search" maxlength="120" placeholder="Tìm tên hoặc email" aria-label="Tìm người dùng" /></label>
               <select id="adminApprovalFilter" aria-label="Lọc trạng thái phê duyệt">
                 <option value="">Tất cả phê duyệt</option><option value="pending">Chờ duyệt</option><option value="approved">Đã duyệt</option><option value="suspended">Tạm khóa</option><option value="rejected">Từ chối</option>
               </select>
             </div>
-            <div class="admin-account-head" aria-hidden="true"><span>Người dùng</span><span>Vai trò</span><span>Phê duyệt</span><span>Gói</span><span>Thanh toán</span><span></span></div>
+            <div class="admin-account-head" aria-hidden="true"><span>Người dùng</span><span>Vai trò</span><span>Phê duyệt</span><span>Gói dịch vụ</span><span>Thanh toán</span><span></span></div>
             <div id="adminAccountsList" class="admin-accounts-list"><div class="empty-state"><strong>Đang tải tài khoản…</strong></div></div>
+          </section>
+        </section>
+
+        <section id="billingView" class="view billing-view is-hidden">
+          <div class="page-heading billing-heading">
+            <div><span class="eyebrow">Billing & subscription</span><h1>Gói dịch vụ phù hợp với bạn</h1><p>Nâng cấp dung lượng xử lý và quản lý lịch sử thanh toán trong cùng một nơi.</p></div>
+            <div class="billing-current"><span>Gói hiện tại</span><strong id="billingCurrentPlan">—</strong><small id="billingPaymentStatus">Đang tải…</small></div>
+          </div>
+          <div id="billingNotice" class="billing-notice is-hidden" role="status"></div>
+          <section id="billingPlans" class="billing-plans" aria-label="Các gói dịch vụ"><div class="empty-state"><strong>Đang tải bảng giá…</strong></div></section>
+          <section class="card payment-checkout">
+            <div class="payment-checkout-copy"><span class="eyebrow">Thanh toán an toàn</span><h2>Chọn phương thức thanh toán</h2><p>Giao dịch chỉ được xác nhận sau khi VidTrans nhận kết quả hợp lệ từ nhà cung cấp hoặc được quản trị viên đối soát.</p></div>
+            <form id="paymentForm" class="payment-form">
+              <label><span>Gói muốn nâng cấp</span><select id="paymentPlan" name="plan"><option value="creator">Creator</option><option value="pro">Pro</option></select></label>
+              <fieldset id="paymentProviders"><legend>Phương thức</legend></fieldset>
+              <button id="createPaymentButton" class="button primary" type="submit">Tạo yêu cầu thanh toán</button>
+            </form>
+            <div id="paymentInstructions" class="payment-instructions is-hidden"></div>
+          </section>
+          <section class="card billing-history">
+            <div><h2>Lịch sử thanh toán</h2><p>Theo dõi trạng thái các yêu cầu gần đây.</p></div>
+            <div id="billingOrders" class="billing-orders"><div class="empty-state"><strong>Chưa có giao dịch</strong></div></div>
           </section>
         </section>
       </main>
@@ -315,6 +346,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261011-1"></script>
+    <script type="module" src="/js/app.js?v=20261012-2"></script>
   </body>
 </html>

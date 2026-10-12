@@ -53,8 +53,20 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(ttl, 300)
         self.assertEqual(claims["sub"], "admin")
         self.assertEqual(claims["scope"], "admin")
+        self.assertEqual(claims["role"], "owner")
+        self.assertEqual(claims["user_id"], "admin")
         self.assertEqual(claims["iss"], "vidtrans-test")
         self.assertEqual(claims["aud"], "vidtrans-test-api")
+
+    def test_issue_user_scope_with_role_and_user_id(self) -> None:
+        token, _ = self.manager.issue_token(
+            "viewer@example.com", user_id="user-123", role="viewer", scope="user"
+        )
+        claims = self.manager.verify_token(token)
+        self.assertEqual(claims["sub"], "viewer@example.com")
+        self.assertEqual(claims["user_id"], "user-123")
+        self.assertEqual(claims["role"], "viewer")
+        self.assertEqual(claims["scope"], "user")
 
     def test_rejects_tampered_and_expired_tokens(self) -> None:
         token, _ = self.manager.issue_token()
