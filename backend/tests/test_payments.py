@@ -44,6 +44,11 @@ class PaymentOrderStoreTests(unittest.TestCase):
         self.assertFalse(applied_again)
         self.assertEqual(duplicate["status"], "paid")
 
+    def test_cancel_order(self) -> None:
+        order = self.store.create(user_id="user-a", provider="bank", plan="creator")
+        cancelled = self.store.cancel(order["order_id"])
+        self.assertEqual(cancelled["status"], "cancelled")
+
 
 class PaymentGatewayClientTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -128,6 +133,13 @@ class PaymentGatewayClientTests(unittest.TestCase):
         signature = hmac.new(b"bank-webhook-secret", payload, hashlib.sha256).hexdigest()
         self.assertTrue(self.client.verify_bank_callback(payload, f"sha256={signature}"))
         self.assertFalse(self.client.verify_bank_callback(payload + b" ", signature))
+
+    def test_payment_config_from_env_defaults(self) -> None:
+        cfg = PaymentConfig.from_env()
+        self.assertTrue(cfg.enabled)
+        self.assertEqual(cfg.bank_name, "MB Bank")
+        self.assertTrue(cfg.availability()["bank"])
+
 
 
 if __name__ == "__main__":

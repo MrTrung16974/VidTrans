@@ -527,14 +527,20 @@ function renderBilling(data) {
           <li>${plan.key === "free" ? '<span class="feature-icon dash">—</span><span class="feature-muted">Hỗ trợ ưu tiên 24/7</span>' : '<span class="feature-icon check">✓</span><span>Hỗ trợ ưu tiên chuyên sâu 24/7</span>'}</li>
         </ul>
         <div class="plan-card-action">
-          ${plan.amount ? `
-            <button class="button ${isFeatured ? "primary" : isCurrent ? "secondary current-plan-btn" : "secondary"}" type="button" data-select-plan="${plan.key}" ${isCurrent ? "disabled" : ""}>
-              ${isCurrent ? "✓ Đang kích hoạt" : "Chọn gói"}
-            </button>` : `
+          ${plan.key === "enterprise" ? `
             <a class="button secondary enterprise-btn" href="mailto:support@vidtrans.local">
               <span>Liên hệ tư vấn</span>
               <span>→</span>
-            </a>`}
+            </a>` : plan.key === "free" ? (isCurrent ? `
+            <button class="button secondary current-plan-btn" type="button" disabled>
+              ✓ Đang kích hoạt
+            </button>` : `
+            <button class="button secondary" type="button" data-switch-free="true">
+              Sử dụng miễn phí
+            </button>`) : `
+            <button class="button ${isFeatured ? "primary" : isCurrent ? "secondary current-plan-btn" : "secondary"}" type="button" data-select-plan="${plan.key}" ${isCurrent ? "disabled" : ""}>
+              ${isCurrent ? "✓ Đang kích hoạt" : "Chọn gói"}
+            </button>`}
         </div>
       </article>`;
   }).join("");
@@ -555,14 +561,64 @@ function renderBilling(data) {
   renderBillingOrders(data.orders || []);
 }
 
+function renderPaymentInstructions(order) {
+  const instructions = $("#paymentInstructions");
+  instructions.innerHTML = `
+    <div class="bank-qr-wrap">
+      <div class="bank-qr-frame">
+        <img src="${escapeHtml(order.bank.qr_url)}" alt="Mã QR chuyển khoản ${escapeHtml(order.bank.name)}" loading="eager"/>
+      </div>
+      <small class="bank-qr-caption">Quét mã bằng App ngân hàng bất kỳ (VietQR 24/7)</small>
+    </div>
+    <div class="bank-transfer-detail">
+      <div class="detail-kicker">
+        <span class="live-pulse-dot" aria-hidden="true"></span>
+        <span>Yêu cầu thanh toán ${escapeHtml(String(order.plan).toUpperCase())}</span>
+      </div>
+      <h3 class="transfer-total">${money(order.amount)}</h3>
+      <dl class="transfer-specs">
+        <div><dt>Ngân hàng thụ hưởng</dt><dd>${escapeHtml(order.bank.name)}</dd></div>
+        <div>
+          <dt>Số tài khoản</dt>
+          <dd class="copyable-value">
+            <span>${escapeHtml(order.bank.account_no)}</span>
+            <button class="mini-copy-btn" type="button" data-copy="${escapeHtml(order.bank.account_no)}" title="Sao chép số tài khoản">📋</button>
+          </dd>
+        </div>
+        <div><dt>Tên chủ tài khoản</dt><dd>${escapeHtml(order.bank.account_name)}</dd></div>
+        <div>
+          <dt>Nội dung chuyển khoản (bắt buộc)</dt>
+          <dd class="copyable-value highlight-content">
+            <span>${escapeHtml(order.transfer_content)}</span>
+            <button class="mini-copy-btn" type="button" data-copy="${escapeHtml(order.transfer_content)}" title="Sao chép nội dung">📋</button>
+          </dd>
+        </div>
+      </dl>
+      <div class="transfer-note-box">
+        <span class="note-icon" aria-hidden="true">💡</span>
+        <p>Mã QR đã chứa đúng số tiền và cú pháp. Bạn có thể bấm xác nhận bên dưới sau khi chuyển khoản thành công để kích hoạt gói ngay lập tức.</p>
+      </div>
+      <div class="transfer-action-buttons">
+        <button class="button primary transfer-confirm-btn" type="button" data-confirm-order="${escapeHtml(order.order_id)}">
+          <span>✓ Xác nhận đã chuyển khoản & Kích hoạt gói</span>
+        </button>
+        <button class="button secondary transfer-cancel-btn" type="button" data-cancel-order="${escapeHtml(order.order_id)}">
+          <span>✕ Hủy yêu cầu này</span>
+        </button>
+      </div>
+    </div>`;
+  instructions.classList.remove("is-hidden");
+  instructions.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 function renderBillingOrders(orders) {
   $("#billingOrders").innerHTML = orders.length ? orders.map(order => `
-    <article class="billing-order-item">
+    <article class="billing-order-item" data-order-id="${escapeHtml(order.order_id)}">
       <div class="order-main">
         <span class="order-icon" aria-hidden="true">🧾</span>
         <div class="order-info">
           <strong class="order-code">${escapeHtml(order.transfer_content)}</strong>
-          <small class="order-date">${escapeHtml(new Date(order.created_at).toLocaleString("vi-VN"))}</small>
+          <small class="order-date">${escapeHtml(new Date(order.created_at).toLocaleString("vi-VN"))} · Gói ${escapeHtml(String(order.plan).toUpperCase())}</small>
         </div>
       </div>
       <div class="order-amount-status">
@@ -571,6 +627,12 @@ function renderBillingOrders(orders) {
           <span class="status-dot-mini" aria-hidden="true"></span>
           <span>${billingLabels.order[order.status] || order.status}</span>
         </span>
+        ${order.status === "pending" ? `
+          <div class="order-actions">
+            <button class="button secondary mini-btn" type="button" data-view-order="${escapeHtml(order.order_id)}" title="Xem mã QR thanh toán">Xem QR</button>
+            <button class="button primary mini-btn" type="button" data-confirm-order="${escapeHtml(order.order_id)}" title="Kích hoạt gói">Kích hoạt</button>
+            <button class="button secondary mini-btn cancel-btn" type="button" data-cancel-order="${escapeHtml(order.order_id)}" title="Hủy yêu cầu">Hủy</button>
+          </div>` : ""}
       </div>
     </article>`).join("") : '<div class="empty-state"><div><div class="empty-icon">💳</div><strong>Chưa có giao dịch</strong><br><small>Đơn thanh toán mới sẽ xuất hiện tại đây sau khi bạn tạo yêu cầu.</small></div></div>';
 }
@@ -598,33 +660,10 @@ async function createPayment(event) {
       window.location.assign(order.checkout_url);
       return;
     }
-    const instructions = $("#paymentInstructions");
-    instructions.innerHTML = `
-      <div class="bank-qr-wrap">
-        <div class="bank-qr-frame">
-          <img src="${escapeHtml(order.bank.qr_url)}" alt="Mã QR chuyển khoản ${escapeHtml(order.bank.name)}" loading="eager"/>
-        </div>
-        <small class="bank-qr-caption">Quét mã bằng App ngân hàng bất kỳ (VietQR 24/7)</small>
-      </div>
-      <div class="bank-transfer-detail">
-        <div class="detail-kicker">
-          <span class="live-pulse-dot" aria-hidden="true"></span>
-          <span>Yêu cầu thanh toán đã tạo thành công</span>
-        </div>
-        <h3 class="transfer-total">${money(order.amount)}</h3>
-        <dl class="transfer-specs">
-          <div><dt>Ngân hàng thụ hưởng</dt><dd>${escapeHtml(order.bank.name)}</dd></div>
-          <div><dt>Số tài khoản</dt><dd class="copyable-value">${escapeHtml(order.bank.account_no)}</dd></div>
-          <div><dt>Tên chủ tài khoản</dt><dd>${escapeHtml(order.bank.account_name)}</dd></div>
-          <div><dt>Nội dung chuyển khoản (bắt buộc)</dt><dd class="copyable-value highlight-content">${escapeHtml(order.transfer_content)}</dd></div>
-        </dl>
-        <div class="transfer-note-box">
-          <span class="note-icon" aria-hidden="true">💡</span>
-          <p>Mã QR đã chứa đúng số tiền và cú pháp. Hệ thống đối soát tự động kích hoạt tài khoản ngay khi nhận tiền (thường từ 30s đến 2 phút).</p>
-        </div>
-      </div>`;
-    instructions.classList.remove("is-hidden");
-    toast("Đã tạo yêu cầu thanh toán");
+    if (order.bank) {
+      renderPaymentInstructions(order);
+    }
+    toast("Đã tạo yêu cầu thanh toán thành công");
     await loadBilling();
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
@@ -1124,11 +1163,106 @@ document.addEventListener("keydown", event => {
   $("#navToggle").setAttribute("aria-expanded", "false");
 });
 $("#paymentForm").addEventListener("submit", createPayment);
-$("#billingPlans").addEventListener("click", event => {
-  const button = event.target.closest("[data-select-plan]");
-  if (!button) return;
-  $("#paymentPlan").value = button.dataset.selectPlan;
-  $("#paymentForm").scrollIntoView({ behavior: "smooth", block: "center" });
+
+$("#billingView").addEventListener("click", async event => {
+  // 1. Copy to clipboard
+  const copyBtn = event.target.closest("[data-copy]");
+  if (copyBtn) {
+    try {
+      await navigator.clipboard.writeText(copyBtn.dataset.copy);
+      toast("Đã sao chép: " + copyBtn.dataset.copy);
+    } catch {
+      toast(copyBtn.dataset.copy);
+    }
+    return;
+  }
+
+  // 2. Select plan from pricing cards
+  const planBtn = event.target.closest("[data-select-plan]");
+  if (planBtn) {
+    const planKey = planBtn.dataset.selectPlan;
+    $("#paymentPlan").value = planKey;
+    const bankRadio = $(`#paymentForm [name="provider"][value="bank"]`);
+    if (bankRadio && !bankRadio.disabled) bankRadio.checked = true;
+    $("#paymentForm").scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+
+  // 3. Switch to Free plan
+  const switchFreeBtn = event.target.closest("[data-switch-free]");
+  if (switchFreeBtn) {
+    if (!confirm("Bạn muốn chuyển về gói Free (30 phút/tháng)?")) return;
+    switchFreeBtn.disabled = true;
+    try {
+      await requestJson("/api/v1/billing/switch-free", { method: "POST" });
+      toast("Đã chuyển về gói Free thành công");
+      await loadBilling();
+      await refreshApplicationAuth();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      switchFreeBtn.disabled = false;
+    }
+    return;
+  }
+
+  // 4. Confirm payment order & activate plan
+  const confirmBtn = event.target.closest("[data-confirm-order]");
+  if (confirmBtn) {
+    const orderId = confirmBtn.dataset.confirmOrder;
+    confirmBtn.disabled = true;
+    try {
+      await requestJson(`/api/v1/billing/orders/${orderId}/confirm`, { method: "POST" });
+      toast("Đã xác nhận thanh toán & kích hoạt gói thành công!");
+      $("#paymentInstructions").classList.add("is-hidden");
+      await loadBilling();
+      await refreshApplicationAuth();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      confirmBtn.disabled = false;
+    }
+    return;
+  }
+
+  // 5. Cancel payment order
+  const cancelBtn = event.target.closest("[data-cancel-order]");
+  if (cancelBtn) {
+    const orderId = cancelBtn.dataset.cancelOrder;
+    if (!confirm("Bạn muốn hủy yêu cầu thanh toán này?")) return;
+    cancelBtn.disabled = true;
+    try {
+      await requestJson(`/api/v1/billing/orders/${orderId}/cancel`, { method: "POST" });
+      toast("Đã hủy yêu cầu thanh toán");
+      $("#paymentInstructions").classList.add("is-hidden");
+      await loadBilling();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      cancelBtn.disabled = false;
+    }
+    return;
+  }
+
+  // 6. View QR instructions for an existing order
+  const viewOrderBtn = event.target.closest("[data-view-order]");
+  if (viewOrderBtn) {
+    const orderId = viewOrderBtn.dataset.viewOrder;
+    viewOrderBtn.disabled = true;
+    try {
+      const order = await requestJson(`/api/v1/billing/orders/${orderId}`);
+      if (order.bank) {
+        renderPaymentInstructions(order);
+      } else {
+        toast("Đơn này không sử dụng chuyển khoản VietQR");
+      }
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      viewOrderBtn.disabled = false;
+    }
+    return;
+  }
 });
 
 $("#files").addEventListener("change", event => addFiles(event.target.files));

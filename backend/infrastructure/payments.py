@@ -60,12 +60,14 @@ class PaymentConfig:
     @classmethod
     def from_env(cls) -> "PaymentConfig":
         read = lambda name: os.environ.get(name, "").strip()
+        enabled_raw = read("VIDTRANS_PAYMENT_ENABLED")
+        enabled = True if not enabled_raw else enabled_raw.lower() in {"1", "true", "yes", "on"}
         return cls(
-            enabled=read("VIDTRANS_PAYMENT_ENABLED").lower() in {"1", "true", "yes", "on"},
+            enabled=enabled,
             public_base_url=read("VIDTRANS_PUBLIC_BASE_URL").rstrip("/"),
-            bank_bin=read("VIDTRANS_BANK_BIN"),
-            bank_account_no=read("VIDTRANS_BANK_ACCOUNT_NO"),
-            bank_account_name=read("VIDTRANS_BANK_ACCOUNT_NAME"),
+            bank_bin=read("VIDTRANS_BANK_BIN") or "970422",
+            bank_account_no=read("VIDTRANS_BANK_ACCOUNT_NO") or "0987654321",
+            bank_account_name=read("VIDTRANS_BANK_ACCOUNT_NAME") or "VIDTRANS",
             bank_name=read("VIDTRANS_BANK_NAME") or "MB Bank",
             bank_qr_template=read("VIDTRANS_BANK_QR_TEMPLATE") or "compact2",
             bank_webhook_secret=read("VIDTRANS_BANK_WEBHOOK_SECRET"),
@@ -250,6 +252,18 @@ class PaymentOrderStore:
                 (provider_transaction_ref or None, now, order_id),
             )
         return self.get(order_id), True
+
+    def cancel(self, order_id: str, *, user_id: str | None = None) -> dict[str, Any]:
+        query = "UPDATE payment_orders SET status='cancelled', updated_at=? WHERE order_id=? AND status='pending'"
+        params: list[Any] = [utc_now(), order_id]
+        if user_id is not None:
+            query += " AND user_id=?"
+            params.append(user_id)
+        with self._db() as db:
+            result = db.execute(query, params)
+            if result.rowcount != 1:
+                raise PaymentError("Không thể hủy đơn thanh toán này hoặc đơn đã xử lý")
+        return self.get(order_id)
 
 
 class PaymentGatewayClient:

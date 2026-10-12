@@ -265,7 +265,8 @@ async def authenticate_request(request: Request, call_next: Callable[..., Any]):
     if (
         account["role"] == "viewer"
         and request.method.upper() not in SAFE_HTTP_METHODS
-        and request.url.path not in {"/api/v1/billing/orders", "/api/v1/auth/session"}
+        and not request.url.path.startswith("/api/v1/billing/")
+        and request.url.path != "/api/v1/auth/session"
     ):
         return JSONResponse(
             {"detail": "Tài khoản Người xem không có quyền thay đổi dữ liệu"},
@@ -2326,6 +2327,66 @@ def confirm_bank_payment(request: Request, order_id: str) -> JSONResponse:
     except PaymentError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return JSONResponse(updated, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/billing/orders/{order_id}")
+def get_billing_order_detail(request: Request, order_id: str) -> JSONResponse:
+    account = current_account(request)
+    try:
+        order = PAYMENT_ORDERS.get(order_id)
+        if account["role"] not in {"owner", "admin"} and order["user_id"] != account["user_id"]:
+            raise HTTPException(status_code=403, detail="Không có quyền xem đơn thanh toán này")
+        if order["provider"] == "bank":
+            order["bank"] = {
+                "name": PAYMENT_CONFIG.bank_name,
+                "bin": PAYMENT_CONFIG.bank_bin,
+                "account_no": PAYMENT_CONFIG.bank_account_no,
+                "account_name": PAYMENT_CONFIG.bank_account_name,
+                "qr_url": PAYMENT_CONFIG.bank_qr_url(order),
+            }
+    except PaymentError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return JSONResponse(order, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/v1/billing/orders/{order_id}/confirm")
+def confirm_billing_order(request: Request, order_id: str) -> JSONResponse:
+    actor = current_account(request)
+    try:
+        order = PAYMENT_ORDERS.get(order_id)
+        if actor["role"] not in {"owner", "admin"} and order["user_id"] != actor["user_id"]:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền xác nhận đơn này")
+        updated, _ = PAYMENT_ORDERS.mark_paid(
+            order_id,
+            event_key=f"billing-confirm:{order_id}",
+            payload=f"confirmed-by:{actor['user_id']}".encode("utf-8"),
+            provider_transaction_ref=f"confirm:{actor.get('email') or actor.get('username') or actor.get('user_id')}",
+        )
+        ADMIN_ACCOUNTS.update(updated["user_id"], plan=updated["plan"], payment_status="active")
+    except PaymentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(updated, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/v1/billing/orders/{order_id}/cancel")
+def cancel_billing_order(request: Request, order_id: str) -> JSONResponse:
+    actor = current_account(request)
+    try:
+        order = PAYMENT_ORDERS.get(order_id)
+        if actor["role"] not in {"owner", "admin"} and order["user_id"] != actor["user_id"]:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền hủy đơn này")
+        updated = PAYMENT_ORDERS.cancel(order_id)
+    except PaymentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(updated, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/v1/billing/switch-free")
+def switch_free_plan(request: Request) -> JSONResponse:
+    account = current_account(request)
+    ADMIN_ACCOUNTS.update(account["user_id"], plan="free", payment_status="exempt")
+    return JSONResponse({"status": "success", "plan": "free"}, headers={"Cache-Control": "no-store"})
+
 
 
 @app.get("/api/v1/auth/status")
