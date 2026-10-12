@@ -7,6 +7,7 @@ import os
 import sqlite3
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
@@ -42,6 +43,9 @@ class PaymentConfig:
     bank_bin: str
     bank_account_no: str
     bank_account_name: str
+    bank_name: str
+    bank_qr_template: str
+    bank_webhook_secret: str
     vietqr_client_id: str
     vietqr_api_key: str
     momo_partner_code: str
@@ -62,6 +66,9 @@ class PaymentConfig:
             bank_bin=read("VIDTRANS_BANK_BIN"),
             bank_account_no=read("VIDTRANS_BANK_ACCOUNT_NO"),
             bank_account_name=read("VIDTRANS_BANK_ACCOUNT_NAME"),
+            bank_name=read("VIDTRANS_BANK_NAME") or "MB Bank",
+            bank_qr_template=read("VIDTRANS_BANK_QR_TEMPLATE") or "compact2",
+            bank_webhook_secret=read("VIDTRANS_BANK_WEBHOOK_SECRET"),
             vietqr_client_id=read("VIDTRANS_VIETQR_CLIENT_ID"),
             vietqr_api_key=read("VIDTRANS_VIETQR_API_KEY"),
             momo_partner_code=read("VIDTRANS_MOMO_PARTNER_CODE"),
@@ -85,6 +92,21 @@ class PaymentConfig:
                 self.zalopay_app_id and self.zalopay_key1 and self.zalopay_key2 and self.zalopay_endpoint
             ),
         }
+
+    def bank_qr_url(self, order: dict[str, Any]) -> str:
+        if not self.availability()["bank"]:
+            raise PaymentError("Chuyển khoản ngân hàng chưa được cấu hình")
+        query = urllib.parse.urlencode(
+            {
+                "amount": int(order["amount"]),
+                "addInfo": order["transfer_content"],
+                "accountName": self.bank_account_name,
+            }
+        )
+        bank_bin = urllib.parse.quote(self.bank_bin, safe="")
+        account_no = urllib.parse.quote(self.bank_account_no, safe="")
+        template = urllib.parse.quote(self.bank_qr_template, safe="")
+        return f"https://img.vietqr.io/image/{bank_bin}-{account_no}-{template}.png?{query}"
 
 
 class PaymentOrderStore:
@@ -329,4 +351,13 @@ class PaymentGatewayClient:
     def verify_zalopay_callback(self, data: str, mac: str) -> bool:
         expected = self._hmac(self.config.zalopay_key2, data)
         return hmac.compare_digest(expected, mac)
+
+    def verify_bank_callback(self, payload: bytes, signature: str) -> bool:
+        if not self.config.bank_webhook_secret or not signature:
+            return False
+        normalized = signature.removeprefix("sha256=").strip().lower()
+        expected = hmac.new(
+            self.config.bank_webhook_secret.encode("utf-8"), payload, hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(expected, normalized)
 

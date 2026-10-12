@@ -384,7 +384,7 @@ function updateFormSummary() {
   $("#musicField").classList.toggle("is-hidden", mode !== "3");
   const voiceEnabled = mode === "2" || mode === "3";
   const musicEnabled = mode === "3";
-  ["#voiceModeField", "#voiceTypeField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
+  ["#voiceModeField", "#voiceTypeField", "#voiceStyleField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
     const field = $(selector);
     field.classList.toggle("is-disabled", !voiceEnabled);
     $$('input, select', field).forEach(control => { control.disabled = !voiceEnabled; });
@@ -480,7 +480,7 @@ async function createPayment(event) {
       return;
     }
     const instructions = $("#paymentInstructions");
-    instructions.innerHTML = `<span>Yêu cầu thanh toán đã tạo</span><h3>${money(order.amount)}</h3><dl><div><dt>Ngân hàng / BIN</dt><dd>${escapeHtml(order.bank.bin)}</dd></div><div><dt>Số tài khoản</dt><dd>${escapeHtml(order.bank.account_no)}</dd></div><div><dt>Chủ tài khoản</dt><dd>${escapeHtml(order.bank.account_name)}</dd></div><div><dt>Nội dung</dt><dd>${escapeHtml(order.transfer_content)}</dd></div></dl><p>Vui lòng chuyển đúng số tiền và nội dung. Gói sẽ được kích hoạt sau khi quản trị viên đối soát.</p>`;
+    instructions.innerHTML = `<div class="bank-qr"><img src="${escapeHtml(order.bank.qr_url)}" alt="Mã QR chuyển khoản ${escapeHtml(order.bank.name)}" loading="eager"/><small>Mở ứng dụng ngân hàng và quét mã</small></div><div class="bank-transfer-detail"><span>Yêu cầu thanh toán đã tạo</span><h3>${money(order.amount)}</h3><dl><div><dt>Ngân hàng</dt><dd>${escapeHtml(order.bank.name)}</dd></div><div><dt>Số tài khoản</dt><dd>${escapeHtml(order.bank.account_no)}</dd></div><div><dt>Chủ tài khoản</dt><dd>${escapeHtml(order.bank.account_name)}</dd></div><div><dt>Nội dung bắt buộc</dt><dd>${escapeHtml(order.transfer_content)}</dd></div></dl><p>QR đã điền đúng số tiền và nội dung. Gói sẽ tự kích hoạt khi dịch vụ đối soát gửi xác nhận hợp lệ; quản trị viên vẫn có thể xác nhận thủ công.</p></div>`;
     instructions.classList.remove("is-hidden");
     toast("Đã tạo yêu cầu thanh toán");
     await loadBilling();
@@ -898,6 +898,23 @@ $("#navToggle").addEventListener("click", () => {
 $("#userMenuButton").addEventListener("click", () => {
   const open = $("#userMenu").classList.toggle("open");
   $("#userMenuButton").setAttribute("aria-expanded", String(open));
+});
+document.addEventListener("click", event => {
+  if (!$("#userMenu").contains(event.target)) {
+    $("#userMenu").classList.remove("open");
+    $("#userMenuButton").setAttribute("aria-expanded", "false");
+  }
+  if (!$("#mainNavigation").contains(event.target) && !$("#navToggle").contains(event.target)) {
+    $("#mainNavigation").classList.remove("open");
+    $("#navToggle").setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  $("#userMenu").classList.remove("open");
+  $("#mainNavigation").classList.remove("open");
+  $("#userMenuButton").setAttribute("aria-expanded", "false");
+  $("#navToggle").setAttribute("aria-expanded", "false");
 });
 $("#paymentForm").addEventListener("submit", createPayment);
 $("#billingPlans").addEventListener("click", event => {

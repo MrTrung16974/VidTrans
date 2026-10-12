@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import IntEnum, StrEnum
 
-from domain.languages import language_profile, validate_language_pair
+from domain.languages import language_profile, validate_language_pair, voice_preset
 
 
 class ProcessingMode(IntEnum):
@@ -57,6 +57,7 @@ class ProcessingRequest:
     ocr: OcrOptions
     voice_mode: VoiceRoutingMode
     fallback_voice: VoiceType
+    voice_style: str
     tiktok: TikTokOptions
 
     @classmethod
@@ -70,6 +71,7 @@ class ProcessingRequest:
         ocr_roi_bottom: float,
         voice_mode: str,
         voice_type: str,
+        voice_style: str = "natural",
         generate_tiktok_post: bool = True,
         tiktok_max_summary_chars: int = 350,
         tiktok_hashtag_count: int = 6,
@@ -95,6 +97,7 @@ class ProcessingRequest:
             resolved_voice_type = VoiceType(voice_type)
         except ValueError as exc:
             raise ValueError("voice_type must be female or male") from exc
+        resolved_voice_style = voice_preset(voice_style).key
         resolved_source_language, resolved_target_language = validate_language_pair(
             source_language, target_language
         )
@@ -146,6 +149,7 @@ class ProcessingRequest:
             ),
             voice_mode=resolved_voice_mode,
             fallback_voice=resolved_voice_type,
+            voice_style=resolved_voice_style,
             tiktok=TikTokOptions(
                 enabled=generate_tiktok_post,
                 max_summary_chars=tiktok_max_summary_chars,

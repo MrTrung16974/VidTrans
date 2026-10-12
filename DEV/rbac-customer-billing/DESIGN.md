@@ -9,6 +9,7 @@
 - `infrastructure/admin_accounts.py`: migration additive `password_hash`; lookup/auth account; password không bao giờ xuất qua API.
 - `infrastructure/payments.py`: catalog, order store, provider config/adapters và state transition.
 - `main.py`: middleware xác thực; helper permission; `/api/v1/me`, `/billing/*`, callback public có signature; guard `/admin/*`.
+- Chuyển khoản MB: server tạo VietQR chứa amount/nội dung của order; webhook đối soát ký HMAC mới được phép đánh dấu paid. Tài khoản nhận và secret chỉ lấy từ environment.
 
 ## 2. Frontend
 
@@ -27,6 +28,7 @@
 - Identity/role lấy từ JWT đã xác minh và account DB.
 - Amount/plan từ catalog server-side.
 - HMAC compare bằng `hmac.compare_digest`; callback idempotent.
+- Callback ngân hàng xác minh chữ ký trên raw body, đối chiếu provider/amount và transaction ID trước khi kích hoạt gói.
 - Provider secrets chỉ từ environment. Không đọc hoặc sửa file cấu hình chứa secret.
 
 ## 5. Test strategy

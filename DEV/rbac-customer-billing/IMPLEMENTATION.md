@@ -13,13 +13,14 @@
 - Payment order/event persistence, user ownership, amount từ catalog, idempotent paid event.
 - MoMo `captureWallet`: HMAC-SHA256, create order, checkout URL và IPN verification.
 - ZaloPay create order: HMAC-SHA256, Vietnam-date transaction ID, checkout URL và callback verification.
+- Chuyển khoản MB hiển thị VietQR đã điền số tiền/nội dung; webhook đối soát HMAC có kiểm tra amount, provider và idempotency transaction.
 - Header/navigation mới có mobile menu, user menu và ẩn route theo role.
 - Page Billing responsive: current plan, catalog, provider availability, checkout và history.
 
 ## Giới hạn đúng trạng thái
 
 - Không gọi sandbox thật vì chưa có merchant credentials/callback HTTPS.
-- Chuyển khoản ngân hàng cần admin xác nhận; chưa có API đối soát ngân hàng.
+- Muốn tự động xác nhận chuyển khoản cần một dịch vụ đối soát được cấu hình gửi webhook; nếu không có, admin vẫn xác nhận thủ công.
 - Chưa có refund/chargeback, recurring payment hoặc hóa đơn điện tử.
 - Audit log riêng cho manual bank confirmation chưa được thêm; actor đã được dùng trong idempotency payload nhưng đây chưa phải audit trail vận hành đầy đủ.
 

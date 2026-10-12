@@ -31,7 +31,7 @@ from application.tiktok_publish_routes import create_tiktok_publish_router
 from application.tiktok_publishing import TikTokPublishScheduler, TikTokPublishingService
 from infrastructure.tiktok_browser import TikTokBrowserManager
 from domain.models import ProcessingMode, ProcessingRequest
-from domain.languages import language_profile, languages_from_config, normalize_language
+from domain.languages import language_profile, languages_from_config, normalize_language, voice_preset
 
 from infrastructure.douyin_browser_auth import DouyinBrowserAuthManager
 from infrastructure.auth import (
@@ -72,7 +72,7 @@ from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layou
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService
 from pipeline.translation import ensure_translation_complete, filter_meaningful_segments, translate_segments
-from pipeline.tts_timing import bounded_tempo, schedule_voice_segments
+from pipeline.tts_timing import available_voice_window, bounded_tempo, schedule_voice_segments
 from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
 
 try:
@@ -190,6 +190,7 @@ PUBLIC_AUTH_PATHS = {
     "/api/v1/tiktok-auth/callback",
     "/api/v1/billing/callbacks/momo",
     "/api/v1/billing/callbacks/zalopay",
+    "/api/v1/billing/callbacks/bank",
 }
 SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -665,10 +666,12 @@ def make_ocr_progress_callback(job_id: str) -> Callable[[int, int], None]:
     return report
 
 
-async def tts_edge_sync(text: str, output_path: Path, voice_name: str, rate: str) -> None:
+async def tts_edge_sync(
+    text: str, output_path: Path, voice_name: str, rate: str, pitch: str = "+0Hz"
+) -> None:
     if edge_tts is None:
         raise RuntimeError("edge-tts is not available")
-    communicate = edge_tts.Communicate(text=text, voice=voice_name, rate=rate)
+    communicate = edge_tts.Communicate(text=text, voice=voice_name, rate=rate, pitch=pitch)
     await communicate.save(str(output_path))
 
 
@@ -681,13 +684,16 @@ def synthesize_tts_segments(
     work_dir: Path,
     voice_type: str,
     speech_rate: float,
+    voice_style: str = "natural",
     job_id: str | None = None,
     target_language: str = "vi",
 ) -> list[Path]:
     tts_dir = work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
-    rate_percent = int((speech_rate - 1.0) * 100)
+    preset = voice_preset(voice_style)
+    rate_percent = int((speech_rate - 1.0) * 100) + preset.rate_percent
     base_rate_string = f"{rate_percent:+d}%"
+    pitch_string = f"{preset.pitch_hz:+d}Hz"
 
     import concurrent.futures
     import threading
@@ -753,12 +759,12 @@ def synthesize_tts_segments(
         
         # Pass 1: Generate initial audio to gauge speaking duration
         try:
-            asyncio.run(tts_edge_sync(text, output_path, voice_name, base_rate_string))
+            asyncio.run(tts_edge_sync(text, output_path, voice_name, base_rate_string, pitch_string))
         except Exception as exc:
             logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
             tts_gtts_sync(text, output_path, slow=speech_rate < 0.95, language=target_language)
             
-        cue_duration = max(0.25, float(segment["end"]) - float(segment["start"]) - 0.05)
+        cue_duration = available_voice_window(segments, index)
 
         # Trim only the outer silence. Reversing for the tail is important:
         # stop_periods=1 would stop at the first natural pause inside a line.
@@ -805,7 +811,18 @@ def synthesize_tts_segments(
                 ]
             )
         segment["tts_speed_factor"] = round(speed_factor, 3)
+        segment["tts_voice_style"] = preset.key
+        segment["tts_voice_name"] = voice_name
+        segment["tts_voice_rate"] = base_rate_string
+        segment["tts_voice_pitch"] = pitch_string
         segment["tts_duration"] = round(get_media_duration(fitted_path), 3)
+        segment["tts_target_duration"] = round(cue_duration, 3)
+        segment["tts_overrun"] = round(max(0.0, segment["tts_duration"] - cue_duration), 3)
+        segment["tts_fit_quality"] = (
+            "exact" if segment["tts_overrun"] <= 0.05
+            else "soft" if segment["tts_overrun"] <= 0.35
+            else "overflow"
+        )
         segment["tts_path"] = fitted_path
         
         with progress_lock:
@@ -1321,6 +1338,7 @@ def process_video(
     whisper_model: str,
     voice_type: str,
     voice_mode: str,
+    voice_style: str,
     speech_rate: float,
     background_music_path: Optional[Path],
     keep_original_audio: bool,
@@ -1548,6 +1566,7 @@ def process_video(
                 work_dir,
                 voice_type,
                 speech_rate,
+                voice_style,
                 job_id=job_id,
                 target_language=target_language,
             )
@@ -1595,6 +1614,7 @@ def process_video(
                     "voice_routing": {
                         "mode": voice_mode,
                         "fallback_voice": voice_type,
+                        "voice_style": voice_style,
                         "summary": voice_summary,
                     },
                     "segments": serializable_segments,
@@ -1915,6 +1935,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             whisper_model=str(resume_request["whisper_model"]),
             voice_type=str(resume_request["voice_type"]),
             voice_mode=str(resume_request["voice_mode"]),
+            voice_style=str(resume_request.get("voice_style", "natural")),
             speech_rate=float(resume_request["speech_rate"]),
             background_music_path=background_music_path,
             keep_original_audio=bool(resume_request["keep_original_audio"]),
@@ -2185,9 +2206,11 @@ def create_payment_order(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if provider == "bank":
         order["bank"] = {
+            "name": PAYMENT_CONFIG.bank_name,
             "bin": PAYMENT_CONFIG.bank_bin,
             "account_no": PAYMENT_CONFIG.bank_account_no,
             "account_name": PAYMENT_CONFIG.bank_account_name,
+            "qr_url": PAYMENT_CONFIG.bank_qr_url(order),
         }
     else:
         try:
@@ -2205,6 +2228,37 @@ def create_payment_order(
 
 def activate_paid_order(order: dict[str, Any]) -> None:
     ADMIN_ACCOUNTS.update(order["user_id"], plan=order["plan"], payment_status="active")
+
+
+@app.post("/api/v1/billing/callbacks/bank")
+async def bank_payment_callback(request: Request) -> Response:
+    raw_payload = await request.body()
+    signature = request.headers.get("x-vidtrans-signature", "")
+    if not PAYMENT_GATEWAY.verify_bank_callback(raw_payload, signature):
+        raise HTTPException(status_code=400, detail="Chữ ký đối soát ngân hàng không hợp lệ")
+    try:
+        payload = json.loads(raw_payload)
+        if not isinstance(payload, dict):
+            raise PaymentError("Payload đối soát ngân hàng không hợp lệ")
+        order_id = str(payload.get("order_id", ""))
+        transaction_id = str(payload.get("transaction_id", ""))
+        amount = int(payload.get("amount", -1))
+        order = PAYMENT_ORDERS.get(order_id)
+        if order["provider"] != "bank" or amount != order["amount"]:
+            raise PaymentError("Thông tin chuyển khoản không khớp")
+        if not transaction_id or len(transaction_id) > 200:
+            raise PaymentError("Mã giao dịch ngân hàng không hợp lệ")
+        order, applied = PAYMENT_ORDERS.mark_paid(
+            order_id,
+            event_key=f"bank:{transaction_id}",
+            payload=raw_payload,
+            provider_transaction_ref=transaction_id,
+        )
+        if applied:
+            activate_paid_order(order)
+    except (json.JSONDecodeError, PaymentError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(status_code=204)
 
 
 @app.post("/api/v1/billing/callbacks/momo")
@@ -2458,6 +2512,7 @@ async def process_video_endpoint(
     mode: int = Form(...),
     voice_type: str = Form("female"),
     voice_mode: str = Form("auto"),
+    voice_style: str = Form("natural"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -2490,6 +2545,7 @@ async def process_video_endpoint(
             ocr_roi_bottom=ocr_roi_bottom,
             voice_mode=voice_mode,
             voice_type=voice_type,
+            voice_style=voice_style,
             source_language=source_language,
             target_language=target_language,
             generate_tiktok_post=generate_tiktok_post,
@@ -2543,6 +2599,7 @@ async def process_video_endpoint(
         "whisper_model": whisper_model,
         "voice_type": request.fallback_voice.value,
         "voice_mode": request.voice_mode.value,
+        "voice_style": request.voice_style,
         "speech_rate": speech_rate,
         "background_music_path": str(background_music_path) if background_music_path else None,
         "keep_original_audio": keep_original_audio,
@@ -2575,6 +2632,7 @@ async def process_video_endpoint(
         "voice_routing": {
             "mode": request.voice_mode.value,
             "fallback_voice": request.fallback_voice.value,
+            "voice_style": request.voice_style,
         },
         "tiktok": {
             "enabled": request.tiktok.enabled,
@@ -2614,6 +2672,7 @@ async def create_batch_endpoint(
     mode: int = Form(1),
     voice_type: str = Form("female"),
     voice_mode: str = Form("auto"),
+    voice_style: str = Form("natural"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -2681,6 +2740,7 @@ async def create_batch_endpoint(
             ocr_roi_bottom=ocr_roi_bottom,
             voice_mode=voice_mode,
             voice_type=voice_type,
+            voice_style=voice_style,
             source_language=source_language,
             target_language=target_language,
             generate_tiktok_post=generate_tiktok_post,
@@ -2721,6 +2781,7 @@ async def create_batch_endpoint(
         "target_language": request.target_language,
         "voice_mode": request.voice_mode.value,
         "voice_type": request.fallback_voice.value,
+        "voice_style": request.voice_style,
         "speech_rate": speech_rate,
         "whisper_model": whisper_model,
         "keep_original_audio": keep_original_audio,
@@ -2779,6 +2840,7 @@ async def create_batch_endpoint(
                 "voice_routing": {
                     "mode": request.voice_mode.value,
                     "fallback_voice": request.fallback_voice.value,
+                    "voice_style": request.voice_style,
                 },
                 "tiktok": {
                     "enabled": request.tiktok.enabled,
@@ -2837,6 +2899,7 @@ async def create_batch_endpoint(
                 "voice_routing": {
                     "mode": request.voice_mode.value,
                     "fallback_voice": request.fallback_voice.value,
+                    "voice_style": request.voice_style,
                 },
                 "tiktok": {
                     "enabled": request.tiktok.enabled,

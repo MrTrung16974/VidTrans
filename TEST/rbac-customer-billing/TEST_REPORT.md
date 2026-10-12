@@ -8,3 +8,11 @@
 - Sandbox MoMo/ZaloPay: `BLOCKED`, cần credential merchant và HTTPS callback URL.
 - UAT/production payment: `NOT_RUN`.
 
+## Bổ sung chuyển khoản MB — 2026-10-12
+
+- Targeted suite `tests.test_payments tests.test_auth tests.test_frontend_static`: `17 PASS / 0 FAIL`.
+- JavaScript syntax: `PASS`.
+- Python AST syntax và `git diff --check`: `PASS`.
+- VietQR URL và HMAC callback: `PASS` cấp unit.
+- Webhook đối soát thật, giao dịch MB thật và kích hoạt plan production: `NOT_RUN`; cần tài khoản nhận thật, secret triển khai và dịch vụ đối soát.
+

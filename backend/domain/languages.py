@@ -20,6 +20,23 @@ class LanguageProfile:
         return self.edge_male if voice_type == "male" else self.edge_female
 
 
+@dataclass(frozen=True)
+class VoicePreset:
+    key: str
+    label_vi: str
+    rate_percent: int
+    pitch_hz: int
+
+
+VOICE_PRESETS: dict[str, VoicePreset] = {
+    "natural": VoicePreset("natural", "Tự nhiên", 0, 0),
+    "warm": VoicePreset("warm", "Ấm áp", -4, -8),
+    "bright": VoicePreset("bright", "Tươi sáng", 3, 8),
+    "deep": VoicePreset("deep", "Trầm", -6, -18),
+    "energetic": VoicePreset("energetic", "Năng động", 8, 4),
+}
+
+
 LANGUAGES: dict[str, LanguageProfile] = {
     "vi": LanguageProfile("vi", "Tiếng Việt", "vi", "vi", "vi", "vi", "vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"),
     "en": LanguageProfile("en", "Tiếng Anh", "en", "en", "en", "en", "en-US-JennyNeural", "en-US-GuyNeural"),
@@ -50,6 +67,13 @@ def normalize_language(code: str, *, allow_auto: bool = False) -> str:
 
 def language_profile(code: str) -> LanguageProfile:
     return LANGUAGES[normalize_language(code)]
+
+
+def voice_preset(key: str) -> VoicePreset:
+    normalized = (key or "natural").strip().lower()
+    if normalized not in VOICE_PRESETS:
+        raise ValueError(f"voice_style must be one of: {', '.join(VOICE_PRESETS)}")
+    return VOICE_PRESETS[normalized]
 
 
 def validate_language_pair(source_language: str, target_language: str) -> tuple[str, str]:

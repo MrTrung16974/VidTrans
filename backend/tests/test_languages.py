@@ -1,6 +1,14 @@
 import unittest
 
-from domain.languages import LANGUAGES, language_profile, languages_from_config, normalize_language, validate_language_pair
+from domain.languages import (
+    LANGUAGES,
+    VOICE_PRESETS,
+    language_profile,
+    languages_from_config,
+    normalize_language,
+    validate_language_pair,
+    voice_preset,
+)
 from domain.models import ProcessingRequest
 
 
@@ -44,3 +52,12 @@ class LanguageCatalogTests(unittest.TestCase):
                     voice_mode="auto", voice_type="female",
                     source_language=source, target_language="vi",
                 )
+
+    def test_voice_preset_catalog_is_bounded_and_validated(self):
+        self.assertEqual(
+            set(VOICE_PRESETS), {"natural", "warm", "bright", "deep", "energetic"}
+        )
+        self.assertEqual(voice_preset("warm").pitch_hz, -8)
+        self.assertEqual(voice_preset("").key, "natural")
+        with self.assertRaisesRegex(ValueError, "voice_style"):
+            voice_preset("custom-injected-voice")

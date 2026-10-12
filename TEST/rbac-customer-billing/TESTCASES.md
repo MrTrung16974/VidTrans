@@ -17,4 +17,7 @@
 | TC_013 | Responsive | 1440/390 không overflow | PASS |
 | TC_014 | Merchant sandbox E2E | Redirect + callback thật | BLOCKED — cần merchant credentials và HTTPS callback |
 | TC_015 | Bank reconciliation | Admin xác nhận kích hoạt plan | PASS cấp store/API code; UI Admin action NOT_RUN |
+| TC_016 | VietQR chuyển khoản MB | QR chứa account server-side, đúng amount và transfer content của order | PASS |
+| TC_017 | Bank webhook signature | Raw body đúng HMAC được chấp nhận; payload bị sửa bị từ chối | PASS cấp unit |
+| TC_018 | Bank webhook business validation | Chỉ order bank, đúng amount, transaction ID hợp lệ mới được paid | PASS cấp code review; integration NOT_RUN |
 

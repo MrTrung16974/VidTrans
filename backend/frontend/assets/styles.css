@@ -616,9 +616,12 @@ a { color: inherit; text-decoration: none; }
 .nav-toggle { display: none; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 12px; background: #fff; cursor: pointer; }
 .nav-toggle span { display: block; width: 19px; height: 2px; margin: 4px auto; border-radius: 2px; background: var(--ink); }
 .nav-tabs { padding: 4px; border-radius: 16px; box-shadow: 0 5px 18px rgba(31,45,61,.035); }
-.nav-tabs a { gap: 7px; min-height: 44px; padding: 0 13px; }
-.nav-tabs a > i { width: 20px; height: 20px; display: grid; place-items: center; color: #83909f; font-size: .75rem; font-style: normal; font-weight: 900; }
+.nav-tabs a { gap: 8px; min-height: 44px; padding: 0 13px; }
+.nav-tabs a > i { width: 27px; height: 27px; display: grid; place-items: center; flex: 0 0 27px; border-radius: 8px; color: #718096; background: #f1f4f7; font-style: normal; transition: color .16s,background .16s,transform .16s; }
+.nav-tabs a > i svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .nav-tabs a.active > i,.nav-tabs a:hover > i { color: var(--brand); }
+.nav-tabs a.active > i { color: #fff; background: linear-gradient(145deg,var(--brand),#f08a50); box-shadow: 0 5px 12px rgba(239,107,58,.22); }
+.nav-tabs a:hover > i { transform: translateY(-1px); }
 .nav-tabs a > b { font-style: normal; }
 .user-menu { position: relative; }
 .user-menu-button { min-width: 184px; display: grid; grid-template-columns: 35px minmax(0,1fr) auto; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 13px; padding: 6px 9px 6px 7px; color: var(--ink); background: rgba(255,255,255,.92); cursor: pointer; text-align: left; }
@@ -668,8 +671,11 @@ a { color: inherit; text-decoration: none; }
 .payment-method > span:nth-child(3) strong { font-size: .78rem; }
 .payment-method > span:nth-child(3) small { margin-top: 3px; color: var(--muted); font-size: .67rem; line-height: 1.4; }
 .payment-method > i { color: var(--muted); font-size: .63rem; font-style: normal; font-weight: 750; }
-.payment-instructions { grid-column: 1 / -1; padding: 22px; border: 1px solid #bfe0d8; border-radius: 16px; background: linear-gradient(145deg,#eff9f6,#fff); }
-.payment-instructions > span { color: var(--teal); font-size: .7rem; font-weight: 850; text-transform: uppercase; }
+.payment-instructions { grid-column: 1 / -1; display: grid; grid-template-columns: 210px minmax(0,1fr); gap: 24px; align-items: center; padding: 22px; border: 1px solid #bfe0d8; border-radius: 16px; background: linear-gradient(145deg,#eff9f6,#fff); }
+.bank-qr { display: grid; justify-items: center; gap: 8px; }
+.bank-qr img { width: 200px; max-width: 100%; aspect-ratio: 1; border: 1px solid #dfe8e5; border-radius: 14px; background: #fff; object-fit: contain; }
+.bank-qr small { color: var(--muted); font-size: .68rem; }
+.bank-transfer-detail > span { color: var(--teal); font-size: .7rem; font-weight: 850; text-transform: uppercase; }
 .payment-instructions h3 { margin: 8px 0 16px; font-size: 1.65rem; }
 .payment-instructions dl { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin: 0; }
 .payment-instructions dl div { padding: 11px; border-radius: 10px; background: #fff; }
@@ -692,7 +698,8 @@ a { color: inherit; text-decoration: none; }
 @media(max-width: 1180px) {
   .topbar { grid-template-columns: auto 1fr auto; }
   .nav-tabs a { padding: 0 9px; }
-  .nav-tabs a > i { display: none; }
+  .nav-tabs a > i { width: 24px; height: 24px; flex-basis: 24px; }
+  .nav-tabs a > i svg { width: 15px; height: 15px; }
   .billing-plans { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .billing-plan { min-height: 320px; }
 }
@@ -719,5 +726,6 @@ a { color: inherit; text-decoration: none; }
   .payment-method { grid-template-columns: auto 38px minmax(0,1fr); }
   .payment-method > i { grid-column: 3; }
   .payment-instructions dl { grid-template-columns: 1fr; }
+  .payment-instructions { grid-template-columns: 1fr; }
   .billing-orders article { align-items: flex-start; }
 }

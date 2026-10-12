@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 
-MAX_NATURAL_TEMPO = 1.10
+MAX_NATURAL_TEMPO = 1.16
+TEMPO_DEADBAND = 1.03
+MAX_BORROWED_PAUSE_SECONDS = 0.45
+MIN_TRANSITION_GAP_SECONDS = 0.08
 VOICE_GAP_SECONDS = 0.025
 
 
@@ -13,9 +16,28 @@ def bounded_tempo(rendered_duration: float, cue_duration: float) -> float:
     if rendered_duration <= 0 or cue_duration <= 0:
         return 1.0
     required = rendered_duration / cue_duration
-    if required <= 1.05:
+    if required <= TEMPO_DEADBAND:
         return 1.0
     return min(required, MAX_NATURAL_TEMPO)
+
+
+def available_voice_window(segments: Sequence[dict[str, Any]], index: int) -> float:
+    """Return a natural TTS window, borrowing only a bounded real pause.
+
+    A translated sentence may be slightly longer than its source cue. When the
+    source has a genuine pause before the next sentence, using part of that
+    pause sounds more natural than accelerating the voice unnecessarily.
+    """
+
+    segment = segments[index]
+    source_start = max(0.0, float(segment.get("start") or 0.0))
+    source_end = max(source_start, float(segment.get("end") or source_start))
+    base_window = max(0.25, source_end - source_start - 0.05)
+    if index + 1 >= len(segments):
+        return base_window
+    next_start = max(source_end, float(segments[index + 1].get("start") or source_end))
+    usable_pause = max(0.0, next_start - source_end - MIN_TRANSITION_GAP_SECONDS)
+    return base_window + min(usable_pause, MAX_BORROWED_PAUSE_SECONDS)
 
 
 def schedule_voice_segments(

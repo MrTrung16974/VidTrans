@@ -1,4 +1,6 @@
 import unittest
+import hashlib
+import hmac
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -51,6 +53,9 @@ class PaymentGatewayClientTests(unittest.TestCase):
             bank_bin="970436",
             bank_account_no="123456789",
             bank_account_name="VIDTRANS TEST",
+            bank_name="MB Bank",
+            bank_qr_template="compact2",
+            bank_webhook_secret="bank-webhook-secret",
             vietqr_client_id="client",
             vietqr_api_key="api-key",
             momo_partner_code="partner",
@@ -109,6 +114,20 @@ class PaymentGatewayClientTests(unittest.TestCase):
         mac = self.client._hmac("zalo-key-2", data)
         self.assertTrue(self.client.verify_zalopay_callback(data, mac))
         self.assertFalse(self.client.verify_zalopay_callback(data + " ", mac))
+
+    def test_bank_qr_contains_server_amount_and_transfer_content(self) -> None:
+        url = self.config.bank_qr_url(
+            {"amount": 199_000, "transfer_content": "VIDTRANS ORDER123"}
+        )
+        self.assertIn("970436-123456789-compact2.png", url)
+        self.assertIn("amount=199000", url)
+        self.assertIn("addInfo=VIDTRANS+ORDER123", url)
+
+    def test_bank_callback_requires_valid_hmac(self) -> None:
+        payload = b'{"order_id":"order-1","amount":199000,"transaction_id":"mb-1"}'
+        signature = hmac.new(b"bank-webhook-secret", payload, hashlib.sha256).hexdigest()
+        self.assertTrue(self.client.verify_bank_callback(payload, f"sha256={signature}"))
+        self.assertFalse(self.client.verify_bank_callback(payload + b" ", signature))
 
 
 if __name__ == "__main__":

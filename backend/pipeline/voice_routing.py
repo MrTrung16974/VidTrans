@@ -11,6 +11,7 @@ import numpy as np
 MALE_MAX_F0_HZ = 160.0
 FEMALE_MIN_F0_HZ = 190.0
 MIN_CONFIDENCE = 0.35
+STRONG_CONFIDENCE = 0.60
 
 
 @dataclass(frozen=True)
@@ -76,8 +77,19 @@ def analyze_pitch(samples: np.ndarray, sample_rate: int) -> PitchAnalysis:
     if not pitches or frame_count == 0:
         return PitchAnalysis(None, 0.0, 0, frame_count, None)
 
-    pitch_hz = float(np.median(pitches))
-    confidence = float(len(pitches) / frame_count * np.median(periodicities))
+    pitch_values = np.asarray(pitches, dtype=np.float32)
+    pitch_median = float(np.median(pitch_values))
+    deviation = np.abs(pitch_values - pitch_median)
+    mad = float(np.median(deviation))
+    stable_limit = max(12.0, 3.0 * mad)
+    stable = deviation <= stable_limit
+    stable_pitches = pitch_values[stable]
+    stable_periodicities = np.asarray(periodicities, dtype=np.float32)[stable]
+    pitch_hz = float(np.median(stable_pitches))
+    voiced_ratio = len(stable_pitches) / frame_count
+    periodicity = float(np.median(stable_periodicities))
+    stability = max(0.0, 1.0 - min(1.0, mad / max(pitch_hz, 1.0)))
+    confidence = float(voiced_ratio * periodicity * stability)
     voice_type: str | None = None
     if confidence >= MIN_CONFIDENCE:
         if pitch_hz <= MALE_MAX_F0_HZ:
@@ -99,23 +111,76 @@ def route_segments_by_pitch(
     or noisy cues inherit the latest confident style, then the selected fallback.
     """
     samples, sample_rate = _read_pcm_wav(audio_path)
-    previous_voice = fallback_voice
-    summary = {"male": 0, "female": 0, "fallback": 0}
+    analyses: list[PitchAnalysis] = []
+    durations: list[float] = []
     for segment in segments:
-        start_sample = max(0, int(float(segment["start"]) * sample_rate))
-        end_sample = min(len(samples), int(float(segment["end"]) * sample_rate))
-        analysis = analyze_pitch(samples[start_sample:end_sample], sample_rate)
-        selected_voice = analysis.voice_type or previous_voice
-        selection_source = "pitch" if analysis.voice_type else "fallback"
+        start = max(0.0, float(segment["start"]))
+        end = max(start, float(segment["end"]))
+        start_sample = max(0, int(start * sample_rate))
+        end_sample = min(len(samples), int(end * sample_rate))
+        analyses.append(analyze_pitch(samples[start_sample:end_sample], sample_rate))
+        durations.append(max(0.0, end - start))
+
+    evidence = {"male": 0.0, "female": 0.0}
+    for analysis, duration in zip(analyses, durations):
         if analysis.voice_type:
-            previous_voice = analysis.voice_type
+            evidence[analysis.voice_type] += analysis.confidence * max(duration, 0.25)
+    global_voice: str | None = None
+    if evidence["male"] > evidence["female"]:
+        global_voice = "male"
+    elif evidence["female"] > evidence["male"]:
+        global_voice = "female"
+
+    raw_voices = [analysis.voice_type for analysis in analyses]
+    resolved_voices: list[str] = []
+    sources: list[str] = []
+    for index, analysis in enumerate(analyses):
+        if analysis.voice_type:
+            resolved_voices.append(analysis.voice_type)
+            sources.append("pitch")
+            continue
+        previous_confident = next(
+            (voice for voice in reversed(raw_voices[:index]) if voice is not None), None
+        )
+        next_confident = next((voice for voice in raw_voices[index + 1 :] if voice is not None), None)
+        if previous_confident and previous_confident == next_confident:
+            resolved_voices.append(previous_confident)
+            sources.append("neighbor")
+        elif global_voice:
+            resolved_voices.append(global_voice)
+            sources.append("global")
+        elif previous_confident or next_confident:
+            resolved_voices.append(previous_confident or next_confident or fallback_voice)
+            sources.append("neighbor")
         else:
+            resolved_voices.append(fallback_voice)
+            sources.append("fallback")
+
+    # Remove only a weak, isolated flip. Strong evidence and sustained speaker
+    # changes remain untouched so real dialogue can still switch voice style.
+    for index in range(1, len(resolved_voices) - 1):
+        if (
+            resolved_voices[index - 1] == resolved_voices[index + 1]
+            and resolved_voices[index] != resolved_voices[index - 1]
+            and analyses[index].confidence < STRONG_CONFIDENCE
+        ):
+            resolved_voices[index] = resolved_voices[index - 1]
+            sources[index] = "smoothed"
+
+    summary = {"male": 0, "female": 0, "fallback": 0}
+    for segment, analysis, selected_voice, selection_source in zip(
+        segments, analyses, resolved_voices, sources
+    ):
+        if selection_source != "pitch":
             summary["fallback"] += 1
         summary[selected_voice] += 1
         segment["voice_type"] = selected_voice
         segment["voice_routing"] = {
             "mode": "auto",
             "selection_source": selection_source,
+            "raw_voice_type": analysis.voice_type,
+            "resolved_voice_type": selected_voice,
+            "global_voice_type": global_voice,
             **asdict(analysis),
         }
     return summary
