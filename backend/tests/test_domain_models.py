@@ -40,9 +40,9 @@ class ProcessingRequestTests(unittest.TestCase):
             ocr_roi_bottom=0.96,
             voice_mode="manual",
             voice_type="male",
-            voice_style="deep",
+            voice_style="storyteller",
         )
-        self.assertEqual(request.voice_style, "deep")
+        self.assertEqual(request.voice_style, "storyteller")
         with self.assertRaisesRegex(ValueError, "voice_style"):
             ProcessingRequest.from_form(
                 mode=2,

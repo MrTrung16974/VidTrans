@@ -384,6 +384,9 @@ function updateFormSummary() {
   $("#musicField").classList.toggle("is-hidden", mode !== "3");
   const voiceEnabled = mode === "2" || mode === "3";
   const musicEnabled = mode === "3";
+  const voiceMode = document.querySelector('[name="voice_mode"]')?.value || "auto";
+  const voiceTypeLabel = $("#voiceTypeLabel");
+  if (voiceTypeLabel) voiceTypeLabel.textContent = voiceMode === "auto" ? "Giọng dự phòng" : "Giọng đọc";
   ["#voiceModeField", "#voiceTypeField", "#voiceStyleField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
     const field = $(selector);
     field.classList.toggle("is-disabled", !voiceEnabled);
@@ -1096,7 +1099,7 @@ $("#userMenuButton").addEventListener("click", () => {
   $("#userMenuButton").setAttribute("aria-expanded", String(open));
 });
 document.addEventListener("click", event => {
-  if (!$("#userMenu").contains(event.target)) {
+  if (event.target.closest("#userMenu a") || !$("#userMenu").contains(event.target)) {
     $("#userMenu").classList.remove("open");
     $("#userMenuButton").setAttribute("aria-expanded", "false");
   }
@@ -1147,7 +1150,7 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
     toast("Đã xóa phiên đăng nhập Douyin");
   } catch (error) { toast(error.message, true); }
 });
-[$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource")].forEach(element => element.addEventListener("change", updateFormSummary));
+[$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), document.querySelector('[name="voice_mode"]')].forEach(element => element.addEventListener("change", updateFormSummary));
 [$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#refreshAdminAccounts").addEventListener("click", loadAdminAccounts);

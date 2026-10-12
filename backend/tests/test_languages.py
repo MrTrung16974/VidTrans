@@ -55,9 +55,16 @@ class LanguageCatalogTests(unittest.TestCase):
 
     def test_voice_preset_catalog_is_bounded_and_validated(self):
         self.assertEqual(
-            set(VOICE_PRESETS), {"natural", "warm", "bright", "deep", "energetic"}
+            set(VOICE_PRESETS),
+            {
+                "natural", "warm", "bright", "deep", "energetic", "gentle",
+                "storyteller", "news", "commercial", "youthful", "authoritative",
+                "calm", "cheerful",
+            },
         )
         self.assertEqual(voice_preset("warm").pitch_hz, -8)
+        self.assertEqual(voice_preset("storyteller").rate_percent, -6)
+        self.assertEqual(voice_preset("commercial").pitch_hz, 6)
         self.assertEqual(voice_preset("").key, "natural")
         with self.assertRaisesRegex(ValueError, "voice_style"):
             voice_preset("custom-injected-voice")

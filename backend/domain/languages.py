@@ -34,6 +34,14 @@ VOICE_PRESETS: dict[str, VoicePreset] = {
     "bright": VoicePreset("bright", "Tươi sáng", 3, 8),
     "deep": VoicePreset("deep", "Trầm", -6, -18),
     "energetic": VoicePreset("energetic", "Năng động", 8, 4),
+    "gentle": VoicePreset("gentle", "Nhẹ nhàng", -8, -3),
+    "storyteller": VoicePreset("storyteller", "Kể chuyện", -6, -5),
+    "news": VoicePreset("news", "Bản tin", 2, -2),
+    "commercial": VoicePreset("commercial", "Quảng cáo", 7, 6),
+    "youthful": VoicePreset("youthful", "Trẻ trung", 5, 10),
+    "authoritative": VoicePreset("authoritative", "Uy tín", -4, -14),
+    "calm": VoicePreset("calm", "Điềm tĩnh", -10, -6),
+    "cheerful": VoicePreset("cheerful", "Vui vẻ", 8, 12),
 }
 
 
