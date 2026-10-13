@@ -1,4 +1,4 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20261010-1";
+import { createTikTokWorkspace } from "./tiktok.js?v=20261013-2";
 import { resolveDouyinFrameUrl } from "./browser-frame.js?v=20260920-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -1360,7 +1360,9 @@ bindWorkflowStepNav();
 const oauthParams = new URLSearchParams(location.search);
 if (oauthParams.get("tiktok") === "connected") toast("Đã kết nối tài khoản TikTok thành công");
 if (oauthParams.get("tiktok_error")) toast(oauthParams.get("tiktok_error"), true);
-if (oauthParams.has("tiktok") || oauthParams.has("tiktok_error")) {
+if (oauthParams.get("instagram") === "connected") toast("Đã kết nối tài khoản Instagram thành công");
+if (oauthParams.get("instagram_error")) toast(oauthParams.get("instagram_error"), true);
+if (oauthParams.has("tiktok") || oauthParams.has("tiktok_error") || oauthParams.has("instagram") || oauthParams.has("instagram_error")) {
   history.replaceState(null, "", `${location.pathname}${location.hash || "#create"}`);
 }
 bootstrapApplication();

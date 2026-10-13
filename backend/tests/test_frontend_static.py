@@ -9,6 +9,21 @@ from infrastructure.frontend_static import FrontendStaticFiles
 
 
 class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
+    async def test_instagram_publishing_controls_and_module_are_shipped(self):
+        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        html = (frontend / "index.html").read_text(encoding="utf-8")
+        javascript = (frontend / "js" / "instagram.js").read_text(encoding="utf-8")
+
+        for element_id in (
+            "instagramConnect", "instagramAccount", "instagramPublishMode",
+            "instagramScheduleAt", "instagramReviewConsent", "instagramPublish",
+            "instagramPublishStatus",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("/api/v1/instagram-auth/connect", javascript)
+        self.assertIn("/social-publishes", javascript)
+        self.assertIn("platform: 'INSTAGRAM'", javascript)
+
     async def test_unknown_websocket_is_rejected_without_http_assertion(self):
         with TemporaryDirectory() as directory:
             app = Starlette(routes=[Mount("/", app=FrontendStaticFiles(directory=directory, html=True))])

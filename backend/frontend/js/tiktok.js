@@ -1,4 +1,5 @@
 import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20260914-1";
+import { createInstagramWorkspace } from "./instagram.js?v=20261013-1";
 export function createTikTokWorkspace({ requestJson, toast }) {
   const $ = selector => document.querySelector(selector);
   let status = null, apiStatus = null, draft = null, timer = null, apiTimer = null, refreshing = false, loading = false, submitting = false;
@@ -7,6 +8,11 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   let publishAttempt = null, publishTimer = null, publishSubmitting = false, publishKey = null;
   const edits = new Map();
   let checkedFrameUrl = null, frameProblem = null, frameChecking = false;
+  const instagram = createInstagramWorkspace({
+    requestJson, toast,
+    getDraft: () => draft,
+    getCaption: () => $('#tiktokCaption').value,
+  });
   function checkFrame(url) {
     if (checkedFrameUrl === url || frameChecking) return;
     checkedFrameUrl = url; frameChecking = true; frameProblem = null;
@@ -179,11 +185,13 @@ export function createTikTokWorkspace({ requestJson, toast }) {
         $('#tiktokPreviousAttempt').textContent = `Video này đã được tải lên TikTok Studio lúc ${when}. Kiểm tra mục Bài đăng / Bản nháp trên TikTok để tránh đăng trùng trước khi tải lại.`;
       }
       await loadLatestPublish(jobId);
+      instagram.setDraft();
     } catch (error) {
       if (version !== requestVersion) return;
       draft = null;
       $('#tiktokDraftEmpty').classList.remove('is-hidden');
       $('#tiktokDraftEditor').classList.add('is-hidden');
+      instagram.setDraft();
       toast(error.message, true);
     } finally {
       if (version === requestVersion) { loading = false; controls(); }
@@ -326,13 +334,14 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       ++requestVersion;
       if (draft) edits.set(draft.job_id, $('#tiktokCaption').value);
       draft = null; loading = false;
+      instagram.setDraft();
       $('#tiktokVideoPreview').pause();
       $('#tiktokDraftEditor').classList.add('is-hidden');
       $('#tiktokDraftEmpty').classList.remove('is-hidden');
       controls();
     }
   });
-  $('#tiktokCaption').addEventListener('input', () => { $('#tiktokReviewConsent').checked = false; controls(); });
+  $('#tiktokCaption').addEventListener('input', () => { $('#tiktokReviewConsent').checked = false; instagram.changed(); controls(); });
   $('#tiktokPublishMode').addEventListener('change', updatePublishMode);
   $('#tiktokPrivacy').addEventListener('change', () => { $('#tiktokReviewConsent').checked = false; publishKey = null; controls(); });
   $('#tiktokScheduleAt').addEventListener('change', () => { $('#tiktokReviewConsent').checked = false; publishKey = null; controls(); });
@@ -404,6 +413,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       locked = false;
       clearTimeout(timer); clearInterval(apiTimer);
       loadVideos(); refresh(); refreshApi();
+      instagram.enter();
       if (status) render(status);
       scheduleStatusRefresh();
       apiTimer = setInterval(refreshApi, 60000);
@@ -415,6 +425,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokVideoPreview').pause();
       $('#tiktokReviewConsent').checked = false;
       $('#tiktokBrowserFrame').removeAttribute('src');
+      instagram.leave();
     },
     lock() {
       locked = true; ++requestVersion; draft = null; status = null; edits.clear();
@@ -428,6 +439,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokCaption').value = '';
       $('#tiktokDraftEditor').classList.add('is-hidden');
       $('#tiktokDraftEmpty').classList.remove('is-hidden');
+      instagram.lock();
       controls();
     },
   };

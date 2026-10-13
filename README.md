@@ -161,6 +161,23 @@ Tự động đăng mặc định tắt để tránh đăng ngoài ý muốn. Kh
 cập nhật. Lỗi đăng được ghi riêng, video/subtitle đã tạo vẫn được giữ để tải xuống. Ứng dụng
 TikTok chưa qua kiểm duyệt có thể chỉ cho đăng ở chế độ riêng tư.
 
+### Đăng Instagram Reels
+
+Phase Instagram dùng API chính thức với Instagram Login. Tạo Meta app, bật Instagram API,
+đăng ký redirect URI `/api/v1/instagram-auth/callback` và cấp các quyền trong
+`VIDTRANS_INSTAGRAM_SCOPES`. Tài khoản phải thuộc loại được API Content Publishing hỗ trợ.
+
+Meta lấy video từ URL HTTPS thay vì nhận file trực tiếp từ VidTrans. Vì vậy production phải có
+domain HTTPS truy cập được từ Internet, đặt `VIDTRANS_PUBLIC_BASE_URL` bằng origin của domain đó
+và tạo `VIDTRANS_MEDIA_SIGNING_SECRET` ngẫu nhiên tối thiểu 32 ký tự. VidTrans chỉ cấp URL ký số
+có thời hạn cho đúng file trong `backend/outputs`; token sai hoặc hết hạn trả 404. Không đặt URL
+localhost hoặc IP nội bộ vì Meta sẽ không tải được video.
+
+Sau khi cấu hình và restart, gọi `/api/v1/instagram-auth/connect` từ giao diện quản trị để lấy
+authorization URL. Luồng publish tạo Reels container, lưu checkpoint trước khi chờ xử lý, rồi
+publish khi container `FINISHED`. Nếu timeout sau checkpoint, attempt chuyển sang
+`NEEDS_RECONCILIATION` để tránh tạo bài trùng.
+
 Trạng thái batch và job được lưu bền vững tại `backend/work/jobs.sqlite3`; restart server không
 làm mất hàng đợi. Scheduler mặc định chạy tối đa hai pipeline, nhưng Whisper và OCR chỉ có một
 slot để tránh tràn RAM/GPU. File nguồn được giữ để hỗ trợ retry và chỉ bị xóa khi người dùng xóa
@@ -206,6 +223,14 @@ VIDTRANS_TIKTOK_CLIENT_KEY=...
 VIDTRANS_TIKTOK_CLIENT_SECRET=...
 VIDTRANS_TIKTOK_REDIRECT_URI=https://your-domain.example/api/v1/tiktok-auth/callback
 VIDTRANS_TIKTOK_SCOPES=video.publish
+# Instagram Reels:
+VIDTRANS_INSTAGRAM_CLIENT_ID=...
+VIDTRANS_INSTAGRAM_CLIENT_SECRET=...
+VIDTRANS_INSTAGRAM_REDIRECT_URI=https://your-domain.example/api/v1/instagram-auth/callback
+VIDTRANS_INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish
+VIDTRANS_INSTAGRAM_API_VERSION=v24.0
+VIDTRANS_PUBLIC_BASE_URL=https://your-domain.example
+VIDTRANS_MEDIA_SIGNING_SECRET=replace-with-at-least-32-random-characters
 # OAuth2/JWT quản trị (sinh password hash và secret bằng lệnh ở trên):
 VIDTRANS_AUTH_ENABLED=1
 VIDTRANS_AUTH_USERNAME=admin

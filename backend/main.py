@@ -26,6 +26,9 @@ from infrastructure.artifact_archive import build_artifact_archive
 from app.config import AppSettings
 from application.job_scheduler import JobScheduler
 from application.job_service import JobService
+from application.instagram_routes import create_instagram_router
+from application.social_publish_routes import create_social_publish_router
+from application.social_publishing import SocialPublishScheduler, SocialPublishingService
 from application.tiktok_browser_routes import create_tiktok_browser_router
 from application.tiktok_publish_routes import create_tiktok_publish_router
 from application.tiktok_publishing import TikTokPublishScheduler, TikTokPublishingService
@@ -50,6 +53,11 @@ from infrastructure.payments import (
     PaymentOrderStore,
 )
 from infrastructure.job_store import SQLiteJobStore
+from infrastructure.publishers.registry import PublisherRegistry
+from infrastructure.publishers.instagram import InstagramPublisher
+from infrastructure.publishers.tiktok import TikTokSocialPublisher
+from infrastructure.signed_media import SignedMediaUrlService
+from infrastructure.social_publish_store import SQLiteSocialPublishStore
 from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.workflow_events import (
@@ -165,6 +173,24 @@ TIKTOK_PUBLISH_STORE = SQLiteTikTokPublishStore(WORK_DIR / "jobs.sqlite3")
 TIKTOK_PUBLISHING = TikTokPublishingService(TIKTOK_PUBLISH_STORE, TIKTOK_PUBLISHER)
 app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR, TIKTOK_PUBLISHER))
 app.include_router(create_tiktok_publish_router(TIKTOK_PUBLISHING, JOB_SERVICE, OUTPUT_DIR))
+SOCIAL_PUBLISH_STORE = SQLiteSocialPublishStore(WORK_DIR / "jobs.sqlite3")
+_migrated_tiktok_history = SOCIAL_PUBLISH_STORE.migrate_legacy_tiktok_history()
+if _migrated_tiktok_history:
+    logger.info("Migrated %d terminal TikTok publish attempts", _migrated_tiktok_history)
+SIGNED_MEDIA_URLS = SignedMediaUrlService(
+    OUTPUT_DIR,
+    public_base_url=os.environ.get("VIDTRANS_PUBLIC_BASE_URL", "").strip(),
+    secret=os.environ.get("VIDTRANS_MEDIA_SIGNING_SECRET", "").strip(),
+)
+INSTAGRAM_PUBLISHER = InstagramPublisher(
+    WORK_DIR / "instagram-auth",
+    SIGNED_MEDIA_URLS,
+)
+TIKTOK_SOCIAL_PUBLISHER = TikTokSocialPublisher(TIKTOK_PUBLISHER)
+SOCIAL_PUBLISHERS = PublisherRegistry([INSTAGRAM_PUBLISHER, TIKTOK_SOCIAL_PUBLISHER])
+SOCIAL_PUBLISHING = SocialPublishingService(SOCIAL_PUBLISH_STORE, SOCIAL_PUBLISHERS)
+app.include_router(create_social_publish_router(SOCIAL_PUBLISHING, JOB_SERVICE, OUTPUT_DIR))
+app.include_router(create_instagram_router(INSTAGRAM_PUBLISHER, SIGNED_MEDIA_URLS))
 AUTH_MANAGER = AuthManager()
 ADMIN_ACCOUNTS = AdminAccountStore(
     WORK_DIR / "jobs.sqlite3",
@@ -188,6 +214,7 @@ PUBLIC_AUTH_PATHS = {
     "/api/v1/auth/status",
     "/api/v1/auth/token",
     "/api/v1/tiktok-auth/callback",
+    "/api/v1/instagram-auth/callback",
     "/api/v1/billing/callbacks/momo",
     "/api/v1/billing/callbacks/zalopay",
     "/api/v1/billing/callbacks/bank",
@@ -196,6 +223,8 @@ SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def is_protected_path(path: str) -> bool:
+    if path.startswith("/api/v1/social-media/"):
+        return False
     return (
         path.startswith("/api/")
         or path.startswith("/process-video")
@@ -1998,6 +2027,9 @@ async def start_job_scheduler() -> None:
     publish_scheduler = TikTokPublishScheduler(TIKTOK_PUBLISHING)
     app.state.tiktok_publish_scheduler = publish_scheduler
     await publish_scheduler.start()
+    social_publish_scheduler = SocialPublishScheduler(SOCIAL_PUBLISHING)
+    app.state.social_publish_scheduler = social_publish_scheduler
+    await social_publish_scheduler.start()
     app.state.n8n_workflow_dispatcher = N8N_WORKFLOW_DISPATCHER
     await N8N_WORKFLOW_DISPATCHER.start()
 
@@ -2010,6 +2042,9 @@ async def stop_job_scheduler() -> None:
     publish_scheduler = getattr(app.state, "tiktok_publish_scheduler", None)
     if publish_scheduler is not None:
         await publish_scheduler.stop()
+    social_publish_scheduler = getattr(app.state, "social_publish_scheduler", None)
+    if social_publish_scheduler is not None:
+        await social_publish_scheduler.stop()
     workflow_dispatcher = getattr(app.state, "n8n_workflow_dispatcher", None)
     if workflow_dispatcher is not None:
         await workflow_dispatcher.stop()

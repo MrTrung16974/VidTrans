@@ -671,10 +671,10 @@
             <div class="tiktok-header-copy">
               <div class="tiktok-eyebrow">
                 <span class="tiktok-dot" aria-hidden="true">♪</span>
-                <span>TIKTOK PUBLISHING HUB · ĐĂNG BÀI CHUYÊN NGHIỆP</span>
+                <span>SOCIAL PUBLISHING HUB · ĐĂNG BÀI ĐA NỀN TẢNG</span>
               </div>
-              <h1>Chuẩn bị bài đăng TikTok</h1>
-              <p>Duyệt video thành phẩm, tinh chỉnh caption & hashtag, sau đó đăng trực tiếp hoặc mở TikTok Studio.</p>
+              <h1>Chuẩn bị bài đăng mạng xã hội</h1>
+              <p>Duyệt video, tinh chỉnh caption rồi đăng TikTok hoặc Instagram Reels từ một workspace.</p>
             </div>
             <div class="tiktok-header-actions">
               <a class="button secondary back-to-jobs-btn" href="#jobs">
@@ -684,8 +684,26 @@
             </div>
           </div>
 
-          <!-- Connection Hub (2 Channels) -->
+          <!-- Connection Hub -->
           <div class="tiktok-connection-hub">
+            <article class="card tiktok-channel-card channel-instagram">
+              <div class="channel-main">
+                <div class="channel-badge-wrap instagram-badge-wrap"><span aria-hidden="true">◎</span></div>
+                <div class="channel-meta">
+                  <div class="channel-title-row">
+                    <strong>Instagram Reels</strong>
+                    <span class="channel-pill pill-instagram">Content API</span>
+                  </div>
+                  <p id="instagramStatus" class="channel-status" role="status">Đang kiểm tra kết nối…</p>
+                  <select id="instagramAccount" class="is-hidden select-account" aria-label="Tài khoản Instagram dùng để đăng"></select>
+                </div>
+              </div>
+              <div class="channel-actions">
+                <button id="instagramConnect" class="button primary tiktok-btn instagram-connect-btn" type="button">Kết nối Instagram</button>
+                <button id="instagramDisconnect" class="button secondary small-btn" type="button">Ngắt kết nối</button>
+              </div>
+            </article>
+
             <!-- Channel 1: Official API -->
             <article class="card tiktok-channel-card channel-official">
               <div class="channel-main">
@@ -848,7 +866,44 @@
                   </button>
                 </div>
 
-                <p class="fine-print">VidTrans tự động gắn file và điền caption vào trường nhập liệu. Bạn chỉ cần kiểm tra quyền riêng tư rồi bấm Đăng.</p>
+                <section class="instagram-publish-panel" aria-labelledby="instagramPublishHeading">
+                  <div class="instagram-publish-heading">
+                    <span class="instagram-mini-icon" aria-hidden="true">◎</span>
+                    <div>
+                      <strong id="instagramPublishHeading">Instagram Reels</strong>
+                      <small>Dùng cùng video và caption đã duyệt phía trên.</small>
+                    </div>
+                  </div>
+                  <div class="tiktok-publish-controls">
+                    <label class="field">
+                      <span class="field-title">Hình thức đăng</span>
+                      <select id="instagramPublishMode">
+                        <option value="DIRECT_NOW">Đăng ngay</option>
+                        <option value="SCHEDULE_LOCAL">Đặt lịch bằng VidTrans</option>
+                      </select>
+                    </label>
+                    <label id="instagramScheduleField" class="field is-hidden">
+                      <span class="field-title">Thời gian đăng</span>
+                      <input id="instagramScheduleAt" type="datetime-local" />
+                    </label>
+                  </div>
+                  <label class="instagram-option">
+                    <input id="instagramShareToFeed" type="checkbox" checked />
+                    <span>Chia sẻ Reel lên bảng feed Instagram</span>
+                  </label>
+                  <div id="instagramPublishStatus" class="tiktok-publish-status instagram-status-panel is-hidden" role="status">
+                    <strong id="instagramPublishStatusTitle"></strong>
+                    <p id="instagramPublishStatusMessage"></p>
+                    <button id="instagramCancel" class="button secondary is-hidden" type="button">Hủy lịch</button>
+                  </div>
+                  <label class="tiktok-check instagram-consent">
+                    <input id="instagramReviewConsent" type="checkbox" />
+                    <span>Tôi đã duyệt video, caption và đúng tài khoản Instagram sẽ đăng.</span>
+                  </label>
+                  <button id="instagramPublish" class="button primary full instagram-publish-btn" type="button" disabled>Đăng Instagram Reel</button>
+                </section>
+
+                <p class="fine-print">Mỗi nền tảng có trạng thái riêng. Instagram hoặc TikTok lỗi sẽ không làm hỏng video đã dựng.</p>
               </div>
             </section>
 
@@ -1236,6 +1291,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261012-14"></script>
+    <script type="module" src="/js/app.js?v=20261013-1"></script>
   </body>
 </html>
