@@ -74,3 +74,24 @@
 - `test_auth.AuthTests.test_rejects_tampered_and_expired_tokens` fail một lần trong full
   discovery nhưng pass ngay khi chạy lại riêng; chưa thấy liên hệ với publishing changes.
 
+## Phase 5a — Threads
+
+- Thêm OAuth state một lần, short-to-long token exchange và account discovery.
+- Video được cấp signed HTTPS URL, tạo Threads container, poll đến `FINISHED` rồi publish.
+- Checkpoint container/post ID và reconcile an toàn sau timeout/restart.
+- Thêm auth/status/connect/callback/disconnect routes và cấu hình Docker/.env.
+- Đăng ký `THREADS` vào provider registry chung.
+- Threads + generic contract targeted tests: `20 tests`, PASS.
+
+## Phase 5b–c — Pinterest và LinkedIn
+
+- Pinterest API v5: register media, multipart upload, poll media, tạo video Pin theo board;
+  bắt buộc cover HTTPS và lưu media/Pin checkpoint.
+- LinkedIn versioned REST API: initialize multipart video, upload theo byte range, thu ETag,
+  finalize, poll `AVAILABLE`, rồi tạo video Post và lấy `x-restli-id`.
+- Cả hai adapter chuẩn hóa trạng thái remote về lõi chung và không submit lại khi đã có post ID.
+- Đăng ký `PINTEREST` và `LINKEDIN` trong provider registry; thêm cấu hình `.env`/Docker.
+- Targeted contract + 5 provider tests: `25 tests`, PASS.
+- Chưa chạy smoke test bằng tài khoản thật; Pinterest cần token/board/cover URL, LinkedIn cần
+  quyền `w_member_social` hoặc `w_organization_social` và owner URN tương ứng.
+

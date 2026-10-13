@@ -18,7 +18,8 @@
 - Phase 4: **hoàn tất** — TikTok compatibility adapter, status normalization, generic
   registry/API và migration idempotent cho lịch sử terminal. Attempt TikTok đang hoạt động
   tiếp tục do scheduler cũ quản lý để tránh double side effect.
-- Phase 5: **tiếp theo** — Threads, LinkedIn và Pinterest adapters.
+- Phase 5: **đang triển khai** — Threads adapter/OAuth/video publish/reconcile đã hoàn
+  tất automated tests; LinkedIn và Pinterest là hai nhánh tiếp theo.
 - Xác minh ngày `2026-10-13`: 39 targeted tests pass; full suite chạy 264 tests. Còn
   1 import error có sẵn (`infrastructure.douyin_qr_auth` bị thiếu); auth tamper test fail
   ngẫu nhiên một lần nhưng pass khi chạy lại riêng.

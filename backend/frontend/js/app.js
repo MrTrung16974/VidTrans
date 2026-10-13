@@ -1362,7 +1362,9 @@ if (oauthParams.get("tiktok") === "connected") toast("Đã kết nối tài kho�
 if (oauthParams.get("tiktok_error")) toast(oauthParams.get("tiktok_error"), true);
 if (oauthParams.get("instagram") === "connected") toast("Đã kết nối tài khoản Instagram thành công");
 if (oauthParams.get("instagram_error")) toast(oauthParams.get("instagram_error"), true);
-if (oauthParams.has("tiktok") || oauthParams.has("tiktok_error") || oauthParams.has("instagram") || oauthParams.has("instagram_error")) {
+if (oauthParams.get("threads") === "connected") toast("Đã kết nối tài khoản Threads thành công");
+if (oauthParams.get("threads_error")) toast(oauthParams.get("threads_error"), true);
+if (oauthParams.has("tiktok") || oauthParams.has("tiktok_error") || oauthParams.has("instagram") || oauthParams.has("instagram_error") || oauthParams.has("threads") || oauthParams.has("threads_error")) {
   history.replaceState(null, "", `${location.pathname}${location.hash || "#create"}`);
 }
 bootstrapApplication();
