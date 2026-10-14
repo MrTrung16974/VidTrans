@@ -65,6 +65,7 @@ from infrastructure.publishers.facebook import FacebookPublisher, FacebookPublis
 from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SQLiteSocialPublishStore
+from infrastructure.social_credentials import SocialCredentialStore
 from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.workflow_events import (
@@ -216,6 +217,7 @@ ADMIN_ACCOUNTS = AdminAccountStore(
     AUTH_MANAGER.config.username if AUTH_MANAGER.config.enabled else "admin",
     AUTH_MANAGER.config.password_hash if AUTH_MANAGER.config.enabled else "",
 )
+SOCIAL_CREDENTIALS = SocialCredentialStore(WORK_DIR / "jobs.sqlite3")
 PAYMENT_CONFIG = PaymentConfig.from_env()
 PAYMENT_ORDERS = PaymentOrderStore(WORK_DIR / "jobs.sqlite3")
 PAYMENT_GATEWAY = PaymentGatewayClient(PAYMENT_CONFIG)

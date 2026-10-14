@@ -26,7 +26,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       .finally(() => { clearTimeout(timeout); frameChecking = false; if (status && !locked) render(status); });
   }
   const busyStates = new Set(['queued', 'opening', 'uploading', 'publishing']);
-  const labels = { queued: 'Đang chuẩn bị', opening: 'Đang mở TikTok Studio', uploading: 'Đang chuyển video', awaiting_review: 'Sẵn sàng đăng bài', publishing: 'Đang đăng bài', publish_submitted: 'Đã gửi yêu cầu đăng', needs_login: 'Cần đăng nhập TikTok', needs_review: 'Cần bạn kiểm tra' };
+  const labels = { queued: 'Đang chuẩn bị', opening: 'Đang mở TikTok Web', uploading: 'Đang chuyển video', awaiting_review: 'Sẵn sàng đăng bài', publishing: 'Đang đăng bài', publish_submitted: 'Đã gửi yêu cầu đăng', needs_login: 'Cần đăng nhập TikTok', needs_review: 'Cần bạn kiểm tra' };
   const publishLabels = { READY: 'Sẵn sàng', SCHEDULED_LOCAL: 'Đã đặt lịch', UPLOADING: 'Đang tải video', PROCESSING_UPLOAD: 'TikTok đang xử lý', SUBMITTED: 'TikTok đã nhận yêu cầu', SEND_TO_USER_INBOX: 'Bản nháp đã tới TikTok', PUBLISH_COMPLETE: 'Đã đăng thành công', NEEDS_RECONCILIATION: 'Cần kiểm tra trên TikTok', FAILED: 'Đăng thất bại', CANCELLED: 'Đã hủy lịch' };
   const publishBusy = new Set(['READY', 'UPLOADING', 'PROCESSING_UPLOAD', 'PROCESSING_DOWNLOAD', 'SUBMITTED', 'NEEDS_RECONCILIATION']);
 
@@ -87,7 +87,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     attemptId = attempt?.id;
     $('#tiktokAttemptPanel').classList.toggle('is-hidden', !attempt);
     if (attempt) {
-      $('#tiktokAttemptTitle').textContent = labels[attempt.state] || 'Kiểm tra TikTok Studio';
+      $('#tiktokAttemptTitle').textContent = labels[attempt.state] || 'Kiểm tra TikTok Web';
       $('#tiktokAttemptMessage').textContent = attempt.message;
       $('#tiktokResolveButton').textContent = attempt.state === 'publish_submitted' ? 'Đã kiểm tra kết quả, kết thúc lượt' : 'Kết thúc không đăng';
       $('#tiktokResolveControls').classList.toggle('is-hidden', busyStates.has(attempt.state));
@@ -184,7 +184,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokPreviousAttempt').classList.toggle('is-hidden', !warn);
       if (warn) {
         const when = new Date(previous.created_at * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-        $('#tiktokPreviousAttempt').textContent = `Video này đã được tải lên TikTok Studio lúc ${when}. Kiểm tra mục Bài đăng / Bản nháp trên TikTok để tránh đăng trùng trước khi tải lại.`;
+        $('#tiktokPreviousAttempt').textContent = `Video này đã được tải lên TikTok Web lúc ${when}. Kiểm tra mục Bài đăng / Bản nháp trên TikTok để tránh đăng trùng trước khi tải lại.`;
       }
       await loadLatestPublish(jobId);
       instagram.setDraft();
@@ -285,7 +285,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokReviewConsent').checked = false;
       await refresh();
       switchPlatform('tiktok-studio');
-      toast('Đã nhận yêu cầu chuẩn bị. Đang mở TikTok Studio để bạn kiểm tra và đăng.');
+      toast('Đã nhận yêu cầu chuẩn bị. Đang mở TikTok Web để bạn kiểm tra và đăng.');
     } catch (error) {
       toast(error.message, true);
       await refresh();
@@ -399,7 +399,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     try {
       const result = await requestJson(`/api/v1/tiktok-browser/attempts/${status.attempt.id}/publish`, { method: 'POST', body });
       render(result);
-      toast('Đã bấm Đăng trên TikTok. Kiểm tra thông báo kết quả trong khung TikTok Studio.');
+      toast('Đã bấm Đăng trên TikTok. Kiểm tra thông báo kết quả trong khung TikTok Web.');
     } catch (error) { toast(error.message, true); await refresh(); }
   });
   $('#tiktokResolveButton').addEventListener('click', async () => {
@@ -415,23 +415,27 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     } catch (error) { toast(error.message, true); controls(); }
   });
 
-  const PLATFORMS = ['tiktok-api', 'tiktok-studio', 'facebook', 'youtube', 'instagram'];
-  let currentPlatform = 'tiktok-api';
+  const PLATFORMS = ['tiktok-studio', 'tiktok-api', 'facebook', 'youtube', 'instagram'];
+  const PLATFORM_STORAGE_KEY = 'vidtrans_social_platform_v2';
+  let currentPlatform = 'tiktok-studio';
   try {
-    const saved = localStorage.getItem('vidtrans_social_platform');
+    const saved = localStorage.getItem(PLATFORM_STORAGE_KEY);
     if (PLATFORMS.includes(saved)) currentPlatform = saved;
   } catch {}
 
   function switchPlatform(platformId) {
     if (!PLATFORMS.includes(platformId)) return;
     currentPlatform = platformId;
-    try { localStorage.setItem('vidtrans_social_platform', platformId); } catch {}
+    try { localStorage.setItem(PLATFORM_STORAGE_KEY, platformId); } catch {}
 
     // 1. Segmented tab buttons active highlight
     document.querySelectorAll('.platform-tab-btn[data-platform-target]').forEach(btn => {
       const match = btn.getAttribute('data-platform-target') === platformId;
       btn.classList.toggle('is-active', match);
       btn.setAttribute('aria-selected', match ? 'true' : 'false');
+      if (match && typeof btn.scrollIntoView === 'function') {
+        btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      }
     });
 
     // 2. Publishing console panels in Column 2
@@ -441,7 +445,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       panel.classList.toggle('is-hidden', !match);
     });
 
-    // 3. If switching to TikTok Studio, ensure browser frame renders if available
+    // 3. If switching to TikTok Web, ensure browser frame renders if available
     if (platformId === 'tiktok-studio' && status && !locked) {
       render(status);
     }

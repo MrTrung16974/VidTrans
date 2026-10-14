@@ -36,6 +36,25 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"/api/v1/facebook-auth/callback"', main)
         self.assertIn('"/api/v1/youtube-auth/callback"', main)
 
+    async def test_tiktok_web_is_primary_and_api_is_fallback(self):
+        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        html = (frontend / "index.html").read_text(encoding="utf-8")
+        javascript = (frontend / "js" / "tiktok.js").read_text(encoding="utf-8")
+
+        web_tab = 'class="platform-tab-btn is-active" data-platform-target="tiktok-studio" aria-selected="true"'
+        api_tab = 'class="platform-tab-btn" data-platform-target="tiktok-api" aria-selected="false"'
+        self.assertIn(web_tab, html)
+        self.assertIn(api_tab, html)
+        self.assertLess(html.index(web_tab), html.index(api_tab))
+        self.assertIn('panel-tiktok-studio is-active', html)
+        self.assertIn('panel-tiktok-api is-hidden', html)
+        self.assertIn('<span class="tab-btn-title">TikTok Web</span>', html)
+        self.assertIn('<span class="tab-btn-badge">Dự phòng</span>', html)
+        self.assertIn('aria-label="TikTok Web"', html)
+        self.assertIn('aria-label="TikTok API dự phòng"', html)
+        self.assertIn("let currentPlatform = 'tiktok-studio';", javascript)
+        self.assertIn("vidtrans_social_platform_v2", javascript)
+
     async def test_unknown_websocket_is_rejected_without_http_assertion(self):
         with TemporaryDirectory() as directory:
             app = Starlette(routes=[Mount("/", app=FrontendStaticFiles(directory=directory, html=True))])

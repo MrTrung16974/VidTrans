@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 python-multipart
+cryptography>=46,<51
 openai-whisper
 deep-translator
 gTTS
