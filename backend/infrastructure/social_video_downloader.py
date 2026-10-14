@@ -16,8 +16,14 @@ logger = logging.getLogger(__name__)
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 SUPPORTED_SOCIAL_DOMAINS = {
     "douyin.com",
+    "facebook.com",
+    "fb.com",
+    "fb.watch",
     "iesdouyin.com",
     "tiktok.com",
+    "youtu.be",
+    "youtube.com",
+    "youtube-nocookie.com",
 }
 URL_PATTERN = re.compile(r"https?://[^\s<>\[\]\"']+", re.IGNORECASE)
 TRAILING_URL_PUNCTUATION = ".,;:!?)]}，。；：！？）】》、"
@@ -59,11 +65,11 @@ def normalize_social_video_url(raw_url: str) -> str:
         hostname = (parsed.hostname or "").lower()
         port = parsed.port
     except ValueError as exc:
-        raise ValueError("Link TikTok/Douyin không hợp lệ") from exc
+        raise ValueError("Link mạng xã hội không hợp lệ") from exc
     if parsed.scheme.lower() not in {"http", "https"} or not hostname:
         raise ValueError("Link phải bắt đầu bằng http:// hoặc https://")
     if parsed.username or parsed.password or port not in {None, 80, 443}:
-        raise ValueError("Link TikTok/Douyin chứa thông tin kết nối không được hỗ trợ")
+        raise ValueError("Link mạng xã hội chứa thông tin kết nối không được hỗ trợ")
     if not _is_supported_host(hostname):
         raise ValueError(f"Chưa hỗ trợ tải video từ tên miền {hostname}")
     scheme = "https" if parsed.scheme.lower() == "https" else "http"
@@ -72,7 +78,7 @@ def normalize_social_video_url(raw_url: str) -> str:
 
 
 def extract_social_video_urls(share_text: str, *, limit: int = 50) -> list[str]:
-    """Extract unique TikTok/Douyin links from URLs or full copied share messages."""
+    """Extract unique allow-listed social video links from URLs or copied share messages."""
 
     candidates = URL_PATTERN.findall(share_text or "")
     if not candidates:
@@ -92,8 +98,16 @@ def extract_social_video_urls(share_text: str, *, limit: int = 50) -> list[str]:
 
 def social_platform(url: str) -> str:
     hostname = (urlsplit(url).hostname or "").lower()
-    return "Douyin" if any(hostname == domain or hostname.endswith("." + domain)
-                           for domain in ("douyin.com", "iesdouyin.com")) else "TikTok"
+    platform_domains = (
+        ("Douyin", ("douyin.com", "iesdouyin.com")),
+        ("TikTok", ("tiktok.com",)),
+        ("YouTube", ("youtube.com", "youtu.be", "youtube-nocookie.com")),
+        ("Facebook", ("facebook.com", "fb.com", "fb.watch")),
+    )
+    for platform, domains in platform_domains:
+        if any(hostname == domain or hostname.endswith("." + domain) for domain in domains):
+            return platform
+    raise ValueError("Tên miền mạng xã hội chưa được hỗ trợ")
 
 
 _DOUYIN_PATH_ID = re.compile(r"/(?:share/)?(video|note|slides)/(\d+)")
@@ -128,7 +142,7 @@ YoutubeDLFactory = Callable[[dict[str, Any]], ContextManager[Any]]
 
 
 class SocialVideoDownloader:
-    """Download one allow-listed TikTok/Douyin video through yt-dlp."""
+    """Download one allow-listed social video through yt-dlp."""
 
     def __init__(
         self,
@@ -188,7 +202,7 @@ class SocialVideoDownloader:
             yt_dlp = importlib.import_module("yt_dlp")
         except ImportError as exc:  # pragma: no cover - exercised by deployment checks
             raise SocialVideoDownloadError(
-                "Thiếu yt-dlp. Hãy build lại Docker image để cài bộ tải TikTok/Douyin."
+                "Thiếu yt-dlp. Hãy build lại Docker image để cài bộ tải video mạng xã hội."
             ) from exc
         return yt_dlp.YoutubeDL(options)
 
@@ -296,9 +310,15 @@ class SocialVideoDownloader:
             cleanup()
             if cancel_requested and cancel_requested():
                 raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from exc
+            if platform not in {"TikTok", "Douyin"}:
+                message = " ".join(str(exc).split())
+                raise SocialVideoDownloadError(
+                    f"Không tải được video {platform}: {message or 'nguồn từ chối truy cập'}. "
+                    "Nếu video yêu cầu đăng nhập, hãy cung cấp cookies.txt của chính tài khoản có quyền xem."
+                ) from exc
             
             try:
-                if social_platform(normalized_url) == "Douyin":
+                if platform == "Douyin":
                     if self._douyin_resolver is None:
                         raise RuntimeError("Douyin browser is not configured")
                     info = self._douyin_resolver(normalized_url, browser_cookie_path, cancel_requested)
@@ -362,13 +382,13 @@ class SocialVideoDownloader:
                     raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from fallback_error
                 logger.warning("Social video fallback failed: %s", type(fallback_error).__name__)
                 message = " ".join(str(exc).split())
-                if social_platform(normalized_url) == "Douyin":
+                if platform == "Douyin":
                     message = (
                         "Không lấy được video qua phiên trình duyệt. Mở tab Douyin, đăng nhập hoặc hoàn tất "
                         "xác minh rồi bấm Đồng bộ và thử lại. Nếu trình duyệt không mở được, kiểm tra dịch vụ douyin-browser."
                     )
                 raise SocialVideoDownloadError(
-                    f"Không tải được video {social_platform(normalized_url)}: {message or 'nguồn từ chối truy cập'}"
+                    f"Không tải được video {platform}: {message or 'nguồn từ chối truy cập'}"
                 ) from exc
         finally:
             browser_cookie_path.unlink(missing_ok=True)
@@ -406,7 +426,7 @@ class SocialVideoDownloader:
         return SocialVideoDownloadResult(
             path=output_path,
             source_url=normalized_url,
-            platform=social_platform(normalized_url),
+            platform=platform,
             title=str(sanitized.get("title") or "").strip(),
             video_id=str(sanitized.get("id")) if sanitized.get("id") is not None else None,
             duration=duration,

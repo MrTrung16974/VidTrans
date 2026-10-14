@@ -66,6 +66,20 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             ],
         )
 
+    def test_extracts_youtube_and_facebook_video_urls(self) -> None:
+        text = (
+            "https://youtu.be/abc123 https://www.youtube.com/shorts/short123 "
+            "https://www.facebook.com/reel/987654 https://fb.watch/example/"
+        )
+        self.assertEqual(
+            extract_social_video_urls(text),
+            [
+                "https://youtu.be/abc123",
+                "https://www.youtube.com/shorts/short123",
+                "https://www.facebook.com/reel/987654",
+                "https://fb.watch/example/",
+            ],
+        )
     def test_rejects_unsupported_or_unsafe_urls(self) -> None:
         invalid_urls = [
             "https://example.com/video/1",
@@ -81,6 +95,34 @@ class SocialVideoDownloaderTests(unittest.TestCase):
         self.assertEqual(social_platform("https://v.douyin.com/example/"), "Douyin")
         self.assertEqual(social_platform("https://vm.tiktok.com/example/"), "TikTok")
         self.assertEqual(social_platform("https://www.iesdouyin.com/share/video/123"), "Douyin")
+        self.assertEqual(social_platform("https://youtu.be/example"), "YouTube")
+        self.assertEqual(social_platform("https://www.youtube.com/watch?v=example"), "YouTube")
+        self.assertEqual(social_platform("https://www.facebook.com/reel/123"), "Facebook")
+        self.assertEqual(social_platform("https://fb.watch/example/"), "Facebook")
+
+    def test_youtube_and_facebook_use_yt_dlp_without_tiktok_fallback(self) -> None:
+        for url, platform in (
+            ("https://youtu.be/example", "YouTube"),
+            ("https://www.facebook.com/reel/123", "Facebook"),
+        ):
+            with self.subTest(platform=platform), TemporaryDirectory() as directory:
+                result = SocialVideoDownloader(ydl_factory=FakeYoutubeDL).download(
+                    url, Path(directory) / "video"
+                )
+                self.assertEqual(result.platform, platform)
+
+    def test_youtube_and_facebook_fail_without_calling_tiktok_fallback_services(self) -> None:
+        for url, platform in (
+            ("https://youtu.be/example", "YouTube"),
+            ("https://www.facebook.com/reel/123", "Facebook"),
+        ):
+            with self.subTest(platform=platform), TemporaryDirectory() as directory:
+                ydl = FakeYoutubeDL({})
+                ydl.extract_info = Mock(side_effect=RuntimeError("login required"))
+                downloader = SocialVideoDownloader(ydl_factory=lambda options: ydl)
+                with patch("urllib.request.urlopen", side_effect=AssertionError("TikTok fallback must not run")):
+                    with self.assertRaisesRegex(SocialVideoDownloadError, platform):
+                        downloader.download(url, Path(directory) / "video")
 
     def test_browser_fallback_recovers_cookie_error_and_cleans_private_snapshot(self) -> None:
         with TemporaryDirectory() as directory:

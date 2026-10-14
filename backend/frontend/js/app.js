@@ -305,7 +305,11 @@ function renderFiles() {
 }
 
 function extractSourceLinks(value) {
-  const domains = ["tiktok.com", "douyin.com", "iesdouyin.com"];
+  const domains = [
+    "tiktok.com", "douyin.com", "iesdouyin.com",
+    "youtube.com", "youtu.be", "youtube-nocookie.com",
+    "facebook.com", "fb.com", "fb.watch",
+  ];
   const matches = String(value || "").match(/https?:\/\/[^\s<>\[\]"']+/gi) || [];
   const unique = new Set();
   for (const raw of matches) {
@@ -327,7 +331,11 @@ function extractSourceLinks(value) {
 function renderSourceLinks() {
   state.links = extractSourceLinks($("#sourceLinks").value);
   $("#linkList").innerHTML = state.links.map(link => {
-    const platform = new URL(link).hostname.includes("douyin") ? "DY" : "TT";
+    const hostname = new URL(link).hostname.toLowerCase();
+    const platform = hostname.includes("douyin") ? "DY"
+      : (hostname.includes("youtube") || hostname === "youtu.be") ? "YT"
+      : (hostname.includes("facebook") || hostname === "fb.com" || hostname === "fb.watch") ? "FB"
+      : "TT";
     return `<div class="file-item link-item">
       <span class="file-item-icon">${platform}</span>
       <div><strong title="${escapeHtml(link)}">${escapeHtml(link)}</strong><small>Sẽ tải trong hàng đợi nền</small></div>
@@ -807,7 +815,7 @@ async function submitBatch(event) {
   renderSourceLinks();
   const sourceText = $("#sourceLinks").value.trim();
   if (!state.files.length && !state.links.length) {
-    return toast(sourceText ? "Không tìm thấy link TikTok/Douyin hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
+    return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
   if ($("#sourceLanguage").value !== "auto" && $("#sourceLanguage").value === $("#targetLanguage").value) {

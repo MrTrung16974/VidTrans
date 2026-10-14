@@ -187,8 +187,8 @@ Ngay khi bấm **Bắt đầu xử lý**, giao diện chuyển sang trang **Ti�
 upload tạm theo phần trăm. Giữ tab mở cho đến khi upload đạt 100%; sau khi server tạo job, dòng
 tạm tự được thay bằng các job bền vững và từ thời điểm đó có thể đóng trình duyệt.
 
-Video từ TikTok/Douyin được tải bằng `yt-dlp` bên trong worker, vì vậy API tạo batch trả kết quả
-ngay và dashboard hiển thị riêng tiến độ tải nguồn. Hệ thống chỉ chấp nhận domain TikTok/Douyin,
+Video từ TikTok, Douyin, YouTube và Facebook được tải bằng `yt-dlp` bên trong worker, vì vậy API tạo batch trả kết quả
+ngay và dashboard hiển thị riêng tiến độ tải nguồn. Hệ thống chỉ chấp nhận domain thuộc bốn nền tảng này,
 không tải playlist, giới hạn mặc định 2 GB và 120 phút cho mỗi video, đồng thời xóa file `.part`
 khi tải lỗi hoặc bị hủy. Douyin thường yêu cầu phiên đăng nhập mới kể cả với video công khai.
 Tab Douyin mở phiên Chromium của dịch vụ `douyin-browser` để đăng nhập và xác minh.
@@ -272,7 +272,7 @@ nên giữ Whisper/OCR ở một slot.
 - `POST /api/v1/douyin-auth/qr` — mở phiên Chromium đăng nhập Douyin bằng QR hoặc OTP
 - `POST /api/v1/douyin-auth/qr/{session_id}/phone` — yêu cầu Douyin gửi OTP đến số đã nhập
 - `POST /api/v1/douyin-auth/qr/{session_id}/otp` — chuyển OTP vào phiên Chromium để xác minh
-- `POST /api/v1/batches` — tạo batch từ nhiều file và/hoặc trường `source_links` chứa link TikTok/Douyin
+- `POST /api/v1/batches` — tạo batch từ nhiều file và/hoặc trường `source_links` chứa link TikTok, Douyin, YouTube hoặc Facebook
 - `GET /api/v1/batches` — danh sách batch
 - `GET /api/v1/batches/{batch_id}` — chi tiết batch và các job
 - `GET /api/v1/jobs` — danh sách, tìm kiếm, lọc và phân trang job

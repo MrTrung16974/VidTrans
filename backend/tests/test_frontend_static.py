@@ -55,6 +55,17 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("let currentPlatform = 'tiktok-studio';", javascript)
         self.assertIn("vidtrans_social_platform_v2", javascript)
 
+    async def test_source_links_include_youtube_and_facebook(self):
+        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        html = (frontend / "index.html").read_text(encoding="utf-8")
+        javascript = (frontend / "js" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("TikTok / Douyin / YouTube / Facebook", html)
+        for domain in ("youtube.com", "youtu.be", "facebook.com", "fb.watch"):
+            self.assertIn(f'"{domain}"', javascript)
+        self.assertIn('? "YT"', javascript)
+        self.assertIn('? "FB"', javascript)
+
     async def test_unknown_websocket_is_rejected_without_http_assertion(self):
         with TemporaryDirectory() as directory:
             app = Starlette(routes=[Mount("/", app=FrontendStaticFiles(directory=directory, html=True))])

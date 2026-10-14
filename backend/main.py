@@ -2822,11 +2822,14 @@ async def create_batch_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if source_links.strip() and not source_urls:
-        raise HTTPException(status_code=400, detail="Không tìm thấy link TikTok hoặc Douyin hợp lệ")
+        raise HTTPException(
+            status_code=400,
+            detail="Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ",
+        )
     cookie_payload: bytes | None = None
     if source_cookies is not None and source_cookies.filename:
         if not source_urls:
-            raise HTTPException(status_code=400, detail="Chỉ dùng cookies.txt khi batch có link TikTok/Douyin")
+            raise HTTPException(status_code=400, detail="Chỉ dùng cookies.txt khi batch có link mạng xã hội")
         cookie_payload = await source_cookies.read(512 * 1024 + 1)
         if len(cookie_payload) > 512 * 1024:
             raise HTTPException(status_code=400, detail="File cookies.txt không được vượt quá 512 KB")
