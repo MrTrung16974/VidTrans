@@ -24,6 +24,18 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/social-publishes", javascript)
         self.assertIn("platform: 'INSTAGRAM'", javascript)
 
+    async def test_facebook_and_youtube_publishing_controls_are_shipped(self):
+        backend = Path(__file__).resolve().parents[1]
+        html = (backend / "frontend" / "index.html").read_text(encoding="utf-8")
+        javascript = (backend / "frontend" / "js" / "social-extra.js").read_text(encoding="utf-8")
+        main = (backend / "main.py").read_text(encoding="utf-8")
+        for element_id in ("facebookConnect", "facebookPublish", "youtubeConnect", "youtubeTitle", "youtubePrivacy", "youtubePublish"):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("platform:'FACEBOOK'", javascript)
+        self.assertIn("platform:'YOUTUBE'", javascript)
+        self.assertIn('"/api/v1/facebook-auth/callback"', main)
+        self.assertIn('"/api/v1/youtube-auth/callback"', main)
+
     async def test_unknown_websocket_is_rejected_without_http_assertion(self):
         with TemporaryDirectory() as directory:
             app = Starlette(routes=[Mount("/", app=FrontendStaticFiles(directory=directory, html=True))])

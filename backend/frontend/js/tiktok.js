@@ -1,5 +1,6 @@
 import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20260914-1";
 import { createInstagramWorkspace } from "./instagram.js?v=20261013-1";
+import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261014-1";
 export function createTikTokWorkspace({ requestJson, toast }) {
   const $ = selector => document.querySelector(selector);
   let status = null, apiStatus = null, draft = null, timer = null, apiTimer = null, refreshing = false, loading = false, submitting = false;
@@ -13,6 +14,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     getDraft: () => draft,
     getCaption: () => $('#tiktokCaption').value,
   });
+  const extraSocial = createExtraSocialWorkspaces({ requestJson, toast, getDraft: () => draft, getCaption: () => $('#tiktokCaption').value });
   function checkFrame(url) {
     if (checkedFrameUrl === url || frameChecking) return;
     checkedFrameUrl = url; frameChecking = true; frameProblem = null;
@@ -186,12 +188,14 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       }
       await loadLatestPublish(jobId);
       instagram.setDraft();
+      extraSocial.forEach(workspace => workspace.setDraft());
     } catch (error) {
       if (version !== requestVersion) return;
       draft = null;
       $('#tiktokDraftEmpty').classList.remove('is-hidden');
       $('#tiktokDraftEditor').classList.add('is-hidden');
       instagram.setDraft();
+      extraSocial.forEach(workspace => workspace.setDraft());
       toast(error.message, true);
     } finally {
       if (version === requestVersion) { loading = false; controls(); }
@@ -280,7 +284,8 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       await requestJson(`/api/v1/jobs/${encodeURIComponent(current.job_id)}/tiktok-browser/prepare`, { method: 'POST', body });
       $('#tiktokReviewConsent').checked = false;
       await refresh();
-      toast('Đã nhận yêu cầu chuẩn bị. Theo dõi và hoàn tất trong TikTok Web.');
+      switchPlatform('tiktok-studio');
+      toast('Đã nhận yêu cầu chuẩn bị. Đang mở TikTok Studio để bạn kiểm tra và đăng.');
     } catch (error) {
       toast(error.message, true);
       await refresh();
@@ -315,12 +320,14 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   }
 
   $('#tiktokBrowserOpen').addEventListener('click', async () => {
+    switchPlatform('tiktok-studio');
     $('#tiktokBrowserOpen').disabled = true;
     await browserAction('open');
     await refresh();
   });
   $('#tiktokBrowserCheck').addEventListener('click', () => { checkedFrameUrl = null; frameProblem = null; refresh(true); });
   $('#tiktokBrowserLoginQr').addEventListener('click', async () => {
+    switchPlatform('tiktok-studio');
     $('#tiktokBrowserLoginQr').disabled = true;
     await browserAction('login?method=qr');
     await refresh();
@@ -335,13 +342,14 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       if (draft) edits.set(draft.job_id, $('#tiktokCaption').value);
       draft = null; loading = false;
       instagram.setDraft();
+      extraSocial.forEach(workspace => workspace.setDraft());
       $('#tiktokVideoPreview').pause();
       $('#tiktokDraftEditor').classList.add('is-hidden');
       $('#tiktokDraftEmpty').classList.remove('is-hidden');
       controls();
     }
   });
-  $('#tiktokCaption').addEventListener('input', () => { $('#tiktokReviewConsent').checked = false; instagram.changed(); controls(); });
+  $('#tiktokCaption').addEventListener('input', () => { $('#tiktokReviewConsent').checked = false; instagram.changed(); extraSocial.forEach(workspace => workspace.changed()); controls(); });
   $('#tiktokPublishMode').addEventListener('change', updatePublishMode);
   $('#tiktokPrivacy').addEventListener('change', () => { $('#tiktokReviewConsent').checked = false; publishKey = null; controls(); });
   $('#tiktokScheduleAt').addEventListener('change', () => { $('#tiktokReviewConsent').checked = false; publishKey = null; controls(); });
@@ -407,13 +415,55 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     } catch (error) { toast(error.message, true); controls(); }
   });
 
+  const PLATFORMS = ['tiktok-api', 'tiktok-studio', 'facebook', 'youtube', 'instagram'];
+  let currentPlatform = 'tiktok-api';
+  try {
+    const saved = localStorage.getItem('vidtrans_social_platform');
+    if (PLATFORMS.includes(saved)) currentPlatform = saved;
+  } catch {}
+
+  function switchPlatform(platformId) {
+    if (!PLATFORMS.includes(platformId)) return;
+    currentPlatform = platformId;
+    try { localStorage.setItem('vidtrans_social_platform', platformId); } catch {}
+
+    // 1. Segmented tab buttons active highlight
+    document.querySelectorAll('.platform-tab-btn[data-platform-target]').forEach(btn => {
+      const match = btn.getAttribute('data-platform-target') === platformId;
+      btn.classList.toggle('is-active', match);
+      btn.setAttribute('aria-selected', match ? 'true' : 'false');
+    });
+
+    // 2. Publishing console panels in Column 2
+    document.querySelectorAll('.platform-publish-panel[data-platform-panel]').forEach(panel => {
+      const match = panel.getAttribute('data-platform-panel') === platformId;
+      panel.classList.toggle('is-active', match);
+      panel.classList.toggle('is-hidden', !match);
+    });
+
+    // 3. If switching to TikTok Studio, ensure browser frame renders if available
+    if (platformId === 'tiktok-studio' && status && !locked) {
+      render(status);
+    }
+  }
+
+  // Bind platform tabs
+  document.querySelectorAll('.platform-tab-btn[data-platform-target]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-platform-target');
+      if (target) switchPlatform(target);
+    });
+  });
+
   return {
     refresh: () => { locked = false; return refresh(); }, openDraft,
+    switchPlatform,
     enter() {
       locked = false;
       clearTimeout(timer); clearInterval(apiTimer);
       loadVideos(); refresh(); refreshApi();
-      instagram.enter();
+      instagram.enter(); extraSocial.forEach(workspace => workspace.enter());
+      switchPlatform(currentPlatform);
       if (status) render(status);
       scheduleStatusRefresh();
       apiTimer = setInterval(refreshApi, 60000);
@@ -425,7 +475,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokVideoPreview').pause();
       $('#tiktokReviewConsent').checked = false;
       $('#tiktokBrowserFrame').removeAttribute('src');
-      instagram.leave();
+      instagram.leave(); extraSocial.forEach(workspace => workspace.leave());
     },
     lock() {
       locked = true; ++requestVersion; draft = null; status = null; edits.clear();
@@ -439,7 +489,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokCaption').value = '';
       $('#tiktokDraftEditor').classList.add('is-hidden');
       $('#tiktokDraftEmpty').classList.remove('is-hidden');
-      instagram.lock();
+      instagram.lock(); extraSocial.forEach(workspace => workspace.lock());
       controls();
     },
   };

@@ -1,0 +1,9 @@
+services:
+  vidtrans:
+    build:
+      secrets:
+        - corporate_ca
+
+secrets:
+  corporate_ca:
+    file: ${VIDTRANS_CORPORATE_CA_FILE:?Set VIDTRANS_CORPORATE_CA_FILE to the trusted PEM/CRT file}

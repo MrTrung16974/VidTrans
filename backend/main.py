@@ -29,6 +29,7 @@ from application.job_service import JobService
 from application.instagram_routes import create_instagram_router
 from application.threads_routes import create_threads_router
 from application.social_publish_routes import create_social_publish_router
+from application.social_account_routes import create_social_account_router
 from application.social_publishing import SocialPublishScheduler, SocialPublishingService
 from application.tiktok_browser_routes import create_tiktok_browser_router
 from application.tiktok_publish_routes import create_tiktok_publish_router
@@ -60,6 +61,8 @@ from infrastructure.publishers.tiktok import TikTokSocialPublisher
 from infrastructure.publishers.threads import ThreadsPublisher
 from infrastructure.publishers.pinterest import PinterestPublisher
 from infrastructure.publishers.linkedin import LinkedInPublisher
+from infrastructure.publishers.facebook import FacebookPublisher, FacebookPublisherError
+from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SQLiteSocialPublishStore
 from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
@@ -193,15 +196,20 @@ INSTAGRAM_PUBLISHER = InstagramPublisher(
 THREADS_PUBLISHER = ThreadsPublisher(WORK_DIR / "threads-auth", SIGNED_MEDIA_URLS)
 PINTEREST_PUBLISHER = PinterestPublisher()
 LINKEDIN_PUBLISHER = LinkedInPublisher()
+FACEBOOK_PUBLISHER = FacebookPublisher(WORK_DIR / "facebook-auth")
+YOUTUBE_PUBLISHER = YouTubePublisher(WORK_DIR / "youtube-auth")
 TIKTOK_SOCIAL_PUBLISHER = TikTokSocialPublisher(TIKTOK_PUBLISHER)
 SOCIAL_PUBLISHERS = PublisherRegistry([
     INSTAGRAM_PUBLISHER, THREADS_PUBLISHER, PINTEREST_PUBLISHER, LINKEDIN_PUBLISHER,
+    FACEBOOK_PUBLISHER, YOUTUBE_PUBLISHER,
     TIKTOK_SOCIAL_PUBLISHER,
 ])
 SOCIAL_PUBLISHING = SocialPublishingService(SOCIAL_PUBLISH_STORE, SOCIAL_PUBLISHERS)
 app.include_router(create_social_publish_router(SOCIAL_PUBLISHING, JOB_SERVICE, OUTPUT_DIR))
 app.include_router(create_instagram_router(INSTAGRAM_PUBLISHER, SIGNED_MEDIA_URLS))
 app.include_router(create_threads_router(THREADS_PUBLISHER))
+app.include_router(create_social_account_router("facebook", FACEBOOK_PUBLISHER, FacebookPublisherError))
+app.include_router(create_social_account_router("youtube", YOUTUBE_PUBLISHER, YouTubePublisherError))
 AUTH_MANAGER = AuthManager()
 ADMIN_ACCOUNTS = AdminAccountStore(
     WORK_DIR / "jobs.sqlite3",
@@ -227,6 +235,8 @@ PUBLIC_AUTH_PATHS = {
     "/api/v1/tiktok-auth/callback",
     "/api/v1/instagram-auth/callback",
     "/api/v1/threads-auth/callback",
+    "/api/v1/facebook-auth/callback",
+    "/api/v1/youtube-auth/callback",
     "/api/v1/billing/callbacks/momo",
     "/api/v1/billing/callbacks/zalopay",
     "/api/v1/billing/callbacks/bank",

@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261012-25" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261014-3" />
   </head>
   <body>
     <div class="app-shell">
@@ -24,7 +24,7 @@
         <nav id="mainNavigation" class="nav-tabs" aria-label="Điều hướng chính">
           <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span>Tạo quy trình</span></a>
           <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
-          <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span>Đăng TikTok</span></a>
+          <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span>Đăng bài mạng xã hội</span></a>
           <a href="#douyin" data-view-link="douyin" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span>Douyin</span></a>
           <a href="#admin" data-view-link="admin" data-admin-only><i aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M6 19c.5-3.2 2.5-5 6-5s5.5 1.8 6 5M19 5v4M17 7h4"/></svg></i><span>Quản trị</span></a>
         </nav>
@@ -684,75 +684,44 @@
             </div>
           </div>
 
-          <!-- Connection Hub -->
-          <div class="tiktok-connection-hub">
-            <article class="card tiktok-channel-card channel-instagram">
-              <div class="channel-main">
-                <div class="channel-badge-wrap instagram-badge-wrap"><span aria-hidden="true">◎</span></div>
-                <div class="channel-meta">
-                  <div class="channel-title-row">
-                    <strong>Instagram Reels</strong>
-                    <span class="channel-pill pill-instagram">Content API</span>
-                  </div>
-                  <p id="instagramStatus" class="channel-status" role="status">Đang kiểm tra kết nối…</p>
-                  <select id="instagramAccount" class="is-hidden select-account" aria-label="Tài khoản Instagram dùng để đăng"></select>
-                </div>
-              </div>
-              <div class="channel-actions">
-                <button id="instagramConnect" class="button primary tiktok-btn instagram-connect-btn" type="button">Kết nối Instagram</button>
-                <button id="instagramDisconnect" class="button secondary small-btn" type="button">Ngắt kết nối</button>
-              </div>
-            </article>
-
-            <!-- Channel 1: Official API -->
-            <article class="card tiktok-channel-card channel-official">
-              <div class="channel-main">
-                <div class="channel-badge-wrap">
-                  <span class="tiktok-channel-icon" aria-hidden="true">♪</span>
-                </div>
-                <div class="channel-meta">
-                  <div class="channel-title-row">
-                    <strong>TikTok API Chính thức</strong>
-                    <span class="channel-pill pill-official">API OAuth2</span>
-                  </div>
-                  <p id="tiktokApiStatus" class="channel-status" role="status">Đang kiểm tra kết nối…</p>
-                  <select id="tiktokApiAccount" class="is-hidden select-account" aria-label="Tài khoản TikTok dùng để đăng"></select>
-                </div>
-              </div>
-              <div class="channel-actions">
-                <button id="tiktokApiConnect" class="button primary tiktok-btn" type="button">Kết nối TikTok</button>
-                <button id="tiktokApiDisconnect" class="button secondary small-btn" type="button">Ngắt kết nối</button>
-              </div>
-            </article>
-
-            <!-- Channel 2: Studio Fallback / QR -->
-            <article class="card tiktok-channel-card channel-studio">
-              <div class="channel-main">
-                <div class="channel-badge-wrap studio-badge-wrap">
-                  <span class="tiktok-channel-icon studio-icon" aria-hidden="true">🖥</span>
-                </div>
-                <div class="channel-meta">
-                  <div class="channel-title-row">
-                    <strong>TikTok Studio Dự phòng</strong>
-                    <span class="channel-pill pill-studio">Trình duyệt / QR</span>
-                  </div>
-                  <p id="tiktokBrowserStatus" class="channel-status" role="status">Đang kiểm tra trình duyệt…</p>
-                </div>
-              </div>
-              <div class="channel-actions">
-                <button id="tiktokBrowserOpen" class="button primary tiktok-btn" type="button">Mở / đăng nhập TikTok</button>
-                <button id="tiktokBrowserLoginQr" class="button secondary small-btn" type="button" title="Đổi sang mã QR đăng nhập">Đổi sang QR</button>
-                <button id="tiktokBrowserCheck" class="button secondary small-btn" type="button" title="Kiểm tra trạng thái phiên">Kiểm tra phiên</button>
-                <button id="tiktokBrowserLogout" class="button secondary small-btn" type="button" title="Đăng xuất phiên trình duyệt">Ngắt kết nối</button>
-              </div>
-            </article>
-          </div>
-
-          <!-- Helper tip strip -->
-          <div class="tiktok-tip-bar">
-            <span class="tip-icon" aria-hidden="true">💡</span>
-            <span>Nếu mã QR hết hạn hoặc đăng nhập chưa nhận phiên, bấm <strong>Đổi sang QR</strong> để làm mới mã. Phiên Chromium được lưu giữ tự động.</span>
-          </div>
+          <!-- Segmented Platform Selector Navigation Bar -->
+          <nav class="platform-tab-nav" aria-label="Chọn kênh đăng bài">
+            <button type="button" class="platform-tab-btn is-active" data-platform-target="tiktok-api" aria-selected="true">
+              <span class="tab-badge-icon official-mini-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.47 6.27 6.27 0 0 0 1.95-4.46V8.91a8.31 8.31 0 0 0 3.82 1.09V6.69z"/></svg>
+              </span>
+              <span class="tab-btn-title">TikTok API</span>
+              <span class="tab-btn-badge">Chính thức</span>
+            </button>
+            <button type="button" class="platform-tab-btn" data-platform-target="tiktok-studio" aria-selected="false">
+              <span class="tab-badge-icon studio-mini-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              </span>
+              <span class="tab-btn-title">TikTok Studio</span>
+              <span class="tab-btn-badge">Trình duyệt ảo</span>
+            </button>
+            <button type="button" class="platform-tab-btn" data-platform-target="facebook" aria-selected="false">
+              <span class="tab-badge-icon facebook-mini-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+              </span>
+              <span class="tab-btn-title">Facebook Page</span>
+              <span class="tab-btn-badge">Reels</span>
+            </button>
+            <button type="button" class="platform-tab-btn" data-platform-target="youtube" aria-selected="false">
+              <span class="tab-badge-icon youtube-mini-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+              </span>
+              <span class="tab-btn-title">YouTube</span>
+              <span class="tab-btn-badge">Shorts</span>
+            </button>
+            <button type="button" class="platform-tab-btn" data-platform-target="instagram" aria-selected="false">
+              <span class="tab-badge-icon instagram-mini-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+              </span>
+              <span class="tab-btn-title">Instagram</span>
+              <span class="tab-btn-badge">Reels</span>
+            </button>
+          </nav>
 
           <!-- 2-Column Workspace -->
           <div class="tiktok-workspace">
@@ -821,59 +790,324 @@
 
                 <p id="tiktokPreviousAttempt" class="tiktok-notice is-hidden"></p>
 
-                <div class="tiktok-publish-controls">
-                  <label class="field">
-                    <span class="field-title">Hình thức đăng</span>
-                    <select id="tiktokPublishMode">
-                      <option value="DIRECT_NOW">Đăng ngay</option>
-                      <option value="SCHEDULE">Đặt lịch bằng VidTrans</option>
-                      <option value="INBOX_DRAFT">Gửi bản nháp tới TikTok</option>
-                    </select>
-                  </label>
-                  <label id="tiktokPrivacyField" class="field">
-                    <span class="field-title">Quyền riêng tư</span>
-                    <select id="tiktokPrivacy">
-                      <option value="SELF_ONLY">Chỉ mình tôi (Private)</option>
-                      <option value="MUTUAL_FOLLOW_FRIENDS">Bạn bè (Friends)</option>
-                      <option value="FOLLOWER_OF_CREATOR">Người theo dõi (Followers)</option>
-                      <option value="PUBLIC_TO_EVERYONE">Mọi người (Public)</option>
-                    </select>
-                  </label>
-                  <label id="tiktokScheduleField" class="field is-hidden">
-                    <span class="field-title">Thời gian đăng</span>
-                    <input id="tiktokScheduleAt" type="datetime-local" />
-                  </label>
+                <div class="composer-hint-box">
+                  <span class="composer-hint-icon">✦</span>
+                  <span class="composer-hint-text">Video và caption ở đây tự động đồng bộ sang kênh bạn chọn ở cột bên phải. Bạn có thể đăng lần lượt nhiều kênh mà không cần nhập lại.</span>
+                </div>
+              </div>
+            </section>
+
+            <!-- Column 2: Platform Specific Publishing Console -->
+            <div class="tiktok-console-container">
+              <!-- Panel 1: TikTok API -->
+              <section class="card platform-publish-panel panel-tiktok-api is-active" data-platform-panel="tiktok-api">
+                <div class="workspace-card-heading studio-head">
+                  <div class="step-badge step-official">02</div>
+                  <div class="studio-heading-text">
+                    <h2>Đăng qua TikTok API Chính thức</h2>
+                    <p>Đăng trực tiếp hoặc gửi bản nháp vào hộp thư tài khoản TikTok chính chủ.</p>
+                  </div>
+                  <span class="panel-status-pill pill-official">API OAuth2</span>
                 </div>
 
-                <div id="tiktokPublishStatus" class="tiktok-publish-status is-hidden" role="status">
-                  <strong id="tiktokPublishStatusTitle"></strong>
-                  <p id="tiktokPublishStatusMessage"></p>
-                  <button id="tiktokCancelSchedule" class="button secondary is-hidden" type="button">Hủy lịch</button>
-                </div>
-
-                <label class="tiktok-check">
-                  <input id="tiktokReviewConsent" type="checkbox" />
-                  <span>Tôi đã xem video, duyệt caption và xác nhận đúng tài khoản TikTok sẽ đăng.</span>
-                </label>
-
-                <div class="publish-cta-group">
-                  <button id="tiktokOfficialPublish" class="button primary full publish-official-btn" type="button" disabled>
-                    <span class="tiktok-note-symbol">♪</span>
-                    <span>Đăng ngay qua TikTok API</span>
-                  </button>
-                  <button id="tiktokPrepareButton" class="button secondary full publish-studio-btn" type="button" disabled>
-                    <span>Mở TikTok Studio dự phòng</span>
-                  </button>
-                </div>
-
-                <section class="instagram-publish-panel" aria-labelledby="instagramPublishHeading">
-                  <div class="instagram-publish-heading">
-                    <span class="instagram-mini-icon" aria-hidden="true">◎</span>
-                    <div>
-                      <strong id="instagramPublishHeading">Instagram Reels</strong>
-                      <small>Dùng cùng video và caption đã duyệt phía trên.</small>
+                <div class="platform-panel-content">
+                  <div class="panel-account-strip">
+                    <div class="account-strip-info">
+                      <div class="account-strip-title-row">
+                        <span class="account-strip-label">Tài khoản TikTok:</span>
+                        <p id="tiktokApiStatus" class="channel-status" role="status">Đang kiểm tra kết nối…</p>
+                      </div>
+                      <select id="tiktokApiAccount" class="is-hidden select-account" aria-label="Tài khoản TikTok dùng để đăng"></select>
+                    </div>
+                    <div class="account-strip-actions">
+                      <button id="tiktokApiConnect" class="button primary tiktok-btn btn-tiktok-api" type="button">Kết nối TikTok</button>
+                      <button id="tiktokApiDisconnect" class="button secondary small-btn" type="button">Ngắt kết nối</button>
                     </div>
                   </div>
+
+                  <div class="tiktok-publish-controls">
+                    <label class="field">
+                      <span class="field-title">Hình thức đăng</span>
+                      <select id="tiktokPublishMode">
+                        <option value="DIRECT_NOW">Đăng ngay</option>
+                        <option value="SCHEDULE">Đặt lịch bằng VidTrans</option>
+                        <option value="INBOX_DRAFT">Gửi bản nháp tới TikTok</option>
+                      </select>
+                    </label>
+                    <label id="tiktokPrivacyField" class="field">
+                      <span class="field-title">Quyền riêng tư</span>
+                      <select id="tiktokPrivacy">
+                        <option value="SELF_ONLY">Chỉ mình tôi (Private)</option>
+                        <option value="MUTUAL_FOLLOW_FRIENDS">Bạn bè (Friends)</option>
+                        <option value="FOLLOWER_OF_CREATOR">Người theo dõi (Followers)</option>
+                        <option value="PUBLIC_TO_EVERYONE">Mọi người (Public)</option>
+                      </select>
+                    </label>
+                    <label id="tiktokScheduleField" class="field is-hidden">
+                      <span class="field-title">Thời gian đăng</span>
+                      <input id="tiktokScheduleAt" type="datetime-local" />
+                    </label>
+                  </div>
+
+                  <div id="tiktokPublishStatus" class="tiktok-publish-status is-hidden" role="status">
+                    <strong id="tiktokPublishStatusTitle"></strong>
+                    <p id="tiktokPublishStatusMessage"></p>
+                    <button id="tiktokCancelSchedule" class="button secondary is-hidden" type="button">Hủy lịch</button>
+                  </div>
+
+                  <label class="tiktok-check">
+                    <input id="tiktokReviewConsent" type="checkbox" />
+                    <span>Tôi đã xem video, duyệt caption và xác nhận đúng tài khoản TikTok sẽ đăng.</span>
+                  </label>
+
+                  <div class="publish-cta-group">
+                    <button id="tiktokOfficialPublish" class="button primary full publish-official-btn btn-tiktok-api" type="button" disabled>
+                      <span class="tiktok-note-symbol">♪</span>
+                      <span>Đăng ngay qua TikTok API</span>
+                    </button>
+                    <button id="tiktokPrepareButton" class="button secondary full publish-studio-btn" type="button" disabled>
+                      <span>Mở TikTok Studio dự phòng</span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Panel 2: TikTok Studio -->
+              <section class="card platform-publish-panel panel-tiktok-studio is-hidden" data-platform-panel="tiktok-studio">
+                <div class="workspace-card-heading studio-head">
+                  <div class="step-badge step-studio">02</div>
+                  <div class="studio-heading-text">
+                    <h2>Hoàn tất trên TikTok Studio</h2>
+                    <p>Tương tác trực tiếp trên trình duyệt ảo để xác nhận và đăng bài.</p>
+                  </div>
+                  <a id="tiktokBrowserExternal" class="button secondary small-btn external-browser-link is-hidden" target="_blank" rel="noopener">
+                    <span>Mở rộng</span> ↗
+                  </a>
+                </div>
+
+                <div class="platform-panel-content">
+                  <div class="panel-account-strip studio-account-strip">
+                    <div class="account-strip-info">
+                      <div class="account-strip-title-row">
+                        <span class="account-strip-label">Phiên trình duyệt ảo:</span>
+                        <p id="tiktokBrowserStatus" class="channel-status" role="status">Đang kiểm tra trình duyệt…</p>
+                      </div>
+                      <span id="tiktokSetupStatus" class="is-hidden"></span>
+                    </div>
+                    <div class="channel-actions studio-actions">
+                      <button id="tiktokBrowserOpen" class="button primary tiktok-btn btn-tiktok-studio" type="button">Mở / đăng nhập TikTok</button>
+                      <button id="tiktokBrowserLoginQr" class="button secondary small-btn" type="button" title="Đổi sang mã QR đăng nhập">Đổi sang QR</button>
+                      <button id="tiktokBrowserCheck" class="button secondary small-btn" type="button" title="Kiểm tra trạng thái phiên">Kiểm tra phiên</button>
+                      <button id="tiktokBrowserLogout" class="button secondary small-btn" type="button" title="Đăng xuất phiên trình duyệt">Ngắt kết nối</button>
+                    </div>
+                  </div>
+                  <div id="tiktokAttemptPanel" class="tiktok-attempt is-hidden" role="status">
+                    <strong id="tiktokAttemptTitle"></strong>
+                    <p id="tiktokAttemptMessage"></p>
+                    <button id="tiktokActiveDraft" class="tiktok-text-button" type="button">Xem nội dung đang chuẩn bị</button>
+                    <div id="tiktokResolveControls" class="is-hidden">
+                      <label class="tiktok-check">
+                        <input id="tiktokResolveConsent" type="checkbox" />
+                        <span>Tôi đã kiểm tra video, caption, tài khoản và quyền riêng tư.</span>
+                      </label>
+                      <div class="tiktok-attempt-actions">
+                        <button id="tiktokPublishButton" type="button" class="button primary" disabled>Đăng bài ngay</button>
+                        <button id="tiktokResolveButton" type="button" class="button secondary" disabled>Kết thúc không đăng</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Mock Browser Window Wrapper -->
+                  <div class="browser-window-mock">
+                    <div class="browser-window-bar">
+                      <div class="traffic-lights">
+                        <span class="light red"></span>
+                        <span class="light yellow"></span>
+                        <span class="light green"></span>
+                      </div>
+                      <div class="browser-address-bar">
+                        <span class="lock-icon">🔒</span>
+                        <span class="address-text">tiktok.com/creator-center/upload</span>
+                      </div>
+                      <div class="browser-bar-spacer"></div>
+                    </div>
+
+                    <div class="tiktok-browser-stage">
+                      <div id="tiktokBrowserPlaceholder" class="tiktok-browser-placeholder">
+                        <div class="placeholder-icon-wrap" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.47 6.27 6.27 0 0 0 1.95-4.46V8.91a8.31 8.31 0 0 0 3.82 1.09V6.69z"/></svg>
+                        </div>
+                        <strong>Không gian TikTok Studio của bạn</strong>
+                        <p id="tiktokBrowserHelp">Bấm “Mở / đăng nhập TikTok” ở trên để khởi động trình duyệt ảo.</p>
+                      </div>
+                      <iframe id="tiktokBrowserFrame" title="TikTok Studio — đăng nhập và hoàn tất bài đăng" class="is-hidden" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe>
+                    </div>
+                  </div>
+
+                  <p class="tiktok-studio-footnote">
+                    <span class="footnote-shield">🛡️</span>
+                    <span>Nếu TikTok yêu cầu QR, OTP hoặc CAPTCHA, hãy thao tác ngay trong khung trình duyệt này. Trạng thái tải lên chưa phải xác nhận bài đã đăng.</span>
+                  </p>
+                </div>
+              </section>
+
+              <!-- Panel 3: Facebook -->
+              <section class="card platform-publish-panel panel-facebook is-hidden" data-platform-panel="facebook">
+                <div class="workspace-card-heading studio-head">
+                  <div class="step-badge step-facebook">02</div>
+                  <div class="studio-heading-text">
+                    <h2 id="facebookPublishHeading">Đăng Facebook Page Reel</h2>
+                    <p>Đăng video ngắn kèm caption lên Facebook Fanpage đã liên kết.</p>
+                  </div>
+                  <span class="panel-status-pill pill-facebook">Graph API</span>
+                </div>
+
+                <div class="platform-panel-content">
+                  <div class="panel-account-strip">
+                    <div class="account-strip-info">
+                      <div class="account-strip-title-row">
+                        <span class="account-strip-label">Fanpage Facebook:</span>
+                        <p id="facebookStatus" class="channel-status">Đang kiểm tra kết nối…</p>
+                      </div>
+                      <select id="facebookAccount" class="is-hidden select-account" aria-label="Facebook Page dùng để đăng"></select>
+                    </div>
+                    <div class="account-strip-actions">
+                      <button id="facebookConnect" class="button primary tiktok-btn btn-facebook" type="button">Kết nối Facebook</button>
+                      <button id="facebookDisconnect" class="button secondary small-btn" type="button">Ngắt kết nối</button>
+                    </div>
+                  </div>
+
+                  <div class="tiktok-publish-controls">
+                    <label class="field">
+                      <span class="field-title">Hình thức đăng</span>
+                      <select id="facebookPublishMode">
+                        <option value="DIRECT_NOW">Đăng ngay</option>
+                        <option value="SCHEDULE_LOCAL">Đặt lịch bằng VidTrans</option>
+                      </select>
+                    </label>
+                    <label id="facebookScheduleField" class="field is-hidden">
+                      <span class="field-title">Thời gian đăng</span>
+                      <input id="facebookScheduleAt" type="datetime-local" />
+                    </label>
+                  </div>
+
+                  <div id="facebookPublishStatus" class="tiktok-publish-status is-hidden" role="status">
+                    <strong id="facebookPublishStatusTitle"></strong>
+                    <p id="facebookPublishStatusMessage"></p>
+                    <button id="facebookCancel" class="button secondary is-hidden" type="button">Hủy lịch</button>
+                  </div>
+
+                  <label class="tiktok-check">
+                    <input id="facebookReviewConsent" type="checkbox" />
+                    <span>Tôi đã duyệt video, caption và đúng Facebook Page sẽ đăng.</span>
+                  </label>
+
+                  <div class="publish-cta-group">
+                    <button id="facebookPublish" class="button primary full btn-facebook-publish" type="button" disabled>
+                      <span>Đăng Facebook Reel</span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Panel 4: YouTube -->
+              <section class="card platform-publish-panel panel-youtube is-hidden" data-platform-panel="youtube">
+                <div class="workspace-card-heading studio-head">
+                  <div class="step-badge step-youtube">02</div>
+                  <div class="studio-heading-text">
+                    <h2 id="youtubePublishHeading">Đăng YouTube Shorts / Video</h2>
+                    <p>Video dọc thời lượng dưới 60s sẽ tự động được YouTube xếp vào Shorts.</p>
+                  </div>
+                  <span class="panel-status-pill pill-youtube">Data API</span>
+                </div>
+
+                <div class="platform-panel-content">
+                  <div class="panel-account-strip">
+                    <div class="account-strip-info">
+                      <div class="account-strip-title-row">
+                        <span class="account-strip-label">Kênh YouTube:</span>
+                        <p id="youtubeStatus" class="channel-status">Đang kiểm tra kết nối…</p>
+                      </div>
+                      <select id="youtubeAccount" class="is-hidden select-account" aria-label="YouTube channel dùng để đăng"></select>
+                    </div>
+                    <div class="account-strip-actions">
+                      <button id="youtubeConnect" class="button primary tiktok-btn btn-youtube" type="button">Kết nối YouTube</button>
+                      <button id="youtubeDisconnect" class="button secondary small-btn" type="button">Ngắt kết nối</button>
+                    </div>
+                  </div>
+
+                  <label class="field">
+                    <span class="field-title">Tiêu đề video YouTube</span>
+                    <input id="youtubeTitle" maxlength="100" placeholder="Tiêu đề video YouTube (bắt buộc)" />
+                  </label>
+
+                  <div class="tiktok-publish-controls">
+                    <label class="field">
+                      <span class="field-title">Hình thức đăng</span>
+                      <select id="youtubePublishMode">
+                        <option value="DIRECT_NOW">Đăng ngay</option>
+                        <option value="SCHEDULE_LOCAL">Đặt lịch bằng VidTrans</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span class="field-title">Quyền riêng tư</span>
+                      <select id="youtubePrivacy">
+                        <option value="private">Riêng tư (Private)</option>
+                        <option value="unlisted">Không công khai (Unlisted)</option>
+                        <option value="public">Công khai (Public)</option>
+                      </select>
+                    </label>
+                    <label id="youtubeScheduleField" class="field is-hidden">
+                      <span class="field-title">Thời gian đăng</span>
+                      <input id="youtubeScheduleAt" type="datetime-local" />
+                    </label>
+                  </div>
+
+                  <div id="youtubePublishStatus" class="tiktok-publish-status is-hidden" role="status">
+                    <strong id="youtubePublishStatusTitle"></strong>
+                    <p id="youtubePublishStatusMessage"></p>
+                    <button id="youtubeCancel" class="button secondary is-hidden" type="button">Hủy lịch</button>
+                  </div>
+
+                  <label class="tiktok-check">
+                    <input id="youtubeReviewConsent" type="checkbox" />
+                    <span>Tôi đã duyệt video, tiêu đề, mô tả và đúng YouTube channel sẽ đăng.</span>
+                  </label>
+
+                  <div class="publish-cta-group">
+                    <button id="youtubePublish" class="button primary full btn-youtube-publish" type="button" disabled>
+                      <span>Đăng YouTube</span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Panel 5: Instagram -->
+              <section class="card platform-publish-panel panel-instagram is-hidden" data-platform-panel="instagram">
+                <div class="workspace-card-heading studio-head">
+                  <div class="step-badge step-instagram">02</div>
+                  <div class="studio-heading-text">
+                    <h2 id="instagramPublishHeading">Đăng Instagram Reels</h2>
+                    <p>Đăng video Reel lên tài khoản Instagram Professional đã kết nối.</p>
+                  </div>
+                  <span class="panel-status-pill pill-instagram">Content API</span>
+                </div>
+
+                <div class="platform-panel-content">
+                  <div class="panel-account-strip">
+                    <div class="account-strip-info">
+                      <div class="account-strip-title-row">
+                        <span class="account-strip-label">Tài khoản Instagram:</span>
+                        <p id="instagramStatus" class="channel-status" role="status">Đang kiểm tra kết nối…</p>
+                      </div>
+                      <select id="instagramAccount" class="is-hidden select-account" aria-label="Tài khoản Instagram dùng để đăng"></select>
+                    </div>
+                    <div class="account-strip-actions">
+                      <button id="instagramConnect" class="button primary tiktok-btn btn-instagram" type="button">Kết nối Instagram</button>
+                      <button id="instagramDisconnect" class="button secondary small-btn" type="button">Ngắt kết nối</button>
+                    </div>
+                  </div>
+
                   <div class="tiktok-publish-controls">
                     <label class="field">
                       <span class="field-title">Hình thức đăng</span>
@@ -887,85 +1121,31 @@
                       <input id="instagramScheduleAt" type="datetime-local" />
                     </label>
                   </div>
+
                   <label class="instagram-option">
                     <input id="instagramShareToFeed" type="checkbox" checked />
                     <span>Chia sẻ Reel lên bảng feed Instagram</span>
                   </label>
+
                   <div id="instagramPublishStatus" class="tiktok-publish-status instagram-status-panel is-hidden" role="status">
                     <strong id="instagramPublishStatusTitle"></strong>
                     <p id="instagramPublishStatusMessage"></p>
                     <button id="instagramCancel" class="button secondary is-hidden" type="button">Hủy lịch</button>
                   </div>
+
                   <label class="tiktok-check instagram-consent">
                     <input id="instagramReviewConsent" type="checkbox" />
-                    <span>Tôi đã duyệt video, caption và đúng tài khoản Instagram sẽ đăng.</span>
+                    <span>Tôi đã xem video, duyệt caption và đúng tài khoản Instagram sẽ đăng.</span>
                   </label>
-                  <button id="instagramPublish" class="button primary full instagram-publish-btn" type="button" disabled>Đăng Instagram Reel</button>
-                </section>
 
-                <p class="fine-print">Mỗi nền tảng có trạng thái riêng. Instagram hoặc TikTok lỗi sẽ không làm hỏng video đã dựng.</p>
-              </div>
-            </section>
-
-            <!-- Column 2: Studio / Interactive Stage -->
-            <section class="card tiktok-studio-card">
-              <div class="workspace-card-heading studio-head">
-                <div class="step-badge step-studio">02</div>
-                <div class="studio-heading-text">
-                  <h2>Hoàn tất trên TikTok Studio</h2>
-                  <p>Tương tác trực tiếp trên trình duyệt ảo để xác nhận và đăng bài.</p>
-                </div>
-                <a id="tiktokBrowserExternal" class="button secondary small-btn external-browser-link is-hidden" target="_blank" rel="noopener">
-                  <span>Mở rộng</span> ↗
-                </a>
-              </div>
-
-              <div id="tiktokAttemptPanel" class="tiktok-attempt is-hidden" role="status">
-                <strong id="tiktokAttemptTitle"></strong>
-                <p id="tiktokAttemptMessage"></p>
-                <button id="tiktokActiveDraft" class="tiktok-text-button" type="button">Xem nội dung đang chuẩn bị</button>
-                <div id="tiktokResolveControls" class="is-hidden">
-                  <label class="tiktok-check">
-                    <input id="tiktokResolveConsent" type="checkbox" />
-                    <span>Tôi đã kiểm tra video, caption, tài khoản và quyền riêng tư.</span>
-                  </label>
-                  <div class="tiktok-attempt-actions">
-                    <button id="tiktokPublishButton" type="button" class="button primary" disabled>Đăng bài ngay</button>
-                    <button id="tiktokResolveButton" type="button" class="button secondary" disabled>Kết thúc không đăng</button>
+                  <div class="publish-cta-group">
+                    <button id="instagramPublish" class="button primary full instagram-publish-btn" type="button" disabled>
+                      <span>Đăng Instagram Reel</span>
+                    </button>
                   </div>
                 </div>
-              </div>
-
-              <!-- Mock Browser Window Wrapper -->
-              <div class="browser-window-mock">
-                <div class="browser-window-bar">
-                  <div class="traffic-lights">
-                    <span class="light red"></span>
-                    <span class="light yellow"></span>
-                    <span class="light green"></span>
-                  </div>
-                  <div class="browser-address-bar">
-                    <span class="lock-icon">🔒</span>
-                    <span class="address-text">tiktok.com/creator-center/upload</span>
-                  </div>
-                  <div class="browser-bar-spacer"></div>
-                </div>
-
-                <div class="tiktok-browser-stage">
-                  <div id="tiktokBrowserPlaceholder" class="tiktok-browser-placeholder">
-                    <div class="placeholder-icon-wrap" aria-hidden="true">♪</div>
-                    <strong>Không gian TikTok Studio của bạn</strong>
-                    <p id="tiktokBrowserHelp">Bấm “Mở / đăng nhập TikTok” ở trên để khởi động trình duyệt ảo.</p>
-                  </div>
-                  <iframe id="tiktokBrowserFrame" title="TikTok Studio — đăng nhập và hoàn tất bài đăng" class="is-hidden" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe>
-                </div>
-              </div>
-
-              <p class="tiktok-studio-footnote">
-                <span class="footnote-shield">🛡️</span>
-                <span>Nếu TikTok yêu cầu QR, OTP hoặc CAPTCHA, hãy thao tác ngay trong khung trình duyệt này. Trạng thái tải lên chưa phải xác nhận bài đã đăng.</span>
-              </p>
-            </section>
+              </section>
+            </div>
           </div>
         </section>
 

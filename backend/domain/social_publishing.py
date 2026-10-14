@@ -12,6 +12,8 @@ class SocialPlatform(StrEnum):
     THREADS = "THREADS"
     LINKEDIN = "LINKEDIN"
     PINTEREST = "PINTEREST"
+    FACEBOOK = "FACEBOOK"
+    YOUTUBE = "YOUTUBE"
     X = "X"
 
 

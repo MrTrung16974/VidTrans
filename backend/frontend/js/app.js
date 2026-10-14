@@ -1,4 +1,4 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20261013-2";
+import { createTikTokWorkspace } from "./tiktok.js?v=20261014-3";
 import { resolveDouyinFrameUrl } from "./browser-frame.js?v=20260920-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -1364,7 +1364,11 @@ if (oauthParams.get("instagram") === "connected") toast("Đã kết nối tài k
 if (oauthParams.get("instagram_error")) toast(oauthParams.get("instagram_error"), true);
 if (oauthParams.get("threads") === "connected") toast("Đã kết nối tài khoản Threads thành công");
 if (oauthParams.get("threads_error")) toast(oauthParams.get("threads_error"), true);
-if (oauthParams.has("tiktok") || oauthParams.has("tiktok_error") || oauthParams.has("instagram") || oauthParams.has("instagram_error") || oauthParams.has("threads") || oauthParams.has("threads_error")) {
+if (oauthParams.get("facebook") === "connected") toast("Đã kết nối Facebook Page thành công");
+if (oauthParams.get("facebook_error")) toast(oauthParams.get("facebook_error"), true);
+if (oauthParams.get("youtube") === "connected") toast("Đã kết nối YouTube thành công");
+if (oauthParams.get("youtube_error")) toast(oauthParams.get("youtube_error"), true);
+if (["tiktok", "tiktok_error", "instagram", "instagram_error", "threads", "threads_error", "facebook", "facebook_error", "youtube", "youtube_error"].some(key => oauthParams.has(key))) {
   history.replaceState(null, "", `${location.pathname}${location.hash || "#create"}`);
 }
 bootstrapApplication();

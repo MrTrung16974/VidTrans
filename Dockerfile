@@ -1,8 +1,10 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_ROOT_USER_ACTION=ignore
 
 WORKDIR /app
 
@@ -15,6 +17,7 @@ RUN set -eux; \
         if apt-get update -o Acquire::Retries=3 \
             && apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
                 ffmpeg \
+                ca-certificates \
                 libass9 \
                 fontconfig \
                 fonts-dejavu-core \
@@ -29,9 +32,17 @@ RUN set -eux; \
 COPY requirements.txt ./
 # Install the CPU wheel first. Otherwise the unconstrained Whisper dependency may
 # pull several gigabytes of CUDA libraries into a Docker Desktop CPU image.
-RUN pip install --upgrade pip \
-    && pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 \
-    && pip install -r requirements.txt
+RUN --mount=type=secret,id=corporate_ca,required=false \
+    set -eux; \
+    if [ -f /run/secrets/corporate_ca ]; then \
+        cp /etc/ssl/certs/ca-certificates.crt /tmp/vidtrans-build-ca.pem; \
+        cat /run/secrets/corporate_ca >> /tmp/vidtrans-build-ca.pem; \
+        export PIP_CERT=/tmp/vidtrans-build-ca.pem; \
+    fi; \
+    pip install --upgrade pip; \
+    pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1; \
+    pip install -r requirements.txt; \
+    rm -f /tmp/vidtrans-build-ca.pem
 
 COPY requirements-downloader.txt ./
 RUN pip install -r requirements-downloader.txt
