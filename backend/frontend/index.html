@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261015-1" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261015-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -789,8 +789,15 @@
                 </div>
 
                 <div id="tiktokPreviousAttempt" class="tiktok-repost-notice is-hidden">
-                  <p id="tiktokPreviousAttemptText"></p>
-                  <button id="tiktokRepostButton" class="button secondary small-btn" type="button">Đăng lại qua TikTok Web</button>
+                  <div class="tiktok-repost-copy">
+                    <span class="tiktok-repost-icon" aria-hidden="true">↻</span>
+                    <p id="tiktokPreviousAttemptText"></p>
+                  </div>
+                  <button id="tiktokRepostButton" class="tiktok-repost-button" type="button">
+                    <span class="tiktok-repost-button-icon" aria-hidden="true">♪</span>
+                    <span>Đăng lại qua TikTok Web</span>
+                    <span class="tiktok-repost-arrow" aria-hidden="true">→</span>
+                  </button>
                 </div>
 
                 <div class="composer-hint-box">

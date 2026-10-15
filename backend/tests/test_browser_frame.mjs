@@ -19,6 +19,9 @@ test('old localhost config uses authenticated VPS proxy and websocket route', ()
   assert.equal(url.pathname, '/tiktok-browser/vnc_lite.html');
   assert.equal(url.searchParams.get('path'), 'tiktok-browser/websockify');
   assert.equal(url.searchParams.get('scale'), 'true');
+  assert.equal(url.searchParams.get('autoconnect'), 'true');
+  assert.equal(url.searchParams.get('reconnect'), 'true');
+  assert.equal(url.searchParams.get('reconnect_delay'), '1000');
 });
 test('source browser tabs normalize YouTube and Facebook proxy routes', () => {
   for (const platform of ['youtube', 'facebook']) {

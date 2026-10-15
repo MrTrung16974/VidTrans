@@ -57,6 +57,8 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="tiktokRepostButton"', html)
         self.assertIn("prepare({ repost: true })", javascript)
         self.assertIn("chắc chắn muốn tải lại", javascript)
+        self.assertIn("resolvedBrowserUrl || lastBrowserUrl", javascript)
+        self.assertIn('class="tiktok-repost-button"', html)
 
     async def test_source_links_include_youtube_and_facebook(self):
         frontend = Path(__file__).resolve().parents[1] / "frontend"

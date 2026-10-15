@@ -1,4 +1,4 @@
-import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20260914-1";
+import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20261015-2";
 import { createInstagramWorkspace } from "./instagram.js?v=20261013-1";
 import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261014-1";
 export function createTikTokWorkspace({ requestJson, toast }) {
@@ -8,7 +8,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   let requestVersion = 0, locked = false, attemptId = null;
   let publishAttempt = null, publishTimer = null, publishSubmitting = false, publishKey = null;
   const edits = new Map();
-  let checkedFrameUrl = null, frameProblem = null, frameChecking = false;
+  let checkedFrameUrl = null, frameProblem = null, frameChecking = false, lastBrowserUrl = null;
   const instagram = createInstagramWorkspace({
     requestJson, toast,
     getDraft: () => draft,
@@ -57,7 +57,12 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokBrowserLogout').disabled = !result.available || Boolean(result.attempt);
     const frame = $('#tiktokBrowserFrame');
     const external = $('#tiktokBrowserExternal');
-    const browserUrl = resolveTikTokFrameUrl(result.browser_url, location.href);
+    const resolvedBrowserUrl = resolveTikTokFrameUrl(result.browser_url, location.href);
+    if (resolvedBrowserUrl) lastBrowserUrl = resolvedBrowserUrl;
+    // CDP can briefly miss its 2-second health check while Chromium is busy
+    // accepting a large upload. That must not tear down a healthy noVNC
+    // websocket and force the operator to reconnect.
+    const browserUrl = resolvedBrowserUrl || lastBrowserUrl;
     if (!browserUrl) {
       frame.removeAttribute('src');
       frame.classList.add('is-hidden');
@@ -72,14 +77,15 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       if (location.hash === '#tiktok' && !locked) {
         const sameOrigin = new URL(browserUrl).origin === location.origin;
         if (sameOrigin) checkFrame(browserUrl);
-        if (sameOrigin && (frameChecking || frameProblem)) {
+        const frameAlreadyMounted = Boolean(frame.getAttribute('src'));
+        if (sameOrigin && frameProblem && !frameAlreadyMounted) {
           frame.removeAttribute('src'); frame.classList.add('is-hidden');
           $('#tiktokBrowserPlaceholder').classList.remove('is-hidden');
-          $('#tiktokBrowserHelp').textContent = frameProblem || 'Đang kiểm tra kết nối trình duyệt…';
+          $('#tiktokBrowserHelp').textContent = frameProblem;
         } else {
-        if (frame.getAttribute('src') !== browserUrl) frame.src = browserUrl;
-        frame.classList.remove('is-hidden');
-        $('#tiktokBrowserPlaceholder').classList.add('is-hidden');
+          if (!frameAlreadyMounted) frame.src = browserUrl;
+          frame.classList.remove('is-hidden');
+          $('#tiktokBrowserPlaceholder').classList.add('is-hidden');
         }
       }
     }
@@ -482,6 +488,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokVideoPreview').pause();
       $('#tiktokReviewConsent').checked = false;
       $('#tiktokBrowserFrame').removeAttribute('src');
+      lastBrowserUrl = null;
       instagram.leave(); extraSocial.forEach(workspace => workspace.leave());
     },
     lock() {
@@ -491,6 +498,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       clearTimeout(publishTimer); publishTimer = null;
       clearInterval(apiTimer); apiTimer = null;
       $('#tiktokBrowserFrame').removeAttribute('src');
+      lastBrowserUrl = null;
       $('#tiktokVideoPreview').pause();
       $('#tiktokVideoPreview').removeAttribute('src');
       $('#tiktokCaption').value = '';

@@ -72,6 +72,22 @@ class TikTokBrowserTests(unittest.TestCase):
             self.assertTrue(result['session_present'])
             self.assertTrue(result['session_check_error'])
 
+    def test_one_failed_cdp_probe_keeps_recent_browser_session_available(self):
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        self.manager._session_present = True
+        with patch('urllib.request.urlopen', return_value=response), patch.object(
+            self.manager, '_with_browser', return_value=True
+        ):
+            healthy = self.manager.status(refresh=True)
+        with patch('urllib.request.urlopen', side_effect=OSError('temporary timeout')):
+            transient = self.manager.status()
+
+        self.assertTrue(healthy['available'])
+        self.assertTrue(transient['available'])
+        self.assertTrue(transient['session_present'])
+        self.assertIsNotNone(transient['browser_url'])
+
     def test_double_click_and_concurrent_jobs_do_not_upload_twice(self):
         started, resume = threading.Event(), threading.Event()
         calls = []

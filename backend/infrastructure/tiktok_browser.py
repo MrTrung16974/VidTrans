@@ -27,6 +27,10 @@ UPLOAD_POLL_SECONDS = 3.0
 CAPTION_SETTLE_SECONDS = 1.0
 CAPTION_PREFILL_SETTLE_SECONDS = 3.0
 CAPTION_FILL_ATTEMPTS = 3
+# A single CDP probe can miss while Chromium is navigating or under load.
+# noVNC is a separate connection, so do not advertise the whole browser as
+# unavailable until CDP has stayed unreachable beyond this short grace period.
+BROWSER_AVAILABILITY_GRACE_SECONDS = 20.0
 # TikTok Studio can restore the filename well after the upload card turns green.
 # Five seconds was not enough in production (the editor was replaced after the
 # backend had already reported success), so keep ownership of the browser long
@@ -100,6 +104,7 @@ class TikTokBrowserManager:
         self._session_checked_at = 0.0
         self._session_check_error = False
         self._login_limited = False
+        self._last_browser_available_at = 0.0
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, state TEXT NOT NULL, caption TEXT NOT NULL, message TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_browser ON attempts(active) WHERE active=1")
@@ -248,15 +253,22 @@ class TikTokBrowserManager:
         context.clear_cookies()
 
     def status(self, *, refresh: bool = False) -> dict[str, Any]:
-        available = False
+        probe_available = False
         try:
             with urllib.request.urlopen(f"{self.cdp_url.rstrip('/')}/json/version", timeout=2) as response:
-                available = response.status == 200
+                probe_available = response.status == 200
         except (OSError, ValueError):
             pass
+        now = time.monotonic()
+        if probe_available:
+            self._last_browser_available_at = now
+        available = probe_available or (
+            self._last_browser_available_at > 0
+            and now - self._last_browser_available_at <= BROWSER_AVAILABILITY_GRACE_SECONDS
+        )
         # Poll real cookies after QR confirmation, with bounded CDP traffic.
         check_due = refresh or time.monotonic() - self._session_checked_at >= 5
-        if check_due and available and self._browser_lock.acquire(blocking=False):
+        if check_due and probe_available and self._browser_lock.acquire(blocking=False):
             try:
                 self._session_present = self._with_browser(self._read_session)
                 self._session_check_error = False

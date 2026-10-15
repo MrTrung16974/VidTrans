@@ -31,6 +31,9 @@ function resolveBrowserFrameUrl(raw, pageHref, platform) {
   if (page.protocol === 'https:' && target.protocol !== 'https:') return null;
   target.searchParams.set('path', proxied ? `${proxiedShared ? 'source' : platform}-browser/websockify` : 'websockify');
   target.searchParams.set('scale', 'true');
+  target.searchParams.set('autoconnect', 'true');
+  target.searchParams.set('reconnect', 'true');
+  target.searchParams.set('reconnect_delay', '1000');
   return target.href;
 }
 
