@@ -32,7 +32,15 @@ YOUTUBE_AUTH_ERROR_MARKERS = (
     "sign in to confirm you're not a bot",
     "login required",
     "fresh cookies",
+    "the page needs to be reloaded",
 )
+
+# With account cookies, yt-dlp currently selects the tv_downgraded client by
+# default. YouTube intermittently rejects that client with UNPLAYABLE / "The
+# page needs to be reloaded" even though the browser session is valid. Keep the
+# normal client selection, but add the embedded web client as the upstream
+# recommended fallback for authenticated downloads.
+YOUTUBE_AUTHENTICATED_PLAYER_CLIENTS = ["default", "web_embedded"]
 
 
 class SocialVideoDownloadError(RuntimeError):
@@ -338,6 +346,10 @@ class SocialVideoDownloader:
                 )
         if effective_cookie_file and effective_cookie_file.is_file():
             options["cookiefile"] = str(effective_cookie_file)
+            if platform == "YouTube":
+                options["extractor_args"] = {
+                    "youtube": {"player_client": YOUTUBE_AUTHENTICATED_PLAYER_CLIENTS}
+                }
 
         try:
             if cancel_requested and cancel_requested():

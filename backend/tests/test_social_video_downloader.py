@@ -198,7 +198,25 @@ class SocialVideoDownloaderTests(unittest.TestCase):
 
             self.assertEqual(provider_paths, [snapshot])
             self.assertEqual(instances[0].options["cookiefile"], str(snapshot))
+            self.assertEqual(
+                instances[0].options["extractor_args"],
+                {"youtube": {"player_client": ["default", "web_embedded"]}},
+            )
             self.assertFalse(snapshot.exists())
+
+    def test_youtube_reload_error_is_reported_as_an_authenticated_session_problem(self) -> None:
+        with TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "youtube.cookies.txt"
+            snapshot.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            ydl = FakeYoutubeDL({})
+            ydl.extract_info = Mock(side_effect=RuntimeError("ERROR: The page needs to be reloaded."))
+            downloader = SocialVideoDownloader(cookie_file=snapshot, ydl_factory=lambda options: ydl)
+
+            with self.assertRaises(SocialVideoDownloadError) as raised:
+                downloader.download("https://youtu.be/example", Path(directory) / "video")
+
+            self.assertIn("YouTube từ chối phiên đăng nhập", str(raised.exception))
+            self.assertNotIn("ERROR:", str(raised.exception))
 
     def test_browser_fallback_respects_duration_and_cancellation(self) -> None:
         for failure in ("duration", "cancel"):
