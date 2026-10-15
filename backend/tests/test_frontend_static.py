@@ -54,6 +54,9 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('aria-label="TikTok API dự phòng"', html)
         self.assertIn("let currentPlatform = 'tiktok-studio';", javascript)
         self.assertIn("vidtrans_social_platform_v2", javascript)
+        self.assertIn('id="tiktokRepostButton"', html)
+        self.assertIn("prepare({ repost: true })", javascript)
+        self.assertIn("chắc chắn muốn tải lại", javascript)
 
     async def test_source_links_include_youtube_and_facebook(self):
         frontend = Path(__file__).resolve().parents[1] / "frontend"

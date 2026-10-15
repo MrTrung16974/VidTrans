@@ -1471,6 +1471,23 @@ a { color: inherit; text-decoration: none; }
   font-size: 0.76rem;
   line-height: 1.5;
 }
+.tiktok-repost-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #9a3412;
+}
+.tiktok-repost-notice p { margin: 0; font-size: 0.78rem; line-height: 1.5; }
+.tiktok-repost-notice .button { flex: 0 0 auto; border-color: #fdba74; background: #fff; color: #9a3412; }
+@media (max-width: 720px) {
+  .tiktok-repost-notice { align-items: stretch; flex-direction: column; }
+}
 .composer-hint-icon {
   color: var(--brand);
   font-size: 0.95rem;

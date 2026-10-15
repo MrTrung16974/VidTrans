@@ -34,6 +34,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     const caption = $('#tiktokCaption').value;
     $('#tiktokCaptionCount').textContent = `${caption.length.toLocaleString('vi-VN')} / 2.200`;
     $('#tiktokPrepareButton').disabled = locked || submitting || loading || !draft || !status?.available || Boolean(status?.attempt) || !caption.trim() || caption.length > 2200 || !$('#tiktokReviewConsent').checked;
+    $('#tiktokRepostButton').disabled = locked || submitting || loading || !draft || !status?.available || Boolean(status?.attempt) || !caption.trim() || caption.length > 2200;
     const mode = $('#tiktokPublishMode').value;
     const needsCaption = mode !== 'INBOX_DRAFT';
     const hasScope = mode === 'INBOX_DRAFT' ? apiStatus?.can_upload_draft : apiStatus?.can_direct_publish;
@@ -184,7 +185,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokPreviousAttempt').classList.toggle('is-hidden', !warn);
       if (warn) {
         const when = new Date(previous.created_at * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-        $('#tiktokPreviousAttempt').textContent = `Video này đã được tải lên TikTok Web lúc ${when}. Kiểm tra mục Bài đăng / Bản nháp trên TikTok để tránh đăng trùng trước khi tải lại.`;
+        $('#tiktokPreviousAttemptText').textContent = `Video này đã được tải lên TikTok Web lúc ${when}. Kiểm tra mục Bài đăng / Bản nháp trên TikTok để tránh đăng trùng.`;
       }
       await loadLatestPublish(jobId);
       instagram.setDraft();
@@ -271,8 +272,9 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     finally { publishSubmitting = false; controls(); }
   }
 
-  async function prepare() {
-    if ($('#tiktokPrepareButton').disabled) return;
+  async function prepare({ repost = false } = {}) {
+    if ((repost ? $('#tiktokRepostButton') : $('#tiktokPrepareButton')).disabled) return;
+    if (repost && !confirm('Video này đã từng được tải lên TikTok. Bạn chắc chắn muốn tải lại để đăng lại?')) return;
     submitting = true;
     $('#tiktokVideoPreview').pause();
     const current = draft;
@@ -285,7 +287,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       $('#tiktokReviewConsent').checked = false;
       await refresh();
       switchPlatform('tiktok-studio');
-      toast('Đã nhận yêu cầu chuẩn bị. Đang mở TikTok Web để bạn kiểm tra và đăng.');
+      toast(repost ? 'Đang tải lại video lên TikTok Web.' : 'Đã nhận yêu cầu chuẩn bị. Đang mở TikTok Web để bạn kiểm tra và đăng.');
     } catch (error) {
       toast(error.message, true);
       await refresh();
@@ -362,7 +364,8 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       toast('Đã hủy lịch đăng TikTok.');
     } catch (error) { toast(error.message, true); }
   });
-  $('#tiktokPrepareButton').addEventListener('click', prepare);
+  $('#tiktokPrepareButton').addEventListener('click', () => prepare());
+  $('#tiktokRepostButton').addEventListener('click', () => prepare({ repost: true }));
   $('#tiktokSuggestCaption').addEventListener('click', async () => {
     if (!draft || suggesting) return;
     const version = requestVersion;
