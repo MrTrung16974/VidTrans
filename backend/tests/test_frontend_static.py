@@ -66,6 +66,16 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('? "YT"', javascript)
         self.assertIn('? "FB"', javascript)
 
+    async def test_source_browser_workspace_ships_platform_tabs(self):
+        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        html = (frontend / "index.html").read_text(encoding="utf-8")
+        javascript = (frontend / "js" / "app.js").read_text(encoding="utf-8")
+        for platform in ("douyin", "youtube", "facebook"):
+            self.assertIn(f'data-source-browser-tab="{platform}"', html)
+        self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
+        self.assertIn("/js/app.js?v=20261015-2", html)
+        self.assertIn('button.addEventListener("click", () => selectSourceBrowserTab', javascript)
+
     async def test_unknown_websocket_is_rejected_without_http_assertion(self):
         with TemporaryDirectory() as directory:
             app = Starlette(routes=[Mount("/", app=FrontendStaticFiles(directory=directory, html=True))])

@@ -1,5 +1,5 @@
 import { createTikTokWorkspace } from "./tiktok.js?v=20261014-3";
-import { resolveDouyinFrameUrl } from "./browser-frame.js?v=20260920-1";
+import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -7,6 +7,7 @@ const state = {
   files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false,
+  sourceBrowserPlatform: "douyin", sourceBrowsers: {},
   adminAccounts: [], adminAccountSummary: null, adminSearchTimer: null,
   billing: null,
   auth: { enabled: false, configured: false, authenticated: false, username: null, role: "owner", user_id: null },
@@ -198,6 +199,81 @@ function renderDouyinBrowserStatus(status) {
   }
 }
 
+const sourceBrowserLabels = { youtube: "YouTube", facebook: "Facebook" };
+
+function renderSourceBrowserStatus(platform, status) {
+  state.sourceBrowsers[platform] = status;
+  const prefix = platform;
+  const label = sourceBrowserLabels[platform];
+  $(`#${prefix}BrowserStatus`).textContent = status.message;
+  $(`#${prefix}BrowserIndicator`).classList.toggle("available", Boolean(status.available));
+  $(`#${prefix}BrowserIndicator`).classList.toggle("authenticated", Boolean(status.authenticated));
+  for (const action of ["Sync", "Reload", "Logout"]) $(`#${prefix}Browser${action}`).disabled = !status.available;
+  const frame = $(`#${prefix}BrowserFrame`);
+  const loading = $(`#${prefix}BrowserLoading`);
+  const browserUrl = resolveSourceBrowserFrameUrl(status.browser_url, location.href, platform);
+  if (status.available && browserUrl && frame.dataset.source !== browserUrl) {
+    loading.classList.remove("is-hidden");
+    frame.dataset.source = browserUrl;
+    frame.src = browserUrl;
+  }
+  if (!status.available) $(`#${prefix}BrowserHelp`).textContent = `Container ${platform}-browser chưa sẵn sàng.`;
+  else if (status.authenticated) $(`#${prefix}BrowserHelp`).textContent = `Cookie đã đồng bộ và sẵn sàng cho bộ tải video ${label}.`;
+  else $(`#${prefix}BrowserHelp`).textContent = `Đăng nhập ${label} trong khung bên dưới rồi bấm Đồng bộ.`;
+}
+
+async function refreshSourceBrowserStatus(platform, { refresh = false, quiet = false } = {}) {
+  try {
+    const status = await requestJson(`/api/v1/source-browser/${platform}/status${refresh ? "?refresh=true" : ""}`);
+    renderSourceBrowserStatus(platform, status);
+    return status;
+  } catch (error) {
+    renderSourceBrowserStatus(platform, { available: false, authenticated: false, message: error.message, browser_url: null });
+    if (!quiet) toast(error.message, true);
+    return null;
+  }
+}
+
+function selectSourceBrowserTab(platform) {
+  state.sourceBrowserPlatform = platform;
+  $$('[data-source-browser-tab]').forEach(button => {
+    const active = button.dataset.sourceBrowserTab === platform;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  $$('[data-source-browser-panel]').forEach(panel => panel.classList.toggle("is-hidden", panel.dataset.sourceBrowserPanel !== platform));
+  if (platform === "douyin") refreshDouyinBrowserStatus();
+  else refreshSourceBrowserStatus(platform);
+}
+
+async function syncSourceBrowser(platform) {
+  const button = $(`#${platform}BrowserSync`);
+  button.disabled = true;
+  try {
+    const status = await requestJson(`/api/v1/source-browser/${platform}/sync`, { method: "POST" });
+    renderSourceBrowserStatus(platform, status);
+    toast(status.message, !status.authenticated);
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = !state.sourceBrowsers[platform]?.available; }
+}
+
+async function reloadSourceBrowser(platform) {
+  try {
+    const status = await requestJson(`/api/v1/source-browser/${platform}/reload`, { method: "POST" });
+    renderSourceBrowserStatus(platform, status);
+    toast(`Đã tải lại trang ${sourceBrowserLabels[platform]}`);
+  } catch (error) { toast(error.message, true); }
+}
+
+async function logoutSourceBrowser(platform) {
+  if (!window.confirm(`Đăng xuất ${sourceBrowserLabels[platform]} và xóa cookie đã đồng bộ?`)) return;
+  try {
+    const status = await requestJson(`/api/v1/source-browser/${platform}/session`, { method: "DELETE" });
+    renderSourceBrowserStatus(platform, status);
+    toast(status.message);
+  } catch (error) { toast(error.message, true); }
+}
+
 async function refreshDouyinBrowserStatus({ refresh = false, quiet = false } = {}) {
   try {
     const status = await requestJson(`/api/v1/douyin-browser/status${refresh ? "?refresh=true" : ""}`);
@@ -218,9 +294,10 @@ function stopDouyinBrowserPolling() {
 
 function startDouyinBrowserPolling() {
   stopDouyinBrowserPolling();
-  refreshDouyinBrowserStatus();
+  selectSourceBrowserTab(state.sourceBrowserPlatform);
   state.douyinBrowserPollTimer = setInterval(() => {
-    refreshDouyinBrowserStatus({ refresh: true, quiet: true });
+    if (state.sourceBrowserPlatform === "douyin") refreshDouyinBrowserStatus({ refresh: true, quiet: true });
+    else refreshSourceBrowserStatus(state.sourceBrowserPlatform, { refresh: true, quiet: true });
   }, 8000);
 }
 
@@ -1293,6 +1370,13 @@ $("#douyinBrowserFrame").addEventListener("load", () => {
   state.douyinBrowserLoaded = true;
   $("#douyinBrowserLoading").classList.add("is-hidden");
 });
+$$('[data-source-browser-tab]').forEach(button => button.addEventListener("click", () => selectSourceBrowserTab(button.dataset.sourceBrowserTab)));
+for (const platform of ["youtube", "facebook"]) {
+  $(`#${platform}BrowserSync`).addEventListener("click", () => syncSourceBrowser(platform));
+  $(`#${platform}BrowserReload`).addEventListener("click", () => reloadSourceBrowser(platform));
+  $(`#${platform}BrowserLogout`).addEventListener("click", () => logoutSourceBrowser(platform));
+  $(`#${platform}BrowserFrame`).addEventListener("load", () => $(`#${platform}BrowserLoading`).classList.add("is-hidden"));
+}
 $("#douyinLogoutButton").addEventListener("click", async () => {
   try {
     await requestJson("/api/v1/douyin-auth", { method: "DELETE" });

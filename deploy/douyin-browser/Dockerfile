@@ -22,6 +22,14 @@ RUN apt-get update -o Acquire::Retries=3 \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
 
+# Optional private/corporate CA used by HTTPS-inspecting networks. Never disable
+# Chromium certificate verification for login browsers.
+RUN --mount=type=secret,id=corporate_ca,required=false \
+    if [ -f /run/secrets/corporate_ca ]; then \
+        cp /run/secrets/corporate_ca /usr/local/share/ca-certificates/vidtrans-corporate-ca.crt; \
+        update-ca-certificates; \
+    fi
+
 COPY start-browser.sh /usr/local/bin/start-douyin-browser
 COPY cdp-proxy.py /usr/local/bin/douyin-cdp-proxy
 RUN chmod 0755 /usr/local/bin/start-douyin-browser /usr/local/bin/douyin-cdp-proxy \

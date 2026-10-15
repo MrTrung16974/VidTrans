@@ -9,3 +9,4 @@ __pycache__/
 !.env.example
 /deploy/.vps-configured
 /deploy/nginx/runtime/
+/secrets/

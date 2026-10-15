@@ -27,6 +27,12 @@ SUPPORTED_SOCIAL_DOMAINS = {
 }
 URL_PATTERN = re.compile(r"https?://[^\s<>\[\]\"']+", re.IGNORECASE)
 TRAILING_URL_PUNCTUATION = ".,;:!?)]}，。；：！？）】》、"
+YOUTUBE_AUTH_ERROR_MARKERS = (
+    "sign in to confirm you’re not a bot",
+    "sign in to confirm you're not a bot",
+    "login required",
+    "fresh cookies",
+)
 
 
 class SocialVideoDownloadError(RuntimeError):
@@ -35,6 +41,24 @@ class SocialVideoDownloadError(RuntimeError):
 
 class SocialVideoDownloadCancelled(SocialVideoDownloadError):
     pass
+
+
+def _download_failure_message(platform: str, error: Exception, *, used_cookies: bool) -> str:
+    message = " ".join(str(error).split())
+    if platform == "YouTube" and any(marker in message.lower() for marker in YOUTUBE_AUTH_ERROR_MARKERS):
+        if used_cookies:
+            return (
+                "YouTube từ chối phiên đăng nhập trong cookies.txt. "
+                "Hãy xuất lại cookie YouTube mới từ trình duyệt đang đăng nhập rồi thử lại."
+            )
+        return (
+            "YouTube yêu cầu xác minh người dùng. Hãy chọn file cookies.txt ở Bước 1 "
+            "hoặc cấu hình VIDTRANS_YTDLP_COOKIE_FILE trên máy chủ rồi thử lại."
+        )
+    return (
+        f"Không tải được video {platform}: {message or 'nguồn từ chối truy cập'}. "
+        "Nếu video yêu cầu đăng nhập, hãy cung cấp cookies.txt của chính tài khoản có quyền xem."
+    )
 
 
 @dataclass(frozen=True)
@@ -154,6 +178,7 @@ class SocialVideoDownloader:
         cookie_file: Path | None = None,
         ydl_factory: YoutubeDLFactory | None = None,
         douyin_cookie_provider: Callable[[Path], Path] | None = None,
+        platform_cookie_providers: dict[str, Callable[[Path], Path]] | None = None,
         douyin_resolver: Callable[..., dict[str, Any]] | None = None,
         tiktok_proxy: str | None = None,
         douyin_proxy: str | None = None,
@@ -166,6 +191,7 @@ class SocialVideoDownloader:
         self.cookie_file = cookie_file
         self._ydl_factory = ydl_factory
         self._douyin_cookie_provider = douyin_cookie_provider
+        self._platform_cookie_providers = dict(platform_cookie_providers or {})
         self._douyin_resolver = douyin_resolver
         self.tiktok_proxy = tiktok_proxy
         self.douyin_proxy = douyin_proxy
@@ -285,12 +311,31 @@ class SocialVideoDownloader:
         if self.ffmpeg_location:
             options["ffmpeg_location"] = self.ffmpeg_location
         browser_cookie_path = destination_stem.with_name(destination_stem.name + ".browser.cookies.txt")
-        effective_cookie_file = cookie_file or self.cookie_file
+        # A per-job upload is authoritative. Otherwise prefer a fresh snapshot
+        # from the isolated platform browser and keep the configured shared file
+        # as a fallback for deployments that do not run browser sidecars.
+        effective_cookie_file = cookie_file
+        if effective_cookie_file and not effective_cookie_file.is_file():
+            raise SocialVideoDownloadError(
+                f"Không tìm thấy file cookies.txt đã cấu hình: {effective_cookie_file}"
+            )
         if social_platform(normalized_url) == "Douyin" and self._douyin_cookie_provider and not effective_cookie_file:
             try:
                 effective_cookie_file = self._douyin_cookie_provider(browser_cookie_path)
             except Exception as cookie_error:
                 logger.warning("Cannot refresh Douyin download cookies: %s", type(cookie_error).__name__)
+        platform_cookie_provider = self._platform_cookie_providers.get(platform)
+        if platform_cookie_provider and not effective_cookie_file:
+            try:
+                effective_cookie_file = platform_cookie_provider(browser_cookie_path)
+            except Exception as cookie_error:
+                logger.warning("Cannot refresh %s download cookies: %s", platform, type(cookie_error).__name__)
+        if not effective_cookie_file:
+            effective_cookie_file = self.cookie_file
+            if effective_cookie_file and not effective_cookie_file.is_file():
+                raise SocialVideoDownloadError(
+                    f"Không tìm thấy file cookies.txt đã cấu hình: {effective_cookie_file}"
+                )
         if effective_cookie_file and effective_cookie_file.is_file():
             options["cookiefile"] = str(effective_cookie_file)
 
@@ -311,10 +356,8 @@ class SocialVideoDownloader:
             if cancel_requested and cancel_requested():
                 raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from exc
             if platform not in {"TikTok", "Douyin"}:
-                message = " ".join(str(exc).split())
                 raise SocialVideoDownloadError(
-                    f"Không tải được video {platform}: {message or 'nguồn từ chối truy cập'}. "
-                    "Nếu video yêu cầu đăng nhập, hãy cung cấp cookies.txt của chính tài khoản có quyền xem."
+                    _download_failure_message(platform, exc, used_cookies=bool(effective_cookie_file))
                 ) from exc
             
             try:

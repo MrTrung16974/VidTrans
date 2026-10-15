@@ -39,6 +39,7 @@ from domain.models import ProcessingMode, ProcessingRequest
 from domain.languages import language_profile, languages_from_config, normalize_language, voice_preset
 
 from infrastructure.douyin_browser_auth import DouyinBrowserAuthManager
+from infrastructure.social_browser_auth import SocialBrowserAuthManager
 from infrastructure.auth import (
     AuthConfigurationError,
     AuthManager,
@@ -167,10 +168,20 @@ N8N_WORKFLOW_DISPATCHER = N8nWorkflowDispatcher(
 TIKTOK_SUMMARY_PROVIDER = LocalExtractiveTikTokProvider()
 _social_cookie_value = os.environ.get("VIDTRANS_YTDLP_COOKIE_FILE", "").strip()
 DOUYIN_BROWSER_AUTH = DouyinBrowserAuthManager(WORK_DIR / "douyin-auth" / "douyin.cookies.txt")
+YOUTUBE_BROWSER_AUTH = SocialBrowserAuthManager(
+    "youtube", WORK_DIR / "youtube-browser-auth" / "youtube.cookies.txt"
+)
+FACEBOOK_BROWSER_AUTH = SocialBrowserAuthManager(
+    "facebook", WORK_DIR / "facebook-browser-auth" / "facebook.cookies.txt"
+)
 SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     ffmpeg_location=FFMPEG,
     cookie_file=Path(_social_cookie_value) if _social_cookie_value else None,
     douyin_cookie_provider=DOUYIN_BROWSER_AUTH.export_download_cookies,
+    platform_cookie_providers={
+        "YouTube": YOUTUBE_BROWSER_AUTH.export_download_cookies,
+        "Facebook": FACEBOOK_BROWSER_AUTH.export_download_cookies,
+    },
     douyin_resolver=DOUYIN_BROWSER_AUTH.resolve_video,
     tiktok_proxy=os.environ.get("VIDTRANS_TIKTOK_PROXY", "").strip() or None,
     douyin_proxy=os.environ.get("VIDTRANS_DOUYIN_PROXY", "").strip() or None,
@@ -2583,6 +2594,46 @@ def get_douyin_auth_status() -> JSONResponse:
 def logout_douyin() -> JSONResponse:
     DOUYIN_BROWSER_AUTH.logout()
     return JSONResponse({"authenticated": False, "message": "Đã xóa phiên đăng nhập Douyin"})
+
+
+SOURCE_BROWSER_MANAGERS = {
+    "youtube": YOUTUBE_BROWSER_AUTH,
+    "facebook": FACEBOOK_BROWSER_AUTH,
+}
+
+
+def _source_browser_manager(platform: str) -> SocialBrowserAuthManager:
+    manager = SOURCE_BROWSER_MANAGERS.get(platform.lower())
+    if manager is None:
+        raise HTTPException(status_code=404, detail="Nền tảng trình duyệt không được hỗ trợ")
+    return manager
+
+
+@app.get("/api/v1/source-browser/{platform}/status")
+def get_source_browser_status(platform: str, refresh: bool = Query(default=False)) -> JSONResponse:
+    return JSONResponse(_source_browser_manager(platform).status(refresh=refresh))
+
+
+@app.post("/api/v1/source-browser/{platform}/sync")
+def sync_source_browser(platform: str) -> JSONResponse:
+    payload = _source_browser_manager(platform).sync()
+    return JSONResponse(payload, status_code=200 if payload["available"] else 503)
+
+
+@app.post("/api/v1/source-browser/{platform}/reload")
+def reload_source_browser(platform: str) -> JSONResponse:
+    try:
+        return JSONResponse(_source_browser_manager(platform).reload())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.delete("/api/v1/source-browser/{platform}/session")
+def delete_source_browser_session(platform: str) -> JSONResponse:
+    try:
+        return JSONResponse(_source_browser_manager(platform).logout())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/tiktok-auth")

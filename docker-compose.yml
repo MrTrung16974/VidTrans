@@ -49,6 +49,54 @@ services:
     shm_size: "1gb"
     restart: unless-stopped
 
+  youtube-browser:
+    image: vidtrans-douyin-browser
+    build:
+      context: ./deploy/douyin-browser
+      dockerfile: Dockerfile
+    container_name: vidtrans-youtube-browser
+    ports:
+      - "127.0.0.1:5203:6080"
+    expose:
+      - "9222"
+    environment:
+      DISPLAY: ":99"
+      SCREEN_GEOMETRY: "1024x720x24"
+      CHROMIUM_PROFILE_DIR: "/data/profile"
+      BROWSER_START_URL: "https://www.youtube.com/"
+      BROWSER_LANGUAGE: "vi-VN"
+      CDP_EXTERNAL_HOST: "youtube-browser"
+      TZ: "Asia/Ho_Chi_Minh"
+      BROWSER_PROXY_SERVER: "${VIDTRANS_YOUTUBE_PROXY:-}"
+    volumes:
+      - youtube-browser-profile:/data/profile
+    shm_size: "1gb"
+    restart: unless-stopped
+
+  facebook-browser:
+    image: vidtrans-douyin-browser
+    build:
+      context: ./deploy/douyin-browser
+      dockerfile: Dockerfile
+    container_name: vidtrans-facebook-browser
+    ports:
+      - "127.0.0.1:5204:6080"
+    expose:
+      - "9222"
+    environment:
+      DISPLAY: ":99"
+      SCREEN_GEOMETRY: "1024x720x24"
+      CHROMIUM_PROFILE_DIR: "/data/profile"
+      BROWSER_START_URL: "https://www.facebook.com/"
+      BROWSER_LANGUAGE: "vi-VN"
+      CDP_EXTERNAL_HOST: "facebook-browser"
+      TZ: "Asia/Ho_Chi_Minh"
+      BROWSER_PROXY_SERVER: "${VIDTRANS_FACEBOOK_PROXY:-}"
+    volumes:
+      - facebook-browser-profile:/data/profile
+    shm_size: "1gb"
+    restart: unless-stopped
+
   vidtrans:
     image: vidtrans-vidtrans
     build:
@@ -59,6 +107,10 @@ services:
       douyin-browser:
         condition: service_healthy
       tiktok-browser:
+        condition: service_healthy
+      youtube-browser:
+        condition: service_healthy
+      facebook-browser:
         condition: service_healthy
     ports:
       # Keep the FastAPI port private to the VPS. Production traffic must enter via Nginx.
@@ -109,6 +161,7 @@ services:
       VIDTRANS_AUTH_COOKIE_NAME: "${VIDTRANS_AUTH_COOKIE_NAME:-vidtrans_access_token}"
       VIDTRANS_AUTH_COOKIE_SECURE: "${VIDTRANS_AUTH_COOKIE_SECURE:-0}"
       VIDTRANS_TRUST_PROXY_HEADERS: "${VIDTRANS_TRUST_PROXY_HEADERS:-0}"
+      VIDTRANS_YTDLP_COOKIE_FILE: "${VIDTRANS_YTDLP_COOKIE_FILE:-}"
       VIDTRANS_N8N_WEBHOOK_URL: "${VIDTRANS_N8N_WEBHOOK_URL:-}"
       VIDTRANS_N8N_WEBHOOK_SECRET: "${VIDTRANS_N8N_WEBHOOK_SECRET:-}"
       VIDTRANS_N8N_TIMEOUT_SECONDS: "${VIDTRANS_N8N_TIMEOUT_SECONDS:-5}"
@@ -116,10 +169,16 @@ services:
       VIDTRANS_N8N_ALLOW_INSECURE_HTTP: "${VIDTRANS_N8N_ALLOW_INSECURE_HTTP:-0}"
       VIDTRANS_DOUYIN_BROWSER_CDP_URL: "${VIDTRANS_DOUYIN_BROWSER_CDP_URL:-http://douyin-browser:9222}"
       VIDTRANS_DOUYIN_BROWSER_PUBLIC_URL: "${VIDTRANS_DOUYIN_BROWSER_PUBLIC_URL:-http://localhost:5201/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=websockify}"
+      VIDTRANS_YOUTUBE_BROWSER_CDP_URL: "http://youtube-browser:9222"
+      VIDTRANS_YOUTUBE_BROWSER_PUBLIC_URL: "${VIDTRANS_YOUTUBE_BROWSER_PUBLIC_URL:-http://localhost:5203/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=websockify}"
+      VIDTRANS_FACEBOOK_BROWSER_CDP_URL: "http://facebook-browser:9222"
+      VIDTRANS_FACEBOOK_BROWSER_PUBLIC_URL: "${VIDTRANS_FACEBOOK_BROWSER_PUBLIC_URL:-http://localhost:5204/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=websockify}"
     volumes:
       - ./backend/outputs:/app/backend/outputs
       - ./backend/uploads:/app/backend/uploads
       - ./backend/work:/app/backend/work
+      # Store exported Netscape cookies under ./secrets and configure the path in .env.
+      - ./secrets:/app/secrets:ro
       - whisper-models:/root/.cache/whisper
       # faster-whisper models are downloaded from Hugging Face on first use.
       - whisper-hf-models:/root/.cache/huggingface
@@ -129,6 +188,8 @@ services:
 volumes:
   tiktok-browser-profile:
   douyin-browser-profile:
+  youtube-browser-profile:
+  facebook-browser-profile:
   whisper-models:
   whisper-hf-models:
   paddle-models:

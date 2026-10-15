@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 const test = (name, run) => { run(); console.log(`PASS ${name}`); };
 const source = readFileSync(new URL('../frontend/js/browser-frame.js', import.meta.url), 'utf8');
-const { resolveTikTokFrameUrl, resolveDouyinFrameUrl, frameResponseProblem } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { resolveTikTokFrameUrl, resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl, frameResponseProblem } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const page = 'https://169.58.116.223/#tiktok';
 test('Douyin keeps a complete noVNC URL and repairs the websocket path', () => {
   for (const raw of ['http://localhost:5201/vnc_lite.html?path=websockify', '/douyin-browser/vnc_lite.html?path=websockifyvnc.html?resize=scale']) {
@@ -19,6 +19,16 @@ test('old localhost config uses authenticated VPS proxy and websocket route', ()
   assert.equal(url.pathname, '/tiktok-browser/vnc_lite.html');
   assert.equal(url.searchParams.get('path'), 'tiktok-browser/websockify');
   assert.equal(url.searchParams.get('scale'), 'true');
+});
+test('source browser tabs normalize YouTube and Facebook proxy routes', () => {
+  for (const platform of ['youtube', 'facebook']) {
+    const port = platform === 'youtube' ? '5203' : '5204';
+    const url = new URL(resolveSourceBrowserFrameUrl(`http://localhost:${port}/vnc_lite.html`, page, platform));
+    assert.equal(url.pathname, `/${platform}-browser/vnc_lite.html`);
+    assert.equal(url.searchParams.get('path'), `${platform}-browser/websockify`);
+  }
+  assert.equal(resolveSourceBrowserFrameUrl('https://youtube.com/', page, 'youtube'), null);
+  assert.equal(resolveSourceBrowserFrameUrl('/vnc_lite.html', page, 'unknown'), null);
 });
 test('keeps local development browser', () => {
   assert.equal(new URL(resolveTikTokFrameUrl('http://localhost:5202/vnc_lite.html', 'http://localhost:5200')).port, '5202');

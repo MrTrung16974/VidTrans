@@ -7,6 +7,11 @@ export function resolveDouyinFrameUrl(raw, pageHref) {
   return resolveBrowserFrameUrl(raw, pageHref, 'douyin');
 }
 
+export function resolveSourceBrowserFrameUrl(raw, pageHref, platform) {
+  if (!['douyin', 'youtube', 'facebook'].includes(platform)) return null;
+  return resolveBrowserFrameUrl(raw, pageHref, platform);
+}
+
 function resolveBrowserFrameUrl(raw, pageHref, platform) {
   if (!raw) return null;
   const page = new URL(pageHref);

@@ -152,6 +152,54 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             self.assertIn("cookiefile", calls[1])
             self.assertFalse(Path(calls[1]["cookiefile"]).exists())
 
+    def test_youtube_bot_check_has_actionable_message_without_raw_yt_dlp_error(self) -> None:
+        with TemporaryDirectory() as directory:
+            ydl = FakeYoutubeDL({})
+            ydl.extract_info = Mock(
+                side_effect=RuntimeError("ERROR: Sign in to confirm you’re not a bot. Use --cookies")
+            )
+            downloader = SocialVideoDownloader(ydl_factory=lambda options: ydl)
+
+            with self.assertRaises(SocialVideoDownloadError) as raised:
+                downloader.download("https://youtu.be/example", Path(directory) / "video")
+
+            self.assertIn("cookies.txt", str(raised.exception))
+            self.assertNotIn("ERROR:", str(raised.exception))
+
+    def test_configured_cookie_file_must_exist(self) -> None:
+        with TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing-cookies.txt"
+            downloader = SocialVideoDownloader(cookie_file=missing, ydl_factory=FakeYoutubeDL)
+
+            with self.assertRaisesRegex(SocialVideoDownloadError, "Không tìm thấy file cookies.txt"):
+                downloader.download("https://youtu.be/example", Path(directory) / "video")
+
+    def test_platform_browser_cookie_provider_is_used_and_snapshot_is_deleted(self) -> None:
+        with TemporaryDirectory() as directory:
+            snapshot = (Path(directory) / "video.browser.cookies.txt").resolve()
+            provider_paths = []
+
+            def provider(path: Path) -> Path:
+                provider_paths.append(path)
+                path.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+                return path
+
+            instances = []
+
+            def factory(options):
+                instances.append(FakeYoutubeDL(options))
+                return instances[-1]
+
+            downloader = SocialVideoDownloader(
+                ydl_factory=factory,
+                platform_cookie_providers={"YouTube": provider},
+            )
+            downloader.download("https://youtu.be/example", Path(directory) / "video")
+
+            self.assertEqual(provider_paths, [snapshot])
+            self.assertEqual(instances[0].options["cookiefile"], str(snapshot))
+            self.assertFalse(snapshot.exists())
+
     def test_browser_fallback_respects_duration_and_cancellation(self) -> None:
         for failure in ("duration", "cancel"):
             with self.subTest(failure=failure), TemporaryDirectory() as directory:
