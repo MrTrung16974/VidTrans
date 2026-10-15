@@ -2,15 +2,15 @@
 
 ## Thay đổi
 
-- Thêm manager cookie Chromium cô lập cho YouTube/Facebook.
+- Thêm manager cookie theo domain cho YouTube/Facebook.
 - Nối snapshot cookie theo platform vào `SocialVideoDownloader`; ưu tiên cookie job → browser snapshot → shared cookie.
 - Thêm API status/sync/reload/logout.
-- Thêm hai browser sidecar/profile, Nginx authenticated proxy và production URL.
+- Gộp Douyin/YouTube/Facebook vào một `social-browser`, một persistent profile và route `/source-browser/` có Nginx auth.
 - Chuyển view Douyin thành workspace ba tab, giữ hash/API Douyin cũ.
 
 ## Kiểm chứng 2026-10-15
 
-- `python3 -m unittest tests.test_social_browser_auth tests.test_social_video_downloader tests.test_douyin_browser_auth tests.test_frontend_static`: PASS, 44 tests.
+- `python3 -m unittest tests.test_social_browser_auth tests.test_social_video_downloader tests.test_douyin_browser_auth tests.test_frontend_static`: PASS, 46 tests.
 - `node tests/test_browser_frame.mjs`: PASS, 8 tests.
 - `docker compose config --quiet`: PASS.
 - Production compose với hostname tổng hợp: PASS.
@@ -39,6 +39,14 @@
 - Bằng chứng runtime: noVNC/CDP healthy nhưng Chromium log có TLS `net_error -202`; `curl` trong container báo `self-signed certificate in certificate chain`.
 - Kết nối Facebook/YouTube vẫn timeout khi chỉ bỏ verify, nên môi trường còn có chặn mạng ngoài lỗi CA.
 - Browser Dockerfile nhận optional BuildKit secret `corporate_ca` và cập nhật system trust store; không hạ xác minh TLS.
-- Compose có proxy riêng `VIDTRANS_YOUTUBE_PROXY`/`VIDTRANS_FACEBOOK_PROXY`.
-- `docker-rebuild.sh --corporate-ca` build CA và nay restart cả YouTube/Facebook browser.
+- Compose có một proxy chung `VIDTRANS_SOCIAL_BROWSER_PROXY` vì ba nguồn chạy trong cùng Chromium.
+- `docker-rebuild.sh --corporate-ca` build CA và restart `social-browser`.
 - Kiểm chứng: Dockerfile build PASS; base/corporate/production compose config PASS; shell syntax/diff check PASS.
+
+## Gộp một VNC theo phản hồi 2026-10-15
+
+- Xóa hai service `youtube-browser`/`facebook-browser`; cả ba manager kết nối CDP của `social-browser`.
+- Khi đổi tab, frontend gọi API `activate` để điều hướng cửa sổ Chromium hiện tại tới đúng nền tảng.
+- Đồng bộ và đăng xuất lọc theo domain; test bảo đảm cookie YouTube/Facebook không bị xuất hoặc xóa nhầm bởi Douyin và ngược lại.
+- Giữ các Nginx route cũ làm alias tương thích; route chuẩn mới là `/source-browser/`.
+- Tăng cache key JavaScript lên `20261015-3`.

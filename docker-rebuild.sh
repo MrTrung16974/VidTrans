@@ -62,9 +62,9 @@ else
     docker build --file Dockerfile.code --tag "$APP_IMAGE" .
 fi
 
-# The interactive Douyin browser has its own dependency image. Docker keeps
+# The interactive source browser has its own dependency image. Docker keeps
 # this layer cached, so normal code-only rebuilds remain fast after first use.
-"${compose[@]}" build douyin-browser
+"${compose[@]}" build social-browser tiktok-browser
 
 if [[ "$PRODUCTION" -eq 1 ]]; then
     bash deploy/vps-first-run.sh
@@ -80,10 +80,10 @@ if [[ "$PRODUCTION" -eq 1 ]]; then
     public_host="$(awk -F= '$1 == "VIDTRANS_PUBLIC_HOST" { print substr($0, index($0, "=") + 1); exit }' .env.production)"
     "${compose[@]}" build nginx
     printf 'Applying the new image behind Nginx at https://%s...\n' "$public_host"
-    "${compose[@]}" up -d --force-recreate --remove-orphans douyin-browser tiktok-browser youtube-browser facebook-browser vidtrans nginx certbot
-    "${compose[@]}" ps douyin-browser tiktok-browser youtube-browser facebook-browser vidtrans nginx certbot
+    "${compose[@]}" up -d --force-recreate --remove-orphans social-browser tiktok-browser vidtrans nginx certbot
+    "${compose[@]}" ps social-browser tiktok-browser vidtrans nginx certbot
 else
     printf '%s\n' "Applying the new image at http://localhost:5200..."
-    "${compose[@]}" up -d --force-recreate --remove-orphans douyin-browser tiktok-browser youtube-browser facebook-browser vidtrans
-    "${compose[@]}" ps douyin-browser tiktok-browser youtube-browser facebook-browser vidtrans
+    "${compose[@]}" up -d --force-recreate --remove-orphans social-browser tiktok-browser vidtrans
+    "${compose[@]}" ps social-browser tiktok-browser vidtrans
 fi

@@ -3,19 +3,11 @@ services:
     build:
       secrets:
         - corporate_ca
-  douyin-browser:
+  social-browser:
     build:
       secrets:
         - corporate_ca
   tiktok-browser:
-    build:
-      secrets:
-        - corporate_ca
-  youtube-browser:
-    build:
-      secrets:
-        - corporate_ca
-  facebook-browser:
     build:
       secrets:
         - corporate_ca

@@ -138,6 +138,22 @@ class DouyinBrowserAuthTests(unittest.TestCase):
             self.assertTrue(available["available"])
             self.assertEqual(available["browser_url"], "/douyin-browser/vnc_lite.html")
 
+    def test_shared_browser_exports_only_douyin_cookies(self) -> None:
+        with TemporaryDirectory() as directory:
+            manager = self.manager(directory)
+            browser = FakeBrowser([
+                {"domain": ".douyin.com", "path": "/", "name": "sessionid", "value": "douyin-secret"},
+                {"domain": ".youtube.com", "path": "/", "name": "SAPISID", "value": "youtube-secret"},
+            ])
+            manager._with_browser = lambda operation: operation(browser)  # type: ignore[method-assign]
+            snapshot = Path(directory) / "download.cookies.txt"
+
+            manager.export_download_cookies(snapshot)
+
+            exported = snapshot.read_text(encoding="utf-8")
+            self.assertIn("douyin-secret", exported)
+            self.assertNotIn("youtube-secret", exported)
+
 
 if __name__ == "__main__":
     unittest.main()

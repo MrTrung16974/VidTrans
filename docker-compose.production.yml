@@ -4,9 +4,7 @@ services:
       VIDTRANS_TIKTOK_BROWSER_PUBLIC_URL: "/tiktok-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=tiktok-browser/websockify"
       VIDTRANS_AUTH_COOKIE_SECURE: "1"
       VIDTRANS_TRUST_PROXY_HEADERS: "1"
-      VIDTRANS_DOUYIN_BROWSER_PUBLIC_URL: "/douyin-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=douyin-browser/websockify"
-      VIDTRANS_YOUTUBE_BROWSER_PUBLIC_URL: "/youtube-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=youtube-browser/websockify"
-      VIDTRANS_FACEBOOK_BROWSER_PUBLIC_URL: "/facebook-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=facebook-browser/websockify"
+      VIDTRANS_SOURCE_BROWSER_PUBLIC_URL: "/source-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=source-browser/websockify"
 
   nginx:
     image: vidtrans-nginx
@@ -17,13 +15,9 @@ services:
     depends_on:
       vidtrans:
         condition: service_started
-      douyin-browser:
+      social-browser:
         condition: service_healthy
       tiktok-browser:
-        condition: service_healthy
-      youtube-browser:
-        condition: service_healthy
-      facebook-browser:
         condition: service_healthy
     ports:
       - "80:80"

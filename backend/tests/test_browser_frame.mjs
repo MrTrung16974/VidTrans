@@ -29,6 +29,9 @@ test('source browser tabs normalize YouTube and Facebook proxy routes', () => {
   }
   assert.equal(resolveSourceBrowserFrameUrl('https://youtube.com/', page, 'youtube'), null);
   assert.equal(resolveSourceBrowserFrameUrl('/vnc_lite.html', page, 'unknown'), null);
+  const shared = new URL(resolveSourceBrowserFrameUrl('/source-browser/vnc_lite.html?path=wrong', page, 'facebook'));
+  assert.equal(shared.pathname, '/source-browser/vnc_lite.html');
+  assert.equal(shared.searchParams.get('path'), 'source-browser/websockify');
 });
 test('keeps local development browser', () => {
   assert.equal(new URL(resolveTikTokFrameUrl('http://localhost:5202/vnc_lite.html', 'http://localhost:5200')).port, '5202');

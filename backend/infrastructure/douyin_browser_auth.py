@@ -20,6 +20,14 @@ from infrastructure.social_video_downloader import (
 logger = logging.getLogger(__name__)
 
 AUTH_COOKIE_NAMES = {"sessionid", "sessionid_ss", "sid_guard", "uid_tt", "uid_tt_ss"}
+DOUYIN_COOKIE_DOMAINS = ("douyin.com", "iesdouyin.com")
+
+
+def _is_douyin_domain(domain: str) -> bool:
+    normalized = domain.lstrip(".").lower()
+    return any(normalized == allowed or normalized.endswith(f".{allowed}") for allowed in DOUYIN_COOKIE_DOMAINS)
+
+
 def has_authenticated_cookie(cookies: list[dict[str, Any]]) -> bool:
     return any(
         str(cookie.get("name") or "") in AUTH_COOKIE_NAMES and bool(cookie.get("value"))
@@ -198,10 +206,16 @@ class DouyinBrowserAuthManager:
     def _authenticated(self) -> bool:
         return self.cookie_path.is_file() and self.cookie_path.stat().st_size > 80
 
+    def _douyin_cookies(self, browser: Any) -> list[dict[str, Any]]:
+        return [
+            cookie for cookie in self._collect_cookies(browser)
+            if _is_douyin_domain(str(cookie.get("domain") or ""))
+        ]
+
     def export_download_cookies(self, target: Path) -> Path:
         """Take a private snapshot at execution time, including guest cookies."""
         with self._lock:
-            cookies = self._with_browser(self._collect_cookies)
+            cookies = self._with_browser(self._douyin_cookies)
             write_netscape_cookies(cookies, target)
         return target
 
@@ -293,13 +307,13 @@ class DouyinBrowserAuthManager:
     def sync(self) -> dict[str, Any]:
         with self._lock:
             try:
-                cookies = self._with_browser(self._collect_cookies)
+                cookies = self._with_browser(self._douyin_cookies)
             except Exception as exc:
                 logger.warning("Cannot connect to interactive Douyin browser: %s", type(exc).__name__)
                 return {
                     "available": False,
                     "authenticated": self._authenticated(),
-                    "message": "Không kết nối được Chromium Douyin. Hãy kiểm tra container douyin-browser.",
+                    "message": "Không kết nối được Chromium Douyin. Hãy kiểm tra container social-browser.",
                     "browser_url": None,
                     "updated_at": self._last_sync_at,
                 }
@@ -328,13 +342,9 @@ class DouyinBrowserAuthManager:
     def reload(self) -> dict[str, Any]:
         def reload_page(browser: Any) -> None:
             context = browser.contexts[0]
-            page = next((item for item in context.pages if "douyin.com" in item.url), None)
-            if page is None:
-                page = context.new_page()
-                page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=20_000)
-            else:
-                page.bring_to_front()
-                page.reload(wait_until="domcontentloaded", timeout=20_000)
+            page = context.pages[0] if context.pages else context.new_page()
+            page.bring_to_front()
+            page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=20_000)
 
         with self._lock:
             try:
@@ -347,12 +357,19 @@ class DouyinBrowserAuthManager:
     def logout(self) -> dict[str, Any]:
         def clear_session(browser: Any) -> None:
             for context in browser.contexts:
-                context.clear_cookies()
                 for page in context.pages:
                     try:
-                        page.evaluate("() => { localStorage.clear(); sessionStorage.clear(); }")
+                        if _is_douyin_domain(urlsplit(page.url).hostname or ""):
+                            page.evaluate("() => { localStorage.clear(); sessionStorage.clear(); }")
                     except Exception:
                         continue
+                for cookie in context.cookies():
+                    if _is_douyin_domain(str(cookie.get("domain") or "")):
+                        context.clear_cookies(
+                            name=str(cookie.get("name") or ""),
+                            domain=str(cookie.get("domain") or ""),
+                            path=str(cookie.get("path") or "/"),
+                        )
             page = browser.contexts[0].pages[0] if browser.contexts[0].pages else browser.contexts[0].new_page()
             page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=20_000)
 

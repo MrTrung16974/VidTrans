@@ -4,10 +4,10 @@
 
 Actor chọn tab Douyin/YouTube/Facebook, thao tác đăng nhập trực tiếp trong Chromium, sau đó bấm Đồng bộ.
 
-- BR01_01: Mỗi nền tảng dùng profile Chromium và cookie file riêng.
+- BR01_01: Ba nền tảng dùng chung một profile Chromium/VNC; mỗi nền tảng vẫn dùng cookie file riêng.
 - BR01_02: Backend xác định đăng nhập bằng cookie marker phía server; frontend không được tự khai báo trạng thái.
 - BR01_03: Đồng bộ không trả giá trị cookie cho client.
-- BR01_04: Logout chỉ xóa cookie/storage của browser đang chọn và cookie file tương ứng.
+- BR01_04: Logout chỉ xóa cookie/storage thuộc domain nền tảng đang chọn và cookie file tương ứng, không làm mất phiên nền tảng khác.
 - AC01_01: Đáp ứng AC01–AC06 trong `ANALYSIS.md`.
 
 ## UC_02 — Tự cấp cookie khi tải video

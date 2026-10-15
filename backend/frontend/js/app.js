@@ -191,7 +191,7 @@ function renderDouyinBrowserStatus(status) {
   }
   if (!status.available) {
     loading.classList.remove("is-hidden");
-    $("#douyinBrowserHelp").textContent = "Container douyin-browser chưa sẵn sàng; xem log để kiểm tra Chromium/noVNC.";
+    $("#douyinBrowserHelp").textContent = "Container social-browser chưa sẵn sàng; xem log để kiểm tra Chromium/noVNC.";
   } else if (status.authenticated) {
     $("#douyinBrowserHelp").textContent = "Cookie đã đồng bộ và sẵn sàng cho bộ tải video Douyin.";
   } else {
@@ -217,7 +217,7 @@ function renderSourceBrowserStatus(platform, status) {
     frame.dataset.source = browserUrl;
     frame.src = browserUrl;
   }
-  if (!status.available) $(`#${prefix}BrowserHelp`).textContent = `Container ${platform}-browser chưa sẵn sàng.`;
+  if (!status.available) $(`#${prefix}BrowserHelp`).textContent = "Container social-browser chưa sẵn sàng.";
   else if (status.authenticated) $(`#${prefix}BrowserHelp`).textContent = `Cookie đã đồng bộ và sẵn sàng cho bộ tải video ${label}.`;
   else $(`#${prefix}BrowserHelp`).textContent = `Đăng nhập ${label} trong khung bên dưới rồi bấm Đồng bộ.`;
 }
@@ -234,7 +234,7 @@ async function refreshSourceBrowserStatus(platform, { refresh = false, quiet = f
   }
 }
 
-function selectSourceBrowserTab(platform) {
+async function selectSourceBrowserTab(platform) {
   state.sourceBrowserPlatform = platform;
   $$('[data-source-browser-tab]').forEach(button => {
     const active = button.dataset.sourceBrowserTab === platform;
@@ -242,8 +242,15 @@ function selectSourceBrowserTab(platform) {
     button.setAttribute("aria-selected", String(active));
   });
   $$('[data-source-browser-panel]').forEach(panel => panel.classList.toggle("is-hidden", panel.dataset.sourceBrowserPanel !== platform));
-  if (platform === "douyin") refreshDouyinBrowserStatus();
-  else refreshSourceBrowserStatus(platform);
+  try {
+    const status = await requestJson(`/api/v1/source-browser/${platform}/activate`, { method: "POST" });
+    if (platform === "douyin") renderDouyinBrowserStatus(status);
+    else renderSourceBrowserStatus(platform, status);
+  } catch (error) {
+    toast(error.message, true);
+    if (platform === "douyin") refreshDouyinBrowserStatus();
+    else refreshSourceBrowserStatus(platform);
+  }
 }
 
 async function syncSourceBrowser(platform) {

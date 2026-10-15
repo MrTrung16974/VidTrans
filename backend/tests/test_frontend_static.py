@@ -73,7 +73,8 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         for platform in ("douyin", "youtube", "facebook"):
             self.assertIn(f'data-source-browser-tab="{platform}"', html)
         self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
-        self.assertIn("/js/app.js?v=20261015-2", html)
+        self.assertIn("/api/v1/source-browser/${platform}/activate", javascript)
+        self.assertIn("/js/app.js?v=20261015-3", html)
         self.assertIn('button.addEventListener("click", () => selectSourceBrowserTab', javascript)
 
     async def test_unknown_websocket_is_rejected_without_http_assertion(self):

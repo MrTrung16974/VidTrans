@@ -191,13 +191,14 @@ Video từ TikTok, Douyin, YouTube và Facebook được tải bằng `yt-dlp` b
 ngay và dashboard hiển thị riêng tiến độ tải nguồn. Hệ thống chỉ chấp nhận domain thuộc bốn nền tảng này,
 không tải playlist, giới hạn mặc định 2 GB và 120 phút cho mỗi video, đồng thời xóa file `.part`
 khi tải lỗi hoặc bị hủy. Douyin thường yêu cầu phiên đăng nhập mới kể cả với video công khai.
-Tab Douyin mở phiên Chromium của dịch vụ `douyin-browser` để đăng nhập và xác minh.
+Workspace đăng nhập nguồn mở một Chromium của dịch vụ `social-browser`; các tab Douyin,
+YouTube và Facebook điều hướng cùng browser/profile nhưng cookie được lọc riêng theo domain.
 Worker lấy cookie mới (kể cả cookie khách) khi bắt đầu tải, thay vì chụp cookie lúc tạo batch.
 Nếu `yt-dlp` bị từ chối, worker mở link bằng phiên Chromium này, lấy địa chỉ MP4 đúng ID
 video và tải với cùng giới hạn dung lượng/thời lượng. Douyin không còn phụ thuộc API TikWM.
 Nếu Douyin vẫn yêu cầu xác minh, mở tab Douyin, hoàn tất xác minh, bấm Đồng bộ rồi thử lại job.
-Trong production, `/douyin-browser/` phải đi qua Nginx tới cổng 6080 của sidecar, bao gồm
-WebSocket `/douyin-browser/websockify`. Khi cập nhật, build lại dịch vụ `vidtrans` và tải lại trang.
+Trong production, `/source-browser/` phải đi qua Nginx tới cổng 6080 của sidecar, bao gồm
+WebSocket `/source-browser/websockify`. Khi cập nhật, build lại stack và tải lại trang.
 `cookies.txt` dạng Netscape vẫn là phương án dự phòng. Mỗi job nhận một bản cookie riêng với
 quyền file hạn chế; bản này tự xóa ngay khi tải thành công và không xuất hiện trong API hoặc gói
 kết quả. Có thể cấu hình một cookie dùng chung: xuất cookie định dạng Netscape từ
@@ -262,8 +263,8 @@ VIDTRANS_YTDLP_COOKIE_FILE=/app/secrets/yt-dlp-cookies.txt
 Trình duyệt đăng nhập nguồn dùng các container Chromium cô lập. Nếu mạng công ty kiểm tra HTTPS,
 export CA gốc dạng PEM/CRT, đặt `VIDTRANS_CORPORATE_CA_FILE=/duong-dan/ca.pem` và build bằng
 `bash docker-rebuild.sh --corporate-ca`. Không dùng `--ignore-certificate-errors` cho browser đăng nhập.
-Nếu Facebook/YouTube bị chặn kết nối ở cấp mạng/VPS, cấu hình proxy riêng bằng
-`VIDTRANS_FACEBOOK_PROXY` và `VIDTRANS_YOUTUBE_PROXY` rồi recreate hai browser container.
+Nếu các mạng xã hội bị chặn kết nối ở cấp mạng/VPS, cấu hình proxy chung bằng
+`VIDTRANS_SOCIAL_BROWSER_PROXY` rồi recreate `social-browser`.
 
 Xem [hướng dẫn tích hợp n8n](docs/n8n-integration.md) để cấu hình chữ ký HMAC,
 deduplicate event và workflow đề xuất. File video không đi qua n8n; webhook chỉ nhận metadata.

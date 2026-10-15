@@ -10,7 +10,7 @@
 
 **CONFIRMED:** VidTrans chỉ có Chromium tương tác cho Douyin. YouTube/Facebook hiện phải tải `cookies.txt` thủ công hoặc cấu hình file dùng chung; cấu hình này gây gián đoạn và khó vận hành trên VPS.
 
-**TO-BE:** Một workspace “Đăng nhập nguồn” có ba tab Douyin, YouTube và Facebook. Mỗi nền tảng có profile Chromium cô lập, nút đồng bộ/tải lại/đăng xuất, và cookie được backend tự cấp cho `yt-dlp` đúng nền tảng.
+**TO-BE:** Một workspace “Đăng nhập nguồn” có ba tab Douyin, YouTube và Facebook dùng chung một Chromium/VNC. Mỗi tab có nút đồng bộ/tải lại/đăng xuất, và cookie được backend lọc theo domain rồi tự cấp cho `yt-dlp` đúng nền tảng.
 
 ## Actor và phạm vi
 
@@ -24,7 +24,7 @@
 - `backend/infrastructure`: quản lý phiên Chromium/cookie và downloader.
 - `backend/main.py`: API và wiring provider.
 - `backend/frontend`: workspace tab.
-- Docker Compose/Nginx: hai sidecar/profile/proxy path mới.
+- Docker Compose/Nginx: một sidecar/profile và proxy path dùng chung cho ba nguồn.
 
 ## Acceptance criteria
 
@@ -37,6 +37,6 @@
 
 ## Giả định và rủi ro
 
-- **ASSUMPTION:** Chấp nhận chạy thêm hai Chromium sidecar độc lập để cô lập phiên và tránh lẫn cookie.
+- **CONFIRMED:** Người dùng yêu cầu gộp ba nguồn vào một VNC; cô lập logic được thực hiện ở lớp lọc/xóa cookie theo domain.
 - YouTube có thể yêu cầu PO Token hoặc giới hạn tài khoản; cookie không bảo đảm vượt mọi cơ chế chống bot.
-- Ba Chromium tăng RAM; runbook cần nêu rõ theo dõi tài nguyên.
+- Dùng chung profile giảm RAM nhưng cùng một thời điểm chỉ hiển thị một trang nguồn trong VNC.

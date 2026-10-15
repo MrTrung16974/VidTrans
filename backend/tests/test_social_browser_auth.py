@@ -57,6 +57,29 @@ class SocialBrowserAuthTests(unittest.TestCase):
             result = manager.sync()
             self.assertFalse(result["authenticated"])
 
+    def test_logout_removes_only_selected_platform_cookies(self) -> None:
+        with TemporaryDirectory() as directory:
+            manager = SocialBrowserAuthManager("youtube", Path(directory) / "youtube.txt")
+            youtube_page = Mock(url="https://www.youtube.com/")
+            facebook_page = Mock(url="https://www.facebook.com/")
+            context = Mock()
+            context.pages = [youtube_page, facebook_page]
+            context.cookies.return_value = [
+                {"domain": ".youtube.com", "path": "/", "name": "SAPISID", "value": "yt"},
+                {"domain": ".facebook.com", "path": "/", "name": "c_user", "value": "fb"},
+            ]
+            browser = Mock(contexts=[context])
+            manager._with_browser = lambda operation: operation(browser)  # type: ignore[method-assign]
+
+            result = manager.logout()
+
+            self.assertFalse(result["authenticated"])
+            context.clear_cookies.assert_called_once_with(
+                name="SAPISID", domain=".youtube.com", path="/"
+            )
+            youtube_page.evaluate.assert_called_once()
+            facebook_page.evaluate.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

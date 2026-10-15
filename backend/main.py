@@ -2597,12 +2597,13 @@ def logout_douyin() -> JSONResponse:
 
 
 SOURCE_BROWSER_MANAGERS = {
+    "douyin": DOUYIN_BROWSER_AUTH,
     "youtube": YOUTUBE_BROWSER_AUTH,
     "facebook": FACEBOOK_BROWSER_AUTH,
 }
 
 
-def _source_browser_manager(platform: str) -> SocialBrowserAuthManager:
+def _source_browser_manager(platform: str) -> Any:
     manager = SOURCE_BROWSER_MANAGERS.get(platform.lower())
     if manager is None:
         raise HTTPException(status_code=404, detail="Nền tảng trình duyệt không được hỗ trợ")
@@ -2612,6 +2613,14 @@ def _source_browser_manager(platform: str) -> SocialBrowserAuthManager:
 @app.get("/api/v1/source-browser/{platform}/status")
 def get_source_browser_status(platform: str, refresh: bool = Query(default=False)) -> JSONResponse:
     return JSONResponse(_source_browser_manager(platform).status(refresh=refresh))
+
+
+@app.post("/api/v1/source-browser/{platform}/activate")
+def activate_source_browser(platform: str) -> JSONResponse:
+    try:
+        return JSONResponse(_source_browser_manager(platform).reload())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/source-browser/{platform}/sync")

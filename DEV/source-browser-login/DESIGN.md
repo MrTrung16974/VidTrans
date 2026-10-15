@@ -2,12 +2,12 @@
 
 ## Kiến trúc
 
-- Thêm `SocialBrowserAuthManager` dùng CDP/Playwright cho YouTube và Facebook; cấu hình platform gồm start URL, domain allowlist và cookie marker.
+- `DouyinBrowserAuthManager` và `SocialBrowserAuthManager` cùng kết nối một Chromium/profile; cấu hình platform gồm start URL, domain allowlist và cookie marker.
 - Giữ `DouyinBrowserAuthManager` cho resolver video đặc thù.
 - `SocialVideoDownloader` nhận map provider theo platform. Thứ tự: cookie job → cookie global → provider browser → guest.
 - API REST: `/api/v1/{youtube|facebook}-browser/{status,sync,reload,session}`.
 - UI tái sử dụng một renderer theo platform, ba panel/tab, iframe noVNC riêng.
-- Compose thêm `youtube-browser`, `facebook-browser`, named profile volumes; Nginx thêm route được bảo vệ.
+- Compose dùng một `social-browser`, một named profile volume và một Nginx route được bảo vệ.
 
 ## Security
 
@@ -24,4 +24,4 @@
 
 ## Tradeoff
 
-Hai sidecar bổ sung dùng nhiều RAM hơn một profile dùng chung, đổi lại cô lập phiên và logout an toàn, không làm điều hướng nền tảng này phá phiên nền tảng khác.
+Một sidecar giảm RAM và đơn giản hóa CA/proxy. Chuyển tab sẽ điều hướng cửa sổ hiện tại; logout phải xóa cookie theo domain để giữ phiên nền tảng khác.

@@ -9,6 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from infrastructure.douyin_browser_auth import write_netscape_cookies
 
@@ -172,7 +173,7 @@ class SocialBrowserAuthManager:
                     "platform": self.platform,
                     "available": False,
                     "authenticated": self._authenticated(),
-                    "message": f"Không kết nối được Chromium {self.label}. Hãy kiểm tra container {self.platform}-browser.",
+                    "message": f"Không kết nối được Chromium {self.label}. Hãy kiểm tra container social-browser.",
                     "browser_url": None,
                     "updated_at": self._last_sync_at,
                 }
@@ -216,12 +217,19 @@ class SocialBrowserAuthManager:
     def logout(self) -> dict[str, Any]:
         def clear_session(browser: Any) -> None:
             for context in browser.contexts:
-                context.clear_cookies()
                 for page in context.pages:
                     try:
-                        page.evaluate("() => { localStorage.clear(); sessionStorage.clear(); }")
+                        hostname = str(urlsplit(page.url).hostname or "")
+                        if _domain_matches(hostname, self.allowed_domains):
+                            page.evaluate("() => { localStorage.clear(); sessionStorage.clear(); }")
                     except Exception:
                         pass
+                for cookie in filter_platform_cookies(context.cookies(), self.allowed_domains):
+                    context.clear_cookies(
+                        name=str(cookie.get("name") or ""),
+                        domain=str(cookie.get("domain") or ""),
+                        path=str(cookie.get("path") or "/"),
+                    )
             context = browser.contexts[0]
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(self.start_url, wait_until="domcontentloaded", timeout=30_000)

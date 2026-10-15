@@ -23,18 +23,20 @@ function resolveBrowserFrameUrl(raw, pageHref, platform) {
   if (!loopback(page.hostname) && loopback(target.hostname)) {
     target = new URL(`/${platform}-browser/vnc_lite.html`, page);
   }
-  const proxied = target.origin === page.origin && target.pathname === `/${platform}-browser/vnc_lite.html`;
+  const proxiedPlatform = target.pathname === `/${platform}-browser/vnc_lite.html`;
+  const proxiedShared = target.pathname === '/source-browser/vnc_lite.html';
+  const proxied = target.origin === page.origin && (proxiedPlatform || proxiedShared);
   const local = loopback(page.hostname) && loopback(target.hostname) && target.pathname === '/vnc_lite.html';
   if (!proxied && !local) return null;
   if (page.protocol === 'https:' && target.protocol !== 'https:') return null;
-  target.searchParams.set('path', proxied ? `${platform}-browser/websockify` : 'websockify');
+  target.searchParams.set('path', proxied ? `${proxiedShared ? 'source' : platform}-browser/websockify` : 'websockify');
   target.searchParams.set('scale', 'true');
   return target.href;
 }
 
 export function frameResponseProblem(response) {
   if (response.status === 401 || response.status === 403) return 'Phiên quản trị chưa được cấp quyền mở trình duyệt. Hãy đăng nhập lại VidTrans.';
-  if (!response.ok) return `Không tải được trình duyệt TikTok (HTTP ${response.status}). Kiểm tra dịch vụ tiktok-browser và cấu hình Nginx.`;
+  if (!response.ok) return `Không tải được trình duyệt (HTTP ${response.status}). Kiểm tra dịch vụ browser và cấu hình Nginx.`;
   const csp = response.headers.get('content-security-policy') || '';
   const xfo = response.headers.get('x-frame-options') || '';
   if (/frame-ancestors\s+'none'/i.test(csp) || /\bDENY\b/i.test(xfo)) {
