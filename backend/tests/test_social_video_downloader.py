@@ -245,7 +245,7 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             )
             self.assertFalse(snapshot.exists())
 
-    def test_youtube_reload_error_is_reported_as_an_authenticated_session_problem(self) -> None:
+    def test_youtube_reload_error_is_reported_as_a_player_problem(self) -> None:
         with TemporaryDirectory() as directory:
             snapshot = Path(directory) / "youtube.cookies.txt"
             snapshot.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
