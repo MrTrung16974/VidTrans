@@ -198,6 +198,7 @@ class SocialVideoDownloader:
         facebook_resolver: Callable[..., dict[str, Any]] | None = None,
         tiktok_proxy: str | None = None,
         douyin_proxy: str | None = None,
+        youtube_proxy: str | None = None,
         redirect_resolver: Callable[[str], str] | None = None,
     ) -> None:
         self.ffmpeg_location = ffmpeg_location
@@ -213,6 +214,7 @@ class SocialVideoDownloader:
         self._facebook_resolver = facebook_resolver
         self.tiktok_proxy = tiktok_proxy
         self.douyin_proxy = douyin_proxy
+        self.youtube_proxy = youtube_proxy
         self._redirect_resolver = redirect_resolver or (
             lambda url: _follow_redirects(url, timeout=self.socket_timeout, proxy=self.douyin_proxy)
         )
@@ -325,6 +327,12 @@ class SocialVideoDownloader:
             options["proxy"] = self.douyin_proxy
         elif platform == "TikTok" and self.tiktok_proxy:
             options["proxy"] = self.tiktok_proxy
+        elif platform == "YouTube" and self.youtube_proxy:
+            # Server-side downloaders spread YouTube traffic over other IPs;
+            # a residential proxy does the same when the VPS IP gets
+            # "Sign in to confirm you're not a bot". The guest retry below
+            # copies these options, so it uses the proxy too.
+            options["proxy"] = self.youtube_proxy
 
         if self.ffmpeg_location:
             options["ffmpeg_location"] = self.ffmpeg_location

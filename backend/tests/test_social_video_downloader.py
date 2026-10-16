@@ -281,6 +281,36 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             self.assertNotIn("cookiefile", calls[1])
             self.assertNotIn("extractor_args", calls[1])
 
+    def test_youtube_proxy_applies_only_to_youtube_and_survives_guest_retry(self) -> None:
+        with TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "youtube.cookies.txt"
+            snapshot.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            calls = []
+
+            def factory(options):
+                calls.append(dict(options))
+                ydl = FakeYoutubeDL(options)
+                if len(calls) == 1:
+                    ydl.extract_info = Mock(side_effect=RuntimeError("The page needs to be reloaded"))
+                return ydl
+
+            downloader = SocialVideoDownloader(
+                cookie_file=snapshot, ydl_factory=factory, youtube_proxy="socks5://proxy.example:1080"
+            )
+            downloader.download("https://youtu.be/example", Path(directory) / "video")
+            self.assertEqual([call.get("proxy") for call in calls], ["socks5://proxy.example:1080"] * 2)
+
+            facebook_calls = []
+
+            def facebook_factory(options):
+                facebook_calls.append(dict(options))
+                return FakeYoutubeDL(options)
+
+            SocialVideoDownloader(ydl_factory=facebook_factory, youtube_proxy="socks5://proxy.example:1080").download(
+                "https://www.facebook.com/reel/123", Path(directory) / "facebook"
+            )
+            self.assertNotIn("proxy", facebook_calls[0])
+
     def test_authenticated_download_uses_interactive_browser_user_agent(self) -> None:
         with TemporaryDirectory() as directory:
             snapshot = Path(directory) / "youtube.cookies.txt"

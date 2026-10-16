@@ -3,6 +3,8 @@
 # [default] pulls yt-dlp-ejs; deno is the JS runtime yt-dlp needs to solve
 # YouTube's n/signature challenges. Without both, only a few player clients
 # return formats and YouTube downloads fail intermittently.
-yt-dlp[default]>=2026.6.9
-deno>=2.0
+# Nightly: YouTube changes faster than stable releases (2026.10.10 adds the
+# tv_samsung default client). A pre-release in the specifier lets pip pick it.
+yt-dlp[default]>=2026.10.10.233141.dev0
+deno>=2.3.0
 playwright>=1.49,<2
