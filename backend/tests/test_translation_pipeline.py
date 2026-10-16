@@ -1,6 +1,6 @@
 import unittest
 
-from pipeline.translation import contains_han, translate_segments
+from pipeline.translation import contains_han, segment_filter_signature, translate_segments
 
 
 class MarkerTranslator:
@@ -83,6 +83,10 @@ class TranslationPipelineTests(unittest.TestCase):
     def test_detects_cjk_text(self) -> None:
         self.assertTrue(contains_han("Tên riêng 炭治郎"))
         self.assertFalse(contains_han("Tiếng Việt đầy đủ"))
+
+    def test_filter_signature_contains_checkpoint_inputs(self) -> None:
+        signature = segment_filter_signature()
+        self.assertEqual(set(signature), {"min_logprob", "max_no_speech_prob", "min_han_chars"})
 
     def test_accepts_han_output_for_chinese_target(self) -> None:
         class EnglishToChinese:

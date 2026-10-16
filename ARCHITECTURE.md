@@ -29,10 +29,14 @@ backend/
 │   └── models.py              # Processing-mode and request contracts
 ├── infrastructure/
 │   ├── job_store.py           # Persistent SQLite job repository
+│   ├── artifact_io.py         # Atomic JSON artifact writes
+│   ├── media_probe.py         # Single-pass source media metadata probe
+│   ├── stage_checkpoint.py    # Per-job fingerprint/checksum checkpoints
 │   └── social_video_downloader.py # Allow-listed yt-dlp adapter and download limits
 ├── pipeline/
 │   ├── ocr.py                 # Burned-subtitle OCR and ASR reconciliation
 │   ├── subtitle_layout.py     # Per-cue placement, sizing and mask metadata
+│   ├── stage_metrics.py       # Content-free timing and real-time-factor metrics
 │   ├── tiktok.py              # Local social-post provider and artifacts
 │   └── voice_routing.py       # Pitch-based or manual TTS voice routing
 │   └── translation.py         # Batched translation, retry and review fallback metadata
@@ -56,6 +60,9 @@ Properties:
 - WAL mode for readers while a background task updates progress;
 - JSON payload keeps the current `/status/{job_id}` response compatible;
 - unfinished in-process jobs are requeued and restarted from their persisted request after restart.
+- transcript, complete translation, TTS, mixed-audio and rendered-video checkpoints are reused
+  after retry/restart only when their per-job fingerprint, schema and artifact/dependency checksums
+  still match; failed translations and incomplete media bundles are never cached.
 - atomic queue claims prevent two workers from running one job;
 - queued and running jobs support cooperative cancellation;
 - batch and job list queries support pagination, status filters and search.
@@ -91,7 +98,9 @@ pipelines may overlap while Whisper and OCR are protected by dedicated semaphore
 5. Responsive batch creator and job dashboard. **Implemented.**
 6. Media/FFmpeg adapter extracted from `main.py`.
 7. Translation and TTS provider interfaces.
-8. Stage-level cache keys and checkpoint resume.
+8. Stage-level cache keys and checkpoint resume. **Implemented locally for per-job transcript,
+   translation, TTS, mixed-audio and render artifacts; kill-after-TTS/restart validated, while
+   remaining crash boundaries and the audio-duration defect remain open.**
 9. Redis-backed workers for multi-host deployment.
 10. Interactive subtitle review editor and background inpainting.
 

@@ -69,6 +69,14 @@ from infrastructure.social_publish_store import SQLiteSocialPublishStore
 from infrastructure.social_credentials import SocialCredentialStore
 from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
+from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
+from infrastructure.media_probe import MediaProbe, probe_media_file
+from infrastructure.stage_checkpoint import (
+    StageCheckpointStore,
+    fingerprint_payload,
+    load_or_compute_json,
+    sha256_file,
+)
 from infrastructure.workflow_events import (
     N8nWebhookClient,
     N8nWebhookConfig,
@@ -85,10 +93,26 @@ from infrastructure.social_video_downloader import (
 )
 from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherError
 from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
+from pipeline.checkpoint_payloads import (
+    restore_file_checkpoint,
+    restore_tts_checkpoint,
+    serialize_tts_checkpoint,
+    valid_file_checkpoint,
+    valid_transcript_checkpoint,
+    valid_translation_checkpoint,
+    valid_tts_checkpoint,
+)
+from pipeline.parallel import collect_indexed_futures
+from pipeline.stage_metrics import StageMeasurement, measure_stage
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService
-from pipeline.translation import ensure_translation_complete, filter_meaningful_segments, translate_segments
+from pipeline.translation import (
+    ensure_translation_complete,
+    filter_meaningful_segments,
+    segment_filter_signature,
+    translate_segments,
+)
 from pipeline.tts_timing import available_voice_window, bounded_tempo, schedule_voice_segments
 from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
 
@@ -696,6 +720,36 @@ def update_job(job_id: str, **fields: Any) -> None:
         notify_workflow_dispatcher()
 
 
+def record_job_stage_measurement(job_id: str, measurement: StageMeasurement) -> None:
+    """Persist additive, content-free stage metrics in the existing job payload."""
+
+    current = JOB_SERVICE.get(job_id)
+    if current is None:
+        return
+    stored = current.get("stage_metrics")
+    stage_metrics = dict(stored) if isinstance(stored, dict) else {}
+    stage_metrics[measurement.stage] = measurement.as_dict()
+    JOB_SERVICE.update(job_id, stage_metrics=stage_metrics)
+
+
+def measure_job_stage(job_id: str, stage: str, *, video_duration: float | None = None):
+    return measure_stage(
+        stage,
+        video_duration=video_duration,
+        on_complete=lambda measurement: record_job_stage_measurement(job_id, measurement),
+    )
+
+
+def record_job_stage_cache(job_id: str, stage: str, hit: bool) -> None:
+    current = JOB_SERVICE.get(job_id)
+    if current is None:
+        return
+    stored = current.get("stage_cache")
+    stage_cache = dict(stored) if isinstance(stored, dict) else {}
+    stage_cache[stage] = "hit" if hit else "miss"
+    JOB_SERVICE.update(job_id, stage_cache=stage_cache)
+
+
 def emit_workflow_event(event_type: str, job_id: str, job: dict[str, Any] | None = None) -> None:
     if not N8N_WORKFLOW_CONFIG.enabled:
         return
@@ -789,7 +843,7 @@ def synthesize_tts_segments(
             seg_start = float(segment.get("start", 0))
             seg_end = float(segment.get("end", seg_start + 1))
             seg_dur = max(0.1, seg_end - seg_start)
-            
+
             chars = list(text)
             inserts = []
             for i in range(len(words) - 1):
@@ -802,17 +856,17 @@ def synthesize_tts_segments(
                     offset = 0
                     best_idx = char_idx
                     while offset < 15:
-                        if char_idx + offset < len(chars) and chars[char_idx + offset] == ' ':
+                        if char_idx + offset < len(chars) and chars[char_idx + offset] == " ":
                             best_idx = char_idx + offset
                             break
-                        if char_idx - offset >= 0 and chars[char_idx - offset] == ' ':
+                        if char_idx - offset >= 0 and chars[char_idx - offset] == " ":
                             best_idx = char_idx - offset
                             break
                         offset += 1
                     # Avoid double punctuation
-                    if best_idx > 0 and chars[best_idx-1] not in (',', '.', '!', '?', ':', ';'):
-                        inserts.append((best_idx, ','))
-            
+                    if best_idx > 0 and chars[best_idx - 1] not in (",", ".", "!", "?", ":", ";"):
+                        inserts.append((best_idx, ","))
+
             for idx, punct in sorted(inserts, reverse=True):
                 chars.insert(idx, punct)
             text = "".join(chars)
@@ -821,14 +875,14 @@ def synthesize_tts_segments(
         selected_voice_type = str(segment.get("voice_type", voice_type))
         profile = language_profile(target_language)
         voice_name = profile.edge_voice(selected_voice_type)
-        
+
         # Pass 1: Generate initial audio to gauge speaking duration
         try:
             asyncio.run(tts_edge_sync(text, output_path, voice_name, base_rate_string, pitch_string))
         except Exception as exc:
             logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
             tts_gtts_sync(text, output_path, slow=speech_rate < 0.95, language=target_language)
-            
+
         cue_duration = available_voice_window(segments, index)
 
         # Trim only the outer silence. Reversing for the tail is important:
@@ -889,7 +943,7 @@ def synthesize_tts_segments(
             else "overflow"
         )
         segment["tts_path"] = fitted_path
-        
+
         with progress_lock:
             completed_count += 1
             if job_id and (completed_count == total_valid or completed_count % max(1, total_valid // 15) == 0):
@@ -902,13 +956,16 @@ def synthesize_tts_segments(
 
     paths: list[Path] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(process_segment, i, seg) for i, seg in enumerate(segments)]
-        concurrent.futures.wait(futures)
-        
+        futures = {
+            executor.submit(process_segment, index, segment): index
+            for index, segment in enumerate(segments)
+        }
+        collect_indexed_futures(futures)
+
     for segment in segments:
         if "tts_path" in segment:
             paths.append(segment["tts_path"])
-            
+
     return paths
 
 
@@ -1035,11 +1092,14 @@ def mix_audio(
     keep_original_audio: bool,
     original_audio_volume: float,
     music_volume: float,
+    source_probe: MediaProbe | None = None,
+    output_path: Path | None = None,
 ) -> Optional[Path]:
     if mode == 1:
         return None
 
-    output_audio = work_dir / "mixed_audio.wav"
+    output_audio = output_path or (work_dir / "mixed_audio.wav")
+    output_audio.parent.mkdir(parents=True, exist_ok=True)
     input_args: list[str] = []
     filter_parts: list[str] = []
     labels: list[str] = []
@@ -1051,7 +1111,8 @@ def mix_audio(
         labels.append("[v]")
         input_index += 1
 
-    if keep_original_audio and has_audio_stream(video_path):
+    source_has_audio = source_probe.has_audio if source_probe is not None else has_audio_stream(video_path)
+    if keep_original_audio and source_has_audio:
         original_audio = extract_original_audio(video_path, work_dir / "original_audio.wav")
         input_args.extend(["-i", str(original_audio)])
         filter_parts.append(f"[{input_index}:a]volume={original_audio_volume:.2f}[o]")
@@ -1061,7 +1122,7 @@ def mix_audio(
         logger.info("Source video has no audio stream; continuing with generated audio only")
 
     if background_music:
-        duration = get_media_duration(video_path)
+        duration = source_probe.duration if source_probe is not None else get_media_duration(video_path)
         looped_music = work_dir / "looped_music.wav"
         run_ffmpeg(
             [
@@ -1155,6 +1216,7 @@ def burn_subtitles_with_pillow(
     segments: list[dict[str, Any]],
     subtitle_style: dict[str, Any],
     work_dir: Path,
+    video_fps: float | None = None,
 ) -> None:
     Image, ImageDraw, ImageFont = _load_pillow()
     frames_dir = work_dir / "frames"
@@ -1162,7 +1224,7 @@ def burn_subtitles_with_pillow(
     frames_dir.mkdir(parents=True, exist_ok=True)
     rendered_dir.mkdir(parents=True, exist_ok=True)
 
-    fps = get_video_fps(video_path)
+    fps = video_fps if video_fps is not None and video_fps > 0 else get_video_fps(video_path)
     run_ffmpeg(
         [
             FFMPEG,
@@ -1283,6 +1345,7 @@ def burn_subtitles(
     segments: list[dict[str, Any]],
     subtitle_style: dict[str, Any],
     work_dir: Path,
+    video_fps: float | None = None,
 ) -> None:
     subtitle_filter = f"subtitles=filename='{ff_escape_path(subtitle_path)}'"
     if BUNDLED_FONT.is_file():
@@ -1353,7 +1416,15 @@ def burn_subtitles(
             if "No such filter: 'drawtext'" not in (fallback_exc.stderr or ""):
                 raise
             logger.warning("ffmpeg drawtext filter is unavailable, falling back to Pillow frame rendering")
-            burn_subtitles_with_pillow(video_path, output_path, audio_path, segments, subtitle_style, work_dir)
+            burn_subtitles_with_pillow(
+                video_path,
+                output_path,
+                audio_path,
+                segments,
+                subtitle_style,
+                work_dir,
+                video_fps=video_fps,
+            )
 
 
 def normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1395,6 +1466,99 @@ def normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any
     return normalized
 
 
+def recognize_video_source(
+    *,
+    job_id: str,
+    video_path: Path,
+    work_dir: Path,
+    source_probe: MediaProbe,
+    subtitle_source: str,
+    source_language: str,
+    whisper_model: str,
+    ocr_sample_fps: float,
+    ocr_roi_top: float,
+    ocr_roi_bottom: float,
+) -> tuple[list[dict[str, Any]], str | None, float | None, str, int]:
+    """Run OCR/ASR and return filtered, checkpoint-ready source segments."""
+
+    video_duration = source_probe.duration
+    ocr_segments: list[dict[str, Any]] = []
+    ocr_requested = subtitle_source in {"auto", "burned"} and source_language == "zh-CN"
+    if ocr_requested and not SETTINGS.paddle_ocr_enabled:
+        message = "OCR is disabled on this Linux ARM64 runtime; using Whisper speech recognition"
+        if subtitle_source == "burned":
+            raise RuntimeError(
+                "Burned-subtitle OCR is disabled on this runtime because PaddleOCR crashes the server. "
+                "Choose Whisper or Auto, or set VIDTRANS_ENABLE_PADDLE_OCR=1 only after validating PaddleOCR."
+            )
+        logger.warning(message)
+        update_job(job_id, status="processing", step="transcribing", step_detail=message, progress=0.22)
+    elif ocr_requested:
+        update_job(job_id, status="processing", step="extracting-subtitles", progress=0.12)
+        try:
+            with measure_job_stage(job_id, "ocr", video_duration=video_duration):
+                with _ocr_slots:
+                    ensure_job_active(job_id)
+                    ocr_segments = extract_burned_subtitle_segments(
+                        video_path,
+                        work_dir,
+                        ffmpeg=FFMPEG,
+                        config=OCRConfig(
+                            sample_fps=ocr_sample_fps,
+                            roi_top=ocr_roi_top,
+                            roi_bottom=ocr_roi_bottom,
+                        ),
+                        progress_callback=make_ocr_progress_callback(job_id),
+                    )
+        except JobCancelled:
+            raise
+        except Exception:
+            if subtitle_source == "burned":
+                raise
+            logger.warning("OCR subtitle extraction failed; using speech transcription", exc_info=True)
+
+    ensure_job_active(job_id)
+    update_job(job_id, status="processing", step="transcribing", step_detail=None, progress=0.22)
+    asr_segments: list[dict[str, Any]] = []
+    detected_language: str | None = None
+    detected_language_probability: float | None = None
+    with measure_job_stage(job_id, "asr", video_duration=video_duration):
+        if source_probe.has_audio:
+            with _whisper_slots:
+                ensure_job_active(job_id)
+                asr_segments, detected_language, detected_language_probability = transcribe_video(
+                    whisper_model, video_path, source_language, job_id
+                )
+        elif not ocr_segments:
+            raise RuntimeError(
+                "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
+                "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
+                "nếu không, hãy chọn video có âm thanh."
+            )
+    if ocr_segments:
+        segments = annotate_ocr_segments_with_asr(ocr_segments, asr_segments)
+        source_method = "ocr"
+    else:
+        segments = asr_segments
+        source_method = "speech"
+    if not segments:
+        raise RuntimeError(
+            "Không nhận diện được phụ đề hoặc lời thoại nguồn. "
+            "Kiểm tra vùng OCR, ngôn ngữ nguồn hoặc thử Whisper model lớn hơn."
+        )
+
+    segments = filter_meaningful_segments(segments)
+    meaningful_count = sum(1 for segment in segments if not segment.get("skip_subtitle"))
+    skipped_count = len(segments) - meaningful_count
+    if skipped_count:
+        logger.info(
+            "Filtered %d non-meaningful segment(s); %d remain for translation",
+            skipped_count,
+            meaningful_count,
+        )
+    return segments, detected_language, detected_language_probability, source_method, skipped_count
+
+
 def process_video(
     *,
     job_id: str,
@@ -1429,88 +1593,90 @@ def process_video(
     subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
     subtitle_style["font_name"] = language_profile(target_language).font_family
     try:
+        JOB_SERVICE.update(job_id, stage_metrics={}, stage_cache={})
         ensure_job_active(job_id)
-        ocr_segments: list[dict[str, Any]] = []
-        ocr_requested = subtitle_source in {"auto", "burned"} and source_language == "zh-CN"
-        if ocr_requested and not SETTINGS.paddle_ocr_enabled:
-            message = "OCR is disabled on this Linux ARM64 runtime; using Whisper speech recognition"
-            if subtitle_source == "burned":
-                raise RuntimeError(
-                    "Burned-subtitle OCR is disabled on this runtime because PaddleOCR crashes the server. "
-                    "Choose Whisper or Auto, or set VIDTRANS_ENABLE_PADDLE_OCR=1 only after validating PaddleOCR."
-                )
-            logger.warning(message)
-            update_job(job_id, status="processing", step="transcribing", step_detail=message, progress=0.22)
-        elif ocr_requested:
-            update_job(job_id, status="processing", step="extracting-subtitles", progress=0.12)
-            try:
-                with _ocr_slots:
-                    ensure_job_active(job_id)
-                    ocr_segments = extract_burned_subtitle_segments(
-                        video_path,
-                        work_dir,
-                        ffmpeg=FFMPEG,
-                        config=OCRConfig(
-                            sample_fps=ocr_sample_fps,
-                            roi_top=ocr_roi_top,
-                            roi_bottom=ocr_roi_bottom,
-                        ),
-                        progress_callback=make_ocr_progress_callback(job_id),
-                    )
-            except JobCancelled:
-                raise
-            except Exception:
-                if subtitle_source == "burned":
-                    raise
-                logger.warning("OCR subtitle extraction failed; using speech transcription", exc_info=True)
-
-        ensure_job_active(job_id)
-        update_job(job_id, status="processing", step="transcribing", step_detail=None, progress=0.22)
-        asr_segments: list[dict[str, Any]] = []
-        detected_language: str | None = None
-        detected_language_probability: float | None = None
-        if has_audio_stream(video_path):
-            with _whisper_slots:
-                ensure_job_active(job_id)
-                asr_segments, detected_language, detected_language_probability = transcribe_video(
-                    whisper_model, video_path, source_language, job_id
-                )
-        elif not ocr_segments:
-            raise RuntimeError(
-                "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
-                "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
-                "nếu không, hãy chọn video có âm thanh."
+        with measure_job_stage(job_id, "preflight"):
+            source_probe = probe_media_file(video_path, ffprobe=FFPROBE)
+            source_checksum = sha256_file(
+                video_path,
+                check_active=lambda: ensure_job_active(job_id),
             )
-        if ocr_segments:
-            segments = annotate_ocr_segments_with_asr(ocr_segments, asr_segments)
-        else:
-            segments = asr_segments
-        if not segments:
-            raise RuntimeError(
-                "Không nhận diện được phụ đề hoặc lời thoại nguồn. "
-                "Kiểm tra vùng OCR, ngôn ngữ nguồn hoặc thử Whisper model lớn hơn."
-            )
+        video_duration = source_probe.duration
+        video_width, video_height = source_probe.width, source_probe.height
+        checkpoint_store = StageCheckpointStore(work_dir)
+        transcript_fingerprint = fingerprint_payload(
+            {
+                "version": 1,
+                "source_checksum": source_checksum,
+                "subtitle_source": subtitle_source,
+                "source_language": source_language,
+                "whisper_model": whisper_model,
+                "asr_engine": ASR_SERVICE.engine_name,
+                "asr_compute_type": ASR_SERVICE.config.compute_type,
+                "asr_beam_size": ASR_SERVICE.config.beam_size,
+                "asr_vad": ASR_SERVICE.config.vad,
+                "asr_vad_min_silence_ms": ASR_SERVICE.config.vad_min_silence_ms,
+                "ocr_enabled": SETTINGS.paddle_ocr_enabled,
+                "ocr_sample_fps": ocr_sample_fps,
+                "ocr_roi_top": ocr_roi_top,
+                "ocr_roi_bottom": ocr_roi_bottom,
+                "filter": segment_filter_signature(),
+            }
+        )
 
-        # Filter out non-meaningful segments (filler words, noise, hallucinations)
-        # before translation so we don't waste API calls and TTS on them.
-        segments = filter_meaningful_segments(segments)
-        meaningful_count = sum(1 for s in segments if not s.get("skip_subtitle"))
-        skipped_count = len(segments) - meaningful_count
-        if skipped_count:
-            logger.info(
-                "Filtered %d non-meaningful segment(s); %d remain for translation",
-                skipped_count,
-                meaningful_count,
+        def compute_transcript_checkpoint() -> dict[str, Any]:
+            (
+                computed_segments,
+                computed_language,
+                computed_probability,
+                computed_source_method,
+                _computed_skipped_count,
+            ) = recognize_video_source(
+                job_id=job_id,
+                video_path=video_path,
+                work_dir=work_dir,
+                source_probe=source_probe,
+                subtitle_source=subtitle_source,
+                source_language=source_language,
+                whisper_model=whisper_model,
+                ocr_sample_fps=ocr_sample_fps,
+                ocr_roi_top=ocr_roi_top,
+                ocr_roi_bottom=ocr_roi_bottom,
             )
+            return {
+                "version": 1,
+                "source_method": computed_source_method,
+                "detected_language": computed_language,
+                "detected_language_probability": computed_probability,
+                "segments": computed_segments,
+            }
 
+        transcript_checkpoint, transcript_cache_hit = load_or_compute_json(
+            checkpoint_store,
+            "transcript",
+            fingerprint=transcript_fingerprint,
+            artifact_name=f"checkpoints/transcript/{transcript_fingerprint}.json",
+            validator=valid_transcript_checkpoint,
+            compute=compute_transcript_checkpoint,
+        )
+        transcript_payload = transcript_checkpoint.payload
+        segments = list(transcript_payload["segments"])
+        detected_language = transcript_payload.get("detected_language")
+        detected_language_probability = transcript_payload.get("detected_language_probability")
+        source_method = str(transcript_payload["source_method"])
+        skipped_count = sum(1 for segment in segments if segment.get("skip_subtitle"))
         transcript_path = work_dir / "transcript.json"
-        transcript_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json_atomic(transcript_path, segments)
+        record_job_stage_cache(job_id, "transcript", transcript_cache_hit)
+        if transcript_cache_hit:
+            update_job(job_id, step_detail="Đã dùng lại kết quả nhận diện hợp lệ", progress=0.38)
+        meaningful_count = sum(1 for segment in segments if not segment.get("skip_subtitle"))
 
         update_job(
             job_id,
             step="translating",
             progress=0.4,
-            subtitle_source_used="ocr" if ocr_segments else "speech",
+            subtitle_source_used=source_method,
             review_cues=sum(1 for segment in segments if segment.get("needs_review")),
             skipped_cues=skipped_count,
         )
@@ -1522,17 +1688,40 @@ def process_video(
             raise RuntimeError("Không xác định được ngôn ngữ nguồn từ âm thanh")
         if effective_source_language == target_language:
             raise RuntimeError("Ngôn ngữ nhận diện trùng với ngôn ngữ đích")
-        translated_segments = translate_segments(
-            segments,
-            source_language=effective_source_language,
-            target_language=target_language,
-            check_active=lambda: ensure_job_active(job_id),
-            progress_callback=lambda completed, total: update_job(
-                job_id,
-                progress=0.4 + 0.06 * completed / max(1, total),
-                step_detail=f"Đã kiểm tra bản dịch {completed}/{total} câu",
-            ),
+        translation_fingerprint = fingerprint_payload(
+            {
+                "version": 1,
+                "transcript_checksum": transcript_checkpoint.checksum,
+                "source_language": effective_source_language,
+                "target_language": target_language,
+                "translation_pipeline_version": 1,
+                "max_batch_chars": 1200,
+            }
         )
+        translation_checkpoint = checkpoint_store.load_json(
+            "translation",
+            fingerprint=translation_fingerprint,
+            validator=valid_translation_checkpoint,
+        )
+        translation_cache_hit = translation_checkpoint is not None
+        if translation_checkpoint is not None:
+            translated_segments = list(translation_checkpoint.payload["segments"])
+        else:
+            with measure_job_stage(job_id, "translation", video_duration=video_duration):
+                translated_segments = translate_segments(
+                    segments,
+                    source_language=effective_source_language,
+                    target_language=target_language,
+                    check_active=lambda: ensure_job_active(job_id),
+                    progress_callback=lambda completed, total: update_job(
+                        job_id,
+                        progress=0.4 + 0.06 * completed / max(1, total),
+                        step_detail=f"Đã kiểm tra bản dịch {completed}/{total} câu",
+                    ),
+                )
+        record_job_stage_cache(job_id, "translation", translation_cache_hit)
+        if translation_cache_hit:
+            update_job(job_id, step_detail="Đã dùng lại bản dịch hợp lệ", progress=0.46)
         translation_fallback_cues = sum(
             1 for segment in translated_segments if segment.get("translation_status") == "source_fallback"
         )
@@ -1548,9 +1737,9 @@ def process_video(
         )
         # Publish diagnostics even on failure, before any TTS, rendering or posting.
         translation_path = OUTPUT_DIR / f"{job_id}.translation.json"
-        translation_path.write_text(json.dumps({
+        write_json_atomic(translation_path, {
             "version": 4,
-            "source_method": "ocr" if ocr_segments else "speech",
+            "source_method": source_method,
             "source_language": effective_source_language,
             "source_language_requested": source_language,
             "detected_language": detected_language,
@@ -1559,11 +1748,17 @@ def process_video(
             "translation_complete": translation_fallback_cues == 0 and meaningful_count > 0,
             "review_cues": sum(1 for s in translated_segments if s.get("needs_review")),
             "segments": translated_segments,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        })
         update_job(job_id, translation_file=translation_path.name)
         ensure_translation_complete(translated_segments, target_language=target_language)
+        if not translation_cache_hit:
+            translation_checkpoint = checkpoint_store.commit_json(
+                "translation",
+                fingerprint=translation_fingerprint,
+                artifact_name=f"checkpoints/translation/{translation_fingerprint}.json",
+                payload={"version": 1, "segments": translated_segments},
+            )
         update_job(job_id, step="translation-ready", progress=0.46)
-        video_width, video_height = get_video_dimensions(video_path)
         translated_segments = apply_subtitle_layout(
             translated_segments,
             video_width=video_width,
@@ -1581,92 +1776,195 @@ def process_video(
             ensure_job_active(job_id)
             update_job(job_id, step="summarizing", progress=0.47, step_detail=None)
             try:
-                tiktok_post = TIKTOK_SUMMARY_PROVIDER.generate(
-                    translated_segments,
-                    max_summary_chars=tiktok_max_summary_chars,
-                    hashtag_count=tiktok_hashtag_count,
-                )
-                tiktok_json_path, tiktok_text_path = write_tiktok_artifacts(
-                    tiktok_post,
-                    OUTPUT_DIR,
-                    job_id,
-                )
+                with measure_job_stage(job_id, "summary", video_duration=video_duration):
+                    tiktok_post = TIKTOK_SUMMARY_PROVIDER.generate(
+                        translated_segments,
+                        max_summary_chars=tiktok_max_summary_chars,
+                        hashtag_count=tiktok_hashtag_count,
+                    )
+                    tiktok_json_path, tiktok_text_path = write_tiktok_artifacts(
+                        tiktok_post,
+                        OUTPUT_DIR,
+                        job_id,
+                    )
             except Exception as exc:
                 logger.warning("TikTok summary generation failed for job %s", job_id, exc_info=True)
                 update_job(job_id, tiktok_error=str(exc))
 
-        video_duration = get_media_duration(video_path)
         voice_summary: dict[str, int] | None = None
         if mode in (2, 3):
             ensure_job_active(job_id)
-            if voice_mode == "auto":
-                update_job(job_id, step="routing-voices", progress=0.5)
-                try:
-                    analysis_audio = extract_voice_analysis_audio(
-                        video_path,
-                        work_dir / "voice_analysis.wav",
-                    )
-                    voice_summary = route_segments_by_pitch(
-                        translated_segments,
-                        analysis_audio,
-                        fallback_voice=voice_type,
-                    )
-                except JobCancelled:
-                    raise
-                except Exception:
-                    logger.warning(
-                        "Automatic voice routing failed; using the selected fallback voice",
-                        exc_info=True,
-                    )
+            with measure_job_stage(job_id, "voice_routing", video_duration=video_duration):
+                if voice_mode == "auto":
+                    update_job(job_id, step="routing-voices", progress=0.5)
+                    try:
+                        analysis_audio = extract_voice_analysis_audio(
+                            video_path,
+                            work_dir / "voice_analysis.wav",
+                        )
+                        voice_summary = route_segments_by_pitch(
+                            translated_segments,
+                            analysis_audio,
+                            fallback_voice=voice_type,
+                        )
+                    except JobCancelled:
+                        raise
+                    except Exception:
+                        logger.warning(
+                            "Automatic voice routing failed; using the selected fallback voice",
+                            exc_info=True,
+                        )
+                        voice_summary = route_segments_manually(translated_segments, voice_type)
+                else:
                     voice_summary = route_segments_manually(translated_segments, voice_type)
-            else:
-                voice_summary = route_segments_manually(translated_segments, voice_type)
 
         audio_path = None
+        tts_checkpoint = None
+        audio_checkpoint = None
         if mode in (2, 3):
             ensure_job_active(job_id)
             update_job(job_id, step="tts", progress=0.55)
-            synthesize_tts_segments(
-                translated_segments,
-                work_dir,
-                voice_type,
-                speech_rate,
-                voice_style,
-                job_id=job_id,
-                target_language=target_language,
+            tts_fingerprint = fingerprint_payload(
+                {
+                    "version": 1,
+                    "translation_bundle_checksum": translation_checkpoint.bundle_checksum,
+                    "source_checksum": source_checksum,
+                    "target_language": target_language,
+                    "voice_type": voice_type,
+                    "voice_mode": voice_mode,
+                    "voice_style": voice_style,
+                    "speech_rate": speech_rate,
+                    "video_duration": round(video_duration, 3),
+                    "routing": [
+                        {
+                            "voice_type": segment.get("voice_type"),
+                            "voice_routing": segment.get("voice_routing"),
+                        }
+                        for segment in translated_segments
+                    ],
+                    "tts_pipeline_version": 1,
+                }
             )
-            ensure_job_active(job_id)
-            voice_track = build_voice_track(translated_segments, work_dir, video_duration)
+            tts_checkpoint = checkpoint_store.load_json(
+                "tts",
+                fingerprint=tts_fingerprint,
+                validator=lambda payload: valid_tts_checkpoint(payload)
+                and payload.get("segment_count") == len(translated_segments),
+            )
+            tts_cache_hit = tts_checkpoint is not None
+            if tts_checkpoint is not None:
+                voice_track = restore_tts_checkpoint(
+                    translated_segments,
+                    tts_checkpoint.payload,
+                    work_dir=work_dir,
+                )
+                update_job(job_id, step_detail="Đã dùng lại giọng đọc hợp lệ", progress=0.75)
+            else:
+                tts_work_dir = work_dir / "checkpoints" / "tts" / tts_fingerprint
+                with measure_job_stage(job_id, "tts", video_duration=video_duration):
+                    synthesize_tts_segments(
+                        translated_segments,
+                        tts_work_dir,
+                        voice_type,
+                        speech_rate,
+                        voice_style,
+                        job_id=job_id,
+                        target_language=target_language,
+                    )
+                    ensure_job_active(job_id)
+                    voice_track = build_voice_track(
+                        translated_segments, tts_work_dir, video_duration
+                    )
+                tts_payload, tts_dependencies = serialize_tts_checkpoint(
+                    translated_segments,
+                    work_dir=work_dir,
+                    voice_track=voice_track,
+                )
+                tts_checkpoint = checkpoint_store.commit_json(
+                    "tts",
+                    fingerprint=tts_fingerprint,
+                    artifact_name=f"checkpoints/tts/{tts_fingerprint}.json",
+                    payload=tts_payload,
+                    dependency_names=tts_dependencies,
+                )
+            record_job_stage_cache(job_id, "tts", tts_cache_hit)
 
             update_job(job_id, step="mixing-audio", progress=0.75)
-            audio_path = mix_audio(
-                mode=mode,
-                video_path=video_path,
-                work_dir=work_dir,
-                voice_track=voice_track,
-                background_music=background_music_path if mode == 3 else None,
-                keep_original_audio=keep_original_audio,
-                original_audio_volume=original_audio_volume,
-                music_volume=music_volume,
+            background_music_checksum = None
+            if mode == 3 and background_music_path is not None:
+                background_music_checksum = sha256_file(
+                    background_music_path,
+                    check_active=lambda: ensure_job_active(job_id),
+                )
+            audio_fingerprint = fingerprint_payload(
+                {
+                    "version": 1,
+                    "tts_bundle_checksum": tts_checkpoint.bundle_checksum,
+                    "source_checksum": source_checksum,
+                    "mode": mode,
+                    "background_music_checksum": background_music_checksum,
+                    "keep_original_audio": keep_original_audio,
+                    "original_audio_volume": original_audio_volume,
+                    "music_volume": music_volume,
+                    "audio_mix_version": 1,
+                }
             )
+            audio_checkpoint = checkpoint_store.load_json(
+                "audio_mix",
+                fingerprint=audio_fingerprint,
+                validator=valid_file_checkpoint,
+            )
+            audio_cache_hit = audio_checkpoint is not None
+            if audio_checkpoint is not None:
+                audio_path = restore_file_checkpoint(audio_checkpoint.payload, work_dir=work_dir)
+                update_job(job_id, step_detail="Đã dùng lại bản phối âm thanh hợp lệ", progress=0.85)
+            else:
+                with measure_job_stage(job_id, "audio_mix", video_duration=video_duration):
+                    audio_path = mix_audio(
+                        mode=mode,
+                        video_path=video_path,
+                        work_dir=work_dir,
+                        voice_track=voice_track,
+                        background_music=background_music_path if mode == 3 else None,
+                        keep_original_audio=keep_original_audio,
+                        original_audio_volume=original_audio_volume,
+                        music_volume=music_volume,
+                        source_probe=source_probe,
+                        output_path=work_dir
+                        / "checkpoints"
+                        / "audio_mix"
+                        / f"{audio_fingerprint}.wav",
+                    )
+                if audio_path is None:
+                    raise RuntimeError("Audio mixing did not produce an artifact")
+                audio_relative_path = str(audio_path.resolve().relative_to(work_dir.resolve()))
+                audio_checkpoint = checkpoint_store.commit_json(
+                    "audio_mix",
+                    fingerprint=audio_fingerprint,
+                    artifact_name=f"checkpoints/audio_mix/{audio_fingerprint}.json",
+                    payload={"version": 1, "artifact": audio_relative_path},
+                    dependency_names=[audio_relative_path],
+                )
+            record_job_stage_cache(job_id, "audio_mix", audio_cache_hit)
 
         # Write subtitle artifacts only after TTS planning. In dubbing modes,
         # tts_start/tts_end make the visible Vietnamese line follow the natural
         # voice instead of the much shorter source-language cue.
-        write_srt(translated_segments, srt_path)
-        write_ass(
-            translated_segments,
-            ass_path,
-            subtitle_style,
-            video_width=video_width,
-            video_height=video_height,
-        )
-        serializable_segments = [
-            {key: value for key, value in segment.items() if key != "tts_path"}
-            for segment in translated_segments
-        ]
-        translation_path.write_text(
-            json.dumps(
+        with measure_job_stage(job_id, "subtitle_artifacts", video_duration=video_duration):
+            write_srt(translated_segments, srt_path)
+            write_ass(
+                translated_segments,
+                ass_path,
+                subtitle_style,
+                video_width=video_width,
+                video_height=video_height,
+            )
+            serializable_segments = [
+                {key: value for key, value in segment.items() if key != "tts_path"}
+                for segment in translated_segments
+            ]
+            write_json_atomic(
+                translation_path,
                 {
                     "version": 4,
                     "source_language": effective_source_language,
@@ -1674,7 +1972,7 @@ def process_video(
                     "detected_language": detected_language,
                     "target_language": target_language,
                     "translation_complete": True,
-                    "source_method": "ocr" if ocr_segments else "speech",
+                    "source_method": source_method,
                     "review_cues": sum(1 for segment in translated_segments if segment.get("needs_review")),
                     "voice_routing": {
                         "mode": voice_mode,
@@ -1684,16 +1982,62 @@ def process_video(
                     },
                     "segments": serializable_segments,
                 },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+            )
 
         output_video = OUTPUT_DIR / f"output_{job_id}.mp4"
+        render_fingerprint = fingerprint_payload(
+            {
+                "version": 1,
+                "source_checksum": source_checksum,
+                "translation_bundle_checksum": translation_checkpoint.bundle_checksum,
+                "tts_bundle_checksum": tts_checkpoint.bundle_checksum if tts_checkpoint else None,
+                "audio_bundle_checksum": audio_checkpoint.bundle_checksum
+                if audio_checkpoint
+                else None,
+                "ass_checksum": sha256_file(ass_path),
+                "subtitle_style": subtitle_style,
+                "video_fps": source_probe.fps,
+                "mode": mode,
+                "render_pipeline_version": 1,
+            }
+        )
+        render_artifact = (
+            work_dir / "checkpoints" / "render" / f"{render_fingerprint}.mp4"
+        )
+        render_artifact.parent.mkdir(parents=True, exist_ok=True)
         ensure_job_active(job_id)
         update_job(job_id, step="rendering", progress=0.9)
-        burn_subtitles(video_path, ass_path, output_video, audio_path, translated_segments, subtitle_style, work_dir)
+        render_checkpoint = checkpoint_store.load_json(
+            "render",
+            fingerprint=render_fingerprint,
+            validator=valid_file_checkpoint,
+        )
+        render_cache_hit = render_checkpoint is not None
+        if render_checkpoint is not None:
+            render_artifact = restore_file_checkpoint(render_checkpoint.payload, work_dir=work_dir)
+            update_job(job_id, step_detail="Đã dùng lại video render hợp lệ", progress=0.98)
+        else:
+            with measure_job_stage(job_id, "render", video_duration=video_duration):
+                burn_subtitles(
+                    video_path,
+                    ass_path,
+                    render_artifact,
+                    audio_path,
+                    translated_segments,
+                    subtitle_style,
+                    work_dir,
+                    video_fps=source_probe.fps,
+                )
+            render_relative_path = str(render_artifact.resolve().relative_to(work_dir.resolve()))
+            render_checkpoint = checkpoint_store.commit_json(
+                "render",
+                fingerprint=render_fingerprint,
+                artifact_name=f"checkpoints/render/{render_fingerprint}.json",
+                payload={"version": 1, "artifact": render_relative_path},
+                dependency_names=[render_relative_path],
+            )
+        record_job_stage_cache(job_id, "render", render_cache_hit)
+        copy_file_atomic(render_artifact, output_video)
         ensure_job_active(job_id)
 
         artifact_fields: dict[str, Any] = {

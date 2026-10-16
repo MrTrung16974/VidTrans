@@ -57,6 +57,16 @@ def contains_han(text: str) -> bool:
     return bool(_HAN_RE.search(text or ""))
 
 
+def segment_filter_signature() -> dict[str, float | int]:
+    """Return non-sensitive filter inputs that affect transcript checkpoint output."""
+
+    return {
+        "min_logprob": _MIN_LOGPROB,
+        "max_no_speech_prob": _MAX_NO_SPEECH_PROB,
+        "min_han_chars": _MIN_HAN_CHARS,
+    }
+
+
 def _clean(value: str) -> str:
     return " ".join((value or "").split()).strip()
 

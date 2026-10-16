@@ -181,7 +181,12 @@ publish khi container `FINISHED`. Nếu timeout sau checkpoint, attempt chuyển
 Trạng thái batch và job được lưu bền vững tại `backend/work/jobs.sqlite3`; restart server không
 làm mất hàng đợi. Scheduler mặc định chạy tối đa hai pipeline, nhưng Whisper và OCR chỉ có một
 slot để tránh tràn RAM/GPU. File nguồn được giữ để hỗ trợ retry và chỉ bị xóa khi người dùng xóa
-job. Xem [ARCHITECTURE.md](ARCHITECTURE.md) để biết ranh giới module.
+job. Transcript, bản dịch hoàn chỉnh, TTS, mixed audio và video render được checkpoint riêng trong
+thư mục của job; retry/restart chỉ dùng lại khi source, cấu hình, schema và checksum của toàn bundle
+vẫn khớp. Bản dịch lỗi/fallback hoặc media dependency thiếu/corrupt không được cache nên lần retry
+sau vẫn chạy lại đúng stage bị invalid và downstream. Trạng thái job còn lưu thời gian/RTF theo stage
+để xác định bottleneck mà không ghi nội dung transcript vào metric. Xem [ARCHITECTURE.md](ARCHITECTURE.md)
+để biết ranh giới module.
 
 Ngay khi bấm **Bắt đầu xử lý**, giao diện chuyển sang trang **Tiến trình** và hiển thị một dòng
 upload tạm theo phần trăm. Giữ tab mở cho đến khi upload đạt 100%; sau khi server tạo job, dòng
