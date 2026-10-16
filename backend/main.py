@@ -7,13 +7,14 @@ import shutil
 import subprocess
 import textwrap
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -55,6 +56,7 @@ from infrastructure.payments import (
     PaymentGatewayClient,
     PaymentOrderStore,
 )
+from infrastructure.job_events import ALL_JOBS, JobEventHub
 from infrastructure.job_store import SQLiteJobStore
 from infrastructure.publishers.registry import PublisherRegistry
 from infrastructure.publishers.instagram import InstagramPublisher
@@ -181,7 +183,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-JOB_SERVICE = JobService(SQLiteJobStore(WORK_DIR / "jobs.sqlite3"))
+# job_change_snapshot is defined with the job routes below; it is only
+# called once the broadcaster runs, after the module has loaded.
+JOB_EVENTS = JobEventHub(lambda job_ids: job_change_snapshot(job_ids))
+JOB_SERVICE = JobService(SQLiteJobStore(WORK_DIR / "jobs.sqlite3"), on_change=JOB_EVENTS.notify)
 N8N_WORKFLOW_CONFIG = N8nWebhookConfig.from_env()
 WORKFLOW_EVENT_STORE = WorkflowEventStore(WORK_DIR / "jobs.sqlite3")
 WORKFLOW_EVENTS = WorkflowEventSink(WORKFLOW_EVENT_STORE)
@@ -2397,6 +2402,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
 
 @app.on_event("startup")
 async def start_job_scheduler() -> None:
+    await JOB_EVENTS.start()
     if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() in {"1", "true", "yes"}:
         requeued = JOB_SERVICE.requeue_interrupted()
         if requeued:
@@ -2420,6 +2426,7 @@ async def start_job_scheduler() -> None:
 
 @app.on_event("shutdown")
 async def stop_job_scheduler() -> None:
+    await JOB_EVENTS.stop()
     scheduler = getattr(app.state, "job_scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
@@ -3517,6 +3524,97 @@ def list_jobs_endpoint(
         for job in jobs
     ]
     return JSONResponse({"items": items, "total": total, "limit": limit, "offset": offset})
+
+
+JOB_EVENT_RESYNC = {"type": "jobs", "resync": True, "items": [], "removed": []}
+
+
+def job_change_snapshot(job_ids: set[str]) -> dict[str, Any]:
+    """Serialize changed jobs exactly like GET /api/v1/jobs does."""
+
+    if ALL_JOBS in job_ids or len(job_ids) > 200:
+        return dict(JOB_EVENT_RESYNC)
+    positions = JOB_SERVICE.queue_positions()
+    items: list[dict[str, Any]] = []
+    removed: list[str] = []
+    for job_id in sorted(job_ids):
+        job = JOB_SERVICE.get(job_id)
+        if job is None:
+            removed.append(job_id)
+        else:
+            items.append(job_response(job_id, job, positions))
+    return {"type": "jobs", "items": items, "removed": removed, "queue_positions": positions}
+
+
+def websocket_auth_claims(websocket: WebSocket) -> dict[str, Any] | None:
+    """Apply the HTTP middleware's auth rules to a WebSocket handshake.
+
+    Browsers cannot attach an Authorization header to a WebSocket, so only the
+    session cookie is accepted. Because cookies ride along on cross-site
+    handshakes, the Origin must match the Host the page was served from.
+    """
+
+    origin = websocket.headers.get("origin")
+    host = websocket.headers.get("host", "").rsplit(":", 1)[0].strip("[]").lower()
+    if origin and (urlsplit(origin).hostname or "").lower() != host:
+        return None
+    if not AUTH_MANAGER.config.enabled:
+        return {}
+    if not AUTH_MANAGER.config.configured:
+        return None
+    token = websocket.cookies.get(AUTH_MANAGER.config.cookie_name)
+    if not token:
+        return None
+    try:
+        claims = AUTH_MANAGER.verify_token(token)
+        account = ADMIN_ACCOUNTS.get(str(claims["user_id"]))
+    except (AuthConfigurationError, InvalidTokenError, AdminAccountError, KeyError):
+        return None
+    if account["approval_status"] != "approved":
+        return None
+    return claims
+
+
+@app.websocket("/api/v1/jobs/events")
+async def job_events_socket(websocket: WebSocket) -> None:
+    """Push job progress instead of having every tab poll the full job list."""
+
+    claims = await asyncio.to_thread(websocket_auth_claims, websocket)
+    if claims is None:
+        await websocket.close(code=4401)
+        return
+    await websocket.accept()
+    expires_at = float(claims.get("exp") or 0)
+    queue = JOB_EVENTS.subscribe()
+
+    async def read_until_closed() -> None:
+        while True:
+            await websocket.receive_text()
+
+    reader = asyncio.create_task(read_until_closed())
+    try:
+        await websocket.send_json({"type": "ready"})
+        while True:
+            getter = asyncio.create_task(queue.get())
+            done, _pending = await asyncio.wait({getter, reader}, timeout=25, return_when=asyncio.FIRST_COMPLETED)
+            if reader in done:
+                getter.cancel()
+                break
+            if expires_at and time.time() >= expires_at:
+                getter.cancel()
+                await websocket.close(code=4401)
+                break
+            if getter in done:
+                await websocket.send_json(getter.result())
+            else:
+                # Keep proxies from closing an idle connection.
+                getter.cancel()
+                await websocket.send_json({"type": "ping"})
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        JOB_EVENTS.unsubscribe(queue)
+        reader.cancel()
 
 
 @app.get("/api/v1/jobs/{job_id}")

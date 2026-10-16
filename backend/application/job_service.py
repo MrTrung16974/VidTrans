@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Mapping
 
 from infrastructure.job_store import SQLiteJobStore
@@ -13,17 +14,32 @@ class JobService:
     preserve this interface when processing moves out of the API process.
     """
 
-    def __init__(self, store: SQLiteJobStore) -> None:
+    def __init__(self, store: SQLiteJobStore, *, on_change: Callable[[str], None] | None = None) -> None:
         self._store = store
+        self._on_change = on_change
+
+    def _changed(self, job_id: str) -> None:
+        # Push notifications are best effort; a listener failure must never
+        # fail the write that already committed.
+        if self._on_change is None:
+            return
+        try:
+            self._on_change(job_id)
+        except Exception:
+            pass
 
     def create(self, job_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return self._store.create(job_id, payload)
+        created = self._store.create(job_id, payload)
+        self._changed(job_id)
+        return created
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         return self._store.get(job_id)
 
     def update(self, job_id: str, **fields: Any) -> dict[str, Any]:
-        return self._store.update(job_id, **fields)
+        updated = self._store.update(job_id, **fields)
+        self._changed(job_id)
+        return updated
 
     def create_batch(
         self,
@@ -46,12 +62,18 @@ class JobService:
 
     def attach_to_batch(self, job_id: str, batch_id: str, *, priority: int = 0) -> None:
         self._store.attach_to_batch(job_id, batch_id, priority=priority)
+        self._changed(job_id)
 
     def claim_next(self, worker_id: str) -> tuple[str, dict[str, Any]] | None:
-        return self._store.claim_next(worker_id)
+        claimed = self._store.claim_next(worker_id)
+        if claimed is not None:
+            self._changed(claimed[0])
+        return claimed
 
     def request_cancel(self, job_id: str) -> dict[str, Any]:
-        return self._store.request_cancel(job_id)
+        cancelled = self._store.request_cancel(job_id)
+        self._changed(job_id)
+        return cancelled
 
     def is_cancel_requested(self, job_id: str) -> bool:
         return self._store.is_cancel_requested(job_id)
@@ -60,10 +82,18 @@ class JobService:
         return self._store.queue_positions()
 
     def delete(self, job_id: str) -> dict[str, Any]:
-        return self._store.delete(job_id)
+        deleted = self._store.delete(job_id)
+        self._changed(job_id)
+        return deleted
 
     def recover_interrupted(self) -> int:
-        return self._store.recover_interrupted()
+        recovered = self._store.recover_interrupted()
+        if recovered:
+            self._changed("*")
+        return recovered
 
     def requeue_interrupted(self) -> list[tuple[str, dict[str, Any]]]:
-        return self._store.requeue_interrupted()
+        requeued = self._store.requeue_interrupted()
+        for job_id, _job in requeued:
+            self._changed(job_id)
+        return requeued

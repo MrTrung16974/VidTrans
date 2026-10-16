@@ -1,5 +1,6 @@
 import { createTikTokWorkspace } from "./tiktok.js?v=20261015-5";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
+import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -68,6 +69,7 @@ async function saveDownload(url, suggestedName, trigger) {
 
 function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", isError = true) {
   tiktokWorkspace.lock();
+  jobEvents.stop();
   clearInterval(state.pollTimer);
   clearInterval(state.douyinBrowserPollTimer);
   state.pollTimer = null;
@@ -142,7 +144,8 @@ async function startProtectedApplication() {
   state.appStarted = true;
   await Promise.all([loadJobs(), refreshDouyinAuthStatus(), tiktokWorkspace.refresh()]);
   clearInterval(state.pollTimer);
-  state.pollTimer = setInterval(loadJobs, 2500);
+  state.pollTimer = null;
+  jobEvents.start();
   if (location.hash === "#douyin") startDouyinBrowserPolling();
   if (location.hash === "#tiktok") tiktokWorkspace.enter();
   if (location.hash === "#admin") loadAdminAccounts();
@@ -1113,8 +1116,40 @@ function renderJobDashboard() {
   }
 }
 
+// Coalesce re-renders: several pushed updates in one frame cost one DOM pass.
+function scheduleJobRender() {
+  if (state.jobRenderFrame) return;
+  state.jobRenderFrame = requestAnimationFrame(() => {
+    state.jobRenderFrame = null;
+    renderJobDashboard();
+  });
+}
+
+function scheduleJobsReload() {
+  clearTimeout(state.jobsReloadTimer);
+  state.jobsReloadTimer = setTimeout(loadJobs, 300);
+}
+
+const jobEvents = createJobEvents({
+  isActive: () => state.appStarted,
+  poll: () => loadJobs(),
+  onReconnected: () => loadJobs(),
+  onChanges(message) {
+    const { jobs, reload } = applyJobChanges(state.jobs, message, { statusFilter: $("#statusFilter").value });
+    state.jobs = jobs;
+    scheduleJobRender();
+    if (reload) scheduleJobsReload();
+  },
+});
+
 async function loadJobs() {
   if (!state.appStarted) return;
+  // Never stack list requests on a slow server; run one more afterwards.
+  if (state.jobsLoading) {
+    state.jobsReloadQueued = true;
+    return;
+  }
+  state.jobsLoading = true;
   const refreshButton = $("#refreshJobs");
   if (refreshButton) refreshButton.classList.add("is-refreshing");
   const params = new URLSearchParams({ limit: "100" });
@@ -1134,8 +1169,13 @@ async function loadJobs() {
   } catch (error) {
     toast(error.message, true);
   } finally {
+    state.jobsLoading = false;
     if (refreshButton) {
       setTimeout(() => refreshButton.classList.remove("is-refreshing"), 400);
+    }
+    if (state.jobsReloadQueued) {
+      state.jobsReloadQueued = false;
+      scheduleJobsReload();
     }
   }
 }
