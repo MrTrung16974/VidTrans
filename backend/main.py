@@ -206,7 +206,12 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
         "YouTube": YOUTUBE_BROWSER_AUTH.export_download_cookies,
         "Facebook": FACEBOOK_BROWSER_AUTH.export_download_cookies,
     },
+    platform_user_agent_providers={
+        "YouTube": YOUTUBE_BROWSER_AUTH.browser_user_agent,
+        "Facebook": FACEBOOK_BROWSER_AUTH.browser_user_agent,
+    },
     douyin_resolver=DOUYIN_BROWSER_AUTH.resolve_video,
+    facebook_resolver=FACEBOOK_BROWSER_AUTH.resolve_facebook_video,
     tiktok_proxy=os.environ.get("VIDTRANS_TIKTOK_PROXY", "").strip() or None,
     douyin_proxy=os.environ.get("VIDTRANS_DOUYIN_PROXY", "").strip() or None,
 )

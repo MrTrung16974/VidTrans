@@ -124,6 +124,47 @@ class SocialVideoDownloaderTests(unittest.TestCase):
                     with self.assertRaisesRegex(SocialVideoDownloadError, platform):
                         downloader.download(url, Path(directory) / "video")
 
+    def test_facebook_falls_back_to_browser_player_media(self) -> None:
+        with TemporaryDirectory() as directory:
+            calls = []
+
+            def factory(options):
+                ydl = FakeYoutubeDL(options)
+                calls.append(ydl)
+                if len(calls) == 1:
+                    ydl.extract_info = Mock(side_effect=RuntimeError("Cannot parse data"))
+                else:
+                    def process_ie_result(info, *, download):
+                        Path(options["outtmpl"].replace("%(ext)s", "mp4")).write_bytes(b"video")
+                        return info
+                    ydl.process_ie_result = process_ie_result
+                return ydl
+
+            resolver = Mock(return_value={
+                "id": "123", "title": "Video Facebook", "duration": None, "ext": "mp4",
+                "url": "https://video.xx.fbcdn.net/v/123.mp4",
+            })
+            result = SocialVideoDownloader(ydl_factory=factory, facebook_resolver=resolver).download(
+                "https://www.facebook.com/reel/123", Path(directory) / "video"
+            )
+
+            self.assertEqual(result.platform, "Facebook")
+            self.assertEqual(result.title, "Video Facebook")
+            self.assertEqual(resolver.call_args.args[0], "https://www.facebook.com/reel/123")
+
+    def test_facebook_browser_fallback_failure_explains_access(self) -> None:
+        with TemporaryDirectory() as directory:
+            ydl = FakeYoutubeDL({})
+            ydl.extract_info = Mock(side_effect=RuntimeError("Cannot parse data; please report this issue"))
+            downloader = SocialVideoDownloader(
+                ydl_factory=lambda options: ydl,
+                facebook_resolver=Mock(side_effect=RuntimeError("no media")),
+            )
+            with self.assertRaises(SocialVideoDownloadError) as raised:
+                downloader.download("https://www.facebook.com/reel/123", Path(directory) / "video")
+            self.assertIn("đăng nhập Facebook", str(raised.exception))
+            self.assertNotIn("report this issue", str(raised.exception))
+
     def test_browser_fallback_recovers_cookie_error_and_cleans_private_snapshot(self) -> None:
         with TemporaryDirectory() as directory:
             stem = Path(directory) / "recover"
@@ -200,7 +241,7 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             self.assertEqual(instances[0].options["cookiefile"], str(snapshot))
             self.assertEqual(
                 instances[0].options["extractor_args"],
-                {"youtube": {"player_client": ["default", "web_embedded"]}},
+                {"youtube": {"player_client": ["default", "-tv_downgraded", "web_embedded"]}},
             )
             self.assertFalse(snapshot.exists())
 
@@ -215,8 +256,49 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             with self.assertRaises(SocialVideoDownloadError) as raised:
                 downloader.download("https://youtu.be/example", Path(directory) / "video")
 
-            self.assertIn("YouTube từ chối phiên đăng nhập", str(raised.exception))
+            self.assertIn("YouTube từ chối player tải tự động", str(raised.exception))
             self.assertNotIn("ERROR:", str(raised.exception))
+
+    def test_youtube_reload_error_retries_public_playback_without_cookies(self) -> None:
+        with TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "youtube.cookies.txt"
+            snapshot.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            calls = []
+
+            def factory(options):
+                calls.append(dict(options))
+                ydl = FakeYoutubeDL(options)
+                if len(calls) == 1:
+                    ydl.extract_info = Mock(side_effect=RuntimeError("The page needs to be reloaded"))
+                return ydl
+
+            result = SocialVideoDownloader(cookie_file=snapshot, ydl_factory=factory).download(
+                "https://youtu.be/example", Path(directory) / "video"
+            )
+
+            self.assertEqual(result.platform, "YouTube")
+            self.assertIn("cookiefile", calls[0])
+            self.assertNotIn("cookiefile", calls[1])
+            self.assertNotIn("extractor_args", calls[1])
+
+    def test_authenticated_download_uses_interactive_browser_user_agent(self) -> None:
+        with TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "youtube.cookies.txt"
+            snapshot.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            instances = []
+
+            def factory(options):
+                instances.append(FakeYoutubeDL(options))
+                return instances[-1]
+
+            downloader = SocialVideoDownloader(
+                cookie_file=snapshot,
+                ydl_factory=factory,
+                platform_user_agent_providers={"YouTube": lambda: "Browser UA"},
+            )
+            downloader.download("https://youtu.be/example", Path(directory) / "video")
+
+            self.assertEqual(instances[0].options["http_headers"]["User-Agent"], "Browser UA")
 
     def test_browser_fallback_respects_duration_and_cancellation(self) -> None:
         for failure in ("duration", "cancel"):

@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from infrastructure.douyin_browser_auth import write_netscape_cookies
 
@@ -60,6 +61,67 @@ def has_required_cookies(
         if bool(cookie.get("value"))
     }
     return all(any(candidate in names for candidate in group) for group in required_groups)
+
+
+_FACEBOOK_ID_PATTERNS = (
+    re.compile(r"/(?:videos|reel|watch/live)/(?:[^/]+/)?(\d{6,})"),
+    re.compile(r"/(?:posts|permalink)/(\d{6,})"),
+)
+_FACEBOOK_MEDIA_PATTERN = re.compile(
+    r'"(browser_native_hd_url|browser_native_sd_url|playable_url_quality_hd|playable_url)"'
+    r':("(?:[^"\\]|\\.)+")'
+)
+# og:title on video pages is "744K views · 2.3K shares | <caption>".
+_FACEBOOK_TITLE_STATS = re.compile(
+    r"^[^|]*\b(?:views|shares|reactions|lượt xem|lượt chia sẻ|cảm xúc)\b[^|]*\|\s*", re.IGNORECASE
+)
+_FACEBOOK_MEDIA_PRIORITY = (
+    "browser_native_hd_url",
+    "playable_url_quality_hd",
+    "browser_native_sd_url",
+    "playable_url",
+)
+
+
+def facebook_video_id(url: str) -> str | None:
+    parsed = urlsplit(url)
+    for pattern in _FACEBOOK_ID_PATTERNS:
+        match = pattern.search(parsed.path)
+        if match:
+            return match.group(1)
+    query = parse_qs(parsed.query)
+    for key in ("v", "story_fbid"):
+        value = (query.get(key) or [""])[0]
+        if value.isdigit():
+            return value
+    return None
+
+
+def facebook_media_url_from_html(html: str, page_url: str) -> str | None:
+    """Pick the best progressive MP4 for the requested video from page data.
+
+    A feed or post page can embed several videos, so when the link carries a
+    video id only media keys near that id are trusted.
+    """
+    video_id = facebook_video_id(page_url)
+    candidates: dict[str, str] = {}
+    for match in _FACEBOOK_MEDIA_PATTERN.finditer(html):
+        key = match.group(1)
+        if key in candidates:
+            continue
+        if video_id and video_id not in html[max(0, match.start() - 6_000):match.end() + 6_000]:
+            continue
+        try:
+            value = str(json.loads(match.group(2)))
+        except ValueError:
+            continue
+        host = (urlsplit(value).hostname or "").lower()
+        if value.startswith("https://") and (host.endswith(".fbcdn.net") or host.endswith(".facebook.com")):
+            candidates[key] = value
+    for key in _FACEBOOK_MEDIA_PRIORITY:
+        if key in candidates:
+            return candidates[key]
+    return None
 
 
 class SocialBrowserAuthManager:
@@ -137,8 +199,72 @@ class SocialBrowserAuthManager:
     def export_download_cookies(self, target: Path) -> Path:
         with self._lock:
             cookies = self._with_browser(self._platform_cookies)
+            # Guest cookies (VISITOR_INFO1_LIVE, YSC, ...) are not a login. Passing
+            # them to yt-dlp switches it to the authenticated player clients, which
+            # YouTube rejects with "The page needs to be reloaded".
+            if not has_required_cookies(cookies, self.required_cookie_groups):
+                raise PermissionError(f"Chromium chưa đăng nhập {self.label}")
             write_netscape_cookies(cookies, target)
         return target
+
+    def browser_user_agent(self) -> str:
+        """Return the UA used by the interactive session that issued the cookies."""
+
+        def read_user_agent(browser: Any) -> str:
+            context = browser.contexts[0]
+            page = context.pages[0] if context.pages else context.new_page()
+            return str(page.evaluate("() => navigator.userAgent") or "").strip()
+
+        with self._lock:
+            return str(self._with_browser(read_user_agent) or "").strip()
+
+    def resolve_facebook_video(self, url: str, cookie_path: Path, cancel_requested=None) -> dict[str, Any]:
+        """Read the progressive MP4 the Facebook web player itself would play.
+
+        Like a browser media downloader, this uses the page rendered by the
+        interactive session instead of yt-dlp's parser, which breaks whenever
+        Facebook reshapes its page data.
+        """
+        if self.platform != "facebook":
+            raise ValueError("Chỉ hỗ trợ Facebook trong trình duyệt này")
+
+        def resolve(browser: Any) -> dict[str, Any]:
+            context = browser.contexts[0]
+            page = context.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                html = ""
+                for _ in range(10):
+                    if cancel_requested and cancel_requested():
+                        raise RuntimeError("Đã hủy khi đang tải video nguồn")
+                    page.wait_for_timeout(1_000)
+                    html = page.content()
+                    if "browser_native_" in html:
+                        break
+                media_url = facebook_media_url_from_html(html, url)
+                if not media_url:
+                    raise RuntimeError("Trang Facebook không có video phát được trong phiên trình duyệt")
+                title = str(page.evaluate(
+                    "() => document.querySelector('meta[property=\"og:title\"]')?.content || document.title"
+                ) or "").strip()
+                user_agent = str(page.evaluate("() => navigator.userAgent") or "").strip()
+                write_netscape_cookies(self._platform_cookies(browser), cookie_path)
+            finally:
+                page.close()
+            headers = {"Referer": "https://www.facebook.com/"}
+            if user_agent:
+                headers["User-Agent"] = user_agent
+            return {
+                "id": facebook_video_id(url) or "video",
+                "title": _FACEBOOK_TITLE_STATS.sub("", title).strip() or "Video Facebook",
+                "duration": None,
+                "ext": "mp4",
+                "url": media_url,
+                "http_headers": headers,
+            }
+
+        with self._lock:
+            return self._with_browser(resolve)
 
     def status(self, *, refresh: bool = False) -> dict[str, Any]:
         available = self._cdp_available()

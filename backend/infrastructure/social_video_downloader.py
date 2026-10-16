@@ -34,13 +34,13 @@ YOUTUBE_AUTH_ERROR_MARKERS = (
     "fresh cookies",
     "the page needs to be reloaded",
 )
+YOUTUBE_RELOAD_ERROR_MARKER = "the page needs to be reloaded"
 
-# With account cookies, yt-dlp currently selects the tv_downgraded client by
-# default. YouTube intermittently rejects that client with UNPLAYABLE / "The
-# page needs to be reloaded" even though the browser session is valid. Keep the
-# normal client selection, but add the embedded web client as the upstream
-# recommended fallback for authenticated downloads.
-YOUTUBE_AUTHENTICATED_PLAYER_CLIENTS = ["default", "web_embedded"]
+# With account cookies, yt-dlp's default selection includes tv_downgraded.
+# YouTube rejects that client with "The page needs to be reloaded" even though
+# the browser session is valid, and that error can mask the clients that did
+# work. Exclude it and keep the embedded web client as an extra fallback.
+YOUTUBE_AUTHENTICATED_PLAYER_CLIENTS = ["default", "-tv_downgraded", "web_embedded"]
 
 
 class SocialVideoDownloadError(RuntimeError):
@@ -55,6 +55,12 @@ def _download_failure_message(platform: str, error: Exception, *, used_cookies: 
     message = " ".join(str(error).split())
     if platform == "YouTube" and any(marker in message.lower() for marker in YOUTUBE_AUTH_ERROR_MARKERS):
         if used_cookies:
+            if YOUTUBE_RELOAD_ERROR_MARKER in message.lower():
+                return (
+                    "YouTube từ chối player tải tự động dù phiên trình duyệt vẫn có thể đang đăng nhập. "
+                    "Hãy tải lại trang YouTube trong trình duyệt nguồn, phát thử video rồi chạy lại; "
+                    "nếu vẫn lỗi, hãy cập nhật yt-dlp vì đây là thay đổi player của YouTube."
+                )
             return (
                 "YouTube từ chối phiên đăng nhập trong cookies.txt. "
                 "Hãy xuất lại cookie YouTube mới từ trình duyệt đang đăng nhập rồi thử lại."
@@ -187,7 +193,9 @@ class SocialVideoDownloader:
         ydl_factory: YoutubeDLFactory | None = None,
         douyin_cookie_provider: Callable[[Path], Path] | None = None,
         platform_cookie_providers: dict[str, Callable[[Path], Path]] | None = None,
+        platform_user_agent_providers: dict[str, Callable[[], str]] | None = None,
         douyin_resolver: Callable[..., dict[str, Any]] | None = None,
+        facebook_resolver: Callable[..., dict[str, Any]] | None = None,
         tiktok_proxy: str | None = None,
         douyin_proxy: str | None = None,
         redirect_resolver: Callable[[str], str] | None = None,
@@ -200,7 +208,9 @@ class SocialVideoDownloader:
         self._ydl_factory = ydl_factory
         self._douyin_cookie_provider = douyin_cookie_provider
         self._platform_cookie_providers = dict(platform_cookie_providers or {})
+        self._platform_user_agent_providers = dict(platform_user_agent_providers or {})
         self._douyin_resolver = douyin_resolver
+        self._facebook_resolver = facebook_resolver
         self.tiktok_proxy = tiktok_proxy
         self.douyin_proxy = douyin_proxy
         self._redirect_resolver = redirect_resolver or (
@@ -346,6 +356,18 @@ class SocialVideoDownloader:
                 )
         if effective_cookie_file and effective_cookie_file.is_file():
             options["cookiefile"] = str(effective_cookie_file)
+            user_agent_provider = self._platform_user_agent_providers.get(platform)
+            if user_agent_provider:
+                try:
+                    browser_user_agent = str(user_agent_provider() or "").strip()
+                    if browser_user_agent:
+                        options["http_headers"] = {"User-Agent": browser_user_agent}
+                except Exception as user_agent_error:
+                    logger.warning(
+                        "Cannot read %s browser user agent: %s",
+                        platform,
+                        type(user_agent_error).__name__,
+                    )
             if platform == "YouTube":
                 options["extractor_args"] = {
                     "youtube": {"player_client": YOUTUBE_AUTHENTICATED_PLAYER_CLIENTS}
@@ -354,9 +376,32 @@ class SocialVideoDownloader:
         try:
             if cancel_requested and cancel_requested():
                 raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
-            with self._create_ydl(options) as ydl:
-                info = ydl.extract_info(normalized_url, download=True)
-                sanitized = ydl.sanitize_info(info) if hasattr(ydl, "sanitize_info") else dict(info or {})
+            try:
+                with self._create_ydl(options) as ydl:
+                    info = ydl.extract_info(normalized_url, download=True)
+                    sanitized = ydl.sanitize_info(info) if hasattr(ydl, "sanitize_info") else dict(info or {})
+            except Exception as authenticated_error:
+                # A current YouTube regression can reject the authenticated
+                # tv player while the exact same public video remains
+                # downloadable as a guest. Browsers/media sniffers naturally
+                # fall back to the public playback request, so mirror that
+                # behaviour before declaring the login session invalid.
+                should_retry_as_guest = (
+                    platform == "YouTube"
+                    and bool(effective_cookie_file)
+                    and YOUTUBE_RELOAD_ERROR_MARKER in str(authenticated_error).lower()
+                )
+                if not should_retry_as_guest:
+                    raise
+                cleanup()
+                guest_options = dict(options)
+                guest_options.pop("cookiefile", None)
+                guest_options.pop("extractor_args", None)
+                guest_options.pop("http_headers", None)
+                logger.info("Retrying public YouTube playback without account cookies")
+                with self._create_ydl(guest_options) as ydl:
+                    info = ydl.extract_info(normalized_url, download=True)
+                    sanitized = ydl.sanitize_info(info) if hasattr(ydl, "sanitize_info") else dict(info or {})
         except SocialVideoDownloadCancelled:
             cleanup()
             raise
@@ -367,7 +412,12 @@ class SocialVideoDownloader:
             cleanup()
             if cancel_requested and cancel_requested():
                 raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from exc
-            if platform not in {"TikTok", "Douyin"}:
+            # Facebook falls back to the page the logged-in browser renders, the
+            # same media URL a browser downloader would capture.
+            browser_fallback_platforms = {"TikTok", "Douyin"}
+            if self._facebook_resolver is not None:
+                browser_fallback_platforms.add("Facebook")
+            if platform not in browser_fallback_platforms:
                 raise SocialVideoDownloadError(
                     _download_failure_message(platform, exc, used_cookies=bool(effective_cookie_file))
                 ) from exc
@@ -377,6 +427,10 @@ class SocialVideoDownloader:
                     if self._douyin_resolver is None:
                         raise RuntimeError("Douyin browser is not configured")
                     info = self._douyin_resolver(normalized_url, browser_cookie_path, cancel_requested)
+                    if browser_cookie_path.is_file():
+                        options["cookiefile"] = str(browser_cookie_path)
+                elif platform == "Facebook":
+                    info = self._facebook_resolver(normalized_url, browser_cookie_path, cancel_requested)
                     if browser_cookie_path.is_file():
                         options["cookiefile"] = str(browser_cookie_path)
                 else:
@@ -441,6 +495,11 @@ class SocialVideoDownloader:
                     message = (
                         "Không lấy được video qua phiên trình duyệt. Mở tab Douyin, đăng nhập hoặc hoàn tất "
                         "xác minh rồi bấm Đồng bộ và thử lại. Nếu trình duyệt không mở được, kiểm tra dịch vụ douyin-browser."
+                    )
+                elif platform == "Facebook":
+                    message = (
+                        "video không công khai, đã bị xóa hoặc cần đăng nhập. Hãy đăng nhập Facebook trong "
+                        "trình duyệt VidTrans bằng tài khoản xem được video, bấm Đồng bộ rồi thử lại"
                     )
                 raise SocialVideoDownloadError(
                     f"Không tải được video {platform}: {message or 'nguồn từ chối truy cập'}"
