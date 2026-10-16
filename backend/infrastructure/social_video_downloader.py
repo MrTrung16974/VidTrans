@@ -62,8 +62,9 @@ def _download_failure_message(platform: str, error: Exception, *, used_cookies: 
                     "nếu vẫn lỗi, hãy cập nhật yt-dlp vì đây là thay đổi player của YouTube."
                 )
             return (
-                "YouTube từ chối phiên đăng nhập trong cookies.txt. "
-                "Hãy xuất lại cookie YouTube mới từ trình duyệt đang đăng nhập rồi thử lại."
+                "YouTube vẫn yêu cầu xác minh dù đã gửi cookie đăng nhập. Nếu chỉ lỗi trên VPS, "
+                "IP máy chủ có thể đã bị anti-bot đánh dấu; hãy cấu hình cùng một proxy residential "
+                "cho VIDTRANS_SOCIAL_BROWSER_PROXY và VIDTRANS_YOUTUBE_PROXY, đăng nhập lại rồi thử lại."
             )
         return (
             "YouTube yêu cầu xác minh người dùng. Hãy chọn file cookies.txt ở Bước 1 "

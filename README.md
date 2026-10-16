@@ -269,7 +269,11 @@ Trình duyệt đăng nhập nguồn dùng các container Chromium cô lập. N�
 export CA gốc dạng PEM/CRT, đặt `VIDTRANS_CORPORATE_CA_FILE=/duong-dan/ca.pem` và build bằng
 `bash docker-rebuild.sh --corporate-ca`. Không dùng `--ignore-certificate-errors` cho browser đăng nhập.
 Nếu các mạng xã hội bị chặn kết nối ở cấp mạng/VPS, cấu hình proxy chung bằng
-`VIDTRANS_SOCIAL_BROWSER_PROXY` rồi recreate `social-browser`.
+`VIDTRANS_SOCIAL_BROWSER_PROXY` rồi recreate `social-browser`. Với lỗi YouTube
+`Sign in to confirm you're not a bot` chỉ xuất hiện trên VPS, yt-dlp tự dùng lại
+proxy chung này để Chromium đăng nhập và tải video qua đúng một IP thoát. Biến
+`VIDTRANS_YOUTUBE_PROXY` chỉ là override tùy chọn; ưu tiên proxy residential
+thay vì proxy datacenter.
 
 Xem [hướng dẫn tích hợp n8n](docs/n8n-integration.md) để cấu hình chữ ký HMAC,
 deduplicate event và workflow đề xuất. File video không đi qua n8n; webhook chỉ nhận metadata.

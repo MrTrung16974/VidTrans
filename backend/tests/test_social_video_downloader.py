@@ -207,6 +207,25 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             self.assertIn("cookies.txt", str(raised.exception))
             self.assertNotIn("ERROR:", str(raised.exception))
 
+    def test_youtube_bot_check_with_cookies_explains_vps_proxy_pair(self) -> None:
+        with TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "youtube.cookies.txt"
+            snapshot.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            ydl = FakeYoutubeDL({})
+            ydl.extract_info = Mock(
+                side_effect=RuntimeError("Sign in to confirm you're not a bot")
+            )
+            downloader = SocialVideoDownloader(
+                cookie_file=snapshot,
+                ydl_factory=lambda options: ydl,
+            )
+
+            with self.assertRaises(SocialVideoDownloadError) as raised:
+                downloader.download("https://youtu.be/example", Path(directory) / "video")
+
+            self.assertIn("VIDTRANS_SOCIAL_BROWSER_PROXY", str(raised.exception))
+            self.assertIn("VIDTRANS_YOUTUBE_PROXY", str(raised.exception))
+
     def test_configured_cookie_file_must_exist(self) -> None:
         with TemporaryDirectory() as directory:
             missing = Path(directory) / "missing-cookies.txt"
