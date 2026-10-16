@@ -79,8 +79,32 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'data-source-browser-tab="{platform}"', html)
         self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
         self.assertIn("/api/v1/source-browser/${platform}/activate", javascript)
-        self.assertIn("/js/app.js?v=20261016-1", html)
+        self.assertIn("/js/app.js?v=20261016-6", html)
         self.assertIn('button.addEventListener("click", () => selectSourceBrowserTab', javascript)
+
+    async def test_source_login_and_cookie_configuration_are_admin_only(self):
+        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        html = (frontend / "index.html").read_text(encoding="utf-8")
+        javascript = (frontend / "js" / "app.js").read_text(encoding="utf-8")
+        main = (frontend.parents[0] / "main.py").read_text(encoding="utf-8")
+
+        self.assertIn('href="#douyin" data-view-link="douyin" data-admin-only', html)
+        self.assertIn('class="source-auth-row" data-admin-only', html)
+        self.assertIn('["admin", "douyin"].includes(view)', javascript)
+        self.assertIn('if source_cookies is not None and source_cookies.filename:\n        require_roles(request, "owner", "admin")', main)
+
+    async def test_login_screen_supports_free_self_registration(self):
+        backend = Path(__file__).resolve().parents[1]
+        html = (backend / "frontend" / "index.html").read_text(encoding="utf-8")
+        javascript = (backend / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        main = (backend / "main.py").read_text(encoding="utf-8")
+
+        self.assertIn('id="authRegisterForm"', html)
+        self.assertIn('id="authModeToggle"', html)
+        self.assertIn('requestJson("/api/v1/auth/register"', javascript)
+        self.assertIn('@app.post("/api/v1/auth/register", status_code=201)', main)
+        for fixed_value in ('role="editor"', 'approval_status="approved"', 'plan="free"', 'payment_status="exempt"'):
+            self.assertIn(fixed_value, main)
 
     async def test_unknown_websocket_is_rejected_without_http_assertion(self):
         with TemporaryDirectory() as directory:

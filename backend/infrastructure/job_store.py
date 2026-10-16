@@ -85,6 +85,7 @@ class SQLiteJobStore:
             }
             for name, definition in {
                 "batch_id": "TEXT",
+                "owner_user_id": "TEXT",
                 "priority": "INTEGER NOT NULL DEFAULT 0",
                 "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
                 "worker_id": "TEXT",
@@ -92,6 +93,7 @@ class SQLiteJobStore:
             }.items():
                 if name not in columns:
                     connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
+            connection.execute("UPDATE jobs SET owner_user_id='__legacy__' WHERE owner_user_id IS NULL OR owner_user_id=''")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, priority DESC, created_at)"
             )
@@ -100,6 +102,37 @@ class SQLiteJobStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_jobs_batch_updated ON jobs(batch_id, updated_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_owner_updated ON jobs(owner_user_id, updated_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_owner_created ON jobs(owner_user_id, created_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_owner_status ON jobs(owner_user_id, status, updated_at DESC)"
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_jobs_owner_insert
+                BEFORE INSERT ON jobs
+                FOR EACH ROW
+                WHEN NEW.owner_user_id IS NULL OR TRIM(NEW.owner_user_id) = ''
+                BEGIN
+                    SELECT RAISE(ABORT, 'owner_user_id cannot be null or empty');
+                END;
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_jobs_owner_update
+                BEFORE UPDATE OF owner_user_id ON jobs
+                FOR EACH ROW
+                WHEN NEW.owner_user_id IS NULL OR TRIM(NEW.owner_user_id) = ''
+                BEGIN
+                    SELECT RAISE(ABORT, 'owner_user_id cannot be null or empty');
+                END;
+                """
             )
             connection.execute(
                 """
@@ -115,6 +148,41 @@ class SQLiteJobStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_batches_updated ON batches(updated_at DESC)"
+            )
+            batch_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(batches)").fetchall()
+            }
+            if "owner_user_id" not in batch_columns:
+                connection.execute("ALTER TABLE batches ADD COLUMN owner_user_id TEXT")
+            connection.execute("UPDATE batches SET owner_user_id='__legacy__' WHERE owner_user_id IS NULL OR owner_user_id=''")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_batches_owner_updated ON batches(owner_user_id, updated_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_batches_owner_created ON batches(owner_user_id, created_at DESC)"
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_batches_owner_insert
+                BEFORE INSERT ON batches
+                FOR EACH ROW
+                WHEN NEW.owner_user_id IS NULL OR TRIM(NEW.owner_user_id) = ''
+                BEGIN
+                    SELECT RAISE(ABORT, 'owner_user_id cannot be null or empty');
+                END;
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_batches_owner_update
+                BEFORE UPDATE OF owner_user_id ON batches
+                FOR EACH ROW
+                WHEN NEW.owner_user_id IS NULL OR TRIM(NEW.owner_user_id) = ''
+                BEGIN
+                    SELECT RAISE(ABORT, 'owner_user_id cannot be null or empty');
+                END;
+                """
             )
 
     @staticmethod
@@ -136,7 +204,9 @@ class SQLiteJobStore:
             raise JobStoreError("Stored job payload must be a JSON object")
         return value
 
-    def create(self, job_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def create(self, job_id: str, payload: Mapping[str, Any], *, owner_user_id: str = "__legacy__") -> dict[str, Any]:
+        if not owner_user_id.strip():
+            raise JobStoreError("owner_user_id is required")
         normalized = dict(payload)
         normalized.setdefault("status", "queued")
         now = _utc_now()
@@ -144,20 +214,24 @@ class SQLiteJobStore:
             with self._connection() as connection:
                 connection.execute(
                     """
-                    INSERT INTO jobs(job_id, status, payload_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO jobs(job_id, status, payload_json, owner_user_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
                         str(normalized["status"]),
                         self._encode(normalized),
+                        owner_user_id,
                         now,
                         now,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
             raise JobAlreadyExistsError(f"Job already exists: {job_id}") from exc
-        return dict(normalized)
+        result = dict(normalized)
+        if owner_user_id != "__legacy__":
+            result["owner_user_id"] = owner_user_id
+        return result
 
     def create_batch(
         self,
@@ -166,17 +240,20 @@ class SQLiteJobStore:
         name: str,
         config: Mapping[str, Any],
         status: str = "queued",
+        owner_user_id: str = "__legacy__",
     ) -> dict[str, Any]:
+        if not owner_user_id.strip():
+            raise JobStoreError("owner_user_id is required")
         now = _utc_now()
         payload = dict(config)
         try:
             with self._connection() as connection:
                 connection.execute(
                     """
-                    INSERT INTO batches(batch_id, name, status, config_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO batches(batch_id, name, status, config_json, owner_user_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (batch_id, name, status, self._encode(payload), now, now),
+                    (batch_id, name, status, self._encode(payload), owner_user_id, now, now),
                 )
         except sqlite3.IntegrityError as exc:
             raise JobAlreadyExistsError(f"Batch already exists: {batch_id}") from exc
@@ -184,6 +261,7 @@ class SQLiteJobStore:
             "batch_id": batch_id,
             "name": name,
             "status": status,
+            "owner_user_id": owner_user_id,
             "config": payload,
             "created_at": now,
             "updated_at": now,
@@ -192,12 +270,44 @@ class SQLiteJobStore:
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT payload_json FROM jobs WHERE job_id = ?",
+                "SELECT payload_json,owner_user_id FROM jobs WHERE job_id = ?",
                 (job_id,),
             ).fetchone()
         if row is None:
             return None
-        return self._decode(row["payload_json"])
+        payload = self._decode(row["payload_json"])
+        if str(row["owner_user_id"]) != "__legacy__":
+            payload["owner_user_id"] = str(row["owner_user_id"])
+        return payload
+
+    def get_for_user(self, job_id: str, owner_user_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT payload_json,owner_user_id FROM jobs WHERE job_id=? AND owner_user_id=?",
+                (job_id, owner_user_id),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = self._decode(row["payload_json"])
+        payload["owner_user_id"] = str(row["owner_user_id"])
+        return payload
+
+    def owns_artifact(self, owner_user_id: str, filename: str) -> bool:
+        artifact_fields = (
+            "output_video", "subtitle_file", "translation_file",
+            "tiktok_json_file", "tiktok_text_file", "filename",
+        )
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM jobs WHERE owner_user_id=? AND payload_json LIKE ?",
+                (owner_user_id, f"%{filename}%"),
+            ).fetchall()
+        return any(
+            filename in {str(payload.get(field) or ""), Path(str(payload.get(field) or "")).name}
+            for row in rows
+            for payload in (self._decode(row["payload_json"]),)
+            for field in artifact_fields
+        )
 
     def get_batch(self, batch_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
@@ -209,6 +319,14 @@ class SQLiteJobStore:
             return None
         return self._batch_row(row)
 
+    def get_batch_for_user(self, batch_id: str, owner_user_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM batches WHERE batch_id=? AND owner_user_id=?",
+                (batch_id, owner_user_id),
+            ).fetchone()
+        return self._batch_row(row) if row is not None else None
+
     def list_jobs(
         self,
         *,
@@ -217,9 +335,13 @@ class SQLiteJobStore:
         search: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        owner_user_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         clauses: list[str] = []
         values: list[Any] = []
+        if owner_user_id is not None:
+            clauses.append("owner_user_id = ?")
+            values.append(owner_user_id)
         if status:
             clauses.append("status = ?")
             values.append(status)
@@ -240,18 +362,20 @@ class SQLiteJobStore:
             ).fetchall()
         return [self._job_row(row) for row in rows], total
 
-    def list_batches(self, *, limit: int = 50, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    def list_batches(self, *, limit: int = 50, offset: int = 0, owner_user_id: str | None = None) -> tuple[list[dict[str, Any]], int]:
         with self._connection() as connection:
-            total = int(connection.execute("SELECT COUNT(*) FROM batches").fetchone()[0])
+            where = " WHERE owner_user_id=?" if owner_user_id is not None else ""
+            values: list[Any] = [owner_user_id] if owner_user_id is not None else []
+            total = int(connection.execute(f"SELECT COUNT(*) FROM batches{where}", values).fetchone()[0])
             rows = connection.execute(
-                "SELECT * FROM batches ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (max(1, min(limit, 200)), max(0, offset)),
+                f"SELECT * FROM batches{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (*values, max(1, min(limit, 200)), max(0, offset)),
             ).fetchall()
             batches = [self._batch_row(row) for row in rows]
             for batch in batches:
                 counts = connection.execute(
-                    "SELECT status, COUNT(*) count FROM jobs WHERE batch_id = ? GROUP BY status",
-                    (batch["batch_id"],),
+                    "SELECT status, COUNT(*) count FROM jobs WHERE batch_id=? AND owner_user_id=? GROUP BY status",
+                    (batch["batch_id"], batch["owner_user_id"]),
                 ).fetchall()
                 batch["counts"] = {str(row["status"]): int(row["count"]) for row in counts}
                 batch["total_jobs"] = sum(batch["counts"].values())
@@ -273,6 +397,7 @@ class SQLiteJobStore:
             "batch_id": str(row["batch_id"]),
             "name": str(row["name"]),
             "status": str(row["status"]),
+            "owner_user_id": str(row["owner_user_id"]),
             "config": SQLiteJobStore._decode(str(row["config_json"])),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
@@ -287,6 +412,7 @@ class SQLiteJobStore:
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
             **payload,
+            "owner_user_id": str(row["owner_user_id"]),
         }
 
     def update(self, job_id: str, **fields: Any) -> dict[str, Any]:
@@ -324,17 +450,34 @@ class SQLiteJobStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT payload_json FROM jobs WHERE job_id = ?",
+                "SELECT payload_json, owner_user_id FROM jobs WHERE job_id = ?",
                 (job_id,),
             ).fetchone()
             if row is None:
                 raise JobNotFoundError(f"Job not found: {job_id}")
+            batch = connection.execute("SELECT owner_user_id FROM batches WHERE batch_id=?", (batch_id,)).fetchone()
+            if batch is not None and str(batch["owner_user_id"]) != str(row["owner_user_id"]):
+                raise JobStoreError("Job and batch owners do not match")
             payload = self._decode(row["payload_json"])
             payload["batch_id"] = batch_id
             connection.execute(
                 "UPDATE jobs SET batch_id = ?, priority = ?, payload_json = ? WHERE job_id = ?",
                 (batch_id, priority, self._encode(payload), job_id),
             )
+
+    def backfill_legacy_owner(self, owner_user_id: str) -> None:
+        if not owner_user_id.strip():
+            raise JobStoreError("owner_user_id is required")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute("SELECT job_id,payload_json FROM jobs WHERE owner_user_id='__legacy__'").fetchall()
+            for row in rows:
+                payload = self._decode(row["payload_json"])
+                connection.execute(
+                    "UPDATE jobs SET owner_user_id=?,payload_json=? WHERE job_id=?",
+                    (owner_user_id, self._encode(payload), row["job_id"]),
+                )
+            connection.execute("UPDATE batches SET owner_user_id=? WHERE owner_user_id='__legacy__'", (owner_user_id,))
 
     def claim_next(self, worker_id: str) -> tuple[str, dict[str, Any]] | None:
         """Atomically claim the oldest highest-priority queued job."""

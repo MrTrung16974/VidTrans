@@ -139,6 +139,44 @@ class SQLiteJobStoreTests(unittest.TestCase):
         self.assertEqual(batch_total, 1)
         self.assertEqual(batches[0]["counts"], {"completed": 1, "queued": 1})
 
+    def test_jobs_and_batches_are_isolated_by_owner(self) -> None:
+        self.store.create_batch("batch-a", name="A", config={"mode": 1}, owner_user_id="user-a")
+        self.store.create_batch("batch-b", name="B", config={"mode": 2}, owner_user_id="user-b")
+        self.store.create("job-a", {"status": "queued", "filename": "a.mp4"}, owner_user_id="user-a")
+        self.store.create("job-b", {"status": "queued", "filename": "b.mp4"}, owner_user_id="user-b")
+        self.store.attach_to_batch("job-a", "batch-a")
+        self.store.attach_to_batch("job-b", "batch-b")
+
+        jobs_a, total_a = self.store.list_jobs(owner_user_id="user-a")
+        batches_a, batch_total_a = self.store.list_batches(owner_user_id="user-a")
+
+        self.assertEqual(total_a, 1)
+        self.assertEqual([job["job_id"] for job in jobs_a], ["job-a"])
+        self.assertIsNone(self.store.get_for_user("job-b", "user-a"))
+        self.assertFalse(self.store.owns_artifact("user-a", "b.mp4"))
+        self.assertTrue(self.store.owns_artifact("user-a", "a.mp4"))
+        self.assertEqual(batch_total_a, 1)
+        self.assertEqual([batch["batch_id"] for batch in batches_a], ["batch-a"])
+        self.assertIsNone(self.store.get_batch_for_user("batch-b", "user-a"))
+
+    def test_job_cannot_attach_to_another_owners_batch(self) -> None:
+        self.store.create_batch("batch-a", name="A", config={}, owner_user_id="user-a")
+        self.store.create("job-b", {"status": "queued"}, owner_user_id="user-b")
+        with self.assertRaisesRegex(Exception, "owners do not match"):
+            self.store.attach_to_batch("job-b", "batch-a")
+
+    def test_triggers_reject_empty_or_null_owner(self) -> None:
+        import sqlite3
+        with self.store._connection() as conn:
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("INSERT INTO jobs(job_id, status, payload_json, owner_user_id, created_at, updated_at) VALUES ('bad1', 'queued', '{}', NULL, 'now', 'now')")
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("INSERT INTO jobs(job_id, status, payload_json, owner_user_id, created_at, updated_at) VALUES ('bad2', 'queued', '{}', '   ', 'now', 'now')")
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("INSERT INTO batches(batch_id, name, status, config_json, owner_user_id, created_at, updated_at) VALUES ('bad-b1', 'B', 'queued', '{}', NULL, 'now', 'now')")
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("INSERT INTO batches(batch_id, name, status, config_json, owner_user_id, created_at, updated_at) VALUES ('bad-b2', 'B', 'queued', '{}', '', 'now', 'now')")
+
     def test_claim_next_is_atomic_and_honors_priority(self) -> None:
         self.store.create("old", {"status": "queued"})
         self.store.create("urgent", {"status": "queued"})

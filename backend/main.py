@@ -1,18 +1,20 @@
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import textwrap
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -69,6 +71,7 @@ from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisher
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SQLiteSocialPublishStore
 from infrastructure.social_credentials import SocialCredentialStore
+from infrastructure.tenant_governance import QuotaExceededError, TenantGovernanceStore
 from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
@@ -138,6 +141,34 @@ OUTPUT_DIR = SETTINGS.output_dir
 WORK_DIR = SETTINGS.work_dir
 FFMPEG = SETTINGS.ffmpeg
 FFPROBE = SETTINGS.ffprobe
+
+
+def storage_owner_segment(owner_user_id: str) -> str:
+    """Return a filesystem-safe, stable tenant directory name."""
+    value = str(owner_user_id).strip()
+    if re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value):
+        return value
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def tenant_job_dir(root: Path, owner_user_id: str, job_id: str) -> Path:
+    path = (root / "users" / storage_owner_segment(owner_user_id) / job_id).resolve()
+    root_resolved = root.resolve()
+    if not path.is_relative_to(root_resolved):
+        raise ValueError("Invalid tenant storage path")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def stored_artifact_path(filename: str) -> Path:
+    path = (OUTPUT_DIR / str(filename)).resolve()
+    if not path.is_relative_to(OUTPUT_DIR.resolve()):
+        raise ValueError("Invalid artifact path")
+    return path
+
+
+def stored_artifact_name(path: Path) -> str:
+    return path.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()
 
 VOICE_OPTIONS = {
     "female": "vi-VN-HoaiMyNeural",
@@ -221,12 +252,71 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     douyin_proxy=os.environ.get("VIDTRANS_DOUYIN_PROXY", "").strip() or None,
     youtube_proxy=os.environ.get("VIDTRANS_YOUTUBE_PROXY", "").strip() or None,
 )
+_TENANT_PUBLISHER_LOCK = threading.RLock()
+_TENANT_TIKTOK_PUBLISHERS: dict[str, TikTokPublisher] = {}
+_TENANT_SOCIAL_REGISTRIES: dict[str, PublisherRegistry] = {}
+
+
+def job_owner_user_id(job_id: str) -> str:
+    job = JOB_SERVICE.get(job_id) or {}
+    owner = str(job.get("owner_user_id") or "")
+    if not owner:
+        raise RuntimeError("Job không có owner")
+    return owner
+
+
+def tenant_social_auth_dir(owner_user_id: str, platform: str) -> Path:
+    path = (WORK_DIR / "users" / storage_owner_segment(owner_user_id) / "social-auth" / platform).resolve()
+    if not path.is_relative_to(WORK_DIR.resolve()):
+        raise RuntimeError("Invalid social credential path")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def tenant_tiktok_publisher(owner_user_id: str) -> TikTokPublisher:
+    with _TENANT_PUBLISHER_LOCK:
+        publisher = _TENANT_TIKTOK_PUBLISHERS.get(owner_user_id)
+        if publisher is None:
+            publisher = TikTokPublisher(tenant_social_auth_dir(owner_user_id, "tiktok"))
+            _TENANT_TIKTOK_PUBLISHERS[owner_user_id] = publisher
+        return publisher
+
+
+def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
+    with _TENANT_PUBLISHER_LOCK:
+        registry = _TENANT_SOCIAL_REGISTRIES.get(owner_user_id)
+        if registry is None:
+            tiktok = tenant_tiktok_publisher(owner_user_id)
+            registry = PublisherRegistry([
+                InstagramPublisher(tenant_social_auth_dir(owner_user_id, "instagram"), SIGNED_MEDIA_URLS),
+                ThreadsPublisher(tenant_social_auth_dir(owner_user_id, "threads"), SIGNED_MEDIA_URLS),
+                PINTEREST_PUBLISHER,
+                LINKEDIN_PUBLISHER,
+                FacebookPublisher(tenant_social_auth_dir(owner_user_id, "facebook")),
+                YouTubePublisher(tenant_social_auth_dir(owner_user_id, "youtube")),
+                TikTokSocialPublisher(tiktok),
+            ])
+            _TENANT_SOCIAL_REGISTRIES[owner_user_id] = registry
+        return registry
+
+
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
 TIKTOK_PUBLISH_STORE = SQLiteTikTokPublishStore(WORK_DIR / "jobs.sqlite3")
-TIKTOK_PUBLISHING = TikTokPublishingService(TIKTOK_PUBLISH_STORE, TIKTOK_PUBLISHER)
-app.include_router(create_tiktok_browser_router(TIKTOK_BROWSER, JOB_SERVICE, OUTPUT_DIR, TIKTOK_PUBLISHER))
-app.include_router(create_tiktok_publish_router(TIKTOK_PUBLISHING, JOB_SERVICE, OUTPUT_DIR))
+TIKTOK_PUBLISHING = TikTokPublishingService(
+    TIKTOK_PUBLISH_STORE,
+    TIKTOK_PUBLISHER,
+    publisher_resolver=lambda job_id: tenant_tiktok_publisher(job_owner_user_id(job_id)),
+)
+app.include_router(create_tiktok_browser_router(
+    TIKTOK_BROWSER,
+    JOB_SERVICE,
+    OUTPUT_DIR,
+    TIKTOK_PUBLISHER,
+    owner_resolver=lambda request: str(current_account(request)["user_id"]),
+    publisher_resolver=lambda request: tenant_tiktok_publisher(str(current_account(request)["user_id"])),
+))
+app.include_router(create_tiktok_publish_router(TIKTOK_PUBLISHING, JOB_SERVICE, OUTPUT_DIR, owner_resolver=lambda request: str(current_account(request)["user_id"])))
 SOCIAL_PUBLISH_STORE = SQLiteSocialPublishStore(WORK_DIR / "jobs.sqlite3")
 _migrated_tiktok_history = SOCIAL_PUBLISH_STORE.migrate_legacy_tiktok_history()
 if _migrated_tiktok_history:
@@ -251,22 +341,180 @@ SOCIAL_PUBLISHERS = PublisherRegistry([
     FACEBOOK_PUBLISHER, YOUTUBE_PUBLISHER,
     TIKTOK_SOCIAL_PUBLISHER,
 ])
-SOCIAL_PUBLISHING = SocialPublishingService(SOCIAL_PUBLISH_STORE, SOCIAL_PUBLISHERS)
-app.include_router(create_social_publish_router(SOCIAL_PUBLISHING, JOB_SERVICE, OUTPUT_DIR))
-app.include_router(create_instagram_router(INSTAGRAM_PUBLISHER, SIGNED_MEDIA_URLS))
-app.include_router(create_threads_router(THREADS_PUBLISHER))
-app.include_router(create_social_account_router("facebook", FACEBOOK_PUBLISHER, FacebookPublisherError))
-app.include_router(create_social_account_router("youtube", YOUTUBE_PUBLISHER, YouTubePublisherError))
+SOCIAL_PUBLISHING = SocialPublishingService(
+    SOCIAL_PUBLISH_STORE,
+    SOCIAL_PUBLISHERS,
+    publisher_resolver=lambda platform, job_id: tenant_social_registry(job_owner_user_id(job_id)).get(platform),
+)
+app.include_router(create_social_publish_router(SOCIAL_PUBLISHING, JOB_SERVICE, OUTPUT_DIR, owner_resolver=lambda request: str(current_account(request)["user_id"])))
+app.include_router(create_instagram_router(
+    INSTAGRAM_PUBLISHER, SIGNED_MEDIA_URLS,
+    publisher_resolver=lambda request: tenant_publisher_for_request(request, "INSTAGRAM"),
+    oauth_session_registrar=lambda request, platform, url: register_tenant_oauth_session(request, platform, url),
+    callback_publisher_resolver=lambda platform, state: tenant_publisher_for_oauth_callback(platform, state),
+))
+app.include_router(create_threads_router(
+    THREADS_PUBLISHER,
+    publisher_resolver=lambda request: tenant_publisher_for_request(request, "THREADS"),
+    oauth_session_registrar=lambda request, platform, url: register_tenant_oauth_session(request, platform, url),
+    callback_publisher_resolver=lambda platform, state: tenant_publisher_for_oauth_callback(platform, state),
+))
+app.include_router(create_social_account_router(
+    "facebook", FACEBOOK_PUBLISHER, FacebookPublisherError,
+    publisher_resolver=lambda request: tenant_publisher_for_request(request, "FACEBOOK"),
+    oauth_session_registrar=lambda request, platform, url: register_tenant_oauth_session(request, platform, url),
+    callback_publisher_resolver=lambda platform, state: tenant_publisher_for_oauth_callback(platform, state),
+))
+app.include_router(create_social_account_router(
+    "youtube", YOUTUBE_PUBLISHER, YouTubePublisherError,
+    publisher_resolver=lambda request: tenant_publisher_for_request(request, "YOUTUBE"),
+    oauth_session_registrar=lambda request, platform, url: register_tenant_oauth_session(request, platform, url),
+    callback_publisher_resolver=lambda platform, state: tenant_publisher_for_oauth_callback(platform, state),
+))
 AUTH_MANAGER = AuthManager()
 ADMIN_ACCOUNTS = AdminAccountStore(
     WORK_DIR / "jobs.sqlite3",
     AUTH_MANAGER.config.username if AUTH_MANAGER.config.enabled else "admin",
     AUTH_MANAGER.config.password_hash if AUTH_MANAGER.config.enabled else "",
 )
+_bootstrap_login = AUTH_MANAGER.config.username or "admin"
+_bootstrap_email = _bootstrap_login if "@" in _bootstrap_login else f"{_bootstrap_login}@local.vidtrans"
+_bootstrap_owner = ADMIN_ACCOUNTS.get_by_email(_bootstrap_email)
+if _bootstrap_owner is None:
+    raise RuntimeError("Bootstrap owner account is missing")
+JOB_SERVICE.backfill_legacy_owner(str(_bootstrap_owner["user_id"]))
+
+
+def copy_legacy_file(source: Path, destination: Path) -> bool:
+    if not source.is_file():
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.exists():
+        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+        shutil.copy2(source, temporary)
+        temporary.replace(destination)
+    return destination.is_file() and destination.stat().st_size == source.stat().st_size
+
+
+def migrate_legacy_job_files() -> tuple[int, int]:
+    """Namespace legacy files without deleting the recoverable originals."""
+    migrated_jobs = 0
+    migrated_files = 0
+    offset = 0
+    while True:
+        jobs, total = JOB_SERVICE.list_jobs(limit=200, offset=offset)
+        if not jobs:
+            break
+        for job in jobs:
+            job_id = str(job["job_id"])
+            owner_user_id = str(job.get("owner_user_id") or _bootstrap_owner["user_id"])
+            updates: dict[str, Any] = {}
+            output_dir = tenant_job_dir(OUTPUT_DIR, owner_user_id, job_id)
+            for field in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
+                value = str(job.get(field) or "")
+                if not value or "/" in value or "\\" in value:
+                    continue
+                source = (OUTPUT_DIR / value).resolve()
+                destination = output_dir / Path(value).name
+                if copy_legacy_file(source, destination):
+                    updates[field] = stored_artifact_name(destination)
+                    migrated_files += 1
+            resume_request = job.get("resume_request")
+            if isinstance(resume_request, dict):
+                migrated_request = dict(resume_request)
+                request_changed = False
+                upload_dir = tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id)
+                for field in ("video_path", "source_cookie_path", "background_music_path"):
+                    raw_path = str(migrated_request.get(field) or "")
+                    if not raw_path:
+                        continue
+                    source = Path(raw_path).resolve()
+                    if not source.is_relative_to(UPLOAD_DIR.resolve()) or source.is_relative_to(upload_dir):
+                        continue
+                    destination = upload_dir / source.name
+                    if copy_legacy_file(source, destination):
+                        migrated_request[field] = str(destination)
+                        request_changed = True
+                        migrated_files += 1
+                if request_changed:
+                    updates["resume_request"] = migrated_request
+            legacy_work = (WORK_DIR / job_id).resolve()
+            tenant_work = tenant_job_dir(WORK_DIR, owner_user_id, job_id)
+            if legacy_work.is_dir() and legacy_work != tenant_work:
+                shutil.copytree(legacy_work, tenant_work, dirs_exist_ok=True)
+            if updates:
+                JOB_SERVICE.update(job_id, **updates)
+                migrated_jobs += 1
+        offset += len(jobs)
+        if offset >= total:
+            break
+    return migrated_jobs, migrated_files
+
+
+_migrated_job_count, _migrated_file_count = migrate_legacy_job_files()
+if _migrated_job_count:
+    logger.info("Namespaced %d legacy jobs and %d files", _migrated_job_count, _migrated_file_count)
+
+
+def migrate_legacy_social_auth(owner_user_id: str) -> int:
+    """Copy pre-tenant OAuth files to the bootstrap owner without overwriting."""
+    migrated = 0
+    for platform in ("tiktok", "instagram", "threads", "facebook", "youtube"):
+        source = WORK_DIR / f"{platform}-auth"
+        destination = tenant_social_auth_dir(owner_user_id, platform)
+        if not source.is_dir():
+            continue
+        for source_file in source.rglob("*"):
+            if not source_file.is_file():
+                continue
+            relative = source_file.relative_to(source)
+            target = destination / relative
+            if target.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, target)
+            migrated += 1
+    return migrated
+
+
+_migrated_social_auth_files = migrate_legacy_social_auth(str(_bootstrap_owner["user_id"]))
+if _migrated_social_auth_files:
+    logger.info("Migrated %d legacy social credential files to bootstrap owner", _migrated_social_auth_files)
 SOCIAL_CREDENTIALS = SocialCredentialStore(WORK_DIR / "jobs.sqlite3")
+
+
+def tenant_publisher_for_request(request: Request, platform: str):
+    user_id = str(current_account(request)["user_id"])
+    if platform.upper() == "TIKTOK":
+        return tenant_tiktok_publisher(user_id)
+    return tenant_social_registry(user_id).get(platform.upper())
+
+
+def register_tenant_oauth_session(request: Request, platform: str, authorization_url: str) -> None:
+    state = (parse_qs(urlsplit(authorization_url).query).get("state") or [""])[0]
+    if not state:
+        raise HTTPException(status_code=503, detail="Nhà cung cấp OAuth không trả về state")
+    SOCIAL_CREDENTIALS.create_oauth_session(
+        user_id=str(current_account(request)["user_id"]),
+        platform=platform,
+        state=state,
+        expires_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        return_path="/#tiktok",
+    )
+
+
+def tenant_publisher_for_oauth_callback(platform: str, state: str):
+    session = SOCIAL_CREDENTIALS.consume_oauth_session(platform=platform, state=state)
+    if session is None:
+        raise ValueError("Phiên kết nối mạng xã hội không hợp lệ hoặc đã hết hạn")
+    user_id = str(session["user_id"])
+    if platform.upper() == "TIKTOK":
+        return tenant_tiktok_publisher(user_id)
+    return tenant_social_registry(user_id).get(platform.upper())
 PAYMENT_CONFIG = PaymentConfig.from_env()
 PAYMENT_ORDERS = PaymentOrderStore(WORK_DIR / "jobs.sqlite3")
 PAYMENT_GATEWAY = PaymentGatewayClient(PAYMENT_CONFIG)
+TENANT_GOVERNANCE = TenantGovernanceStore(WORK_DIR / "jobs.sqlite3")
 ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
@@ -280,6 +528,7 @@ class JobCancelled(RuntimeError):
 PUBLIC_AUTH_PATHS = {
     "/api/v1/auth/status",
     "/api/v1/auth/token",
+    "/api/v1/auth/register",
     "/api/v1/tiktok-auth/callback",
     "/api/v1/instagram-auth/callback",
     "/api/v1/threads-auth/callback",
@@ -397,10 +646,7 @@ def current_account(request: Request) -> dict[str, Any]:
     if account is not None:
         return account
     # Authentication-disabled mode is local development only.
-    owner = ADMIN_ACCOUNTS.list(query="admin@local.vidtrans")
-    if not owner:
-        raise HTTPException(status_code=401, detail="Không xác định được tài khoản hiện tại")
-    return owner[0]
+    return _bootstrap_owner
 
 
 def require_roles(request: Request, *roles: str) -> dict[str, Any]:
@@ -408,6 +654,33 @@ def require_roles(request: Request, *roles: str) -> dict[str, Any]:
     if account["role"] not in roles:
         raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này")
     return account
+
+
+def account_plan_limit(account: dict[str, Any]) -> int | None:
+    plan = PLAN_CATALOG.get(str(account.get("plan") or "free"), PLAN_CATALOG["free"])
+    minutes = plan.get("minutes")
+    return int(minutes) if minutes is not None else None
+
+
+def reserve_job_quota(job_id: str, account: dict[str, Any], minutes: int = 1) -> None:
+    try:
+        TENANT_GOVERNANCE.reserve(
+            job_id=job_id,
+            user_id=str(account["user_id"]),
+            limit_minutes=account_plan_limit(account),
+            minutes=minutes,
+        )
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=402, detail=f"Đã hết quota gói {str(account.get('plan', 'free')).upper()}: {exc}") from exc
+
+
+def job_plan_limit(job_id: str) -> int | None:
+    owner_user_id = job_owner_user_id(job_id)
+    try:
+        account = ADMIN_ACCOUNTS.get(owner_user_id)
+    except AdminAccountError:
+        return 0
+    return account_plan_limit(account)
 
 
 def ff_escape_path(path: Path) -> str:
@@ -1599,7 +1872,10 @@ def process_video(
     tiktok_publish_at: str | None = None,
 ) -> None:
     _job_context.job_id = job_id
-    work_dir = WORK_DIR / job_id
+    current_job = JOB_SERVICE.get(job_id) or {}
+    owner_user_id = str(current_job.get("owner_user_id") or _bootstrap_owner["user_id"])
+    work_dir = tenant_job_dir(WORK_DIR, owner_user_id, job_id)
+    output_dir = tenant_job_dir(OUTPUT_DIR, owner_user_id, job_id)
     work_dir.mkdir(parents=True, exist_ok=True)
     subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
     subtitle_style["font_name"] = language_profile(target_language).font_family
@@ -1613,6 +1889,11 @@ def process_video(
                 check_active=lambda: ensure_job_active(job_id),
             )
         video_duration = source_probe.duration
+        TENANT_GOVERNANCE.adjust(
+            job_id=job_id,
+            limit_minutes=job_plan_limit(job_id),
+            minutes=TENANT_GOVERNANCE.minutes_for_duration(video_duration),
+        )
         video_width, video_height = source_probe.width, source_probe.height
         checkpoint_store = StageCheckpointStore(work_dir)
         transcript_fingerprint = fingerprint_payload(
@@ -1747,7 +2028,7 @@ def process_video(
             ),
         )
         # Publish diagnostics even on failure, before any TTS, rendering or posting.
-        translation_path = OUTPUT_DIR / f"{job_id}.translation.json"
+        translation_path = output_dir / f"{job_id}.translation.json"
         write_json_atomic(translation_path, {
             "version": 4,
             "source_method": source_method,
@@ -1760,7 +2041,7 @@ def process_video(
             "review_cues": sum(1 for s in translated_segments if s.get("needs_review")),
             "segments": translated_segments,
         })
-        update_job(job_id, translation_file=translation_path.name)
+        update_job(job_id, translation_file=stored_artifact_name(translation_path))
         ensure_translation_complete(translated_segments, target_language=target_language)
         if not translation_cache_hit:
             translation_checkpoint = checkpoint_store.commit_json(
@@ -1777,8 +2058,8 @@ def process_video(
             style=subtitle_style,
         )
 
-        srt_path = OUTPUT_DIR / f"{job_id}.srt"
-        translation_path = OUTPUT_DIR / f"{job_id}.translation.json"
+        srt_path = output_dir / f"{job_id}.srt"
+        translation_path = output_dir / f"{job_id}.translation.json"
         ass_path = work_dir / f"{job_id}.ass"
         tiktok_json_path: Path | None = None
         tiktok_text_path: Path | None = None
@@ -1795,7 +2076,7 @@ def process_video(
                     )
                     tiktok_json_path, tiktok_text_path = write_tiktok_artifacts(
                         tiktok_post,
-                        OUTPUT_DIR,
+                        output_dir,
                         job_id,
                     )
             except Exception as exc:
@@ -1995,7 +2276,7 @@ def process_video(
                 },
             )
 
-        output_video = OUTPUT_DIR / f"output_{job_id}.mp4"
+        output_video = output_dir / f"output_{job_id}.mp4"
         render_fingerprint = fingerprint_payload(
             {
                 "version": 1,
@@ -2052,16 +2333,16 @@ def process_video(
         ensure_job_active(job_id)
 
         artifact_fields: dict[str, Any] = {
-            "output_video": str(output_video.name),
-            "subtitle_file": str(srt_path.name),
-            "translation_file": str(translation_path.name),
+            "output_video": stored_artifact_name(output_video),
+            "subtitle_file": stored_artifact_name(srt_path),
+            "translation_file": stored_artifact_name(translation_path),
             "transcript_file": str(transcript_path.relative_to(BASE_DIR)),
         }
         if tiktok_json_path and tiktok_text_path:
             artifact_fields.update(
                 {
-                    "tiktok_json_file": str(tiktok_json_path.name),
-                    "tiktok_text_file": str(tiktok_text_path.name),
+                    "tiktok_json_file": stored_artifact_name(tiktok_json_path),
+                    "tiktok_text_file": stored_artifact_name(tiktok_text_path),
                 }
             )
 
@@ -2103,7 +2384,7 @@ def process_video(
                     raise TikTokPublisherError(
                         "Không có tiêu đề đã tạo nên chưa thể tự động đăng TikTok"
                     )
-                publish_result = TIKTOK_PUBLISHER.publish(
+                publish_result = tenant_tiktok_publisher(owner_user_id).publish(
                     output_video,
                     tiktok_post.title,
                     privacy_level=tiktok_privacy_level,
@@ -2133,6 +2414,7 @@ def process_video(
             **tiktok_publish_fields,
         }
         update_job(job_id, **completion_fields)
+        TENANT_GOVERNANCE.consume(job_id)
     except JobCancelled:
         logger.info("Video processing cancelled for job %s", job_id)
         current = JOB_SERVICE.get(job_id) or {}
@@ -2144,6 +2426,7 @@ def process_video(
             step_detail="Đã hủy theo yêu cầu",
             finished_at=utc_now(),
         )
+        TENANT_GOVERNANCE.release(job_id)
     except Exception as exc:
         logger.exception("Video processing failed for job %s", job_id)
         update_job(
@@ -2153,6 +2436,7 @@ def process_video(
             error=public_error_message(exc),
             finished_at=utc_now(),
         )
+        TENANT_GOVERNANCE.release(job_id)
     finally:
         if hasattr(_job_context, "job_id"):
             del _job_context.job_id
@@ -2176,7 +2460,7 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             tiktok_publish_status="UPLOADING",
             tiktok_publish_error=None,
         )
-        publish_result = TIKTOK_PUBLISHER.publish(
+        publish_result = tenant_tiktok_publisher(job_owner_user_id(job_id)).publish(
             video_path,
             title,
             privacy_level=privacy_level,
@@ -2196,6 +2480,7 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             tiktok_publish_status=publish_result["status"],
             tiktok_publish_detail=publish_result.get("status_payload"),
         )
+        TENANT_GOVERNANCE.consume(job_id)
     except JobCancelled:
         current = JOB_SERVICE.get(job_id) or {}
         update_job(
@@ -2208,6 +2493,7 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             job_action=None,
             publish_request=None,
         )
+        TENANT_GOVERNANCE.consume(job_id)
     except Exception as exc:
         logger.warning("Scheduled TikTok publish failed for job %s", job_id, exc_info=True)
         update_job(
@@ -2222,6 +2508,7 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             tiktok_publish_status="FAILED",
             tiktok_publish_error=str(exc),
         )
+        TENANT_GOVERNANCE.consume(job_id)
     finally:
         if hasattr(_job_context, "job_id"):
             del _job_context.job_id
@@ -2288,9 +2575,12 @@ def prepare_job_source_video(job_id: str, resume_request: dict[str, Any]) -> Pat
             detail = f"Đã tải {megabytes:.1f} MB từ {social_platform(source_url)}"
         update_job(job_id, progress=progress, step_detail=detail)
 
+    job = JOB_SERVICE.get(job_id) or {}
+    owner_user_id = str(job.get("owner_user_id") or _bootstrap_owner["user_id"])
+    upload_dir = tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id)
     result = SOCIAL_VIDEO_DOWNLOADER.download(
         source_url,
-        UPLOAD_DIR / job_id,
+        upload_dir,
         progress_callback=report_download_progress,
         cancel_requested=lambda: JOB_SERVICE.is_cancel_requested(job_id),
         cookie_file=(
@@ -2308,7 +2598,7 @@ def prepare_job_source_video(job_id: str, resume_request: dict[str, Any]) -> Pat
     source_cookie_value = stored_request.pop("source_cookie_path", None)
     if source_cookie_value:
         source_cookie_path = Path(str(source_cookie_value)).resolve()
-        if source_cookie_path.parent == UPLOAD_DIR.resolve():
+        if source_cookie_path.is_relative_to(upload_dir):
             source_cookie_path.unlink(missing_ok=True)
     update_job(
         job_id,
@@ -2490,11 +2780,19 @@ def create_admin_account(
     role: str = Form("viewer", max_length=32),
     plan: str = Form("free", max_length=32),
 ) -> JSONResponse:
-    require_roles(request, "owner", "admin")
+    actor = require_roles(request, "owner", "admin")
     try:
         account = ADMIN_ACCOUNTS.create(
             email=email, display_name=display_name, role=role, plan=plan,
             approval_status="pending", payment_status="trial", password_hash=hash_password(password),
+        )
+        TENANT_GOVERNANCE.audit(
+            actor_user_id=actor["user_id"],
+            action="account.create",
+            resource_type="account",
+            resource_id=account["user_id"],
+            target_user_id=account["user_id"],
+            metadata={"email": email, "role": role, "plan": plan},
         )
     except AdminAccountError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2511,7 +2809,7 @@ def update_admin_account(
     plan: str = Form(..., max_length=32),
     payment_status: str = Form(..., max_length=32),
 ) -> JSONResponse:
-    require_roles(request, "owner", "admin")
+    actor = require_roles(request, "owner", "admin")
     try:
         account = ADMIN_ACCOUNTS.update(
             user_id,
@@ -2521,10 +2819,162 @@ def update_admin_account(
             plan=plan,
             payment_status=payment_status,
         )
+        TENANT_GOVERNANCE.audit(
+            actor_user_id=actor["user_id"],
+            action="account.update",
+            resource_type="account",
+            resource_id=user_id,
+            target_user_id=user_id,
+            metadata={
+                "display_name": display_name,
+                "role": role,
+                "approval_status": approval_status,
+                "plan": plan,
+                "payment_status": payment_status,
+            },
+        )
     except AdminAccountError as exc:
         status_code = 404 if "Không tìm thấy" in str(exc) else 422
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return JSONResponse(public_admin_account(account), headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/v1/admin/accounts/{user_id}")
+def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONResponse:
+    caller = require_roles(request, "owner", "admin")
+    if user_id == caller["user_id"]:
+        raise HTTPException(status_code=400, detail="Không thể tự xóa tài khoản của chính mình")
+    try:
+        deleted = ADMIN_ACCOUNTS.delete(user_id)
+    except AdminAccountError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=caller["user_id"],
+        action="account.delete",
+        resource_type="account",
+        resource_id=user_id,
+        target_user_id=user_id,
+        metadata={"email": deleted.get("email")},
+    )
+    # Safely clean up user-specific storage directories
+    for base_dir in (WORK_DIR, UPLOAD_DIR):
+        user_dir = base_dir / "users" / storage_owner_segment(user_id)
+        if user_dir.exists() and user_dir.is_relative_to(base_dir.resolve()):
+            shutil.rmtree(user_dir, ignore_errors=True)
+    return JSONResponse({"deleted": True, "user_id": user_id}, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/admin/jobs")
+def admin_list_jobs(
+    request: Request,
+    user_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> JSONResponse:
+    caller = require_roles(request, "owner", "admin")
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=caller["user_id"],
+        action="admin.jobs.list",
+        resource_type="job",
+        target_user_id=user_id or None,
+        metadata={"user_id": user_id, "status": status, "search": search, "limit": limit, "offset": offset},
+    )
+    jobs, total = JOB_SERVICE.list_jobs(
+        status=status,
+        search=search,
+        limit=limit,
+        offset=offset,
+        owner_user_id=user_id or None,
+    )
+    positions = JOB_SERVICE.queue_positions()
+    user_lookup: dict[str, dict[str, str]] = {}
+    items = []
+    for job in jobs:
+        owner = str(job.get("owner_user_id") or "")
+        if owner and owner not in user_lookup:
+            try:
+                acc = ADMIN_ACCOUNTS.get(owner)
+                user_lookup[owner] = {"email": acc.get("email", ""), "display_name": acc.get("display_name", "")}
+            except AdminAccountError:
+                user_lookup[owner] = {"email": owner, "display_name": owner}
+        user_info = user_lookup.get(owner, {"email": owner, "display_name": owner})
+        job_data = job_response(str(job["job_id"]), job, positions)
+        job_data["owner_user_id"] = owner
+        job_data["owner_email"] = user_info["email"]
+        job_data["owner_display_name"] = user_info["display_name"]
+        items.append(job_data)
+    return JSONResponse({"items": items, "total": total, "limit": limit, "offset": offset}, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/admin/jobs/{job_id}")
+def admin_get_job(request: Request, job_id: str) -> JSONResponse:
+    caller = require_roles(request, "owner", "admin")
+    job = JOB_SERVICE.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy job")
+    owner = str(job.get("owner_user_id") or "")
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=caller["user_id"],
+        action="admin.jobs.view",
+        resource_type="job",
+        resource_id=job_id,
+        target_user_id=owner or None,
+        metadata={"job_id": job_id},
+    )
+    user_info = {"email": owner, "display_name": owner}
+    if owner:
+        try:
+            acc = ADMIN_ACCOUNTS.get(owner)
+            user_info = {"email": acc.get("email", ""), "display_name": acc.get("display_name", "")}
+        except AdminAccountError:
+            pass
+    job_data = job_response(job_id, job, JOB_SERVICE.queue_positions())
+    job_data["owner_user_id"] = owner
+    job_data["owner_email"] = user_info["email"]
+    job_data["owner_display_name"] = user_info["display_name"]
+    return JSONResponse(job_data, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/admin/audit-events")
+def admin_list_audit_events(
+    request: Request,
+    actor_user_id: str | None = Query(default=None),
+    target_user_id: str | None = Query(default=None),
+    action: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> JSONResponse:
+    require_roles(request, "owner", "admin")
+    items, total = TENANT_GOVERNANCE.list_audit(
+        actor_user_id=actor_user_id or None,
+        target_user_id=target_user_id or None,
+        action=action or None,
+        limit=limit,
+        offset=offset,
+    )
+    return JSONResponse({"items": items, "total": total, "limit": limit, "offset": offset}, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/admin/users/{user_id}/quota")
+def admin_user_quota(request: Request, user_id: str) -> JSONResponse:
+    caller = require_roles(request, "owner", "admin")
+    try:
+        target_account = ADMIN_ACCOUNTS.get(user_id)
+    except AdminAccountError as exc:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng") from exc
+    limit = account_plan_limit(target_account)
+    overview = TENANT_GOVERNANCE.overview(user_id, limit)
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=caller["user_id"],
+        action="admin.quota.view",
+        resource_type="quota",
+        resource_id=user_id,
+        target_user_id=user_id,
+        metadata={"plan": target_account.get("plan")},
+    )
+    return JSONResponse({"account": public_admin_account(target_account), "quota": overview}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/v1/admin/workflow-events/summary")
@@ -2576,14 +3026,15 @@ def replay_workflow_event(event_id: str) -> JSONResponse:
     )
 
 
-def validate_tiktok_auto_publish(request: ProcessingRequest) -> None:
+def validate_tiktok_auto_publish(request: ProcessingRequest, owner_user_id: str) -> None:
     if not request.tiktok.auto_publish:
         return
-    if not TIKTOK_PUBLISHER.connection_status()["connected"]:
+    publisher = tenant_tiktok_publisher(owner_user_id)
+    if not publisher.connection_status()["connected"]:
         raise HTTPException(status_code=400, detail="Hãy kết nối tài khoản TikTok trước khi bật tự động đăng")
     try:
-        creator = TIKTOK_PUBLISHER.creator_info()
-    except TikTokPublisherError as exc:
+        creator = publisher.creator_info()
+    except (TikTokPublisherError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     privacy_options = creator.get("privacy_level_options") or []
     if request.tiktok.privacy_level not in privacy_options:
@@ -2603,9 +3054,11 @@ def get_current_user(request: Request) -> JSONResponse:
 def billing_overview(request: Request) -> JSONResponse:
     account = current_account(request)
     providers = PAYMENT_CONFIG.availability()
+    quota_info = TENANT_GOVERNANCE.overview(str(account["user_id"]), account_plan_limit(account))
     return JSONResponse(
         {
             "account": public_admin_account(account),
+            "quota": quota_info,
             "plans": [{"key": key, **value} for key, value in PLAN_CATALOG.items()],
             "providers": providers,
             "provider_notes": {
@@ -2751,6 +3204,14 @@ def confirm_bank_payment(request: Request, order_id: str) -> JSONResponse:
             provider_transaction_ref="manual-bank-confirmation",
         )
         ADMIN_ACCOUNTS.update(updated["user_id"], plan=updated["plan"], payment_status="active")
+        TENANT_GOVERNANCE.audit(
+            actor_user_id=actor["user_id"],
+            action="billing.order_confirm",
+            resource_type="order",
+            resource_id=order_id,
+            target_user_id=order.get("user_id"),
+            metadata={"order_id": order_id, "plan": updated.get("plan")},
+        )
     except PaymentError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return JSONResponse(updated, headers={"Cache-Control": "no-store"})
@@ -2893,6 +3354,47 @@ def create_auth_token(
     return response
 
 
+@app.post("/api/v1/auth/register", status_code=201)
+def register_account(
+    display_name: str = Form(..., min_length=1, max_length=120),
+    email: str = Form(..., max_length=254),
+    password: str = Form(..., min_length=12, max_length=256),
+) -> JSONResponse:
+    if not AUTH_MANAGER.config.configured:
+        raise HTTPException(status_code=503, detail="Hệ thống đăng ký chưa sẵn sàng")
+    try:
+        account = ADMIN_ACCOUNTS.create(
+            email=email,
+            display_name=display_name,
+            role="editor",
+            approval_status="approved",
+            plan="free",
+            payment_status="exempt",
+            password_hash=hash_password(password),
+        )
+    except (AdminAccountError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    token, expires_in = AUTH_MANAGER.issue_token(
+        account["email"], user_id=account["user_id"], role=account["role"], scope="user"
+    )
+    response = JSONResponse(
+        {"account": public_admin_account(account), "expires_in": expires_in},
+        status_code=201,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+    response.set_cookie(
+        key=AUTH_MANAGER.config.cookie_name,
+        value=token,
+        max_age=expires_in,
+        httponly=True,
+        secure=AUTH_MANAGER.config.cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+    return response
+
+
 @app.delete("/api/v1/auth/session")
 def delete_auth_session() -> JSONResponse:
     response = JSONResponse(
@@ -2916,19 +3418,30 @@ def check_proxy_auth() -> Response:
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/v1/auth/admin-proxy-check")
+def check_admin_proxy_auth(request: Request) -> Response:
+    """Authorize the shared source-login browser for administrators only."""
+
+    require_roles(request, "owner", "admin")
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/v1/douyin-browser/status")
-def get_douyin_browser_status(refresh: bool = Query(default=False)) -> JSONResponse:
+def get_douyin_browser_status(request: Request, refresh: bool = Query(default=False)) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     return JSONResponse(DOUYIN_BROWSER_AUTH.status(refresh=refresh))
 
 
 @app.post("/api/v1/douyin-browser/sync")
-def sync_douyin_browser_session() -> JSONResponse:
+def sync_douyin_browser_session(request: Request) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     payload = DOUYIN_BROWSER_AUTH.sync()
     return JSONResponse(payload, status_code=200 if payload["available"] else 503)
 
 
 @app.post("/api/v1/douyin-browser/reload")
-def reload_douyin_browser() -> JSONResponse:
+def reload_douyin_browser(request: Request) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     try:
         return JSONResponse(DOUYIN_BROWSER_AUTH.reload())
     except RuntimeError as exc:
@@ -2936,7 +3449,8 @@ def reload_douyin_browser() -> JSONResponse:
 
 
 @app.delete("/api/v1/douyin-browser/session")
-def delete_douyin_browser_session() -> JSONResponse:
+def delete_douyin_browser_session(request: Request) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     try:
         return JSONResponse(DOUYIN_BROWSER_AUTH.logout())
     except RuntimeError as exc:
@@ -2944,11 +3458,13 @@ def delete_douyin_browser_session() -> JSONResponse:
 
 
 @app.get("/api/v1/douyin-auth")
-def get_douyin_auth_status() -> JSONResponse:
+def get_douyin_auth_status(request: Request) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     return JSONResponse(DOUYIN_BROWSER_AUTH.status())
 
 @app.delete("/api/v1/douyin-auth")
-def logout_douyin() -> JSONResponse:
+def logout_douyin(request: Request) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     DOUYIN_BROWSER_AUTH.logout()
     return JSONResponse({"authenticated": False, "message": "Đã xóa phiên đăng nhập Douyin"})
 
@@ -2968,12 +3484,14 @@ def _source_browser_manager(platform: str) -> Any:
 
 
 @app.get("/api/v1/source-browser/{platform}/status")
-def get_source_browser_status(platform: str, refresh: bool = Query(default=False)) -> JSONResponse:
+def get_source_browser_status(request: Request, platform: str, refresh: bool = Query(default=False)) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     return JSONResponse(_source_browser_manager(platform).status(refresh=refresh))
 
 
 @app.post("/api/v1/source-browser/{platform}/activate")
-def activate_source_browser(platform: str) -> JSONResponse:
+def activate_source_browser(request: Request, platform: str) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     try:
         return JSONResponse(_source_browser_manager(platform).reload())
     except RuntimeError as exc:
@@ -2981,13 +3499,15 @@ def activate_source_browser(platform: str) -> JSONResponse:
 
 
 @app.post("/api/v1/source-browser/{platform}/sync")
-def sync_source_browser(platform: str) -> JSONResponse:
+def sync_source_browser(request: Request, platform: str) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     payload = _source_browser_manager(platform).sync()
     return JSONResponse(payload, status_code=200 if payload["available"] else 503)
 
 
 @app.post("/api/v1/source-browser/{platform}/reload")
-def reload_source_browser(platform: str) -> JSONResponse:
+def reload_source_browser(request: Request, platform: str) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     try:
         return JSONResponse(_source_browser_manager(platform).reload())
     except RuntimeError as exc:
@@ -2995,7 +3515,8 @@ def reload_source_browser(platform: str) -> JSONResponse:
 
 
 @app.delete("/api/v1/source-browser/{platform}/session")
-def delete_source_browser_session(platform: str) -> JSONResponse:
+def delete_source_browser_session(request: Request, platform: str) -> JSONResponse:
+    require_roles(request, "owner", "admin")
     try:
         return JSONResponse(_source_browser_manager(platform).logout())
     except RuntimeError as exc:
@@ -3003,16 +3524,19 @@ def delete_source_browser_session(platform: str) -> JSONResponse:
 
 
 @app.get("/api/v1/tiktok-auth")
-def get_tiktok_auth_status(account_id: str = Query(default="")) -> JSONResponse:
-    status = TIKTOK_PUBLISHER.connection_status(account_id or None)
-    status["accounts"] = TIKTOK_PUBLISHER.accounts()
+def get_tiktok_auth_status(request: Request, account_id: str = Query(default="")) -> JSONResponse:
+    publisher = tenant_publisher_for_request(request, "TIKTOK")
+    status = publisher.connection_status(account_id or None)
+    status["accounts"] = publisher.accounts()
     return JSONResponse(status)
 
 
 @app.get("/api/v1/tiktok-auth/connect")
-def connect_tiktok() -> JSONResponse:
+def connect_tiktok(request: Request) -> JSONResponse:
     try:
-        return JSONResponse({"authorization_url": TIKTOK_PUBLISHER.authorization_url()})
+        authorization_url = tenant_publisher_for_request(request, "TIKTOK").authorization_url()
+        register_tenant_oauth_session(request, "tiktok", authorization_url)
+        return JSONResponse({"authorization_url": authorization_url})
     except TikTokPublisherError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -3027,24 +3551,26 @@ def tiktok_auth_callback(
     try:
         if error:
             raise TikTokPublisherError(error_description or error)
-        TIKTOK_PUBLISHER.exchange_code(code, state)
+        tenant_publisher_for_oauth_callback("tiktok", state).exchange_code(code, state)
         return RedirectResponse(url="/?tiktok=connected#tiktok", status_code=303)
-    except TikTokPublisherError as exc:
+    except (TikTokPublisherError, ValueError) as exc:
         message = quote_plus(str(exc))
         return RedirectResponse(url=f"/?tiktok_error={message}#tiktok", status_code=303)
 
 
 @app.delete("/api/v1/tiktok-auth")
-def disconnect_tiktok(account_id: str = Query(default="")) -> JSONResponse:
-    TIKTOK_PUBLISHER.disconnect(account_id or None)
-    status = TIKTOK_PUBLISHER.connection_status()
-    status["accounts"] = TIKTOK_PUBLISHER.accounts()
+def disconnect_tiktok(request: Request, account_id: str = Query(default="")) -> JSONResponse:
+    publisher = tenant_publisher_for_request(request, "TIKTOK")
+    publisher.disconnect(account_id or None)
+    status = publisher.connection_status()
+    status["accounts"] = publisher.accounts()
     return JSONResponse(status)
 
 
 @app.post("/process-video")
 @app.post("/convert")
 async def process_video_endpoint(
+    http_request: Request,
     file: UploadFile = File(...),
     mode: int = Form(...),
     voice_type: str = Form("female"),
@@ -3070,6 +3596,7 @@ async def process_video_endpoint(
     tiktok_privacy_level: str = Form("SELF_ONLY"),
     tiktok_publish_at: str | None = Form(default=None),
 ) -> JSONResponse:
+    owner_user_id = str(current_account(http_request)["user_id"])
     video_ext = Path(file.filename or "video.mp4").suffix.lower() or ".mp4"
     if video_ext not in SUPPORTED_VIDEO_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Định dạng video không được hỗ trợ: {video_ext}")
@@ -3103,8 +3630,9 @@ async def process_video_endpoint(
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
 
     job_id = uuid.uuid4().hex[:8]
-    validate_tiktok_auto_publish(request)
-    video_path = UPLOAD_DIR / f"{job_id}{video_ext}"
+    validate_tiktok_auto_publish(request, owner_user_id)
+    upload_dir = tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id)
+    video_path = upload_dir / f"source{video_ext}"
     with video_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     try:
@@ -3116,7 +3644,7 @@ async def process_video_endpoint(
     background_music_path = None
     if background_music is not None:
         music_ext = Path(background_music.filename or "music.mp3").suffix or ".mp3"
-        background_music_path = UPLOAD_DIR / f"{job_id}_bgm{music_ext}"
+        background_music_path = upload_dir / f"background{music_ext}"
         with background_music_path.open("wb") as buffer:
             shutil.copyfileobj(background_music.file, buffer)
 
@@ -3185,7 +3713,7 @@ async def process_video_endpoint(
             "roi_top": request.ocr.roi_top,
             "roi_bottom": request.ocr.roi_bottom,
         },
-    })
+    }, owner_user_id=owner_user_id)
     emit_workflow_event("source.uploaded", job_id, created_job)
     notify_scheduler()
 
@@ -3202,6 +3730,7 @@ async def process_video_endpoint(
 
 @app.post("/api/v1/batches")
 async def create_batch_endpoint(
+    request: Request,
     files: list[UploadFile] | None = File(default=None),
     source_links: str = Form(""),
     source_cookies: UploadFile | None = File(default=None),
@@ -3230,6 +3759,7 @@ async def create_batch_endpoint(
     tiktok_privacy_level: str = Form("SELF_ONLY"),
     tiktok_publish_at: str | None = Form(default=None),
 ) -> JSONResponse:
+    owner_user_id = str(current_account(request)["user_id"])
     # Browsers serialize an untouched <input type="file"> as an empty UploadFile.
     # Ignore only that unnamed placeholder; named zero-byte uploads are still
     # validated below and reported to the user as invalid videos.
@@ -3245,6 +3775,7 @@ async def create_batch_endpoint(
         )
     cookie_payload: bytes | None = None
     if source_cookies is not None and source_cookies.filename:
+        require_roles(request, "owner", "admin")
         if not source_urls:
             raise HTTPException(status_code=400, detail="Chỉ dùng cookies.txt khi batch có link mạng xã hội")
         cookie_payload = await source_cookies.read(512 * 1024 + 1)
@@ -3303,14 +3834,24 @@ async def create_batch_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
-    validate_tiktok_auto_publish(request)
+    validate_tiktok_auto_publish(request, owner_user_id)
+
+    account = current_account(request)
+    limit = account_plan_limit(account)
+    if limit is not None:
+        overview = TENANT_GOVERNANCE.overview(owner_user_id, limit)
+        if overview["remaining_minutes"] is not None and overview["remaining_minutes"] < (len(uploads) + len(source_urls)):
+            raise HTTPException(
+                status_code=402,
+                detail=f"Đã hết quota gói {str(account.get('plan', 'free')).upper()}: Gói còn {overview['remaining_minutes']} phút, không đủ giữ chỗ cho {len(uploads) + len(source_urls)} video mới.",
+            )
 
     batch_id = f"batch_{uuid.uuid4().hex[:10]}"
     normalized_name = " ".join(batch_name.split())[:120] or f"Batch {batch_id[-6:]}"
     background_music_path: Path | None = None
     if background_music is not None:
         music_ext = Path(background_music.filename or "music.mp3").suffix or ".mp3"
-        background_music_path = UPLOAD_DIR / f"{batch_id}_bgm{music_ext}"
+        background_music_path = tenant_job_dir(UPLOAD_DIR, owner_user_id, batch_id) / f"background{music_ext}"
         with background_music_path.open("wb") as buffer:
             shutil.copyfileobj(background_music.file, buffer)
 
@@ -3344,7 +3885,7 @@ async def create_batch_endpoint(
         for upload in uploads:
             upload_job_id = uuid.uuid4().hex[:8]
             video_ext = Path(upload.filename or "video.mp4").suffix.lower() or ".mp4"
-            upload_video_path = UPLOAD_DIR / f"{upload_job_id}{video_ext}"
+            upload_video_path = tenant_job_dir(UPLOAD_DIR, owner_user_id, upload_job_id) / f"source{video_ext}"
             with upload_video_path.open("wb") as buffer:
                 shutil.copyfileobj(upload.file, buffer)
             validate_video_file(upload_video_path, ffprobe=FFPROBE)
@@ -3360,113 +3901,123 @@ async def create_batch_endpoint(
         invalid_name = upload.filename or "video"
         raise HTTPException(status_code=400, detail=f"{invalid_name}: {exc}") from exc
 
-    JOB_SERVICE.create_batch(batch_id, name=normalized_name, config=batch_config)
+    JOB_SERVICE.create_batch(batch_id, name=normalized_name, config=batch_config, owner_user_id=owner_user_id)
 
     created_jobs: list[dict[str, Any]] = []
-    for job_id, upload, video_path in prepared_uploads:
-        resume_request = {**batch_config, "video_path": str(video_path)}
-        created_job = JOB_SERVICE.create(
-            job_id,
-            {
-                "status": "queued",
-                "step": "queued",
-                "step_detail": "Video đã tải lên máy chủ, đang chờ xử lý",
-                "progress": 0.0,
-                "mode": int(request.mode),
-                "filename": upload.filename,
-                "subtitle_source": request.subtitle_source.value,
-                "source_language": request.source_language,
-                "target_language": request.target_language,
-                "voice_routing": {
-                    "mode": request.voice_mode.value,
-                    "fallback_voice": request.fallback_voice.value,
-                    "voice_style": request.voice_style,
+    try:
+        for job_id, upload, video_path in prepared_uploads:
+            reserve_job_quota(job_id, account, minutes=1)
+            resume_request = {**batch_config, "video_path": str(video_path)}
+            created_job = JOB_SERVICE.create(
+                job_id,
+                {
+                    "status": "queued",
+                    "step": "queued",
+                    "step_detail": "Video đã tải lên máy chủ, đang chờ xử lý",
+                    "progress": 0.0,
+                    "mode": int(request.mode),
+                    "filename": upload.filename,
+                    "subtitle_source": request.subtitle_source.value,
+                    "source_language": request.source_language,
+                    "target_language": request.target_language,
+                    "voice_routing": {
+                        "mode": request.voice_mode.value,
+                        "fallback_voice": request.fallback_voice.value,
+                        "voice_style": request.voice_style,
+                    },
+                    "tiktok": {
+                        "enabled": request.tiktok.enabled,
+                        "max_summary_chars": request.tiktok.max_summary_chars,
+                        "hashtag_count": request.tiktok.hashtag_count,
+                        "auto_publish": request.tiktok.auto_publish,
+                        "privacy_level": request.tiktok.privacy_level,
+                        "publish_at": request.tiktok.publish_at,
+                    },
+                    "resume_request": resume_request,
+                    "ocr_config": {
+                        "sample_fps": request.ocr.sample_fps,
+                        "roi_top": request.ocr.roi_top,
+                        "roi_bottom": request.ocr.roi_bottom,
+                    },
                 },
-                "tiktok": {
-                    "enabled": request.tiktok.enabled,
-                    "max_summary_chars": request.tiktok.max_summary_chars,
-                    "hashtag_count": request.tiktok.hashtag_count,
-                    "auto_publish": request.tiktok.auto_publish,
-                    "privacy_level": request.tiktok.privacy_level,
-                    "publish_at": request.tiktok.publish_at,
-                },
-                "resume_request": resume_request,
-                "ocr_config": {
-                    "sample_fps": request.ocr.sample_fps,
-                    "roi_top": request.ocr.roi_top,
-                    "roi_bottom": request.ocr.roi_bottom,
-                },
-            },
-        )
-        JOB_SERVICE.attach_to_batch(job_id, batch_id)
-        created_job = {**created_job, "batch_id": batch_id}
-        emit_workflow_event("source.uploaded", job_id, created_job)
-        created_jobs.append({"job_id": job_id, "filename": upload.filename, "status": "queued"})
+                owner_user_id=owner_user_id,
+            )
+            JOB_SERVICE.attach_to_batch(job_id, batch_id)
+            created_job = {**created_job, "batch_id": batch_id}
+            emit_workflow_event("source.uploaded", job_id, created_job)
+            created_jobs.append({"job_id": job_id, "filename": upload.filename, "status": "queued"})
 
-    for source_url in source_urls:
-        job_id = uuid.uuid4().hex[:8]
-        platform = social_platform(source_url)
-        initial_filename = f"Video {platform} · {job_id}"
-        source_cookie_path: Path | None = None
-        if cookie_payload is not None:
-            source_cookie_path = UPLOAD_DIR / f"{job_id}.cookies.txt"
-            with source_cookie_path.open("wb") as cookie_buffer:
-                cookie_buffer.write(cookie_payload)
-            try:
-                source_cookie_path.chmod(0o600)
-            except OSError:
-                logger.warning("Unable to restrict cookie file permissions for job %s", job_id)
-        resume_request = {
-            **batch_config,
-            "video_path": str(UPLOAD_DIR / f"{job_id}.source"),
-            "source_url": source_url,
-            "source_cookie_path": str(source_cookie_path) if source_cookie_path else None,
-        }
-        JOB_SERVICE.create(
-            job_id,
-            {
-                "status": "queued",
-                "step": "queued",
-                "step_detail": f"Đang chờ tải video từ {platform}",
-                "progress": 0.0,
-                "mode": int(request.mode),
-                "filename": initial_filename,
+        for source_url in source_urls:
+            job_id = uuid.uuid4().hex[:8]
+            platform = social_platform(source_url)
+            initial_filename = f"Video {platform} · {job_id}"
+            reserve_job_quota(job_id, account, minutes=1)
+            source_cookie_path: Path | None = None
+            source_upload_dir = tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id)
+            if cookie_payload is not None:
+                source_cookie_path = source_upload_dir / "source.cookies.txt"
+                with source_cookie_path.open("wb") as cookie_buffer:
+                    cookie_buffer.write(cookie_payload)
+                try:
+                    source_cookie_path.chmod(0o600)
+                except OSError:
+                    logger.warning("Unable to restrict cookie file permissions for job %s", job_id)
+            resume_request = {
+                **batch_config,
+                "video_path": str(source_upload_dir / "source.pending"),
                 "source_url": source_url,
-                "source_platform": platform,
-                "subtitle_source": request.subtitle_source.value,
-                "source_language": request.source_language,
-                "target_language": request.target_language,
-                "voice_routing": {
-                    "mode": request.voice_mode.value,
-                    "fallback_voice": request.fallback_voice.value,
-                    "voice_style": request.voice_style,
-                },
-                "tiktok": {
-                    "enabled": request.tiktok.enabled,
-                    "max_summary_chars": request.tiktok.max_summary_chars,
-                    "hashtag_count": request.tiktok.hashtag_count,
-                    "auto_publish": request.tiktok.auto_publish,
-                    "privacy_level": request.tiktok.privacy_level,
-                    "publish_at": request.tiktok.publish_at,
-                },
-                "resume_request": resume_request,
-                "ocr_config": {
-                    "sample_fps": request.ocr.sample_fps,
-                    "roi_top": request.ocr.roi_top,
-                    "roi_bottom": request.ocr.roi_bottom,
-                },
-            },
-        )
-        JOB_SERVICE.attach_to_batch(job_id, batch_id)
-        created_jobs.append(
-            {
-                "job_id": job_id,
-                "filename": initial_filename,
-                "source_url": source_url,
-                "source_platform": platform,
-                "status": "queued",
+                "source_cookie_path": str(source_cookie_path) if source_cookie_path else None,
             }
-        )
+            JOB_SERVICE.create(
+                job_id,
+                {
+                    "status": "queued",
+                    "step": "queued",
+                    "step_detail": f"Đang chờ tải video từ {platform}",
+                    "progress": 0.0,
+                    "mode": int(request.mode),
+                    "filename": initial_filename,
+                    "source_url": source_url,
+                    "source_platform": platform,
+                    "subtitle_source": request.subtitle_source.value,
+                    "source_language": request.source_language,
+                    "target_language": request.target_language,
+                    "voice_routing": {
+                        "mode": request.voice_mode.value,
+                        "fallback_voice": request.fallback_voice.value,
+                        "voice_style": request.voice_style,
+                    },
+                    "tiktok": {
+                        "enabled": request.tiktok.enabled,
+                        "max_summary_chars": request.tiktok.max_summary_chars,
+                        "hashtag_count": request.tiktok.hashtag_count,
+                        "auto_publish": request.tiktok.auto_publish,
+                        "privacy_level": request.tiktok.privacy_level,
+                        "publish_at": request.tiktok.publish_at,
+                    },
+                    "resume_request": resume_request,
+                    "ocr_config": {
+                        "sample_fps": request.ocr.sample_fps,
+                        "roi_top": request.ocr.roi_top,
+                        "roi_bottom": request.ocr.roi_bottom,
+                    },
+                },
+                owner_user_id=owner_user_id,
+            )
+            JOB_SERVICE.attach_to_batch(job_id, batch_id)
+            created_jobs.append(
+                {
+                    "job_id": job_id,
+                    "filename": initial_filename,
+                    "source_url": source_url,
+                    "source_platform": platform,
+                    "status": "queued",
+                }
+            )
+    except Exception:
+        for job_info in created_jobs:
+            TENANT_GOVERNANCE.release(job_info["job_id"])
+        raise
 
     notify_scheduler()
     return JSONResponse(
@@ -3483,22 +4034,22 @@ async def create_batch_endpoint(
 def job_response(job_id: str, job: dict[str, Any], queue_positions: dict[str, int] | None = None) -> dict[str, Any]:
     response = {
         "job_id": job_id,
-        **{key: value for key, value in job.items() if key != "resume_request"},
+        **{key: value for key, value in job.items() if key not in {"resume_request", "owner_user_id"}},
     }
     if response.get("error"):
         response["error"] = public_error_message(str(response["error"]))
     if queue_positions and job_id in queue_positions:
         response["queue_position"] = queue_positions[job_id]
     if job.get("output_video"):
-        response["video_url"] = f"/download/{job['output_video']}"
+        response["video_url"] = f"/api/v1/jobs/{job_id}/artifacts/video"
     if job.get("subtitle_file"):
-        response["subtitle_url"] = f"/download/{job['subtitle_file']}"
+        response["subtitle_url"] = f"/api/v1/jobs/{job_id}/artifacts/subtitle"
     if job.get("translation_file"):
-        response["translation_url"] = f"/download/{job['translation_file']}"
+        response["translation_url"] = f"/api/v1/jobs/{job_id}/artifacts/translation"
     if job.get("tiktok_json_file"):
-        response["tiktok_json_url"] = f"/download/{job['tiktok_json_file']}"
+        response["tiktok_json_url"] = f"/api/v1/jobs/{job_id}/artifacts/tiktok-json"
     if job.get("tiktok_text_file"):
-        response["tiktok_text_url"] = f"/download/{job['tiktok_text_file']}"
+        response["tiktok_text_url"] = f"/api/v1/jobs/{job_id}/artifacts/tiktok-text"
     if any(job.get(key) for key in ("output_video", "subtitle_file", "translation_file")):
         response["download_all_url"] = f"/api/v1/jobs/{job_id}/download-all"
     return response
@@ -3506,6 +4057,7 @@ def job_response(job_id: str, job: dict[str, Any], queue_positions: dict[str, in
 
 @app.get("/api/v1/jobs")
 def list_jobs_endpoint(
+    request: Request,
     status: str | None = Query(default=None),
     batch_id: str | None = Query(default=None),
     search: str | None = Query(default=None),
@@ -3513,6 +4065,7 @@ def list_jobs_endpoint(
     offset: int = Query(default=0, ge=0),
 ) -> JSONResponse:
     jobs, total = JOB_SERVICE.list_jobs(
+        owner_user_id=str(current_account(request)["user_id"]),
         status=status,
         batch_id=batch_id,
         search=search,
@@ -3543,8 +4096,30 @@ def job_change_snapshot(job_ids: set[str]) -> dict[str, Any]:
         if job is None:
             removed.append(job_id)
         else:
-            items.append(job_response(job_id, job, positions))
+            item = job_response(job_id, job, positions)
+            item["_owner_user_id"] = str(job.get("owner_user_id") or "")
+            items.append(item)
     return {"type": "jobs", "items": items, "removed": removed, "queue_positions": positions}
+
+
+def filter_job_event_for_user(message: dict[str, Any], owner_user_id: str) -> dict[str, Any] | None:
+    if message.get("resync"):
+        return dict(JOB_EVENT_RESYNC)
+    items = [dict(item) for item in message.get("items", []) if item.get("_owner_user_id") == owner_user_id]
+    for item in items:
+        item.pop("_owner_user_id", None)
+    # Deletions cannot be attributed after the row is gone; a scoped reload is safe.
+    if message.get("removed"):
+        return dict(JOB_EVENT_RESYNC)
+    if not items:
+        return None
+    positions = message.get("queue_positions") or {}
+    return {
+        "type": "jobs",
+        "items": items,
+        "removed": [],
+        "queue_positions": {item["job_id"]: positions[item["job_id"]] for item in items if item["job_id"] in positions},
+    }
 
 
 def websocket_auth_claims(websocket: WebSocket) -> dict[str, Any] | None:
@@ -3586,6 +4161,7 @@ async def job_events_socket(websocket: WebSocket) -> None:
         return
     await websocket.accept()
     expires_at = float(claims.get("exp") or 0)
+    owner_user_id = str(claims.get("user_id") or _bootstrap_owner["user_id"])
     queue = JOB_EVENTS.subscribe()
 
     async def read_until_closed() -> None:
@@ -3606,7 +4182,9 @@ async def job_events_socket(websocket: WebSocket) -> None:
                 await websocket.close(code=4401)
                 break
             if getter in done:
-                await websocket.send_json(getter.result())
+                scoped = filter_job_event_for_user(getter.result(), owner_user_id)
+                if scoped is not None:
+                    await websocket.send_json(scoped)
             else:
                 # Keep proxies from closing an idle connection.
                 getter.cancel()
@@ -3619,23 +4197,24 @@ async def job_events_socket(websocket: WebSocket) -> None:
 
 
 @app.get("/api/v1/jobs/{job_id}")
-def get_job_endpoint(job_id: str) -> JSONResponse:
-    job = JOB_SERVICE.get(job_id)
+def get_job_endpoint(request: Request, job_id: str) -> JSONResponse:
+    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     return JSONResponse(job_response(job_id, job, JOB_SERVICE.queue_positions()))
 
 
 @app.post("/api/v1/jobs/{job_id}/refresh-tiktok-status")
-def refresh_tiktok_publish_status(job_id: str) -> JSONResponse:
-    job = JOB_SERVICE.get(job_id)
+def refresh_tiktok_publish_status(request: Request, job_id: str) -> JSONResponse:
+    owner_user_id = str(current_account(request)["user_id"])
+    job = JOB_SERVICE.get_for_user(job_id, owner_user_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     publish_id = str(job.get("tiktok_publish_id") or "")
     if not publish_id:
         raise HTTPException(status_code=409, detail="Job chưa gửi video lên TikTok")
     try:
-        detail = TIKTOK_PUBLISHER.fetch_status(publish_id)
+        detail = tenant_tiktok_publisher(owner_user_id).fetch_status(publish_id)
     except TikTokPublisherError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     update_job(
@@ -3643,13 +4222,13 @@ def refresh_tiktok_publish_status(job_id: str) -> JSONResponse:
         tiktok_publish_status=detail.get("status") or job.get("tiktok_publish_status") or "SUBMITTED",
         tiktok_publish_detail=detail,
     )
-    refreshed = JOB_SERVICE.get(job_id) or job
+    refreshed = JOB_SERVICE.get_for_user(job_id, owner_user_id) or job
     return JSONResponse(job_response(job_id, refreshed, JOB_SERVICE.queue_positions()))
 
 
 @app.get("/api/v1/jobs/{job_id}/download-all")
-def download_all_job_artifacts(job_id: str) -> FileResponse:
-    job = JOB_SERVICE.get(job_id)
+def download_all_job_artifacts(request: Request, job_id: str) -> FileResponse:
+    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     artifact_keys = (
@@ -3664,8 +4243,8 @@ def download_all_job_artifacts(job_id: str) -> FileResponse:
         filename = job.get(key)
         if not filename:
             continue
-        target = (OUTPUT_DIR / str(filename)).resolve()
-        if target.parent == OUTPUT_DIR.resolve() and target.is_file():
+        target = stored_artifact_path(str(filename))
+        if target.is_file():
             artifacts.append(target)
     if not artifacts:
         raise HTTPException(status_code=404, detail="job chưa có artifact để tải")
@@ -3681,24 +4260,28 @@ def download_all_job_artifacts(job_id: str) -> FileResponse:
 
 @app.get("/api/v1/batches")
 def list_batches_endpoint(
+    request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> JSONResponse:
-    batches, total = JOB_SERVICE.list_batches(limit=limit, offset=offset)
+    batches, total = JOB_SERVICE.list_batches(owner_user_id=str(current_account(request)["user_id"]), limit=limit, offset=offset)
     for batch in batches:
+        batch.pop("owner_user_id", None)
         if isinstance(batch.get("config"), dict):
             batch["config"].pop("background_music_path", None)
     return JSONResponse({"items": batches, "total": total, "limit": limit, "offset": offset})
 
 
 @app.get("/api/v1/batches/{batch_id}")
-def get_batch_endpoint(batch_id: str) -> JSONResponse:
-    batch = JOB_SERVICE.get_batch(batch_id)
+def get_batch_endpoint(request: Request, batch_id: str) -> JSONResponse:
+    owner_user_id = str(current_account(request)["user_id"])
+    batch = JOB_SERVICE.get_batch_for_user(batch_id, owner_user_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="batch not found")
+    batch.pop("owner_user_id", None)
     if isinstance(batch.get("config"), dict):
         batch["config"].pop("background_music_path", None)
-    jobs, total = JOB_SERVICE.list_jobs(batch_id=batch_id, limit=200)
+    jobs, total = JOB_SERVICE.list_jobs(owner_user_id=owner_user_id, batch_id=batch_id, limit=200)
     positions = JOB_SERVICE.queue_positions()
     batch["jobs"] = [job_response(str(job["job_id"]), job, positions) for job in jobs]
     batch["total_jobs"] = total
@@ -3713,16 +4296,19 @@ def get_batch_endpoint(batch_id: str) -> JSONResponse:
 
 
 @app.post("/api/v1/jobs/{job_id}/cancel")
-def cancel_job_endpoint(job_id: str) -> JSONResponse:
-    if JOB_SERVICE.get(job_id) is None:
+def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
+    if JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"])) is None:
         raise HTTPException(status_code=404, detail="job not found")
     job = JOB_SERVICE.request_cancel(job_id)
+    TENANT_GOVERNANCE.release(job_id)
     return JSONResponse(job_response(job_id, job))
 
 
 @app.post("/api/v1/jobs/{job_id}/retry")
-def retry_job_endpoint(job_id: str) -> JSONResponse:
-    source = JOB_SERVICE.get(job_id)
+def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
+    account = current_account(request)
+    owner_user_id = str(account["user_id"])
+    source = JOB_SERVICE.get_for_user(job_id, owner_user_id)
     if source is None:
         raise HTTPException(status_code=404, detail="job not found")
     if source.get("status") in {"queued", "scheduled", "processing", "cancelling"}:
@@ -3735,6 +4321,8 @@ def retry_job_endpoint(job_id: str) -> JSONResponse:
     source_url = resume_request.get("source_url")
     if not video_path.is_file() and not source_url:
         raise HTTPException(status_code=409, detail="file video nguồn không còn tồn tại")
+
+    reserve_job_quota(job_id, account, minutes=1)
 
     update_payload = {
         "status": "queued",
@@ -3756,34 +4344,32 @@ def retry_job_endpoint(job_id: str) -> JSONResponse:
     for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
         filename = source.get(key)
         if filename:
-            target = (OUTPUT_DIR / str(filename)).resolve()
-            if target.parent == OUTPUT_DIR.resolve():
+            target = stored_artifact_path(str(filename))
+            if target.is_relative_to(OUTPUT_DIR.resolve()):
                 target.unlink(missing_ok=True)
         update_payload[key] = None
-    (OUTPUT_DIR / f"{job_id}.artifacts.zip").unlink(missing_ok=True)
 
     JOB_SERVICE.update(job_id, **update_payload)
     notify_scheduler()
-    return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
+    return JSONResponse(job_response(job_id, JOB_SERVICE.get_for_user(job_id, owner_user_id)), status_code=200)
 
 
 @app.delete("/api/v1/jobs/{job_id}")
-def delete_job_endpoint(job_id: str) -> JSONResponse:
+def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
+    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
     active = TIKTOK_BROWSER.active_attempt()
     if active and active["job_id"] == job_id:
         raise HTTPException(status_code=409, detail="Hãy kết thúc lượt chuẩn bị TikTok trước khi xóa video")
-    job = JOB_SERVICE.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
     if job.get("status") in {"queued", "processing", "scheduled", "cancelling"}:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa")
     for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
         filename = job.get(key)
         if filename:
-            target = (OUTPUT_DIR / str(filename)).resolve()
-            if target.parent == OUTPUT_DIR.resolve():
+            target = stored_artifact_path(str(filename))
+            if target.is_relative_to(OUTPUT_DIR.resolve()):
                 target.unlink(missing_ok=True)
-    (OUTPUT_DIR / f"{job_id}.artifacts.zip").unlink(missing_ok=True)
     resume_request = job.get("resume_request")
     if isinstance(resume_request, dict):
         for source_key in ("video_path", "source_cookie_path"):
@@ -3791,29 +4377,55 @@ def delete_job_endpoint(job_id: str) -> JSONResponse:
             if not source_value:
                 continue
             source_path = Path(str(source_value)).resolve()
-            if source_path.parent == UPLOAD_DIR.resolve():
+            if source_path.is_relative_to(UPLOAD_DIR.resolve()):
                 source_path.unlink(missing_ok=True)
-    job_work_dir = (WORK_DIR / job_id).resolve()
-    if job_work_dir.parent == WORK_DIR.resolve() and job_work_dir.exists():
+    job_work_dir = tenant_job_dir(WORK_DIR, str(job.get("owner_user_id") or _bootstrap_owner["user_id"]), job_id)
+    if job_work_dir.is_relative_to(WORK_DIR.resolve()) and job_work_dir.exists():
         shutil.rmtree(job_work_dir)
+    TENANT_GOVERNANCE.release(job_id)
     JOB_SERVICE.delete(job_id)
     return JSONResponse({"job_id": job_id, "deleted": True})
 
 
 @app.get("/status/{job_id}")
-def get_status(job_id: str) -> JSONResponse:
-    job = JOB_SERVICE.get(job_id)
+def get_status(request: Request, job_id: str) -> JSONResponse:
+    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     return JSONResponse(job_response(job_id, job, JOB_SERVICE.queue_positions()))
 
 
 @app.get("/download/{filename}")
-def download(filename: str) -> FileResponse:
-    target = (OUTPUT_DIR / Path(filename).name).resolve()
-    if target.parent != OUTPUT_DIR.resolve() or not target.is_file():
+def download(request: Request, filename: str) -> FileResponse:
+    """Compatibility download with mandatory ownership verification."""
+    owner_user_id = str(current_account(request)["user_id"])
+    safe_name = Path(filename).name
+    if not JOB_SERVICE.owns_artifact(owner_user_id, safe_name):
         raise HTTPException(status_code=404, detail="file not found")
-    return FileResponse(target)
+    target = stored_artifact_path(safe_name)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(target, headers={"Cache-Control": "private, no-store"})
+
+
+@app.get("/api/v1/jobs/{job_id}/artifacts/{kind}")
+def download_job_artifact(request: Request, job_id: str, kind: str) -> FileResponse:
+    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
+    if job is None:
+        raise HTTPException(status_code=404, detail="file not found")
+    artifact_fields = {
+        "video": "output_video",
+        "subtitle": "subtitle_file",
+        "translation": "translation_file",
+        "tiktok-json": "tiktok_json_file",
+        "tiktok-text": "tiktok_text_file",
+    }
+    field = artifact_fields.get(kind)
+    filename = str(job.get(field) or "") if field else ""
+    target = stored_artifact_path(filename) if filename else OUTPUT_DIR.resolve()
+    if not filename or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(target, filename=target.name, headers={"Cache-Control": "private, no-store"})
 
 
 def custom_openapi() -> dict[str, Any]:

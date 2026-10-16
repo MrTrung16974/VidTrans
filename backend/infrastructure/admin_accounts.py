@@ -217,3 +217,11 @@ class AdminAccountStore:
                 "SELECT COUNT(*) FROM admin_accounts WHERE payment_status IN ('past_due','cancelled')"
             ).fetchone()[0])
         return {"total": total, "approved": approved, "pending": pending, "payment_attention": payment_attention}
+
+    def delete(self, user_id: str) -> dict[str, Any]:
+        current = self.get(user_id)
+        if current["role"] == "owner":
+            raise AdminAccountError("Không thể xóa tài khoản chủ sở hữu")
+        with self._db() as db:
+            db.execute("DELETE FROM admin_accounts WHERE user_id=?", (user_id,))
+        return current

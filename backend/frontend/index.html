@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261015-2" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261016-4" />
   </head>
   <body>
     <div class="app-shell">
@@ -25,7 +25,7 @@
           <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span>Tạo quy trình</span></a>
           <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
           <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span>Đăng bài mạng xã hội</span></a>
-          <a href="#douyin" data-view-link="douyin" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span>Đăng nhập nguồn</span></a>
+          <a href="#douyin" data-view-link="douyin" data-admin-only><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span>Đăng nhập nguồn</span></a>
           <a href="#admin" data-view-link="admin" data-admin-only><i aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M6 19c.5-3.2 2.5-5 6-5s5.5 1.8 6 5M19 5v4M17 7h4"/></svg></i><span>Quản trị</span></a>
         </nav>
         <div class="topbar-actions">
@@ -132,7 +132,7 @@
                   </label>
                 </div>
 
-                <div class="source-auth-row">
+                <div class="source-auth-row" data-admin-only>
                   <div class="douyin-auth-card">
                     <span class="douyin-auth-icon">DY</span>
                     <div class="douyin-auth-copy">
@@ -566,7 +566,7 @@
             </div>
             <div class="jobs-header-actions">
               <a class="button primary new-batch-btn" href="#create">
-                <span class="btn-icon">＋</span>
+                <svg class="btn-icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                 <span>Batch mới</span>
               </a>
             </div>
@@ -576,7 +576,9 @@
             <article class="metric-card metric-queued">
               <div class="metric-top">
                 <span class="metric-title">Đang chờ / Đặt lịch</span>
-                <span class="metric-badge queued-badge" aria-hidden="true">⏱</span>
+                <span class="metric-badge queued-badge" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                </span>
               </div>
               <strong id="queuedMetric" class="metric-value">0</strong>
               <small class="metric-desc">Trong hàng đợi xử lý</small>
@@ -585,7 +587,9 @@
             <article class="metric-card metric-processing">
               <div class="metric-top">
                 <span class="metric-title">Đang chạy</span>
-                <span class="metric-badge processing-badge" aria-hidden="true">⚡</span>
+                <span class="metric-badge processing-badge" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                </span>
               </div>
               <strong id="processingMetric" class="metric-value">0</strong>
               <small class="metric-desc">Dịch, lồng tiếng & ghép sub</small>
@@ -594,7 +598,9 @@
             <article class="metric-card metric-completed">
               <div class="metric-top">
                 <span class="metric-title">Hoàn tất</span>
-                <span class="metric-badge completed-badge" aria-hidden="true">✓</span>
+                <span class="metric-badge completed-badge" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                </span>
               </div>
               <strong id="completedMetric" class="metric-value">0</strong>
               <small class="metric-desc">Sẵn sàng xuất hoặc duyệt đăng</small>
@@ -603,7 +609,9 @@
             <article class="metric-card metric-failed">
               <div class="metric-top">
                 <span class="metric-title">Cần chú ý</span>
-                <span class="metric-badge failed-badge" aria-hidden="true">⚠</span>
+                <span class="metric-badge failed-badge" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                </span>
               </div>
               <strong id="failedMetric" class="metric-value">0</strong>
               <small class="metric-desc">Tiến trình lỗi hoặc đã hủy</small>
@@ -613,7 +621,9 @@
           <section class="card jobs-panel">
             <div class="jobs-toolbar">
               <div class="search-box">
-                <span class="search-icon" aria-hidden="true">⌕</span>
+                <span class="search-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                </span>
                 <input id="jobSearch" type="search" placeholder="Tìm theo tên video, ID batch..." aria-label="Tìm kiếm video" />
               </div>
               <div class="filter-select-wrap">
@@ -629,7 +639,7 @@
                 </select>
               </div>
               <button id="refreshJobs" class="icon-button refresh-btn" type="button" title="Làm mới danh sách tiến trình">
-                <span class="refresh-symbol" aria-hidden="true">↻</span>
+                <svg class="refresh-symbol" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
               </button>
             </div>
 
@@ -1280,126 +1290,226 @@
               <p>Quản lý tài khoản thành viên, phân quyền vai trò, phê duyệt truy cập và kiểm soát trạng thái thanh toán hệ thống.</p>
             </div>
             <div class="admin-header-actions">
-              <button id="refreshAdminAccounts" class="button secondary admin-refresh-btn" type="button" title="Làm mới dữ liệu tài khoản">
+              <button id="refreshAdminAccounts" class="button secondary admin-refresh-btn" type="button" title="Làm mới dữ liệu">
                 <span class="refresh-symbol" aria-hidden="true">↻</span>
                 <span>Làm mới dữ liệu</span>
               </button>
             </div>
           </div>
 
-          <section class="admin-metrics" aria-label="Thống kê tài khoản">
-            <article class="card admin-metric total">
-              <div class="metric-info">
-                <span>Tổng tài khoản</span>
-                <strong id="adminTotalCount">0</strong>
-              </div>
-              <div class="admin-metric-icon" aria-hidden="true">👥</div>
-            </article>
-            <article class="card admin-metric approved">
-              <div class="metric-info">
-                <span>Đã phê duyệt</span>
-                <strong id="adminApprovedCount">0</strong>
-              </div>
-              <div class="admin-metric-icon" aria-hidden="true">✓</div>
-            </article>
-            <article class="card admin-metric pending">
-              <div class="metric-info">
-                <span>Chờ phê duyệt</span>
-                <strong id="adminPendingCount">0</strong>
-              </div>
-              <div class="admin-metric-icon" aria-hidden="true">⏳</div>
-            </article>
-            <article class="card admin-metric danger">
-              <div class="metric-info">
-                <span>Thanh toán cần xử lý</span>
-                <strong id="adminPaymentAttentionCount">0</strong>
-              </div>
-              <div class="admin-metric-icon" aria-hidden="true">⚠️</div>
-            </article>
-          </section>
+          <div class="admin-subtabs" role="tablist">
+            <button class="admin-subtab active" type="button" data-admin-subtab="accounts">👥 Tài khoản & Phân quyền</button>
+            <button class="admin-subtab" type="button" data-admin-subtab="jobs">🔍 Giám sát Jobs toàn hệ thống</button>
+            <button class="admin-subtab" type="button" data-admin-subtab="audit">🛡️ Nhật ký kiểm toán (Audit)</button>
+          </div>
 
-          <details class="card admin-create-panel">
-            <summary>
-              <div class="summary-left">
-                <span class="admin-summary-icon" aria-hidden="true">＋</span>
-                <div>
-                  <strong>Thêm tài khoản mới</strong>
-                  <small>Tạo thành viên và thiết lập quyền truy cập ban đầu</small>
+          <div id="adminSubtabAccounts" class="admin-subtab-pane">
+            <section class="admin-metrics" aria-label="Thống kê tài khoản">
+              <article class="card admin-metric total">
+                <div class="metric-info">
+                  <span>Tổng tài khoản</span>
+                  <strong id="adminTotalCount">0</strong>
+                </div>
+                <div class="admin-metric-icon" aria-hidden="true">👥</div>
+              </article>
+              <article class="card admin-metric approved">
+                <div class="metric-info">
+                  <span>Đã phê duyệt</span>
+                  <strong id="adminApprovedCount">0</strong>
+                </div>
+                <div class="admin-metric-icon" aria-hidden="true">✓</div>
+              </article>
+              <article class="card admin-metric pending">
+                <div class="metric-info">
+                  <span>Chờ phê duyệt</span>
+                  <strong id="adminPendingCount">0</strong>
+                </div>
+                <div class="admin-metric-icon" aria-hidden="true">⏳</div>
+              </article>
+              <article class="card admin-metric danger">
+                <div class="metric-info">
+                  <span>Thanh toán cần xử lý</span>
+                  <strong id="adminPaymentAttentionCount">0</strong>
+                </div>
+                <div class="admin-metric-icon" aria-hidden="true">⚠️</div>
+              </article>
+            </section>
+
+            <details class="card admin-create-panel">
+              <summary>
+                <div class="summary-left">
+                  <span class="admin-summary-icon" aria-hidden="true">＋</span>
+                  <div>
+                    <strong>Thêm tài khoản mới</strong>
+                    <small>Tạo thành viên và thiết lập quyền truy cập ban đầu</small>
+                  </div>
+                </div>
+                <span class="summary-toggle-pill">
+                  <span>Mở biểu mẫu</span>
+                  <i aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></i>
+                </span>
+              </summary>
+              <form id="adminCreateAccountForm" class="admin-create-form">
+                <label>
+                  <span>Email đăng nhập</span>
+                  <input name="email" type="email" maxlength="254" required placeholder="user@example.com" />
+                </label>
+                <label>
+                  <span>Tên hiển thị</span>
+                  <input name="display_name" maxlength="120" required placeholder="Nguyễn Văn A" />
+                </label>
+                <label>
+                  <span>Mật khẩu tạm</span>
+                  <input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password" placeholder="Tối thiểu 12 ký tự" />
+                </label>
+                <label>
+                  <span>Vai trò</span>
+                  <select name="role">
+                    <option value="viewer">Người xem</option>
+                    <option value="editor">Biên tập viên</option>
+                    <option value="admin">Quản trị viên</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Gói dịch vụ</span>
+                  <select name="plan">
+                    <option value="free">Free</option>
+                    <option value="creator">Creator</option>
+                    <option value="pro">Pro</option>
+                    <option value="enterprise">Enterprise</option>
+                  </select>
+                </label>
+                <button class="button primary admin-create-submit" type="submit">
+                  <span>＋ Tạo tài khoản</span>
+                </button>
+              </form>
+            </details>
+
+            <section class="card admin-accounts-panel">
+              <div class="jobs-toolbar admin-account-toolbar">
+                <div class="admin-list-title">
+                  <strong>Danh sách người dùng</strong>
+                  <small>Thay đổi vai trò và phân quyền chỉ được lưu khi bấm “Lưu”.</small>
+                </div>
+                <label class="admin-search">
+                  <span aria-hidden="true">⌕</span>
+                  <input id="adminUserSearch" type="search" maxlength="120" placeholder="Tìm theo tên hoặc email…" aria-label="Tìm người dùng" />
+                </label>
+                <div class="admin-filter-wrap">
+                  <select id="adminApprovalFilter" aria-label="Lọc trạng thái phê duyệt">
+                    <option value="">Tất cả phê duyệt</option>
+                    <option value="pending">Chờ duyệt</option>
+                    <option value="approved">Đã duyệt</option>
+                    <option value="suspended">Tạm khóa</option>
+                    <option value="rejected">Từ chối</option>
+                  </select>
                 </div>
               </div>
-              <span class="summary-toggle-pill">
-                <span>Mở biểu mẫu</span>
-                <i aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></i>
-              </span>
-            </summary>
-            <form id="adminCreateAccountForm" class="admin-create-form">
-              <label>
-                <span>Email đăng nhập</span>
-                <input name="email" type="email" maxlength="254" required placeholder="user@example.com" />
-              </label>
-              <label>
-                <span>Tên hiển thị</span>
-                <input name="display_name" maxlength="120" required placeholder="Nguyễn Văn A" />
-              </label>
-              <label>
-                <span>Mật khẩu tạm</span>
-                <input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password" placeholder="Tối thiểu 12 ký tự" />
-              </label>
-              <label>
+              <div class="admin-account-head" aria-hidden="true">
+                <span>Người dùng</span>
                 <span>Vai trò</span>
-                <select name="role">
-                  <option value="viewer">Người xem</option>
-                  <option value="editor">Biên tập viên</option>
-                  <option value="admin">Quản trị viên</option>
-                </select>
-              </label>
-              <label>
+                <span>Phê duyệt</span>
                 <span>Gói dịch vụ</span>
-                <select name="plan">
-                  <option value="free">Free</option>
-                  <option value="creator">Creator</option>
-                  <option value="pro">Pro</option>
-                  <option value="enterprise">Enterprise</option>
-                </select>
-              </label>
-              <button class="button primary admin-create-submit" type="submit">
-                <span>＋ Tạo tài khoản</span>
-              </button>
-            </form>
-          </details>
+                <span>Thanh toán</span>
+                <span class="col-action-title">Hành động</span>
+              </div>
+              <div id="adminAccountsList" class="admin-accounts-list">
+                <div class="empty-state"><strong>Đang tải tài khoản…</strong></div>
+              </div>
+            </section>
+          </div>
 
-          <section class="card admin-accounts-panel">
-            <div class="jobs-toolbar admin-account-toolbar">
-              <div class="admin-list-title">
-                <strong>Danh sách người dùng</strong>
-                <small>Thay đổi vai trò và phân quyền chỉ được lưu khi bấm “Lưu”.</small>
-              </div>
-              <label class="admin-search">
-                <span aria-hidden="true">⌕</span>
-                <input id="adminUserSearch" type="search" maxlength="120" placeholder="Tìm theo tên hoặc email…" aria-label="Tìm người dùng" />
-              </label>
-              <div class="admin-filter-wrap">
-                <select id="adminApprovalFilter" aria-label="Lọc trạng thái phê duyệt">
-                  <option value="">Tất cả phê duyệt</option>
-                  <option value="pending">Chờ duyệt</option>
-                  <option value="approved">Đã duyệt</option>
-                  <option value="suspended">Tạm khóa</option>
-                  <option value="rejected">Từ chối</option>
-                </select>
+          <div id="adminSubtabJobs" class="admin-subtab-pane is-hidden">
+            <div class="audit-warning-banner">
+              <span class="audit-warning-icon">🛡️</span>
+              <div>
+                <strong>Chế độ giám sát toàn hệ thống — Có ghi Audit Log</strong>
+                <p>Theo tiêu chuẩn cô lập dữ liệu, quản trị viên chỉ xem jobs của người dùng khác khi cần hỗ trợ hoặc xử lý sự cố. Mọi thao tác truy xuất dữ liệu người dùng qua màn hình này đều được tự động lưu vào Nhật ký kiểm toán (Audit Log) theo tiêu chuẩn bảo mật đa người dùng.</p>
               </div>
             </div>
-            <div class="admin-account-head" aria-hidden="true">
-              <span>Người dùng</span>
-              <span>Vai trò</span>
-              <span>Phê duyệt</span>
-              <span>Gói dịch vụ</span>
-              <span>Thanh toán</span>
-              <span class="col-action-title">Hành động</span>
-            </div>
-            <div id="adminAccountsList" class="admin-accounts-list">
-              <div class="empty-state"><strong>Đang tải tài khoản…</strong></div>
-            </div>
-          </section>
+
+            <section class="card admin-jobs-panel">
+              <div class="jobs-toolbar admin-jobs-toolbar">
+                <div class="admin-list-title">
+                  <strong>Danh sách tiến trình hệ thống</strong>
+                  <small>Dữ liệu tổng hợp từ tất cả người dùng.</small>
+                </div>
+                <label class="admin-search">
+                  <span aria-hidden="true">⌕</span>
+                  <input id="adminJobSearch" type="search" maxlength="120" placeholder="Tìm theo Job ID hoặc tên video…" aria-label="Tìm job" />
+                </label>
+                <div class="admin-filter-wrap">
+                  <select id="adminJobUserFilter" aria-label="Lọc theo người dùng">
+                    <option value="">Tất cả người dùng</option>
+                  </select>
+                </div>
+                <div class="admin-filter-wrap">
+                  <select id="adminJobStatusFilter" aria-label="Lọc theo trạng thái">
+                    <option value="">Tất cả trạng thái</option>
+                    <option value="queued">Chờ xử lý (queued)</option>
+                    <option value="processing">Đang xử lý (processing)</option>
+                    <option value="completed">Hoàn tất (completed)</option>
+                    <option value="failed">Thất bại (failed)</option>
+                    <option value="cancelled">Đã hủy (cancelled)</option>
+                  </select>
+                </div>
+                <button id="refreshAdminJobs" class="button secondary" type="button" title="Làm mới">
+                  <span class="refresh-symbol">↻</span> Làm mới
+                </button>
+              </div>
+
+              <div class="admin-jobs-head" aria-hidden="true">
+                <span>Job ID</span>
+                <span>Người dùng</span>
+                <span>Tên video</span>
+                <span>Trạng thái</span>
+                <span>Tiến độ</span>
+                <span>Thời gian tạo</span>
+                <span class="col-action-title">Thao tác</span>
+              </div>
+              <div id="adminJobsList" class="admin-jobs-list">
+                <div class="empty-state"><strong>Đang tải danh sách jobs…</strong></div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminSubtabAudit" class="admin-subtab-pane is-hidden">
+            <section class="card admin-audit-panel">
+              <div class="jobs-toolbar admin-audit-toolbar">
+                <div class="admin-list-title">
+                  <strong>Nhật ký kiểm toán an ninh (Admin Audit Log)</strong>
+                  <small>Theo dõi mọi truy cập dữ liệu chéo người dùng và thay đổi cấu hình quản trị.</small>
+                </div>
+                <div class="admin-filter-wrap">
+                  <select id="adminAuditActionFilter" aria-label="Lọc theo hành động">
+                    <option value="">Tất cả hành động</option>
+                    <option value="admin.jobs.list">admin.jobs.list (Xem danh sách job)</option>
+                    <option value="admin.jobs.view">admin.jobs.view (Xem chi tiết job)</option>
+                    <option value="admin.quota.view">admin.quota.view (Xem hạn mức)</option>
+                    <option value="account.update">account.update (Cập nhật tài khoản)</option>
+                    <option value="account.create">account.create (Tạo tài khoản)</option>
+                    <option value="account.delete">account.delete (Xóa tài khoản)</option>
+                    <option value="billing.order_confirm">billing.order_confirm (Duyệt nạp tiền)</option>
+                  </select>
+                </div>
+                <button id="refreshAdminAudit" class="button secondary" type="button" title="Làm mới">
+                  <span class="refresh-symbol">↻</span> Làm mới
+                </button>
+              </div>
+
+              <div class="admin-audit-head" aria-hidden="true">
+                <span>Thời gian (UTC)</span>
+                <span>Quản trị viên (Actor)</span>
+                <span>Hành động</span>
+                <span>Tài nguyên</span>
+                <span>Người dùng mục tiêu</span>
+                <span>Chi tiết</span>
+              </div>
+              <div id="adminAuditList" class="admin-audit-list">
+                <div class="empty-state"><strong>Đang tải nhật ký kiểm toán…</strong></div>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section id="billingView" class="view billing-view is-hidden">
@@ -1421,6 +1531,13 @@
                 <strong id="billingCurrentPlan">—</strong>
                 <span id="billingPaymentStatus" class="current-payment-badge">Đang tải…</span>
               </div>
+              <div class="current-quota-body">
+                <div>Hạn mức tháng <span id="billingQuotaPeriod"></span>: <strong id="billingQuotaUsage">—</strong></div>
+                <div id="billingQuotaBar" class="quota-bar-shell" style="height: 6px; background: rgba(0,0,0,0.08); border-radius: 3px; margin: 6px 0; overflow: hidden;">
+                  <div id="billingQuotaProgress" style="height: 100%; width: 0%; background: #ef6b3a; transition: width 0.3s ease;"></div>
+                </div>
+                <small id="billingQuotaRemaining" style="color: #64748b;">Còn lại: — phút</small>
+              </div>
             </div>
           </div>
 
@@ -1433,8 +1550,8 @@
           <section class="card payment-checkout">
             <div class="payment-checkout-copy">
               <span class="eyebrow-chip">THANH TOÁN AN TOÀN & TỰ ĐỘNG</span>
-              <h2>Chọn phương thức thanh toán</h2>
-              <p>Giao dịch chỉ được xác nhận sau khi VidTrans nhận kết quả hợp lệ từ nhà cung cấp hoặc được quản trị viên đối soát.</p>
+              <h2 id="checkoutTitle">Chọn phương thức thanh toán</h2>
+              <p id="checkoutDescription">Chọn gói ở phía trên để xem chi tiết và tiếp tục thanh toán.</p>
               <div class="checkout-guarantees">
                 <div class="guarantee-item">
                   <span class="guarantee-icon" aria-hidden="true">⚡</span>
@@ -1455,17 +1572,14 @@
             <form id="paymentForm" class="payment-form">
               <label class="form-field-wrap">
                 <span>Gói muốn nâng cấp</span>
-                <select id="paymentPlan" name="plan">
-                  <option value="creator">Creator (300 phút/tháng)</option>
-                  <option value="pro">Pro (1000 phút/tháng)</option>
-                </select>
+                <select id="paymentPlan" name="plan"></select>
               </label>
               <fieldset id="paymentProviders" class="providers-fieldset">
                 <legend>Phương thức</legend>
               </fieldset>
               <button id="createPaymentButton" class="button primary checkout-submit-btn" type="submit">
                 <span class="btn-lock" aria-hidden="true">🔒</span>
-                <span>Tạo yêu cầu thanh toán</span>
+                <span id="createPaymentLabel">Tạo yêu cầu thanh toán</span>
               </button>
             </form>
             <div id="paymentInstructions" class="payment-instructions is-hidden"></div>
@@ -1494,7 +1608,7 @@
         <div class="auth-brand-mark"><img src="/assets/vidtrans-mark.svg" alt="" /></div>
         <span class="eyebrow">Secure workspace</span>
         <h1 id="authTitle">Đăng nhập VidTrans</h1>
-        <p>Đăng nhập tài khoản quản trị để truy cập pipeline, tiến trình và file video.</p>
+        <p id="authDescription">Đăng nhập để truy cập pipeline, tiến trình và file video.</p>
         <form id="authLoginForm" class="auth-form">
           <label>
             <span>Tên đăng nhập</span>
@@ -1506,6 +1620,27 @@
           </label>
           <button id="authSubmit" class="button primary full" type="submit">Đăng nhập</button>
         </form>
+        <form id="authRegisterForm" class="auth-form is-hidden">
+          <label>
+            <span>Tên hiển thị</span>
+            <input id="registerDisplayName" name="display_name" type="text" maxlength="120" autocomplete="name" required />
+          </label>
+          <label>
+            <span>Email</span>
+            <input id="registerEmail" name="email" type="email" maxlength="254" autocomplete="email" required />
+          </label>
+          <label>
+            <span>Mật khẩu</span>
+            <input id="registerPassword" name="password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
+            <small>Tối thiểu 12 ký tự.</small>
+          </label>
+          <label>
+            <span>Nhập lại mật khẩu</span>
+            <input id="registerPasswordConfirm" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
+          </label>
+          <button id="authRegisterSubmit" class="button primary full" type="submit">Tạo tài khoản Free</button>
+        </form>
+        <button id="authModeToggle" class="auth-mode-toggle" type="button">Chưa có tài khoản? Đăng ký miễn phí</button>
         <div id="authMessage" class="auth-message" aria-live="polite">OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly</div>
       </section>
     </div>
@@ -1513,6 +1648,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261016-1"></script>
+    <script type="module" src="/js/app.js?v=20261016-6"></script>
   </body>
 </html>

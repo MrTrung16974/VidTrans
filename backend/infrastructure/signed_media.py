@@ -36,10 +36,11 @@ class SignedMediaUrlService:
                 "Chưa cấu hình HTTPS public URL và signing secret cho Instagram"
             )
         resolved = Path(path).resolve()
-        if resolved.parent != self.output_dir or not resolved.is_file():
+        if not resolved.is_relative_to(self.output_dir) or not resolved.is_file():
             raise SignedMediaError("Video không nằm trong thư mục output được phép")
         expires = int(self._clock()) + max(60, min(ttl_seconds, 86400))
-        payload = f"{resolved.name}\n{expires}".encode("utf-8")
+        relative = resolved.relative_to(self.output_dir).as_posix()
+        payload = f"{relative}\n{expires}".encode("utf-8")
         encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
         signature = hmac.new(self.secret, encoded.encode("ascii"), hashlib.sha256).hexdigest()
         token = f"{encoded}.{signature}"
@@ -61,10 +62,8 @@ class SignedMediaUrlService:
             raise SignedMediaError("Media token không hợp lệ") from exc
         if expires < int(self._clock()):
             raise SignedMediaError("Media token đã hết hạn")
-        if Path(filename).name != filename:
-            raise SignedMediaError("Media token không hợp lệ")
         path = (self.output_dir / filename).resolve()
-        if path.parent != self.output_dir or not path.is_file():
+        if not path.is_relative_to(self.output_dir) or not path.is_file():
             raise SignedMediaError("Không tìm thấy media")
         return path
 

@@ -146,6 +146,12 @@ class InstagramPublisherTests(unittest.TestCase):
         url = self.media_urls.create_url(self.video, ttl_seconds=60)
         token = urllib.parse.urlsplit(url).path.rsplit("/", 1)[1]
         self.assertEqual(self.media_urls.resolve(token), self.video)
+        nested = self.output_dir / "users" / "user-a" / "job-a" / "video.mp4"
+        nested.parent.mkdir(parents=True)
+        nested.write_bytes(b"tenant-video")
+        nested_url = self.media_urls.create_url(nested, ttl_seconds=60)
+        nested_token = urllib.parse.urlsplit(nested_url).path.rsplit("/", 1)[1]
+        self.assertEqual(self.media_urls.resolve(nested_token), nested)
         with self.assertRaises(SignedMediaError):
             self.media_urls.resolve(token + "tampered")
         self.now += 61

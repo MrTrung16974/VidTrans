@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import threading
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from application.social_publishing import (
@@ -35,9 +36,14 @@ def create_social_publish_router(
     service: SocialPublishingService,
     jobs: Any,
     output_dir: Path,
+    owner_resolver=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["Social Publishing"])
     output_dir = output_dir.resolve()
+    owner_resolver = owner_resolver or (lambda _request: "__legacy__")
+
+    def owned_job(request: Request, job_id: str):
+        return jobs.get_for_user(job_id, owner_resolver(request)) if hasattr(jobs, "get_for_user") else jobs.get(job_id)
 
     def public_attempt(attempt: dict[str, Any]) -> dict[str, Any]:
         allowed = {
@@ -47,14 +53,14 @@ def create_social_publish_router(
         }
         return {key: value for key, value in attempt.items() if key in allowed}
 
-    def ready_video(job_id: str) -> Path:
-        job = jobs.get(job_id)
+    def ready_video(request: Request, job_id: str) -> Path:
+        job = owned_job(request, job_id)
         if not job:
             raise HTTPException(404, "Không tìm thấy video")
         if job.get("status") != "completed" or not job.get("output_video"):
             raise HTTPException(409, "Video phải xử lý hoàn tất trước khi đăng")
         video = (output_dir / str(job["output_video"])).resolve()
-        if video.parent != output_dir or not video.is_file():
+        if not video.is_relative_to(output_dir) or not video.is_file():
             raise HTTPException(404, "Không tìm thấy file đầu ra")
         return video
 
@@ -63,10 +69,10 @@ def create_social_publish_router(
         return {"items": service.publishers.capabilities()}
 
     @router.post("/jobs/{job_id}/social-publishes", status_code=202)
-    def create_publish(job_id: str, request: CreateSocialPublishRequest):
+    def create_publish(http_request: Request, job_id: str, request: CreateSocialPublishRequest):
         if not request.reviewed:
             raise HTTPException(422, "Hãy duyệt video và nội dung trước khi đăng")
-        video = ready_video(job_id)
+        video = ready_video(http_request, job_id)
         try:
             attempt, created = service.create(
                 job_id=job_id,
@@ -76,7 +82,9 @@ def create_social_publish_router(
                 mode=request.mode,
                 scheduled_for=request.scheduled_for,
                 timezone_name=request.timezone,
-                idempotency_key=request.idempotency_key,
+                idempotency_key=hashlib.sha256(
+                    f"{owner_resolver(http_request)}:{request.idempotency_key}".encode("utf-8")
+                ).hexdigest(),
                 account_id=request.account_id,
                 options=request.options,
             )
@@ -94,20 +102,23 @@ def create_social_publish_router(
         return {**public_attempt(attempt), "created": created}
 
     @router.get("/jobs/{job_id}/social-publishes")
-    def list_publishes(job_id: str):
-        if jobs.get(job_id) is None:
+    def list_publishes(request: Request, job_id: str):
+        if owned_job(request, job_id) is None:
             raise HTTPException(404, "Không tìm thấy video")
         return {"items": [public_attempt(item) for item in service.store.list_for_job(job_id)]}
 
     @router.get("/social-publishes/{attempt_id}")
-    def get_publish(attempt_id: str):
+    def get_publish(request: Request, attempt_id: str):
         attempt = service.store.get(attempt_id)
-        if attempt is None:
+        if attempt is None or owned_job(request, str(attempt["job_id"])) is None:
             raise HTTPException(404, "Không tìm thấy yêu cầu đăng")
         return public_attempt(attempt)
 
     @router.post("/social-publishes/{attempt_id}/cancel")
-    def cancel_publish(attempt_id: str):
+    def cancel_publish(request: Request, attempt_id: str):
+        attempt = service.store.get(attempt_id)
+        if attempt is None or owned_job(request, str(attempt["job_id"])) is None:
+            raise HTTPException(404, "Không tìm thấy yêu cầu đăng")
         try:
             return public_attempt(service.store.cancel(attempt_id))
         except SocialPublishNotFoundError as exc:
@@ -116,9 +127,9 @@ def create_social_publish_router(
             raise HTTPException(409, str(exc)) from exc
 
     @router.post("/social-publishes/{attempt_id}/refresh")
-    def refresh_publish(attempt_id: str):
+    def refresh_publish(request: Request, attempt_id: str):
         attempt = service.store.get(attempt_id)
-        if attempt is None:
+        if attempt is None or owned_job(request, str(attempt["job_id"])) is None:
             raise HTTPException(404, "Không tìm thấy yêu cầu đăng")
         if attempt.get("remote_media_id") or attempt.get("remote_post_id"):
             attempt = service.reconcile(attempt_id)

@@ -19,9 +19,13 @@ class TikTokPublishingValidationError(ValueError):
 
 
 class TikTokPublishingService:
-    def __init__(self, store: SQLiteTikTokPublishStore, publisher: TikTokPublisher) -> None:
+    def __init__(self, store: SQLiteTikTokPublishStore, publisher: TikTokPublisher, publisher_resolver=None) -> None:
         self.store = store
         self.publisher = publisher
+        self._publisher_resolver = publisher_resolver
+
+    def _publisher(self, job_id: str) -> TikTokPublisher:
+        return self._publisher_resolver(job_id) if self._publisher_resolver is not None else self.publisher
 
     def create(
         self,
@@ -140,12 +144,12 @@ class TikTokPublishingService:
         try:
             path = Path(str(attempt["video_path"]))
             if attempt["mode"] == "INBOX_DRAFT":
-                result = self.publisher.upload_draft(
+                result = self._publisher(str(attempt["job_id"])).upload_draft(
                     path, on_initialized=checkpoint, account_id=attempt.get("account_id"),
                     on_progress=progress,
                 )
             else:
-                result = self.publisher.publish(
+                result = self._publisher(str(attempt["job_id"])).publish(
                     path,
                     str(attempt["caption"]),
                     privacy_level=str(attempt["privacy_level"]),
@@ -179,7 +183,7 @@ class TikTokPublishingService:
         if not publish_id:
             return attempt
         try:
-            detail = self.publisher.fetch_status(publish_id, account_id=attempt.get("account_id"))
+            detail = self._publisher(str(attempt["job_id"])).fetch_status(publish_id, account_id=attempt.get("account_id"))
         except TikTokPublisherError as exc:
             return self.store.update(attempt_id, status="NEEDS_RECONCILIATION", error=str(exc))
         status = str(detail.get("status") or "SUBMITTED")

@@ -29,9 +29,16 @@ class SocialPublishingService:
         self,
         store: SQLiteSocialPublishStore,
         publishers: PublisherRegistry,
+        publisher_resolver=None,
     ) -> None:
         self.store = store
         self.publishers = publishers
+        self._publisher_resolver = publisher_resolver
+
+    def _publisher(self, platform: SocialPlatform | str, job_id: str):
+        if self._publisher_resolver is not None:
+            return self._publisher_resolver(platform, job_id)
+        return self.publishers.get(platform)
 
     def create(
         self,
@@ -52,7 +59,7 @@ class SocialPublishingService:
             normalized_mode = PublishMode(mode)
         except ValueError as exc:
             raise SocialPublishingValidationError("Nền tảng hoặc chế độ đăng không hợp lệ") from exc
-        publisher = self.publishers.get(normalized_platform)
+        publisher = self._publisher(normalized_platform, job_id)
         capabilities = publisher.capabilities
         video_path = video_path.resolve()
         if not capabilities.supports_video:
@@ -123,7 +130,7 @@ class SocialPublishingService:
         if attempt.get("remote_media_id") or attempt.get("remote_post_id"):
             return self.reconcile(attempt_id)
 
-        publisher = self.publishers.get(str(attempt["platform"]))
+        publisher = self._publisher(str(attempt["platform"]), str(attempt["job_id"]))
         self.store.update(
             attempt_id,
             status=PublishStatus.UPLOADING.value,
@@ -193,7 +200,7 @@ class SocialPublishingService:
             raise SocialPublishingValidationError("Không tìm thấy yêu cầu đăng")
         if not attempt.get("remote_media_id") and not attempt.get("remote_post_id"):
             return attempt
-        publisher = self.publishers.get(str(attempt["platform"]))
+        publisher = self._publisher(str(attempt["platform"]), str(attempt["job_id"]))
         try:
             result = publisher.reconcile(
                 remote_media_id=attempt.get("remote_media_id"),

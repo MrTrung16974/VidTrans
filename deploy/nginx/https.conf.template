@@ -65,8 +65,19 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
     }
 
+    location = /_vidtrans_admin_browser_auth {
+        internal;
+        proxy_pass http://vidtrans:8000/api/v1/auth/admin-proxy-check;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Host $host;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
     location ^~ /douyin-browser/ {
-        auth_request /_vidtrans_browser_auth;
+        auth_request /_vidtrans_admin_browser_auth;
         proxy_pass http://social-browser:6080/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -102,7 +113,7 @@ server {
     }
 
     location ^~ /youtube-browser/ {
-        auth_request /_vidtrans_browser_auth;
+        auth_request /_vidtrans_admin_browser_auth;
         proxy_pass http://social-browser:6080/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -120,7 +131,7 @@ server {
     }
 
     location ^~ /facebook-browser/ {
-        auth_request /_vidtrans_browser_auth;
+        auth_request /_vidtrans_admin_browser_auth;
         proxy_pass http://social-browser:6080/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -138,7 +149,7 @@ server {
     }
 
     location ^~ /source-browser/ {
-        auth_request /_vidtrans_browser_auth;
+        auth_request /_vidtrans_admin_browser_auth;
         proxy_pass http://social-browser:6080/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

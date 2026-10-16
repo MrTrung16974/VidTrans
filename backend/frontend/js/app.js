@@ -4,6 +4,51 @@ import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
+// Associate requests started synchronously by a user interaction with its
+// button. Background polling deliberately has no trigger, so it stays quiet.
+let apiActionTrigger = null;
+const apiActionRequests = new WeakMap();
+
+function rememberApiAction(element) {
+  apiActionTrigger = element?.closest?.("button, [role=button]") || null;
+  setTimeout(() => {
+    if (apiActionTrigger === element || apiActionTrigger === element?.closest?.("button, [role=button]")) apiActionTrigger = null;
+  }, 0);
+}
+
+document.addEventListener("click", event => rememberApiAction(event.target), true);
+document.addEventListener("submit", event => {
+  rememberApiAction(event.submitter || event.target.querySelector('button[type="submit"], input[type="submit"]'));
+}, true);
+
+function beginElementLoading(trigger) {
+  if (!trigger) return () => {};
+  const current = apiActionRequests.get(trigger);
+  const action = current || { count: 0, startedAt: performance.now() };
+  action.count += 1;
+  apiActionRequests.set(trigger, action);
+  trigger.classList.add("is-api-loading");
+  trigger.setAttribute("aria-busy", "true");
+  return () => {
+    const active = apiActionRequests.get(trigger);
+    if (!active) return;
+    active.count = Math.max(0, active.count - 1);
+    if (active.count) return;
+    // Keep quick requests perceptible instead of flashing for only a few ms.
+    const delay = Math.max(0, 450 - (performance.now() - active.startedAt));
+    setTimeout(() => {
+      if (apiActionRequests.get(trigger) !== active || active.count) return;
+      apiActionRequests.delete(trigger);
+      trigger.classList.remove("is-api-loading");
+      trigger.removeAttribute("aria-busy");
+    }, delay);
+  };
+}
+
+function beginApiActionLoading() {
+  return beginElementLoading(apiActionTrigger);
+}
+
 const state = {
   files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
   tiktokAuth: null, appStarted: false,
@@ -41,7 +86,8 @@ function toast(message, isError = false) {
 function apiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("X-VidTrans-Request", "1");
-  return fetch(url, { ...options, headers, credentials: "same-origin" });
+  const endLoading = beginApiActionLoading();
+  return fetch(url, { ...options, headers, credentials: "same-origin" }).finally(endLoading);
 }
 
 function safeDownloadName(value, fallback = "vidtrans-download") {
@@ -61,10 +107,18 @@ function startBrowserDownload(url, filename) {
 
 async function saveDownload(url, suggestedName, trigger) {
   const filename = safeDownloadName(suggestedName);
+  const endLoading = beginElementLoading(trigger);
   // Let the browser own the transfer so navigation does not interrupt a page
   // stream or leave a zero-byte Save File Picker destination and .crswap file.
-  startBrowserDownload(url, filename);
-  toast("Đã yêu cầu tải file. Xem tiến độ trong mục Tải xuống của trình duyệt; chờ tải xong trước khi mở.");
+  try {
+    startBrowserDownload(url, filename);
+    // Native downloads do not expose completion progress to page JavaScript.
+    // Keep an acknowledgement spinner visible while the browser accepts it.
+    await new Promise(resolve => setTimeout(resolve, 700));
+    toast("Đã yêu cầu tải file. Xem tiến độ trong mục Tải xuống của trình duyệt; chờ tải xong trước khi mở.");
+  } finally {
+    endLoading();
+  }
 }
 
 function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", isError = true) {
@@ -76,6 +130,15 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   state.douyinBrowserPollTimer = null;
   state.appStarted = false;
   state.auth.authenticated = false;
+  // Never leave the previous account's data rendered behind the login gate.
+  // This also prevents a brief stale-data flash when another user signs in.
+  state.jobs = [];
+  state.pendingUploads = [];
+  state.selectedJobIds.clear();
+  state.files = [];
+  state.links = [];
+  const jobsBody = $("#jobsBody");
+  if (jobsBody) renderJobs([]);
   $("#userMenu").classList.add("is-hidden");
   $("#authGate").classList.remove("is-hidden");
   const authMessage = $("#authMessage");
@@ -108,9 +171,11 @@ async function refreshApplicationAuth() {
     const detail = (status.configuration_errors || []).join(" · ") || status.message;
     lockApplication(detail);
     $("#authSubmit").disabled = true;
+    $("#authRegisterSubmit").disabled = true;
     return false;
   }
   $("#authSubmit").disabled = false;
+  $("#authRegisterSubmit").disabled = false;
   if (!status.authenticated) {
     lockApplication("Nhập tài khoản quản trị để tiếp tục.", false);
     return false;
@@ -135,14 +200,18 @@ function applyPermissions() {
   const popoverRole = $("#userPopoverRole");
   if (popoverRole) popoverRole.textContent = roleLabel(role);
   $("#userAvatar").textContent = (state.auth.username || "U").charAt(0).toUpperCase();
-  $("#appLogoutButton").classList.toggle("is-hidden", !state.auth.enabled);
+  $("#appLogoutButton").classList.remove("is-hidden");
+  $("#appLogoutButton").title = state.auth.enabled
+    ? "Đăng xuất khỏi VidTrans"
+    : "Xác thực đang tắt trong cấu hình môi trường local";
   $("#userMenu").classList.remove("is-hidden");
 }
 
 async function startProtectedApplication() {
   if (state.appStarted) return;
   state.appStarted = true;
-  await Promise.all([loadJobs(), refreshDouyinAuthStatus(), tiktokWorkspace.refresh()]);
+  const canManageSources = ["owner", "admin"].includes(state.auth.role);
+  await Promise.all([loadJobs(), canManageSources ? refreshDouyinAuthStatus() : Promise.resolve(), tiktokWorkspace.refresh()]);
   clearInterval(state.pollTimer);
   state.pollTimer = null;
   jobEvents.start();
@@ -549,8 +618,8 @@ let activeView = null;
 
 function showView() {
   let view = location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : "create";
-  if (view === "admin" && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
-  if (["tiktok", "douyin"].includes(view) && state.auth.role === "viewer") view = "jobs";
+  if (["admin", "douyin"].includes(view) && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
+  if (view === "tiktok" && state.auth.role === "viewer") view = "jobs";
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
   $("#tiktokView").classList.toggle("is-hidden", view !== "tiktok");
@@ -582,10 +651,57 @@ function money(value) {
   return value == null ? "Liên hệ" : new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value);
 }
 
+function selectBillingPlan(planKey, { scroll = true } = {}) {
+  const plan = state.billing?.plans?.find(item => item.key === planKey && Number(item.amount) > 0);
+  const select = $("#paymentPlan");
+  if (!plan || !select || ![...select.options].some(option => option.value === planKey)) return;
+  select.value = planKey;
+  $$("[data-plan-card]", $("#billingPlans")).forEach(card => {
+    const selected = card.dataset.planCard === planKey;
+    card.classList.toggle("is-selected", selected);
+    card.setAttribute("aria-selected", String(selected));
+  });
+  $("#checkoutTitle").textContent = `Thanh toán gói ${plan.name}`;
+  $("#checkoutDescription").textContent = `${plan.minutes.toLocaleString("vi-VN")} phút xử lý mỗi tháng · ${money(plan.amount)}/tháng. Chọn phương thức thanh toán để tiếp tục.`;
+  $("#createPaymentLabel").textContent = `Tiếp tục với ${plan.name} · ${money(plan.amount)}`;
+  const notice = $("#billingNotice");
+  notice.innerHTML = `<strong>Đã chọn gói ${escapeHtml(plan.name)}</strong><span>${plan.minutes.toLocaleString("vi-VN")} phút/tháng · ${money(plan.amount)}. Hoàn tất phương thức thanh toán bên dưới.</span>`;
+  notice.classList.remove("is-hidden");
+  if (scroll) {
+    const checkout = $(".payment-checkout");
+    checkout.classList.remove("is-focused");
+    requestAnimationFrame(() => checkout.classList.add("is-focused"));
+    checkout.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => checkout.classList.remove("is-focused"), 1400);
+  }
+}
+
 function renderBilling(data) {
   const account = data.account;
   $("#billingCurrentPlan").textContent = String(account.plan || "free").toUpperCase();
   $("#billingPaymentStatus").textContent = billingLabels.payment[account.payment_status] || account.payment_status;
+
+  const quota = data.quota;
+  if (quota && $("#billingQuotaUsage")) {
+    const period = quota.period || "";
+    $("#billingQuotaPeriod").textContent = period;
+    const limit = quota.limit_minutes;
+    const reserved = quota.reserved_minutes || 0;
+    const consumed = quota.consumed_minutes || 0;
+    const used = reserved + consumed;
+    if (limit == null) {
+      $("#billingQuotaUsage").textContent = `${used} phút (Không giới hạn)`;
+      $("#billingQuotaProgress").style.width = "100%";
+      $("#billingQuotaRemaining").textContent = "Gói Doanh nghiệp không giới hạn thời lượng";
+    } else {
+      const remaining = quota.remaining_minutes ?? Math.max(0, limit - used);
+      const percent = Math.min(100, Math.round((used / limit) * 100));
+      $("#billingQuotaUsage").textContent = `${used} / ${limit} phút (${percent}%)`;
+      $("#billingQuotaProgress").style.width = `${percent}%`;
+      $("#billingQuotaProgress").style.background = percent > 90 ? "#ef4444" : percent > 70 ? "#f59e0b" : "#ef6b3a";
+      $("#billingQuotaRemaining").textContent = `Còn lại: ${remaining} phút ${reserved > 0 ? `(Đang giữ chỗ: ${reserved} phút)` : ""}`;
+    }
+  }
 
   const planBadges = {
     free: { icon: "🌱", label: "Gói Khởi động" },
@@ -594,14 +710,19 @@ function renderBilling(data) {
     enterprise: { icon: "🏢", label: "Doanh nghiệp" },
   };
 
+  const paidPlans = data.plans.filter(plan => Number(plan.amount) > 0 && plan.key !== account.plan);
+  const previousSelection = $("#paymentPlan").value;
+  $("#paymentPlan").innerHTML = paidPlans.map(plan => `<option value="${escapeHtml(plan.key)}">${escapeHtml(plan.name)} (${plan.minutes.toLocaleString("vi-VN")} phút/tháng) · ${money(plan.amount)}</option>`).join("");
+
   $("#billingPlans").innerHTML = data.plans.map(plan => {
     const isCurrent = plan.key === account.plan;
     const isFeatured = plan.key === "pro";
+    const isSelectable = Number(plan.amount) > 0 && !isCurrent;
     const badgeText = isCurrent ? "Gói hiện tại" : isFeatured ? "Phổ biến" : "VidTrans";
     const planMeta = planBadges[plan.key] || { icon: "✦", label: "VidTrans" };
 
     return `
-      <article class="card billing-plan ${isCurrent ? "current" : ""} ${isFeatured ? "featured" : ""}">
+      <article class="card billing-plan ${isCurrent ? "current" : ""} ${isFeatured ? "featured" : ""} ${isSelectable ? "is-selectable" : ""}" ${isSelectable ? `data-plan-card="${escapeHtml(plan.key)}" role="button" tabindex="0" aria-selected="false"` : ""}>
         <div class="plan-card-header">
           <div class="plan-badge-row">
             <span class="plan-badge ${isCurrent ? "badge-current" : isFeatured ? "badge-featured" : "badge-standard"}">
@@ -639,6 +760,11 @@ function renderBilling(data) {
         </div>
       </article>`;
   }).join("");
+
+  const initialPlan = paidPlans.some(plan => plan.key === previousSelection)
+    ? previousSelection
+    : paidPlans[0]?.key;
+  if (initialPlan) selectBillingPlan(initialPlan, { scroll: false });
 
   $("#paymentProviders").innerHTML = `<legend>Phương thức thanh toán</legend><div class="payment-methods-grid">${Object.entries(data.providers).map(([key, available]) => `
     <label class="payment-method ${available ? "" : "disabled"}">
@@ -811,13 +937,25 @@ function renderAdminAccounts() {
       ${adminSelect("approval_status", item.approval_status, approvals, "Phê duyệt", item.role === "owner")}
       ${adminSelect("plan", item.plan, plans, "Gói dịch vụ")}
       ${adminSelect("payment_status", item.payment_status, payments, "Thanh toán")}
-      <div class="admin-action-cell">
+      <div class="admin-action-cell" style="display: flex; gap: 6px; align-items: center;">
         <button class="button secondary btn-admin-save" type="button" data-admin-save title="Lưu thay đổi tài khoản này">
           <span class="save-icon" aria-hidden="true">✓</span>
           <span>Lưu</span>
         </button>
+        ${item.role !== "owner" ? `
+          <button class="button secondary mini-btn cancel-btn" type="button" data-admin-delete="${escapeHtml(item.user_id)}" title="Xóa tài khoản">
+            <span>✕</span>
+          </button>` : ""}
       </div>
     </article>`).join("");
+
+  const userFilter = $("#adminJobUserFilter");
+  if (userFilter) {
+    const currentVal = userFilter.value;
+    userFilter.innerHTML = '<option value="">Tất cả người dùng</option>' + state.adminAccounts.map(a => `
+      <option value="${escapeHtml(a.user_id)}" ${a.user_id === currentVal ? "selected" : ""}>${escapeHtml(a.email || a.display_name || a.user_id)}</option>
+    `).join("");
+  }
 }
 
 async function loadAdminAccounts() {
@@ -865,6 +1003,113 @@ async function createAdminAccount(event) {
     await loadAdminAccounts();
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
+}
+
+async function deleteAdminAccount(userId) {
+  if (!confirm("Bạn có chắc chắn muốn xóa tài khoản này? Toàn bộ file và dữ liệu liên quan sẽ bị dọn dẹp theo chính sách bảo mật.")) return;
+  try {
+    await requestJson(`/api/v1/admin/accounts/${encodeURIComponent(userId)}`, { method: "DELETE" });
+    toast("Đã xóa tài khoản và dọn dẹp dữ liệu");
+    await loadAdminAccounts();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function loadAdminJobs() {
+  const list = $("#adminJobsList");
+  if (!list) return;
+  list.innerHTML = '<div class="empty-state"><strong>Đang tải danh sách jobs toàn hệ thống…</strong></div>';
+  try {
+    const params = new URLSearchParams();
+    const userId = $("#adminJobUserFilter")?.value || "";
+    const status = $("#adminJobStatusFilter")?.value || "";
+    const search = $("#adminJobSearch")?.value.trim() || "";
+    if (userId) params.set("user_id", userId);
+    if (status) params.set("status", status);
+    if (search) params.set("search", search);
+    params.set("limit", "100");
+
+    const data = await requestJson(`/api/v1/admin/jobs?${params}`);
+    renderAdminJobs(data.items || []);
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state error"><strong>${escapeHtml(err.message)}</strong></div>`;
+  }
+}
+
+function renderAdminJobs(jobs) {
+  const list = $("#adminJobsList");
+  if (!list) return;
+  if (!jobs.length) {
+    list.innerHTML = '<div class="empty-state"><strong>Không có tiến trình nào phù hợp</strong></div>';
+    return;
+  }
+  list.innerHTML = jobs.map(job => {
+    const status = job.status || "queued";
+    const statusBadge = `<span class="badge ${status === "completed" ? "badge-success" : status === "failed" ? "badge-danger" : "badge-warning"}">${status}</span>`;
+    const userLabel = job.owner_email ? `${escapeHtml(job.owner_email)}` : (job.owner_user_id || "Chưa rõ");
+    const progress = Math.round((job.progress || 0) * 100);
+    const createdAt = job.created_at ? new Date(job.created_at).toLocaleString("vi-VN") : "—";
+    const fileName = escapeHtml(job.filename || "Video");
+
+    return `
+      <div class="admin-jobs-row" data-job-id="${escapeHtml(job.job_id)}">
+        <code>${escapeHtml(job.job_id)}</code>
+        <div class="user-meta" title="${escapeHtml(job.owner_user_id || "")}">
+          <strong>${userLabel}</strong>
+          ${job.owner_display_name ? `<br><small>${escapeHtml(job.owner_display_name)}</small>` : ""}
+        </div>
+        <div class="job-filename" title="${fileName}">${fileName}</div>
+        <div>${statusBadge}</div>
+        <div>${progress}%</div>
+        <small>${createdAt}</small>
+        <div>
+          <button class="button secondary mini-btn" type="button" data-admin-view-job="${escapeHtml(job.job_id)}" title="Xem chi tiết (Có ghi Audit)">Chi tiết</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function loadAdminAudit() {
+  const list = $("#adminAuditList");
+  if (!list) return;
+  list.innerHTML = '<div class="empty-state"><strong>Đang tải nhật ký kiểm toán…</strong></div>';
+  try {
+    const params = new URLSearchParams();
+    const action = $("#adminAuditActionFilter")?.value || "";
+    if (action) params.set("action", action);
+    params.set("limit", "100");
+
+    const data = await requestJson(`/api/v1/admin/audit-events?${params}`);
+    renderAdminAudit(data.items || []);
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state error"><strong>${escapeHtml(err.message)}</strong></div>`;
+  }
+}
+
+function renderAdminAudit(events) {
+  const list = $("#adminAuditList");
+  if (!list) return;
+  if (!events.length) {
+    list.innerHTML = '<div class="empty-state"><strong>Chưa có bản ghi kiểm toán nào</strong></div>';
+    return;
+  }
+  list.innerHTML = events.map(evt => {
+    const time = evt.created_at ? new Date(evt.created_at).toLocaleString("vi-VN") : "—";
+    const actor = evt.actor_email || evt.actor_user_id;
+    const target = evt.target_email || evt.target_user_id || "—";
+    const metaStr = JSON.stringify(evt.metadata || {});
+
+    return `
+      <div class="admin-audit-row">
+        <small>${time}</small>
+        <strong>${escapeHtml(actor)}</strong>
+        <div><span class="badge badge-info">${escapeHtml(evt.action)}</span></div>
+        <div><small>${escapeHtml(evt.resource_type || "—")}${evt.resource_id ? `:${escapeHtml(evt.resource_id)}` : ""}</small></div>
+        <div>${escapeHtml(target)}</div>
+        <div class="audit-metadata-code" title="${escapeHtml(metaStr)}">${escapeHtml(metaStr)}</div>
+      </div>
+    `;
+  }).join("");
 }
 
 function uploadBatch(formData, { onProgress, onRequest } = {}) {
@@ -932,6 +1177,7 @@ async function submitBatch(event) {
     request: null,
   };
   state.pendingUploads.unshift(pendingUpload);
+  const endSubmitLoading = beginApiActionLoading();
   $("#submitButton").disabled = true;
   $("#uploadProgress").classList.remove("is-hidden");
   location.hash = "#jobs";
@@ -963,6 +1209,7 @@ async function submitBatch(event) {
     renderJobDashboard();
     toast(error.message, true);
   } finally {
+    endSubmitLoading();
     pendingUpload.request = null;
     $("#submitButton").disabled = false;
     $("#uploadProgress").classList.add("is-hidden");
@@ -975,26 +1222,26 @@ function jobActions(job) {
   let downloads = "";
   if (job.video_url) {
     const videoName = job.output_video || `${job.job_id}.mp4`;
-    downloads += `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Tải video MP4 hoàn tất"><span class="btn-icon">⬇</span><span>Video</span></button>`;
+    downloads += `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Tải video MP4 hoàn tất"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span>Video</span></button>`;
   }
   if (job.download_all_url) {
     const zipName = `${job.job_id}.artifacts.zip`;
-    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)"><span class="btn-icon">📦</span><span>ZIP</span></button>`;
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg><span>ZIP</span></button>`;
   }
   const cancel = ["queued", "scheduled", "processing", "cancelling"].includes(job.status)
-    ? `<button type="button" class="btn-job-action btn-cancel" data-action="cancel" data-job="${job.job_id}" title="Hủy tiến trình"><span class="btn-icon">✕</span><span>Hủy</span></button>`
+    ? `<button type="button" class="btn-job-action btn-cancel" data-action="cancel" data-job="${job.job_id}" title="Hủy tiến trình"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
     : "";
   const retry = terminal
-    ? `<button type="button" class="btn-job-action btn-retry" data-action="retry" data-job="${job.job_id}" title="Chạy lại video này"><span class="btn-icon">↺</span><span>Chạy lại</span></button>`
+    ? `<button type="button" class="btn-job-action btn-retry" data-action="retry" data-job="${job.job_id}" title="Chạy lại video này"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>Chạy lại</span></button>`
     : "";
   const remove = terminal
-    ? `<button type="button" class="btn-job-action btn-delete" data-action="delete" data-job="${job.job_id}" title="Xóa video và dữ liệu liên quan"><span class="btn-icon">🗑</span><span>Xóa</span></button>`
+    ? `<button type="button" class="btn-job-action btn-delete" data-action="delete" data-job="${job.job_id}" title="Xóa video và dữ liệu liên quan"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg><span>Xóa</span></button>`
     : "";
   const refreshTikTok = job.tiktok_publish_id && !["PUBLISH_COMPLETE", "FAILED"].includes(job.tiktok_publish_status)
-    ? `<button type="button" class="btn-job-action" data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok"><span class="btn-icon">♪</span><span>TikTok</span></button>`
+    ? `<button type="button" class="btn-job-action btn-tiktok-status" data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.49 6.27 6.27 0 0 0 1.86-4.49v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-.86-.09z"/></svg><span>TikTok</span></button>`
     : "";
   const review = job.status === "completed" && job.video_url
-    ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Duyệt bài và đăng video lên TikTok"><span class="btn-icon">♪</span><span>Duyệt đăng</span></button>`
+    ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Duyệt bài và đăng video lên TikTok"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.49 6.27 6.27 0 0 0 1.86-4.49v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-.86-.09z"/></svg><span>Duyệt đăng</span></button>`
     : "";
   return review + downloads + refreshTikTok + cancel + retry + remove;
 }
@@ -1019,10 +1266,15 @@ function updateJobSelectionUI() {
     delete: eligibleJobs("delete").length,
   };
   const labels = { cancel: "Hủy", retry: "Chạy lại", delete: "Xóa" };
+  const icons = {
+    cancel: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`,
+    retry: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>`,
+    delete: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
+  };
   for (const [action, count] of Object.entries(counts)) {
     const button = $(`[data-bulk-action="${action}"]`);
     button.disabled = count === 0;
-    button.textContent = count ? `${labels[action]} (${count})` : labels[action];
+    button.innerHTML = `<span class="btn-icon">${icons[action]}</span><span>${count ? `${labels[action]} (${count})` : labels[action]}</span>`;
   }
 }
 
@@ -1036,14 +1288,29 @@ function renderPendingUpload(upload) {
   const statusClass = active ? "processing" : "failed";
   const statusText = active ? (progress >= 100 ? "Đang tạo job" : "Đang upload") : upload.status === "cancelled" ? "Đã hủy" : "Upload lỗi";
   const action = active
-    ? `<button class="btn-job-action btn-cancel" data-upload-cancel="${escapeHtml(upload.id)}" type="button"><span class="btn-icon">✕</span><span>Hủy upload</span></button>`
-    : `<button class="btn-job-action" data-upload-dismiss="${escapeHtml(upload.id)}" type="button"><span>Ẩn</span></button>`;
-  return `<article class="job-row upload-row" data-upload-row="${escapeHtml(upload.id)}">
-    <span class="job-select upload-indicator" aria-hidden="true">↑</span>
-    <div class="job-file"><span class="job-file-icon upload-icon">UP</span><div><strong title="${escapeHtml(sourceSummary)}">${escapeHtml(upload.batchName)}</strong><small>${escapeHtml(sourceSummary)}</small></div></div>
+    ? `<button class="btn-job-action btn-cancel" data-upload-cancel="${escapeHtml(upload.id)}" type="button"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
+    : `<button class="btn-job-action btn-dismiss" data-upload-dismiss="${escapeHtml(upload.id)}" type="button"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Ẩn</span></button>`;
+  const uploadIcon = active
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
+  return `<article class="job-row upload-row ${active ? "is-uploading" : "upload-failed"}" data-upload-row="${escapeHtml(upload.id)}">
+    <span class="job-select upload-indicator" aria-hidden="true">${active ? "↑" : "!"}</span>
+    <div class="job-file">
+      <div class="job-file-icon upload-icon ${active ? "active-upload-icon" : "failed-upload-icon"}">${uploadIcon}</div>
+      <div class="job-file-meta">
+        <div class="job-title-row">
+          <strong class="job-name-text" title="${escapeHtml(upload.batchName)}">${escapeHtml(upload.batchName)}</strong>
+          <span class="upload-badge ${active ? "badge-uploading" : "badge-failed"}">${active ? "Đang upload" : "Upload lỗi"}</span>
+        </div>
+        <div class="source-url-row" title="${escapeHtml(sourceSummary)}">
+          <svg class="source-link-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          <span class="url-truncate">${escapeHtml(sourceSummary)}</span>
+        </div>
+      </div>
+    </div>
     <span class="status-pill status-${statusClass}"><span class="status-dot"></span><span>${statusText}</span></span>
-    <div class="job-progress"><div class="progress-track"><span style="width:${progress}%"></span></div><small>${progress}%</small></div>
-    <div class="job-step"><strong>${progress >= 100 && active ? "Đang tạo tiến trình" : "Đang tải batch"}</strong><small title="${escapeHtml(upload.detail)}">${escapeHtml(upload.detail)}</small></div>
+    <div class="job-progress"><div class="progress-track ${active ? "progress-active" : "progress-failed"}"><span style="width:${active ? progress : 100}%"></span></div><small>${active ? `${progress}%` : "—"}</small></div>
+    <div class="job-step"><strong>${progress >= 100 && active ? "Đang tạo tiến trình" : active ? "Đang tải batch" : "Tải lên không thành công"}</strong><small title="${escapeHtml(upload.detail)}">${escapeHtml(upload.detail)}</small></div>
     <div class="job-actions">${action}</div>
   </article>`;
 }
@@ -1051,7 +1318,17 @@ function renderPendingUpload(upload) {
 function renderJobs(jobs) {
   const pendingHtml = state.pendingUploads.map(renderPendingUpload).join("");
   if (!jobs.length && !pendingHtml) {
-    $("#jobsList").innerHTML = '<div class="empty-state"><div><div class="empty-icon">📂</div><strong>Chưa có tiến trình phù hợp</strong><br><small>Tạo batch mới hoặc thay đổi bộ lọc trạng thái để xem video.</small></div></div>';
+    $("#jobsList").innerHTML = `<div class="empty-state">
+      <div class="empty-icon-wrap">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+      </div>
+      <strong>Chưa có tiến trình phù hợp</strong>
+      <small>Tạo batch mới hoặc thay đổi bộ lọc trạng thái để xem video.</small>
+      <a class="button primary empty-state-btn" href="#create">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <span>Tạo batch video mới</span>
+      </a>
+    </div>`;
     updateJobSelectionUI();
     return;
   }
@@ -1070,8 +1347,8 @@ function renderJobs(jobs) {
     return `<article class="job-row${selected ? " selected" : ""}" data-job-row="${escapeHtml(job.job_id)}">
       <label class="job-select" title="Chọn job"><input type="checkbox" data-job-select="${escapeHtml(job.job_id)}" ${selected ? "checked" : ""} aria-label="Chọn ${escapeHtml(job.filename || job.job_id)}" /></label>
       <div class="job-file">
-        <div class="job-file-icon video-icon-badge" aria-hidden="true">
-          <span class="play-triangle">▶</span>
+        <div class="job-file-icon video-icon-badge status-accent-${escapeHtml(job.status)}" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         </div>
         <div class="job-file-meta">
           <strong title="${escapeHtml(job.filename || job.job_id)}">${escapeHtml(job.filename || job.job_id)}</strong>
@@ -1079,7 +1356,7 @@ function renderJobs(jobs) {
         </div>
       </div>
       <span class="status-pill status-${escapeHtml(job.status)}"><span class="status-dot"></span><span>${statusLabels[job.status] || escapeHtml(job.status)}</span></span>
-      <div class="job-progress"><div class="progress-track"><span style="width:${progress}%"></span></div><small>${progress}%</small></div>
+      <div class="job-progress"><div class="progress-track progress-${escapeHtml(job.status)}"><span style="width:${progress}%"></span></div><small>${progress}%</small></div>
       <div class="job-step"><strong>${escapeHtml(stepLabels[job.step] || job.step || "Đang cập nhật")}</strong><small title="${escapeHtml(detail)}">${escapeHtml(detail)}</small></div>
       <div class="job-actions">${jobActions(job)}</div>
     </article>`;
@@ -1224,6 +1501,30 @@ async function bulkJobAction(action) {
   await loadJobs();
 }
 
+let authMode = "login";
+
+function setAuthMode(mode) {
+  authMode = mode === "register" ? "register" : "login";
+  const registering = authMode === "register";
+  $("#authLoginForm").classList.toggle("is-hidden", registering);
+  $("#authRegisterForm").classList.toggle("is-hidden", !registering);
+  $("#authTitle").textContent = registering ? "Đăng ký VidTrans" : "Đăng nhập VidTrans";
+  $("#authDescription").textContent = registering
+    ? "Tạo tài khoản miễn phí để bắt đầu xử lý video."
+    : "Đăng nhập để truy cập pipeline, tiến trình và file video.";
+  $("#authModeToggle").textContent = registering
+    ? "Đã có tài khoản? Đăng nhập"
+    : "Chưa có tài khoản? Đăng ký miễn phí";
+  const message = $("#authMessage");
+  message.textContent = registering
+    ? "Tài khoản mới sẽ được kích hoạt với gói Free."
+    : "OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly";
+  message.classList.remove("error");
+  setTimeout(() => (registering ? $("#registerDisplayName") : $("#authUsername")).focus(), 0);
+}
+
+$("#authModeToggle").addEventListener("click", () => setAuthMode(authMode === "login" ? "register" : "login"));
+
 $("#authLoginForm").addEventListener("submit", async event => {
   event.preventDefault();
   const button = $("#authSubmit");
@@ -1256,7 +1557,46 @@ $("#authLoginForm").addEventListener("submit", async event => {
   }
 });
 
+$("#authRegisterForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $("#authRegisterSubmit");
+  const message = $("#authMessage");
+  const password = $("#registerPassword").value;
+  if (password !== $("#registerPasswordConfirm").value) {
+    message.textContent = "Mật khẩu nhập lại chưa khớp";
+    message.classList.add("error");
+    return;
+  }
+  button.disabled = true;
+  message.textContent = "Đang tạo tài khoản Free…";
+  message.classList.remove("error");
+  try {
+    const body = new FormData();
+    body.set("display_name", $("#registerDisplayName").value.trim());
+    body.set("email", $("#registerEmail").value.trim());
+    body.set("password", password);
+    await requestJson("/api/v1/auth/register", { method: "POST", body });
+    form.reset();
+    if (await refreshApplicationAuth()) {
+      await startProtectedApplication();
+      toast("Đăng ký thành công · Gói Free đã được kích hoạt");
+    }
+  } catch (error) {
+    message.textContent = error.message;
+    message.classList.add("error");
+  } finally {
+    button.disabled = !state.auth.configured;
+  }
+});
+
 $("#appLogoutButton").addEventListener("click", async () => {
+  if (!state.auth.enabled) {
+    $("#userMenu").classList.remove("open");
+    $("#userMenuButton").setAttribute("aria-expanded", "false");
+    toast("Không thể đăng xuất: hệ thống đang chạy chế độ local với VIDTRANS_AUTH_ENABLED=0.", true);
+    return;
+  }
   try {
     await requestJson("/api/v1/auth/session", { method: "DELETE" });
     $("#authPassword").value = "";
@@ -1295,6 +1635,12 @@ document.addEventListener("keydown", event => {
   $("#navToggle").setAttribute("aria-expanded", "false");
 });
 $("#paymentForm").addEventListener("submit", createPayment);
+$("#paymentPlan").addEventListener("change", event => selectBillingPlan(event.target.value, { scroll: false }));
+$("#billingPlans").addEventListener("keydown", event => {
+  if (!event.target.matches("[data-plan-card]") || !["Enter", " "].includes(event.key)) return;
+  event.preventDefault();
+  selectBillingPlan(event.target.dataset.planCard);
+});
 
 $("#billingView").addEventListener("click", async event => {
   // 1. Copy to clipboard
@@ -1310,13 +1656,12 @@ $("#billingView").addEventListener("click", async event => {
   }
 
   // 2. Select plan from pricing cards
-  const planBtn = event.target.closest("[data-select-plan]");
-  if (planBtn) {
-    const planKey = planBtn.dataset.selectPlan;
-    $("#paymentPlan").value = planKey;
+  const planTarget = event.target.closest("[data-select-plan], [data-plan-card]");
+  if (planTarget) {
+    const planKey = planTarget.dataset.selectPlan || planTarget.dataset.planCard;
     const bankRadio = $(`#paymentForm [name="provider"][value="bank"]`);
     if (bankRadio && !bankRadio.disabled) bankRadio.checked = true;
-    $("#paymentForm").scrollIntoView({ behavior: "smooth", block: "center" });
+    selectBillingPlan(planKey);
     return;
   }
 
@@ -1441,7 +1786,45 @@ $("#adminCreateAccountForm").addEventListener("submit", createAdminAccount);
 $("#adminAccountsList").addEventListener("click", event => {
   const button = event.target.closest("[data-admin-save]");
   if (button) saveAdminAccount(button.closest("[data-admin-account]"), button);
+  const deleteBtn = event.target.closest("[data-admin-delete]");
+  if (deleteBtn) deleteAdminAccount(deleteBtn.dataset.adminDelete);
 });
+$$("[data-admin-subtab]").forEach(tabBtn => {
+  tabBtn.addEventListener("click", () => {
+    const tabName = tabBtn.dataset.adminSubtab;
+    $$("[data-admin-subtab]").forEach(btn => btn.classList.toggle("active", btn === tabBtn));
+    $$(".admin-subtab-pane").forEach(pane => pane.classList.add("is-hidden"));
+    if (tabName === "accounts") {
+      $("#adminSubtabAccounts")?.classList.remove("is-hidden");
+      loadAdminAccounts();
+    } else if (tabName === "jobs") {
+      $("#adminSubtabJobs")?.classList.remove("is-hidden");
+      loadAdminJobs();
+    } else if (tabName === "audit") {
+      $("#adminSubtabAudit")?.classList.remove("is-hidden");
+      loadAdminAudit();
+    }
+  });
+});
+$("#refreshAdminJobs")?.addEventListener("click", loadAdminJobs);
+$("#adminJobUserFilter")?.addEventListener("change", loadAdminJobs);
+$("#adminJobStatusFilter")?.addEventListener("change", loadAdminJobs);
+$("#adminJobSearch")?.addEventListener("input", () => {
+  clearTimeout(state.adminJobSearchTimer);
+  state.adminJobSearchTimer = setTimeout(loadAdminJobs, 300);
+});
+$("#adminJobsList")?.addEventListener("click", async event => {
+  const viewBtn = event.target.closest("[data-admin-view-job]");
+  if (viewBtn) {
+    const jobId = viewBtn.dataset.adminViewJob;
+    try {
+      const job = await requestJson(`/api/v1/admin/jobs/${jobId}`);
+      alert(`[Audit Logged] Chi tiết tiến trình ${jobId}:\nNgười dùng: ${job.owner_email || job.owner_user_id}\nTrạng thái: ${job.status}\nTiến độ: ${Math.round((job.progress || 0) * 100)}%\nTạo lúc: ${job.created_at}`);
+    } catch (err) { toast(err.message, true); }
+  }
+});
+$("#refreshAdminAudit")?.addEventListener("click", loadAdminAudit);
+$("#adminAuditActionFilter")?.addEventListener("change", loadAdminAudit);
 $("#statusFilter").addEventListener("change", loadJobs);
 $("#jobSearch").addEventListener("input", () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadJobs, 300); });
 $("#jobsList").addEventListener("click", event => {

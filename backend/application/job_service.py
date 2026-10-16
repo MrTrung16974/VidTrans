@@ -28,13 +28,19 @@ class JobService:
         except Exception:
             pass
 
-    def create(self, job_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        created = self._store.create(job_id, payload)
+    def create(self, job_id: str, payload: Mapping[str, Any], *, owner_user_id: str = "__legacy__") -> dict[str, Any]:
+        created = self._store.create(job_id, payload, owner_user_id=owner_user_id)
         self._changed(job_id)
         return created
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         return self._store.get(job_id)
+
+    def get_for_user(self, job_id: str, owner_user_id: str) -> dict[str, Any] | None:
+        return self._store.get_for_user(job_id, owner_user_id)
+
+    def owns_artifact(self, owner_user_id: str, filename: str) -> bool:
+        return self._store.owns_artifact(owner_user_id, filename)
 
     def update(self, job_id: str, **fields: Any) -> dict[str, Any]:
         updated = self._store.update(job_id, **fields)
@@ -48,11 +54,15 @@ class JobService:
         name: str,
         config: Mapping[str, Any],
         status: str = "queued",
+        owner_user_id: str = "__legacy__",
     ) -> dict[str, Any]:
-        return self._store.create_batch(batch_id, name=name, config=config, status=status)
+        return self._store.create_batch(batch_id, name=name, config=config, status=status, owner_user_id=owner_user_id)
 
     def get_batch(self, batch_id: str) -> dict[str, Any] | None:
         return self._store.get_batch(batch_id)
+
+    def get_batch_for_user(self, batch_id: str, owner_user_id: str) -> dict[str, Any] | None:
+        return self._store.get_batch_for_user(batch_id, owner_user_id)
 
     def list_jobs(self, **filters: Any) -> tuple[list[dict[str, Any]], int]:
         return self._store.list_jobs(**filters)
@@ -97,3 +107,6 @@ class JobService:
         for job_id, _job in requeued:
             self._changed(job_id)
         return requeued
+
+    def backfill_legacy_owner(self, owner_user_id: str) -> None:
+        self._store.backfill_legacy_owner(owner_user_id)
