@@ -73,6 +73,39 @@ class TenantGovernanceStore:
             db.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_actor ON admin_audit_events(actor_user_id,created_at DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_events(target_user_id,created_at DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_events(action,created_at DESC)")
+            db.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_quota_nonnegative_insert
+                BEFORE INSERT ON quota_job_usage
+                FOR EACH ROW
+                WHEN NEW.reserved_minutes < 0 OR NEW.consumed_minutes < 0
+                BEGIN
+                    SELECT RAISE(ABORT, 'quota minutes cannot be negative');
+                END;
+                """
+            )
+            db.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_quota_nonnegative_update
+                BEFORE UPDATE OF reserved_minutes,consumed_minutes ON quota_job_usage
+                FOR EACH ROW
+                WHEN NEW.reserved_minutes < 0 OR NEW.consumed_minutes < 0
+                BEGIN
+                    SELECT RAISE(ABORT, 'quota minutes cannot be negative');
+                END;
+                """
+            )
+            db.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_quota_identity_immutable
+                BEFORE UPDATE OF user_id,period ON quota_job_usage
+                FOR EACH ROW
+                WHEN NEW.user_id != OLD.user_id OR NEW.period != OLD.period
+                BEGIN
+                    SELECT RAISE(ABORT, 'quota identity is immutable');
+                END;
+                """
+            )
 
     @staticmethod
     def minutes_for_duration(seconds: float | int | None) -> int:
@@ -85,7 +118,7 @@ class TenantGovernanceStore:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("SELECT * FROM quota_job_usage WHERE job_id=?", (job_id,)).fetchone()
-            if existing is not None:
+            if existing is not None and existing["status"] != "released":
                 return dict(existing)
             totals = db.execute(
                 "SELECT COALESCE(SUM(reserved_minutes),0),COALESCE(SUM(consumed_minutes),0) FROM quota_job_usage WHERE user_id=? AND period=? AND status!='released'",
@@ -94,11 +127,45 @@ class TenantGovernanceStore:
             used = int(totals[0]) + int(totals[1])
             if limit_minutes is not None and used + minutes > limit_minutes:
                 raise QuotaExceededError(f"Đã dùng hoặc giữ chỗ {used}/{limit_minutes} phút trong tháng này")
+            if existing is not None:
+                db.execute("DELETE FROM quota_job_usage WHERE job_id=? AND status='released'", (job_id,))
             db.execute(
                 "INSERT INTO quota_job_usage(job_id,user_id,period,reserved_minutes,status,created_at,updated_at) VALUES(?,?,?,?, 'reserved',?,?)",
                 (job_id, user_id, period, minutes, now, now),
             )
         return self.job_usage(job_id) or {}
+
+    def reserve_many(self, *, job_ids: list[str], user_id: str, limit_minutes: int | None,
+                     minutes_each: int = 1) -> None:
+        unique_ids = list(dict.fromkeys(job_ids))
+        if not unique_ids:
+            return
+        if len(unique_ids) != len(job_ids):
+            raise ValueError("Job ID quota bị trùng")
+        minutes_each = max(1, int(minutes_each))
+        period, now = billing_period(), utc_now()
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            placeholders = ",".join("?" for _ in unique_ids)
+            existing = int(db.execute(
+                f"SELECT COUNT(*) FROM quota_job_usage WHERE job_id IN ({placeholders})", unique_ids
+            ).fetchone()[0])
+            if existing:
+                raise ValueError("Job đã giữ quota")
+            totals = db.execute(
+                "SELECT COALESCE(SUM(reserved_minutes),0),COALESCE(SUM(consumed_minutes),0) FROM quota_job_usage WHERE user_id=? AND period=? AND status!='released'",
+                (user_id, period),
+            ).fetchone()
+            used = int(totals[0]) + int(totals[1])
+            requested = minutes_each * len(unique_ids)
+            if limit_minutes is not None and used + requested > limit_minutes:
+                raise QuotaExceededError(
+                    f"Batch cần giữ chỗ {requested} phút nhưng gói chỉ còn {max(0, limit_minutes-used)} phút"
+                )
+            db.executemany(
+                "INSERT INTO quota_job_usage(job_id,user_id,period,reserved_minutes,status,created_at,updated_at) VALUES(?,?,?,?, 'reserved',?,?)",
+                [(job_id, user_id, period, minutes_each, now, now) for job_id in unique_ids],
+            )
 
     def adjust(self, *, job_id: str, limit_minutes: int | None, minutes: int) -> dict[str, Any]:
         minutes = max(1, int(minutes))
@@ -177,3 +244,15 @@ class TenantGovernanceStore:
             item["metadata"] = json.loads(item.pop("metadata_json"))
             items.append(item)
         return items, total
+
+    def prune(self, *, audit_cutoff: str, released_quota_cutoff: str) -> dict[str, int]:
+        """Apply time-based retention without removing billable consumed usage."""
+        with self._db() as db:
+            audit_deleted = db.execute(
+                "DELETE FROM admin_audit_events WHERE created_at < ?", (audit_cutoff,)
+            ).rowcount
+            quota_deleted = db.execute(
+                "DELETE FROM quota_job_usage WHERE status='released' AND updated_at < ?",
+                (released_quota_cutoff,),
+            ).rowcount
+        return {"audit_events": int(audit_deleted), "released_quota_rows": int(quota_deleted)}

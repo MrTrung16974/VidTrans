@@ -96,6 +96,12 @@ class JobService:
         self._changed(job_id)
         return deleted
 
+    def prune_terminal(self, cutoff: str) -> dict[str, Any]:
+        removed = self._store.prune_terminal(cutoff)
+        if removed["jobs"]:
+            self._changed("*")
+        return removed
+
     def recover_interrupted(self) -> int:
         recovered = self._store.recover_interrupted()
         if recovered:

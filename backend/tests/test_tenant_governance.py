@@ -1,4 +1,6 @@
+import sqlite3
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -51,6 +53,37 @@ class TenantGovernanceTests(unittest.TestCase):
         items_target, total_target = self.store.list_audit(target_user_id=editor_id)
         self.assertEqual(total_target, 1)
         self.assertEqual(items_target[0]["action"], "account.update")
+
+    def test_batch_reservation_is_atomic(self):
+        user = self.owner["user_id"]
+        self.store.reserve_many(job_ids=["a", "b"], user_id=user, limit_minutes=2)
+        with self.assertRaises(QuotaExceededError):
+            self.store.reserve_many(job_ids=["c", "d"], user_id=user, limit_minutes=3)
+        self.assertIsNone(self.store.job_usage("c"))
+        self.assertIsNone(self.store.job_usage("d"))
+
+    def test_quota_constraints_and_retention(self):
+        user = self.owner["user_id"]
+        self.store.reserve(job_id="released", user_id=user, limit_minutes=30, minutes=1)
+        self.store.release("released")
+        self.store.reserve(job_id="consumed", user_id=user, limit_minutes=30, minutes=2)
+        self.store.consume("consumed")
+        self.store.audit(actor_user_id=user, action="old.event", resource_type="test")
+        old = (datetime.now(timezone.utc) - timedelta(days=400)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+        with self.store._db() as db:
+            db.execute("UPDATE quota_job_usage SET updated_at=? WHERE job_id IN ('released','consumed')", (old,))
+            db.execute("UPDATE admin_audit_events SET created_at=?", (old,))
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("UPDATE quota_job_usage SET reserved_minutes=-1 WHERE job_id='released'")
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("UPDATE quota_job_usage SET user_id='other' WHERE job_id='released'")
+
+        result = self.store.prune(audit_cutoff=cutoff, released_quota_cutoff=cutoff)
+
+        self.assertEqual(result, {"audit_events": 1, "released_quota_rows": 1})
+        self.assertIsNone(self.store.job_usage("released"))
+        self.assertIsNotNone(self.store.job_usage("consumed"))
 
     def test_delete_account_safeguard_and_cascades(self):
         from infrastructure.admin_accounts import AdminAccountError

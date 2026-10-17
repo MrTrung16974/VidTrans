@@ -369,12 +369,17 @@ a { color: inherit; text-decoration: none; }
 .bulk-buttons button:disabled { opacity: 0.45; cursor: not-allowed; background: #f8fafc; border-color: #e2e8f0; color: #94a3b8; box-shadow: none; }
 
 /* Table Column Header */
-.jobs-table-header { display: grid; grid-template-columns: 28px minmax(320px, 2fr) 130px minmax(180px, 1fr) minmax(170px, 1.1fr) minmax(130px, auto); gap: 16px; align-items: center; padding: 12px 22px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 0.72rem; font-weight: 750; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+.jobs-table-header { display: grid; grid-template-columns: 28px minmax(260px, 1.7fr) minmax(150px, .9fr) 120px minmax(150px, 1fr) minmax(160px, 1fr) minmax(130px, auto); gap: 14px; align-items: center; padding: 12px 22px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 0.72rem; font-weight: 750; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
 .col-actions { text-align: right; padding-right: 4px; }
 
 /* Job List & Row */
 .jobs-list { min-height: 240px; }
-.job-row { display: grid; grid-template-columns: 28px minmax(320px, 2fr) 130px minmax(180px, 1fr) minmax(170px, 1.1fr) minmax(130px, auto); gap: 16px; align-items: center; padding: 15px 22px; border-bottom: 1px solid #f1f5f9; background: #ffffff; transition: all 0.18s ease; position: relative; }
+.job-row { display: grid; grid-template-columns: 28px minmax(260px, 1.7fr) minmax(150px, .9fr) 120px minmax(150px, 1fr) minmax(160px, 1fr) minmax(130px, auto); gap: 14px; align-items: center; padding: 15px 22px; border-bottom: 1px solid #f1f5f9; background: #ffffff; transition: all 0.18s ease; position: relative; }
+.job-owner { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.job-owner strong, .job-owner small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-owner strong { font-size: .78rem; color: #334155; }
+.job-owner small { font-size: .68rem; color: #94a3b8; }
+.job-owner-pending { color: #94a3b8; }
 .job-row:last-child { border-bottom: 0; }
 .job-row:hover { background: #fbfcfe; }
 .job-row.selected { background: #fff9f5; box-shadow: inset 3px 0 0 var(--brand); }
@@ -549,9 +554,9 @@ a { color: inherit; text-decoration: none; }
   .workflow-sidebar { order: -1; }
   .sticky-card .summary-list { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
   .summary-list div { display: block; }
-  .jobs-table-header { grid-template-columns: 28px minmax(220px, 1.6fr) 115px minmax(150px, 1fr) auto; gap: 12px; }
+  .jobs-table-header { grid-template-columns: 28px minmax(220px, 1.6fr) minmax(130px,.8fr) 115px minmax(150px,1fr) auto; gap: 12px; }
   .jobs-table-header .col-detail { display: none; }
-  .job-row { grid-template-columns: 28px minmax(220px, 1.6fr) 115px minmax(150px, 1fr) auto; gap: 12px; }
+  .job-row { grid-template-columns: 28px minmax(220px, 1.6fr) minmax(130px,.8fr) 115px minmax(150px,1fr) auto; gap: 12px; }
   .job-step { display: none; }
 }
 
@@ -604,9 +609,10 @@ a { color: inherit; text-decoration: none; }
   .job-select { grid-column: 1; grid-row: 1; min-width: 28px; min-height: 44px; align-self: start; }
   .job-file { grid-column: 2; grid-row: 1; align-items: flex-start; }
   .job-file strong { display: -webkit-box; white-space: normal; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .status-pill { grid-column: 2; grid-row: 2; }
-  .job-progress { grid-column: 1 / -1; grid-row: 3; }
-  .job-actions { grid-column: 1 / -1; grid-row: 4; display: grid; grid-template-columns: repeat(auto-fit,minmax(76px,1fr)); justify-content: stretch; }
+  .job-owner { grid-column: 2; grid-row: 2; }
+  .status-pill { grid-column: 2; grid-row: 3; }
+  .job-progress { grid-column: 1 / -1; grid-row: 4; }
+  .job-actions { grid-column: 1 / -1; grid-row: 5; display: grid; grid-template-columns: repeat(auto-fit,minmax(76px,1fr)); justify-content: stretch; }
   .job-actions button,.job-actions a { width: 100%; min-width: 0; height: 44px; padding: 0 10px; }
   .job-step { display: none; }
   .empty-state { min-height: 190px; padding: 24px 16px; }
@@ -2356,6 +2362,7 @@ a { color: inherit; text-decoration: none; }
 
 .user-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.74rem; font-weight: 600; color: #0f766e; padding: 0 6px; display: block; }
 .user-join-date { font-size: 0.68rem; color: #94a3b8; padding: 0 6px; display: block; }
+.admin-user-quota { font-size: 0.68rem; color: #c2410c; padding: 1px 6px 0; display: block; font-weight: 700; }
 
 .admin-account-field { position: relative; min-width: 0; }
 .field-label-inline { display: none; }
@@ -3069,9 +3076,10 @@ a { color: inherit; text-decoration: none; }
   .job-row { grid-template-columns: 28px minmax(0, 1fr); gap: 10px 12px; padding: 14px 16px; }
   .job-select { grid-column: 1; grid-row: 1; align-self: start; padding-top: 4px; }
   .job-file { grid-column: 2; grid-row: 1; }
-  .status-pill { grid-column: 2; grid-row: 2; }
-  .job-progress { grid-column: 1 / -1; grid-row: 3; }
-  .job-actions { grid-column: 1 / -1; grid-row: 4; justify-content: flex-start; flex-wrap: wrap; }
+  .job-owner { grid-column: 2; grid-row: 2; }
+  .status-pill { grid-column: 2; grid-row: 3; }
+  .job-progress { grid-column: 1 / -1; grid-row: 4; }
+  .job-actions { grid-column: 1 / -1; grid-row: 5; justify-content: flex-start; flex-wrap: wrap; }
   .tiktok-connection-hub {
     grid-template-columns: repeat(2, 1fr);
     gap: 14px;
@@ -3098,9 +3106,10 @@ a { color: inherit; text-decoration: none; }
   }
   .job-select { grid-column: 1; grid-row: 1; align-self: start; padding-top: 4px; }
   .job-file { grid-column: 2; grid-row: 1; }
-  .status-pill { grid-column: 2; grid-row: 2; }
-  .job-progress { grid-column: 1 / -1; grid-row: 3; }
-  .job-actions { grid-column: 1 / -1; grid-row: 4; justify-content: flex-start; flex-wrap: wrap; }
+  .job-owner { grid-column: 2; grid-row: 2; }
+  .status-pill { grid-column: 2; grid-row: 3; }
+  .job-progress { grid-column: 1 / -1; grid-row: 4; }
+  .job-actions { grid-column: 1 / -1; grid-row: 5; justify-content: flex-start; flex-wrap: wrap; }
   .tiktok-header { flex-direction: column; align-items: flex-start; gap: 14px; }
   .tiktok-publish-controls { grid-template-columns: 1fr; }
 }

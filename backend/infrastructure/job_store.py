@@ -136,6 +136,17 @@ class SQLiteJobStore:
             )
             connection.execute(
                 """
+                CREATE TRIGGER IF NOT EXISTS trg_jobs_owner_immutable
+                BEFORE UPDATE OF owner_user_id ON jobs
+                FOR EACH ROW
+                WHEN OLD.owner_user_id != '__legacy__' AND NEW.owner_user_id != OLD.owner_user_id
+                BEGIN
+                    SELECT RAISE(ABORT, 'owner_user_id is immutable');
+                END;
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS batches (
                     batch_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -181,6 +192,45 @@ class SQLiteJobStore:
                 WHEN NEW.owner_user_id IS NULL OR TRIM(NEW.owner_user_id) = ''
                 BEGIN
                     SELECT RAISE(ABORT, 'owner_user_id cannot be null or empty');
+                END;
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_batches_owner_immutable
+                BEFORE UPDATE OF owner_user_id ON batches
+                FOR EACH ROW
+                WHEN OLD.owner_user_id != '__legacy__' AND NEW.owner_user_id != OLD.owner_user_id
+                BEGIN
+                    SELECT RAISE(ABORT, 'owner_user_id is immutable');
+                END;
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_jobs_batch_owner_insert
+                BEFORE INSERT ON jobs
+                FOR EACH ROW
+                WHEN NEW.batch_id IS NOT NULL AND NOT EXISTS (
+                    SELECT 1 FROM batches b
+                    WHERE b.batch_id=NEW.batch_id AND b.owner_user_id=NEW.owner_user_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'job and batch owners must match');
+                END;
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_jobs_batch_owner_update
+                BEFORE UPDATE OF batch_id, owner_user_id ON jobs
+                FOR EACH ROW
+                WHEN NEW.batch_id IS NOT NULL AND NOT EXISTS (
+                    SELECT 1 FROM batches b
+                    WHERE b.batch_id=NEW.batch_id AND b.owner_user_id=NEW.owner_user_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'job and batch owners must match');
                 END;
                 """
             )
@@ -605,6 +655,47 @@ class SQLiteJobStore:
             payload = self._decode(row["payload_json"])
             connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
         return payload
+
+    def prune_terminal(self, cutoff: str) -> dict[str, Any]:
+        """Delete terminal jobs older than cutoff and return their storage identity."""
+        terminal = ("completed", "failed", "cancelled")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT job_id,owner_user_id,payload_json FROM jobs "
+                "WHERE status IN (?,?,?) AND updated_at < ?",
+                (*terminal, cutoff),
+            ).fetchall()
+            removed = [
+                {
+                    "job_id": str(row["job_id"]),
+                    "owner_user_id": str(row["owner_user_id"]),
+                    "payload": self._decode(str(row["payload_json"])),
+                }
+                for row in rows
+            ]
+            if rows:
+                connection.executemany(
+                    "DELETE FROM jobs WHERE job_id=?",
+                    [(str(row["job_id"]),) for row in rows],
+                )
+            orphan_batches = connection.execute(
+                "SELECT batch_id,owner_user_id FROM batches WHERE updated_at < ? "
+                "AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.batch_id=batches.batch_id)",
+                (cutoff,),
+            ).fetchall()
+            connection.execute(
+                "DELETE FROM batches WHERE updated_at < ? "
+                "AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.batch_id=batches.batch_id)",
+                (cutoff,),
+            )
+        return {
+            "jobs": removed,
+            "batches": [
+                {"batch_id": str(row["batch_id"]), "owner_user_id": str(row["owner_user_id"])}
+                for row in orphan_batches
+            ],
+        }
 
     def recover_interrupted(self, reason: str = "Server restarted while the job was running") -> int:
         """Mark jobs with no surviving in-process task as failed.

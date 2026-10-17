@@ -165,6 +165,34 @@ class SQLiteJobStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "owners do not match"):
             self.store.attach_to_batch("job-b", "batch-a")
 
+    def test_database_triggers_lock_owner_and_batch_tenant(self) -> None:
+        self.store.create_batch("batch-a", name="A", config={}, owner_user_id="user-a")
+        self.store.create("job-a", {"status": "queued"}, owner_user_id="user-a")
+        with self.store._connection() as conn:
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("UPDATE jobs SET owner_user_id='user-b' WHERE job_id='job-a'")
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("UPDATE jobs SET batch_id='missing' WHERE job_id='job-a'")
+
+    def test_prune_terminal_keeps_active_and_recent_jobs(self) -> None:
+        self.store.create_batch("old-batch", name="Old", config={}, owner_user_id="user-a")
+        self.store.create("old-done", {"status": "completed"}, owner_user_id="user-a")
+        self.store.attach_to_batch("old-done", "old-batch")
+        self.store.create("recent-done", {"status": "completed"}, owner_user_id="user-a")
+        self.store.create("old-active", {"status": "processing"}, owner_user_id="user-a")
+        old = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        with self.store._connection() as conn:
+            conn.execute("UPDATE jobs SET updated_at=? WHERE job_id IN ('old-done','old-active')", (old,))
+            conn.execute("UPDATE batches SET updated_at=? WHERE batch_id='old-batch'", (old,))
+
+        removed = self.store.prune_terminal(cutoff)
+
+        self.assertEqual([item["job_id"] for item in removed["jobs"]], ["old-done"])
+        self.assertEqual([item["batch_id"] for item in removed["batches"]], ["old-batch"])
+        self.assertIsNotNone(self.store.get("recent-done"))
+        self.assertIsNotNone(self.store.get("old-active"))
+
     def test_triggers_reject_empty_or_null_owner(self) -> None:
         import sqlite3
         with self.store._connection() as conn:
@@ -180,6 +208,7 @@ class SQLiteJobStoreTests(unittest.TestCase):
     def test_claim_next_is_atomic_and_honors_priority(self) -> None:
         self.store.create("old", {"status": "queued"})
         self.store.create("urgent", {"status": "queued"})
+        self.store.create_batch("batch-x", name="Priority", config={})
         self.store.attach_to_batch("urgent", "batch-x", priority=10)
 
         claimed = self.store.claim_next("worker-1")

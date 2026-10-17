@@ -79,7 +79,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'data-source-browser-tab="{platform}"', html)
         self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
         self.assertIn("/api/v1/source-browser/${platform}/activate", javascript)
-        self.assertIn("/js/app.js?v=20261016-6", html)
+        self.assertIn("/js/app.js?v=20261017-2", html)
         self.assertIn('button.addEventListener("click", () => selectSourceBrowserTab', javascript)
 
     async def test_source_login_and_cookie_configuration_are_admin_only(self):
@@ -88,8 +88,11 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         javascript = (frontend / "js" / "app.js").read_text(encoding="utf-8")
         main = (frontend.parents[0] / "main.py").read_text(encoding="utf-8")
 
-        self.assertIn('href="#douyin" data-view-link="douyin" data-admin-only', html)
-        self.assertIn('class="source-auth-row" data-admin-only', html)
+        self.assertIn('href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden', html)
+        self.assertIn('href="#admin" data-view-link="admin" data-admin-only class="is-hidden" hidden', html)
+        self.assertIn('class="source-auth-row is-hidden" data-admin-only hidden', html)
+        self.assertIn('role: "viewer"', javascript)
+        self.assertIn("element.hidden = !isAdmin", javascript)
         self.assertIn('["admin", "douyin"].includes(view)', javascript)
         self.assertIn('if source_cookies is not None and source_cookies.filename:\n        require_roles(request, "owner", "admin")', main)
 

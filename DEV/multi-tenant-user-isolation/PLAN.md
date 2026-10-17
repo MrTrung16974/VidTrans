@@ -10,13 +10,16 @@
 - [x] P1 namespace vật lý file theo user và migration file cũ (copy an toàn, giữ bản legacy để rollback).
 - [x] P1 tách OAuth/token tài khoản mạng xã hội theo user trên TikTok, Instagram, Threads, Facebook và YouTube; OAuth state bind user và dùng một lần.
 - [x] P1 màn audit riêng cho admin (API /api/v1/admin/jobs, /api/v1/admin/audit-events, /api/v1/admin/users/{id}/quota, giao diện subtabs giám sát jobs và nhật ký kiểm toán an ninh).
-- [x] P2 quota theo gói (30/300/1000 phút/tháng), kiểm tra trước khi tải batch, giữ chỗ ban đầu, giải phóng khi hủy/xóa, và hardening DB triggers/indexes/retention.
+- [x] P2 quota theo gói (30/300/1000 phút/tháng), reserve batch nguyên tử, điều chỉnh theo duration thật và consume/release theo kết quả.
+- [x] P2 hardening: trigger DB khóa owner/batch chéo tenant, quota identity và policy retention opt-in theo thời gian.
+- [x] Isolation matrix cấp API: list/detail/batch/artifact/ZIP và admin view được kiểm tra với User A, User B, Admin.
+- [x] Manifest đối soát migration idempotent tại `work/migrations/tenant-storage-v1.json`, có số job/file và danh sách file legacy bị thiếu.
 
 ## 1. Mục tiêu
 
 - Mỗi user chỉ được đọc, sửa, hủy, chạy lại, xóa và tải xuống dữ liệu do chính user đó tạo.
 - Mọi truy vấn nghiệp vụ phải có `user_id`; thiếu scope user phải bị từ chối mặc định.
-- Owner/admin không tự động nhìn dữ liệu user trong các API/màn hình thông thường. Nếu cần hỗ trợ hoặc audit, dùng API Admin riêng và ghi audit log.
+- Theo chính sách vận hành mới, owner/admin thấy và quản lý toàn bộ video ngay tại màn Tiến trình; user thường vẫn chỉ thấy dữ liệu của mình. Mỗi dòng luôn hiện user tạo video.
 - Dữ liệu cần cô lập gồm batch, job, cấu hình xử lý, file upload/output, archive ZIP, trạng thái realtime, draft/publish attempt và tài khoản mạng xã hội.
 - Queue worker vẫn xử lý chung toàn hệ thống nhưng không làm mất ownership.
 
@@ -37,8 +40,8 @@
 ## 3. Quy tắc phân quyền đích
 
 1. `editor` và `viewer`: chỉ thấy dữ liệu thuộc `current_account.user_id`; viewer tiếp tục chỉ đọc.
-2. `admin` và `owner`: trong màn hình nghiệp vụ cũng chỉ thấy dữ liệu của chính mình.
-3. Chức năng xem toàn hệ thống chỉ tồn tại dưới `/api/v1/admin/...`, yêu cầu owner/admin, có bộ lọc user và audit event.
+2. `admin` và `owner`: xem và thao tác toàn bộ job/batch/video của hệ thống; quota retry vẫn tính cho user sở hữu job.
+3. `/api/v1/admin/...` tiếp tục là màn audit/hỗ trợ chuyên sâu, yêu cầu owner/admin và ghi audit event.
 4. Truy cập chéo user trả `404` thay vì `403` để không xác nhận ID có tồn tại.
 5. Không nhận `user_id` từ form/query của user. Backend lấy duy nhất từ JWT/session.
 6. Worker nội bộ được phép lấy job toàn cục từ queue, nhưng không dùng API user-facing.

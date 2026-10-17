@@ -160,6 +160,14 @@ def tenant_job_dir(root: Path, owner_user_id: str, job_id: str) -> Path:
     return path
 
 
+def tenant_storage_path(root: Path, owner_user_id: str, resource_id: str) -> Path:
+    """Resolve an existing tenant path without creating it."""
+    path = (root / "users" / storage_owner_segment(owner_user_id) / resource_id).resolve()
+    if not path.is_relative_to(root.resolve()):
+        raise ValueError("Invalid tenant storage path")
+    return path
+
+
 def stored_artifact_path(filename: str) -> Path:
     path = (OUTPUT_DIR / str(filename)).resolve()
     if not path.is_relative_to(OUTPUT_DIR.resolve()):
@@ -396,16 +404,22 @@ def copy_legacy_file(source: Path, destination: Path) -> bool:
     return destination.is_file() and destination.stat().st_size == source.stat().st_size
 
 
-def migrate_legacy_job_files() -> tuple[int, int]:
+def migrate_legacy_job_files() -> dict[str, Any]:
     """Namespace legacy files without deleting the recoverable originals."""
-    migrated_jobs = 0
-    migrated_files = 0
+    report: dict[str, Any] = {
+        "jobs_scanned": 0,
+        "jobs_updated": 0,
+        "files_copied": 0,
+        "files_missing": [],
+        "work_directories_copied": 0,
+    }
     offset = 0
     while True:
         jobs, total = JOB_SERVICE.list_jobs(limit=200, offset=offset)
         if not jobs:
             break
         for job in jobs:
+            report["jobs_scanned"] += 1
             job_id = str(job["job_id"])
             owner_user_id = str(job.get("owner_user_id") or _bootstrap_owner["user_id"])
             updates: dict[str, Any] = {}
@@ -418,7 +432,9 @@ def migrate_legacy_job_files() -> tuple[int, int]:
                 destination = output_dir / Path(value).name
                 if copy_legacy_file(source, destination):
                     updates[field] = stored_artifact_name(destination)
-                    migrated_files += 1
+                    report["files_copied"] += 1
+                elif not source.is_file():
+                    report["files_missing"].append({"job_id": job_id, "field": field, "name": Path(value).name})
             resume_request = job.get("resume_request")
             if isinstance(resume_request, dict):
                 migrated_request = dict(resume_request)
@@ -435,25 +451,32 @@ def migrate_legacy_job_files() -> tuple[int, int]:
                     if copy_legacy_file(source, destination):
                         migrated_request[field] = str(destination)
                         request_changed = True
-                        migrated_files += 1
+                        report["files_copied"] += 1
+                    elif not source.is_file():
+                        report["files_missing"].append({"job_id": job_id, "field": field, "name": source.name})
                 if request_changed:
                     updates["resume_request"] = migrated_request
             legacy_work = (WORK_DIR / job_id).resolve()
             tenant_work = tenant_job_dir(WORK_DIR, owner_user_id, job_id)
             if legacy_work.is_dir() and legacy_work != tenant_work:
                 shutil.copytree(legacy_work, tenant_work, dirs_exist_ok=True)
+                report["work_directories_copied"] += 1
             if updates:
                 JOB_SERVICE.update(job_id, **updates)
-                migrated_jobs += 1
+                report["jobs_updated"] += 1
         offset += len(jobs)
         if offset >= total:
             break
-    return migrated_jobs, migrated_files
+    report["files_missing_count"] = len(report["files_missing"])
+    return report
 
 
-_migrated_job_count, _migrated_file_count = migrate_legacy_job_files()
-if _migrated_job_count:
-    logger.info("Namespaced %d legacy jobs and %d files", _migrated_job_count, _migrated_file_count)
+_legacy_job_migration = migrate_legacy_job_files()
+if _legacy_job_migration["jobs_updated"]:
+    logger.info(
+        "Namespaced %d legacy jobs and %d files",
+        _legacy_job_migration["jobs_updated"], _legacy_job_migration["files_copied"],
+    )
 
 
 def migrate_legacy_social_auth(owner_user_id: str) -> int:
@@ -480,6 +503,18 @@ def migrate_legacy_social_auth(owner_user_id: str) -> int:
 _migrated_social_auth_files = migrate_legacy_social_auth(str(_bootstrap_owner["user_id"]))
 if _migrated_social_auth_files:
     logger.info("Migrated %d legacy social credential files to bootstrap owner", _migrated_social_auth_files)
+
+_tenant_migration_manifest = {
+    "schema_version": "tenant-storage-v1",
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "bootstrap_owner_user_id": str(_bootstrap_owner["user_id"]),
+    "status": "attention" if _legacy_job_migration["files_missing_count"] else "complete",
+    "job_storage": _legacy_job_migration,
+    "social_auth_files_copied": _migrated_social_auth_files,
+    "legacy_sources_preserved": True,
+}
+_tenant_manifest_path = WORK_DIR / "migrations" / "tenant-storage-v1.json"
+write_json_atomic(_tenant_manifest_path, _tenant_migration_manifest)
 SOCIAL_CREDENTIALS = SocialCredentialStore(WORK_DIR / "jobs.sqlite3")
 
 
@@ -656,6 +691,32 @@ def require_roles(request: Request, *roles: str) -> dict[str, Any]:
     return account
 
 
+def can_manage_all_jobs(account: dict[str, Any]) -> bool:
+    return str(account.get("role") or "") in {"owner", "admin"}
+
+
+def job_for_request(request: Request, job_id: str) -> dict[str, Any] | None:
+    account = current_account(request)
+    if can_manage_all_jobs(account):
+        return JOB_SERVICE.get(job_id)
+    return JOB_SERVICE.get_for_user(job_id, str(account["user_id"]))
+
+
+def add_job_owner_identity(payload: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    owner_user_id = str(job.get("owner_user_id") or "")
+    payload["owner_user_id"] = owner_user_id
+    payload["owner_email"] = owner_user_id
+    payload["owner_display_name"] = owner_user_id
+    if owner_user_id:
+        try:
+            owner = ADMIN_ACCOUNTS.get(owner_user_id)
+            payload["owner_email"] = str(owner.get("email") or owner_user_id)
+            payload["owner_display_name"] = str(owner.get("display_name") or payload["owner_email"])
+        except AdminAccountError:
+            pass
+    return payload
+
+
 def account_plan_limit(account: dict[str, Any]) -> int | None:
     plan = PLAN_CATALOG.get(str(account.get("plan") or "free"), PLAN_CATALOG["free"])
     minutes = plan.get("minutes")
@@ -669,6 +730,17 @@ def reserve_job_quota(job_id: str, account: dict[str, Any], minutes: int = 1) ->
             user_id=str(account["user_id"]),
             limit_minutes=account_plan_limit(account),
             minutes=minutes,
+        )
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=402, detail=f"Đã hết quota gói {str(account.get('plan', 'free')).upper()}: {exc}") from exc
+
+
+def reserve_batch_quota(job_ids: list[str], account: dict[str, Any]) -> None:
+    try:
+        TENANT_GOVERNANCE.reserve_many(
+            job_ids=job_ids,
+            user_id=str(account["user_id"]),
+            limit_minutes=account_plan_limit(account),
         )
     except QuotaExceededError as exc:
         raise HTTPException(status_code=402, detail=f"Đã hết quota gói {str(account.get('plan', 'free')).upper()}: {exc}") from exc
@@ -2691,9 +2763,47 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
         )
 
 
+def retention_days(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except ValueError:
+        logger.warning("Invalid %s; using %d days", name, default)
+        return default
+
+
+def apply_retention_policy() -> None:
+    """Prune old terminal tenant data only when explicitly enabled."""
+    if os.environ.get("VIDTRANS_RETENTION_ENABLED", "0").lower() not in {"1", "true", "yes"}:
+        return
+    now = datetime.now(timezone.utc)
+    job_cutoff = (now - timedelta(days=retention_days("VIDTRANS_JOB_RETENTION_DAYS", 30))).isoformat()
+    audit_cutoff = (now - timedelta(days=retention_days("VIDTRANS_AUDIT_RETENTION_DAYS", 365))).isoformat()
+    released_quota_cutoff = (
+        now - timedelta(days=retention_days("VIDTRANS_RELEASED_QUOTA_RETENTION_DAYS", 90))
+    ).isoformat()
+    removed = JOB_SERVICE.prune_terminal(job_cutoff)
+    for job in removed["jobs"]:
+        for root in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR):
+            path = tenant_storage_path(root, job["owner_user_id"], job["job_id"])
+            if path.is_dir():
+                shutil.rmtree(path)
+    for batch in removed["batches"]:
+        path = tenant_storage_path(UPLOAD_DIR, batch["owner_user_id"], batch["batch_id"])
+        if path.is_dir():
+            shutil.rmtree(path)
+    governance_removed = TENANT_GOVERNANCE.prune(
+        audit_cutoff=audit_cutoff,
+        released_quota_cutoff=released_quota_cutoff,
+    )
+    logger.info(
+        "Retention removed %d jobs, %d batches, %d audit events and %d released quota rows",
+        len(removed["jobs"]), len(removed["batches"]), governance_removed["audit_events"],
+        governance_removed["released_quota_rows"],
+    )
 @app.on_event("startup")
 async def start_job_scheduler() -> None:
     await JOB_EVENTS.start()
+    apply_retention_policy()
     if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() in {"1", "true", "yes"}:
         requeued = JOB_SERVICE.requeue_interrupted()
         if requeued:
@@ -2765,7 +2875,11 @@ def list_admin_accounts(
 ) -> JSONResponse:
     require_roles(request, "owner", "admin")
     try:
-        items = [public_admin_account(item) for item in ADMIN_ACCOUNTS.list(query=query, status=status)]
+        items = []
+        for account in ADMIN_ACCOUNTS.list(query=query, status=status):
+            item = public_admin_account(account)
+            item["quota"] = TENANT_GOVERNANCE.overview(str(account["user_id"]), account_plan_limit(account))
+            items.append(item)
     except AdminAccountError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return JSONResponse({"items": items, "total": len(items)}, headers={"Cache-Control": "no-store"})
@@ -2857,7 +2971,7 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
         metadata={"email": deleted.get("email")},
     )
     # Safely clean up user-specific storage directories
-    for base_dir in (WORK_DIR, UPLOAD_DIR):
+    for base_dir in (WORK_DIR, UPLOAD_DIR, OUTPUT_DIR):
         user_dir = base_dir / "users" / storage_owner_segment(user_id)
         if user_dir.exists() and user_dir.is_relative_to(base_dir.resolve()):
             shutil.rmtree(user_dir, ignore_errors=True)
@@ -3596,7 +3710,8 @@ async def process_video_endpoint(
     tiktok_privacy_level: str = Form("SELF_ONLY"),
     tiktok_publish_at: str | None = Form(default=None),
 ) -> JSONResponse:
-    owner_user_id = str(current_account(http_request)["user_id"])
+    account = current_account(http_request)
+    owner_user_id = str(account["user_id"])
     video_ext = Path(file.filename or "video.mp4").suffix.lower() or ".mp4"
     if video_ext not in SUPPORTED_VIDEO_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Định dạng video không được hỗ trợ: {video_ext}")
@@ -3631,6 +3746,7 @@ async def process_video_endpoint(
 
     job_id = uuid.uuid4().hex[:8]
     validate_tiktok_auto_publish(request, owner_user_id)
+    reserve_job_quota(job_id, account)
     upload_dir = tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id)
     video_path = upload_dir / f"source{video_ext}"
     with video_path.open("wb") as buffer:
@@ -3639,6 +3755,7 @@ async def process_video_endpoint(
         validate_video_file(video_path, ffprobe=FFPROBE)
     except InvalidVideoError as exc:
         video_path.unlink(missing_ok=True)
+        TENANT_GOVERNANCE.release(job_id)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     background_music_path = None
@@ -3656,6 +3773,10 @@ async def process_video_endpoint(
                 raise ValueError("subtitle_style must be a JSON object")
             SubtitleLayoutOptions.from_style(style_payload)
         except (ValueError, json.JSONDecodeError) as exc:
+            TENANT_GOVERNANCE.release(job_id)
+            video_path.unlink(missing_ok=True)
+            if background_music_path is not None:
+                background_music_path.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     resume_request = {
@@ -3759,7 +3880,8 @@ async def create_batch_endpoint(
     tiktok_privacy_level: str = Form("SELF_ONLY"),
     tiktok_publish_at: str | None = Form(default=None),
 ) -> JSONResponse:
-    owner_user_id = str(current_account(request)["user_id"])
+    account = current_account(request)
+    owner_user_id = str(account["user_id"])
     # Browsers serialize an untouched <input type="file"> as an empty UploadFile.
     # Ignore only that unnamed placeholder; named zero-byte uploads are still
     # validated below and reported to the user as invalid videos.
@@ -3803,7 +3925,7 @@ async def create_batch_endpoint(
             detail=f"Định dạng video không được hỗ trợ: {', '.join(invalid_extensions)}",
         )
     try:
-        request = ProcessingRequest.from_form(
+        processing_request = ProcessingRequest.from_form(
             mode=mode,
             subtitle_source=subtitle_source,
             ocr_sample_fps=ocr_sample_fps,
@@ -3822,9 +3944,9 @@ async def create_batch_endpoint(
             tiktok_publish_at=tiktok_publish_at,
         )
         OCRConfig(
-            sample_fps=request.ocr.sample_fps,
-            roi_top=request.ocr.roi_top,
-            roi_bottom=request.ocr.roi_bottom,
+            sample_fps=processing_request.ocr.sample_fps,
+            roi_top=processing_request.ocr.roi_top,
+            roi_bottom=processing_request.ocr.roi_bottom,
         ).validate()
         style_payload = json.loads(subtitle_style) if subtitle_style else None
         if style_payload is not None and not isinstance(style_payload, dict):
@@ -3832,11 +3954,10 @@ async def create_batch_endpoint(
         SubtitleLayoutOptions.from_style(style_payload or {})
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
+    if processing_request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
-    validate_tiktok_auto_publish(request, owner_user_id)
+    validate_tiktok_auto_publish(processing_request, owner_user_id)
 
-    account = current_account(request)
     limit = account_plan_limit(account)
     if limit is not None:
         overview = TENANT_GOVERNANCE.overview(owner_user_id, limit)
@@ -3847,6 +3968,9 @@ async def create_batch_endpoint(
             )
 
     batch_id = f"batch_{uuid.uuid4().hex[:10]}"
+    upload_job_ids = [uuid.uuid4().hex[:8] for _ in uploads]
+    source_job_ids = [uuid.uuid4().hex[:8] for _ in source_urls]
+    reserve_batch_quota([*upload_job_ids, *source_job_ids], account)
     normalized_name = " ".join(batch_name.split())[:120] or f"Batch {batch_id[-6:]}"
     background_music_path: Path | None = None
     if background_music is not None:
@@ -3856,34 +3980,33 @@ async def create_batch_endpoint(
             shutil.copyfileobj(background_music.file, buffer)
 
     batch_config = {
-        "mode": int(request.mode),
-        "subtitle_source": request.subtitle_source.value,
-        "source_language": request.source_language,
-        "target_language": request.target_language,
-        "voice_mode": request.voice_mode.value,
-        "voice_type": request.fallback_voice.value,
-        "voice_style": request.voice_style,
+        "mode": int(processing_request.mode),
+        "subtitle_source": processing_request.subtitle_source.value,
+        "source_language": processing_request.source_language,
+        "target_language": processing_request.target_language,
+        "voice_mode": processing_request.voice_mode.value,
+        "voice_type": processing_request.fallback_voice.value,
+        "voice_style": processing_request.voice_style,
         "speech_rate": speech_rate,
         "whisper_model": whisper_model,
         "keep_original_audio": keep_original_audio,
         "original_audio_volume": original_audio_volume,
         "music_volume": music_volume,
         "subtitle_style": style_payload,
-        "ocr_sample_fps": request.ocr.sample_fps,
-        "ocr_roi_top": request.ocr.roi_top,
-        "ocr_roi_bottom": request.ocr.roi_bottom,
-        "generate_tiktok_post": request.tiktok.enabled,
-        "tiktok_max_summary_chars": request.tiktok.max_summary_chars,
-        "tiktok_hashtag_count": request.tiktok.hashtag_count,
-        "auto_publish_tiktok": request.tiktok.auto_publish,
-        "tiktok_privacy_level": request.tiktok.privacy_level,
-        "tiktok_publish_at": request.tiktok.publish_at,
+        "ocr_sample_fps": processing_request.ocr.sample_fps,
+        "ocr_roi_top": processing_request.ocr.roi_top,
+        "ocr_roi_bottom": processing_request.ocr.roi_bottom,
+        "generate_tiktok_post": processing_request.tiktok.enabled,
+        "tiktok_max_summary_chars": processing_request.tiktok.max_summary_chars,
+        "tiktok_hashtag_count": processing_request.tiktok.hashtag_count,
+        "auto_publish_tiktok": processing_request.tiktok.auto_publish,
+        "tiktok_privacy_level": processing_request.tiktok.privacy_level,
+        "tiktok_publish_at": processing_request.tiktok.publish_at,
         "background_music_path": str(background_music_path) if background_music_path else None,
     }
     prepared_uploads: list[tuple[str, UploadFile, Path]] = []
     try:
-        for upload in uploads:
-            upload_job_id = uuid.uuid4().hex[:8]
+        for upload_job_id, upload in zip(upload_job_ids, uploads):
             video_ext = Path(upload.filename or "video.mp4").suffix.lower() or ".mp4"
             upload_video_path = tenant_job_dir(UPLOAD_DIR, owner_user_id, upload_job_id) / f"source{video_ext}"
             with upload_video_path.open("wb") as buffer:
@@ -3891,6 +4014,8 @@ async def create_batch_endpoint(
             validate_video_file(upload_video_path, ffprobe=FFPROBE)
             prepared_uploads.append((upload_job_id, upload, upload_video_path))
     except InvalidVideoError as exc:
+        for reserved_job_id in [*upload_job_ids, *source_job_ids]:
+            TENANT_GOVERNANCE.release(reserved_job_id)
         for _, _, prepared_path in prepared_uploads:
             prepared_path.unlink(missing_ok=True)
         # The failing file is not appended to prepared_uploads yet.
@@ -3906,7 +4031,6 @@ async def create_batch_endpoint(
     created_jobs: list[dict[str, Any]] = []
     try:
         for job_id, upload, video_path in prepared_uploads:
-            reserve_job_quota(job_id, account, minutes=1)
             resume_request = {**batch_config, "video_path": str(video_path)}
             created_job = JOB_SERVICE.create(
                 job_id,
@@ -3915,29 +4039,29 @@ async def create_batch_endpoint(
                     "step": "queued",
                     "step_detail": "Video đã tải lên máy chủ, đang chờ xử lý",
                     "progress": 0.0,
-                    "mode": int(request.mode),
+                    "mode": int(processing_request.mode),
                     "filename": upload.filename,
-                    "subtitle_source": request.subtitle_source.value,
-                    "source_language": request.source_language,
-                    "target_language": request.target_language,
+                    "subtitle_source": processing_request.subtitle_source.value,
+                    "source_language": processing_request.source_language,
+                    "target_language": processing_request.target_language,
                     "voice_routing": {
-                        "mode": request.voice_mode.value,
-                        "fallback_voice": request.fallback_voice.value,
-                        "voice_style": request.voice_style,
+                        "mode": processing_request.voice_mode.value,
+                        "fallback_voice": processing_request.fallback_voice.value,
+                        "voice_style": processing_request.voice_style,
                     },
                     "tiktok": {
-                        "enabled": request.tiktok.enabled,
-                        "max_summary_chars": request.tiktok.max_summary_chars,
-                        "hashtag_count": request.tiktok.hashtag_count,
-                        "auto_publish": request.tiktok.auto_publish,
-                        "privacy_level": request.tiktok.privacy_level,
-                        "publish_at": request.tiktok.publish_at,
+                        "enabled": processing_request.tiktok.enabled,
+                        "max_summary_chars": processing_request.tiktok.max_summary_chars,
+                        "hashtag_count": processing_request.tiktok.hashtag_count,
+                        "auto_publish": processing_request.tiktok.auto_publish,
+                        "privacy_level": processing_request.tiktok.privacy_level,
+                        "publish_at": processing_request.tiktok.publish_at,
                     },
                     "resume_request": resume_request,
                     "ocr_config": {
-                        "sample_fps": request.ocr.sample_fps,
-                        "roi_top": request.ocr.roi_top,
-                        "roi_bottom": request.ocr.roi_bottom,
+                        "sample_fps": processing_request.ocr.sample_fps,
+                        "roi_top": processing_request.ocr.roi_top,
+                        "roi_bottom": processing_request.ocr.roi_bottom,
                     },
                 },
                 owner_user_id=owner_user_id,
@@ -3947,11 +4071,9 @@ async def create_batch_endpoint(
             emit_workflow_event("source.uploaded", job_id, created_job)
             created_jobs.append({"job_id": job_id, "filename": upload.filename, "status": "queued"})
 
-        for source_url in source_urls:
-            job_id = uuid.uuid4().hex[:8]
+        for job_id, source_url in zip(source_job_ids, source_urls):
             platform = social_platform(source_url)
             initial_filename = f"Video {platform} · {job_id}"
-            reserve_job_quota(job_id, account, minutes=1)
             source_cookie_path: Path | None = None
             source_upload_dir = tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id)
             if cookie_payload is not None:
@@ -3975,31 +4097,31 @@ async def create_batch_endpoint(
                     "step": "queued",
                     "step_detail": f"Đang chờ tải video từ {platform}",
                     "progress": 0.0,
-                    "mode": int(request.mode),
+                    "mode": int(processing_request.mode),
                     "filename": initial_filename,
                     "source_url": source_url,
                     "source_platform": platform,
-                    "subtitle_source": request.subtitle_source.value,
-                    "source_language": request.source_language,
-                    "target_language": request.target_language,
+                    "subtitle_source": processing_request.subtitle_source.value,
+                    "source_language": processing_request.source_language,
+                    "target_language": processing_request.target_language,
                     "voice_routing": {
-                        "mode": request.voice_mode.value,
-                        "fallback_voice": request.fallback_voice.value,
-                        "voice_style": request.voice_style,
+                        "mode": processing_request.voice_mode.value,
+                        "fallback_voice": processing_request.fallback_voice.value,
+                        "voice_style": processing_request.voice_style,
                     },
                     "tiktok": {
-                        "enabled": request.tiktok.enabled,
-                        "max_summary_chars": request.tiktok.max_summary_chars,
-                        "hashtag_count": request.tiktok.hashtag_count,
-                        "auto_publish": request.tiktok.auto_publish,
-                        "privacy_level": request.tiktok.privacy_level,
-                        "publish_at": request.tiktok.publish_at,
+                        "enabled": processing_request.tiktok.enabled,
+                        "max_summary_chars": processing_request.tiktok.max_summary_chars,
+                        "hashtag_count": processing_request.tiktok.hashtag_count,
+                        "auto_publish": processing_request.tiktok.auto_publish,
+                        "privacy_level": processing_request.tiktok.privacy_level,
+                        "publish_at": processing_request.tiktok.publish_at,
                     },
                     "resume_request": resume_request,
                     "ocr_config": {
-                        "sample_fps": request.ocr.sample_fps,
-                        "roi_top": request.ocr.roi_top,
-                        "roi_bottom": request.ocr.roi_bottom,
+                        "sample_fps": processing_request.ocr.sample_fps,
+                        "roi_top": processing_request.ocr.roi_top,
+                        "roi_bottom": processing_request.ocr.roi_bottom,
                     },
                 },
                 owner_user_id=owner_user_id,
@@ -4015,8 +4137,8 @@ async def create_batch_endpoint(
                 }
             )
     except Exception:
-        for job_info in created_jobs:
-            TENANT_GOVERNANCE.release(job_info["job_id"])
+        for reserved_job_id in [*upload_job_ids, *source_job_ids]:
+            TENANT_GOVERNANCE.release(reserved_job_id)
         raise
 
     notify_scheduler()
@@ -4064,8 +4186,9 @@ def list_jobs_endpoint(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> JSONResponse:
+    account = current_account(request)
     jobs, total = JOB_SERVICE.list_jobs(
-        owner_user_id=str(current_account(request)["user_id"]),
+        owner_user_id=None if can_manage_all_jobs(account) else str(account["user_id"]),
         status=status,
         batch_id=batch_id,
         search=search,
@@ -4074,7 +4197,7 @@ def list_jobs_endpoint(
     )
     positions = JOB_SERVICE.queue_positions()
     items = [
-        job_response(str(job["job_id"]), job, positions)
+        add_job_owner_identity(job_response(str(job["job_id"]), job, positions), job)
         for job in jobs
     ]
     return JSONResponse({"items": items, "total": total, "limit": limit, "offset": offset})
@@ -4096,16 +4219,19 @@ def job_change_snapshot(job_ids: set[str]) -> dict[str, Any]:
         if job is None:
             removed.append(job_id)
         else:
-            item = job_response(job_id, job, positions)
+            item = add_job_owner_identity(job_response(job_id, job, positions), job)
             item["_owner_user_id"] = str(job.get("owner_user_id") or "")
             items.append(item)
     return {"type": "jobs", "items": items, "removed": removed, "queue_positions": positions}
 
 
-def filter_job_event_for_user(message: dict[str, Any], owner_user_id: str) -> dict[str, Any] | None:
+def filter_job_event_for_user(message: dict[str, Any], owner_user_id: str, *, allow_all: bool = False) -> dict[str, Any] | None:
     if message.get("resync"):
         return dict(JOB_EVENT_RESYNC)
-    items = [dict(item) for item in message.get("items", []) if item.get("_owner_user_id") == owner_user_id]
+    items = [
+        dict(item) for item in message.get("items", [])
+        if allow_all or item.get("_owner_user_id") == owner_user_id
+    ]
     for item in items:
         item.pop("_owner_user_id", None)
     # Deletions cannot be attributed after the row is gone; a scoped reload is safe.
@@ -4182,7 +4308,10 @@ async def job_events_socket(websocket: WebSocket) -> None:
                 await websocket.close(code=4401)
                 break
             if getter in done:
-                scoped = filter_job_event_for_user(getter.result(), owner_user_id)
+                scoped = filter_job_event_for_user(
+                    getter.result(), owner_user_id,
+                    allow_all=str(claims.get("role") or "") in {"owner", "admin"},
+                )
                 if scoped is not None:
                     await websocket.send_json(scoped)
             else:
@@ -4198,18 +4327,18 @@ async def job_events_socket(websocket: WebSocket) -> None:
 
 @app.get("/api/v1/jobs/{job_id}")
 def get_job_endpoint(request: Request, job_id: str) -> JSONResponse:
-    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
+    job = job_for_request(request, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    return JSONResponse(job_response(job_id, job, JOB_SERVICE.queue_positions()))
+    return JSONResponse(add_job_owner_identity(job_response(job_id, job, JOB_SERVICE.queue_positions()), job))
 
 
 @app.post("/api/v1/jobs/{job_id}/refresh-tiktok-status")
 def refresh_tiktok_publish_status(request: Request, job_id: str) -> JSONResponse:
-    owner_user_id = str(current_account(request)["user_id"])
-    job = JOB_SERVICE.get_for_user(job_id, owner_user_id)
+    job = job_for_request(request, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
+    owner_user_id = str(job.get("owner_user_id") or current_account(request)["user_id"])
     publish_id = str(job.get("tiktok_publish_id") or "")
     if not publish_id:
         raise HTTPException(status_code=409, detail="Job chưa gửi video lên TikTok")
@@ -4222,13 +4351,13 @@ def refresh_tiktok_publish_status(request: Request, job_id: str) -> JSONResponse
         tiktok_publish_status=detail.get("status") or job.get("tiktok_publish_status") or "SUBMITTED",
         tiktok_publish_detail=detail,
     )
-    refreshed = JOB_SERVICE.get_for_user(job_id, owner_user_id) or job
+    refreshed = JOB_SERVICE.get(job_id) or job
     return JSONResponse(job_response(job_id, refreshed, JOB_SERVICE.queue_positions()))
 
 
 @app.get("/api/v1/jobs/{job_id}/download-all")
 def download_all_job_artifacts(request: Request, job_id: str) -> FileResponse:
-    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
+    job = job_for_request(request, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     artifact_keys = (
@@ -4264,7 +4393,10 @@ def list_batches_endpoint(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> JSONResponse:
-    batches, total = JOB_SERVICE.list_batches(owner_user_id=str(current_account(request)["user_id"]), limit=limit, offset=offset)
+    account = current_account(request)
+    batches, total = JOB_SERVICE.list_batches(
+        owner_user_id=None if can_manage_all_jobs(account) else str(account["user_id"]), limit=limit, offset=offset
+    )
     for batch in batches:
         batch.pop("owner_user_id", None)
         if isinstance(batch.get("config"), dict):
@@ -4274,14 +4406,17 @@ def list_batches_endpoint(
 
 @app.get("/api/v1/batches/{batch_id}")
 def get_batch_endpoint(request: Request, batch_id: str) -> JSONResponse:
-    owner_user_id = str(current_account(request)["user_id"])
-    batch = JOB_SERVICE.get_batch_for_user(batch_id, owner_user_id)
+    account = current_account(request)
+    owner_user_id = str(account["user_id"])
+    batch = JOB_SERVICE.get_batch(batch_id) if can_manage_all_jobs(account) else JOB_SERVICE.get_batch_for_user(batch_id, owner_user_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="batch not found")
     batch.pop("owner_user_id", None)
     if isinstance(batch.get("config"), dict):
         batch["config"].pop("background_music_path", None)
-    jobs, total = JOB_SERVICE.list_jobs(owner_user_id=owner_user_id, batch_id=batch_id, limit=200)
+    jobs, total = JOB_SERVICE.list_jobs(
+        owner_user_id=None if can_manage_all_jobs(account) else owner_user_id, batch_id=batch_id, limit=200
+    )
     positions = JOB_SERVICE.queue_positions()
     batch["jobs"] = [job_response(str(job["job_id"]), job, positions) for job in jobs]
     batch["total_jobs"] = total
@@ -4297,7 +4432,7 @@ def get_batch_endpoint(request: Request, batch_id: str) -> JSONResponse:
 
 @app.post("/api/v1/jobs/{job_id}/cancel")
 def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
-    if JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"])) is None:
+    if job_for_request(request, job_id) is None:
         raise HTTPException(status_code=404, detail="job not found")
     job = JOB_SERVICE.request_cancel(job_id)
     TENANT_GOVERNANCE.release(job_id)
@@ -4307,10 +4442,10 @@ def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
 @app.post("/api/v1/jobs/{job_id}/retry")
 def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     account = current_account(request)
-    owner_user_id = str(account["user_id"])
-    source = JOB_SERVICE.get_for_user(job_id, owner_user_id)
+    source = job_for_request(request, job_id)
     if source is None:
         raise HTTPException(status_code=404, detail="job not found")
+    owner_user_id = str(source.get("owner_user_id") or account["user_id"])
     if source.get("status") in {"queued", "scheduled", "processing", "cancelling"}:
         raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý")
 
@@ -4322,7 +4457,8 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     if not video_path.is_file() and not source_url:
         raise HTTPException(status_code=409, detail="file video nguồn không còn tồn tại")
 
-    reserve_job_quota(job_id, account, minutes=1)
+    quota_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
+    reserve_job_quota(job_id, quota_account, minutes=1)
 
     update_payload = {
         "status": "queued",
@@ -4351,12 +4487,12 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
 
     JOB_SERVICE.update(job_id, **update_payload)
     notify_scheduler()
-    return JSONResponse(job_response(job_id, JOB_SERVICE.get_for_user(job_id, owner_user_id)), status_code=200)
+    return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
 
 
 @app.delete("/api/v1/jobs/{job_id}")
 def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
-    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
+    job = job_for_request(request, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     active = TIKTOK_BROWSER.active_attempt()
@@ -4382,14 +4518,14 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     job_work_dir = tenant_job_dir(WORK_DIR, str(job.get("owner_user_id") or _bootstrap_owner["user_id"]), job_id)
     if job_work_dir.is_relative_to(WORK_DIR.resolve()) and job_work_dir.exists():
         shutil.rmtree(job_work_dir)
-    TENANT_GOVERNANCE.release(job_id)
     JOB_SERVICE.delete(job_id)
+    TENANT_GOVERNANCE.release(job_id)
     return JSONResponse({"job_id": job_id, "deleted": True})
 
 
 @app.get("/status/{job_id}")
 def get_status(request: Request, job_id: str) -> JSONResponse:
-    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
+    job = job_for_request(request, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     return JSONResponse(job_response(job_id, job, JOB_SERVICE.queue_positions()))
@@ -4400,7 +4536,18 @@ def download(request: Request, filename: str) -> FileResponse:
     """Compatibility download with mandatory ownership verification."""
     owner_user_id = str(current_account(request)["user_id"])
     safe_name = Path(filename).name
-    if not JOB_SERVICE.owns_artifact(owner_user_id, safe_name):
+    account = current_account(request)
+    owns_artifact = JOB_SERVICE.owns_artifact(owner_user_id, safe_name)
+    if can_manage_all_jobs(account) and not owns_artifact:
+        matches, _ = JOB_SERVICE.list_jobs(search=safe_name, limit=200)
+        owns_artifact = any(
+            safe_name in {
+                str(job.get(field) or ""), Path(str(job.get(field) or "")).name
+            }
+            for job in matches
+            for field in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file")
+        )
+    if not owns_artifact:
         raise HTTPException(status_code=404, detail="file not found")
     target = stored_artifact_path(safe_name)
     if not target.is_file():
@@ -4410,7 +4557,7 @@ def download(request: Request, filename: str) -> FileResponse:
 
 @app.get("/api/v1/jobs/{job_id}/artifacts/{kind}")
 def download_job_artifact(request: Request, job_id: str, kind: str) -> FileResponse:
-    job = JOB_SERVICE.get_for_user(job_id, str(current_account(request)["user_id"]))
+    job = job_for_request(request, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="file not found")
     artifact_fields = {

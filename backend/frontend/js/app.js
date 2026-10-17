@@ -56,7 +56,7 @@ const state = {
   sourceBrowserPlatform: "douyin", sourceBrowsers: {},
   adminAccounts: [], adminAccountSummary: null, adminSearchTimer: null,
   billing: null,
-  auth: { enabled: false, configured: false, authenticated: false, username: null, role: "owner", user_id: null },
+  auth: { enabled: false, configured: false, authenticated: false, username: null, role: "viewer", user_id: null },
 };
 const stepLabels = {
   queued: "Đang xếp hàng", starting: "Đang khởi động", "downloading-source": "Đang tải video nguồn",
@@ -130,6 +130,7 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   state.douyinBrowserPollTimer = null;
   state.appStarted = false;
   state.auth.authenticated = false;
+  state.auth.role = "viewer";
   // Never leave the previous account's data rendered behind the login gate.
   // This also prevents a brief stale-data flash when another user signs in.
   state.jobs = [];
@@ -137,6 +138,7 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   state.selectedJobIds.clear();
   state.files = [];
   state.links = [];
+  applyPermissions();
   const jobsBody = $("#jobsBody");
   if (jobsBody) renderJobs([]);
   $("#userMenu").classList.add("is-hidden");
@@ -191,7 +193,11 @@ function roleLabel(role) {
 
 function applyPermissions() {
   const role = state.auth.role || "viewer";
-  $$('[data-admin-only]').forEach(element => element.classList.toggle("is-hidden", !["owner", "admin"].includes(role)));
+  const isAdmin = ["owner", "admin"].includes(role);
+  $$('[data-admin-only]').forEach(element => {
+    element.hidden = !isAdmin;
+    element.classList.toggle("is-hidden", !isAdmin);
+  });
   $$('[data-min-role="editor"]').forEach(element => element.classList.toggle("is-hidden", role === "viewer"));
   $("#userMenuName").textContent = state.auth.username || "Tài khoản";
   $("#userMenuRole").textContent = roleLabel(role);
@@ -921,7 +927,13 @@ function renderAdminAccounts() {
   const approvals = Object.entries(adminLabels.approval);
   const payments = Object.entries(adminLabels.payment);
   const plans = [["free", "Free"], ["creator", "Creator"], ["pro", "Pro"], ["enterprise", "Enterprise"]];
-  list.innerHTML = state.adminAccounts.map(item => `
+  list.innerHTML = state.adminAccounts.map(item => {
+    const quota = item.quota || {};
+    const quotaUsed = Number(quota.consumed_minutes || 0) + Number(quota.reserved_minutes || 0);
+    const quotaText = quota.limit_minutes == null
+      ? `${quotaUsed} phút · Không giới hạn`
+      : `${quotaUsed}/${quota.limit_minutes} phút · còn ${quota.remaining_minutes ?? 0}`;
+    return `
     <article class="admin-account-row" data-admin-account="${escapeHtml(item.user_id)}">
       <div class="admin-account-user">
         <span class="admin-avatar avatar-${escapeHtml(item.role)}" aria-hidden="true">${escapeHtml((item.display_name || item.email || "U").trim().charAt(0).toUpperCase())}</span>
@@ -931,6 +943,7 @@ function renderAdminAccounts() {
           </div>
           <strong class="user-email" title="${escapeHtml(item.email)}">${escapeHtml(item.email)}</strong>
           <small class="user-join-date">Tham gia ${escapeHtml(new Date(item.created_at).toLocaleDateString("vi-VN"))}</small>
+          <small class="admin-user-quota" title="Quota chu kỳ ${escapeHtml(quota.period || "")}">⏱ ${escapeHtml(quotaText)}</small>
         </div>
       </div>
       ${adminSelect("role", item.role, roles, "Vai trò", item.role === "owner")}
@@ -947,7 +960,8 @@ function renderAdminAccounts() {
             <span>✕</span>
           </button>` : ""}
       </div>
-    </article>`).join("");
+    </article>`;
+  }).join("");
 
   const userFilter = $("#adminJobUserFilter");
   if (userFilter) {
@@ -1308,6 +1322,7 @@ function renderPendingUpload(upload) {
         </div>
       </div>
     </div>
+    <div class="job-owner job-owner-pending">—</div>
     <span class="status-pill status-${statusClass}"><span class="status-dot"></span><span>${statusText}</span></span>
     <div class="job-progress"><div class="progress-track ${active ? "progress-active" : "progress-failed"}"><span style="width:${active ? progress : 100}%"></span></div><small>${active ? `${progress}%` : "—"}</small></div>
     <div class="job-step"><strong>${progress >= 100 && active ? "Đang tạo tiến trình" : active ? "Đang tải batch" : "Tải lên không thành công"}</strong><small title="${escapeHtml(upload.detail)}">${escapeHtml(upload.detail)}</small></div>
@@ -1344,6 +1359,8 @@ function renderJobs(jobs) {
         ? `TikTok: ${job.tiktok_publish_status}${job.tiktok_publish_title ? ` · ${job.tiktok_publish_title}` : ""}`
         : (job.error || job.step_detail || "");
     const batchBadge = job.batch_id ? `<span class="batch-tag">${escapeHtml(job.batch_id)}</span>` : `<span class="single-tag">Video đơn</span>`;
+    const ownerName = job.owner_display_name || job.owner_email || job.owner_user_id || "Chưa xác định";
+    const ownerEmail = job.owner_email && job.owner_email !== ownerName ? job.owner_email : "";
     return `<article class="job-row${selected ? " selected" : ""}" data-job-row="${escapeHtml(job.job_id)}">
       <label class="job-select" title="Chọn job"><input type="checkbox" data-job-select="${escapeHtml(job.job_id)}" ${selected ? "checked" : ""} aria-label="Chọn ${escapeHtml(job.filename || job.job_id)}" /></label>
       <div class="job-file">
@@ -1354,6 +1371,10 @@ function renderJobs(jobs) {
           <strong title="${escapeHtml(job.filename || job.job_id)}">${escapeHtml(job.filename || job.job_id)}</strong>
           <small>${batchBadge}${queue}</small>
         </div>
+      </div>
+      <div class="job-owner" title="${escapeHtml(job.owner_email || ownerName)}">
+        <strong>${escapeHtml(ownerName)}</strong>
+        ${ownerEmail ? `<small>${escapeHtml(ownerEmail)}</small>` : ""}
       </div>
       <span class="status-pill status-${escapeHtml(job.status)}"><span class="status-dot"></span><span>${statusLabels[job.status] || escapeHtml(job.status)}</span></span>
       <div class="job-progress"><div class="progress-track progress-${escapeHtml(job.status)}"><span style="width:${progress}%"></span></div><small>${progress}%</small></div>
