@@ -432,16 +432,24 @@ a { color: inherit; text-decoration: none; }
 .job-progress { display: grid; grid-template-columns: 1fr 40px; align-items: center; gap: 10px; }
 .job-progress .progress-track { height: 7px; background: #e2e8f0; border-radius: 999px; overflow: hidden; box-shadow: inset 0 1px 2px rgba(0,0,0,0.06); }
 .job-progress .progress-track span { display: block; width: 0; height: 100%; border-radius: inherit; transition: width 0.3s ease; background: linear-gradient(90deg, var(--brand), #f5ad68); }
-.progress-processing span, .progress-active span {
+.job-progress .progress-track.progress-processing span,
+.job-progress .progress-track.progress-active span,
+.progress-processing span,
+.progress-active span {
   background: linear-gradient(90deg, #ea580c, #f97316);
   background-size: 20px 20px;
   background-image: linear-gradient(45deg, rgba(255,255,255,0.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.2) 75%, transparent 75%, transparent);
   animation: progress-stripes 1.2s linear infinite;
 }
 @keyframes progress-stripes { 0% { background-position: 0 0; } 100% { background-position: 20px 0; } }
+.job-progress .progress-track.progress-completed span,
 .progress-completed span { background: linear-gradient(90deg, #10b981, #059669); box-shadow: 0 0 6px rgba(16, 185, 129, 0.25); }
-.progress-failed span { background: #ef4444; opacity: 0.85; }
-.progress-queued span, .progress-scheduled span { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.job-progress .progress-track.progress-failed span,
+.progress-failed span { background: #ef4444; opacity: 0.9; }
+.job-progress .progress-track.progress-queued span,
+.job-progress .progress-track.progress-scheduled span,
+.progress-queued span,
+.progress-scheduled span { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
 .job-progress small { color: #475467; font-size: 0.74rem; font-weight: 700; text-align: right; font-feature-settings: "tnum"; }
 
 .job-step { min-width: 0; }
@@ -596,25 +604,33 @@ a { color: inherit; text-decoration: none; }
   .drop-zone { padding: 22px 14px; }
   .cookie-source-field input { min-height: 44px; }
   .file-remove { width: 44px; height: 44px; }
-  .jobs-toolbar { grid-template-columns: minmax(0,1fr) 46px; padding: 13px; }
-  .jobs-toolbar select { grid-row: 2; grid-column: 1 / -1; }
-  .icon-button { min-height: 46px; }
-  .bulk-actions { grid-template-columns: 1fr auto; padding: 11px 13px; }
+  .jobs-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 42px;
+    grid-template-areas:
+      "search search"
+      "filter refresh";
+    gap: 10px;
+    padding: 12px;
+  }
+  .jobs-toolbar .search-box { grid-area: search; width: 100%; }
+  .jobs-toolbar .filter-select-wrap { grid-area: filter; width: 100%; min-width: 0; }
+  .jobs-toolbar .refresh-btn { grid-area: refresh; width: 42px; height: 42px; min-height: 42px; }
+  .icon-button { min-height: 42px; }
+  .bulk-actions { padding: 11px 13px; }
   .bulk-actions > strong { display: none; }
-  .bulk-buttons { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
-  .bulk-buttons button { min-height: 44px; padding: 7px; }
-  .select-all { min-height: 44px; }
-  .select-all input,.job-select input { width: 21px; height: 21px; }
-  .job-row { grid-template-columns: 28px minmax(0,1fr); gap: 9px 10px; padding: 15px 13px; }
-  .job-select { grid-column: 1; grid-row: 1; min-width: 28px; min-height: 44px; align-self: start; }
+  .bulk-buttons { display: flex; gap: 8px; }
+  .bulk-buttons button { min-height: 38px; padding: 0 12px; }
+  .select-all { min-height: 38px; }
+  .job-row { grid-template-columns: 28px minmax(0,1fr); gap: 9px 10px; padding: 14px 14px; }
+  .job-select { grid-column: 1; grid-row: 1; min-width: 28px; min-height: 34px; align-self: start; }
   .job-file { grid-column: 2; grid-row: 1; align-items: flex-start; }
   .job-file strong { display: -webkit-box; white-space: normal; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .job-owner { grid-column: 2; grid-row: 2; }
-  .status-pill { grid-column: 2; grid-row: 3; }
-  .job-progress { grid-column: 1 / -1; grid-row: 4; }
-  .job-actions { grid-column: 1 / -1; grid-row: 5; display: grid; grid-template-columns: repeat(auto-fit,minmax(76px,1fr)); justify-content: stretch; }
-  .job-actions button,.job-actions a { width: 100%; min-width: 0; height: 44px; padding: 0 10px; }
-  .job-step { display: none; }
+  .status-pill { grid-column: 2; grid-row: 2; justify-self: start; align-self: center; }
+  .job-owner { grid-column: 2; grid-row: 2; justify-self: end; align-self: center; text-align: right; max-width: 55%; }
+  .job-progress { grid-column: 1 / -1; grid-row: 3; }
+  .job-step { grid-column: 1 / -1; grid-row: 4; display: block; }
+  .job-actions { grid-column: 1 / -1; grid-row: 5; display: flex; flex-wrap: wrap; gap: 6px; }
   .empty-state { min-height: 190px; padding: 24px 16px; }
 
   .douyin-header { flex-direction: column; align-items: flex-start; gap: 14px; }
@@ -3097,8 +3113,16 @@ a { color: inherit; text-decoration: none; }
 @media(max-width: 860px) {
   .jobs-header { flex-direction: column; align-items: flex-start; gap: 14px; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
-  .jobs-toolbar { grid-template-columns: 1fr auto; }
-  .filter-select-wrap { grid-column: 1 / -1; }
+  .jobs-toolbar {
+    grid-template-columns: 1fr 42px;
+    grid-template-areas:
+      "search search"
+      "filter refresh";
+    gap: 10px;
+  }
+  .jobs-toolbar .search-box { grid-area: search; width: 100%; }
+  .jobs-toolbar .filter-select-wrap { grid-area: filter; width: 100%; min-width: 0; }
+  .jobs-toolbar .refresh-btn { grid-area: refresh; width: 42px; height: 42px; }
   .job-row {
     grid-template-columns: 28px minmax(0, 1fr);
     gap: 10px 12px;
@@ -3106,9 +3130,10 @@ a { color: inherit; text-decoration: none; }
   }
   .job-select { grid-column: 1; grid-row: 1; align-self: start; padding-top: 4px; }
   .job-file { grid-column: 2; grid-row: 1; }
-  .job-owner { grid-column: 2; grid-row: 2; }
-  .status-pill { grid-column: 2; grid-row: 3; }
-  .job-progress { grid-column: 1 / -1; grid-row: 4; }
+  .status-pill { grid-column: 2; grid-row: 2; justify-self: start; align-self: center; }
+  .job-owner { grid-column: 2; grid-row: 2; justify-self: end; align-self: center; text-align: right; max-width: 55%; }
+  .job-progress { grid-column: 1 / -1; grid-row: 3; }
+  .job-step { grid-column: 1 / -1; grid-row: 4; }
   .job-actions { grid-column: 1 / -1; grid-row: 5; justify-content: flex-start; flex-wrap: wrap; }
   .tiktok-header { flex-direction: column; align-items: flex-start; gap: 14px; }
   .tiktok-publish-controls { grid-template-columns: 1fr; }
@@ -3336,29 +3361,36 @@ a { color: inherit; text-decoration: none; }
   .jobs-toolbar {
     display: grid;
     grid-template-columns: 1fr 42px;
+    grid-template-areas:
+      "search search"
+      "filter refresh";
     gap: 8px;
     padding: 10px 12px;
   }
-  .jobs-toolbar .search-box { grid-column: 1; }
+  .jobs-toolbar .search-box {
+    grid-area: search;
+    width: 100%;
+  }
   .jobs-toolbar .search-box input {
     min-height: 42px;
     font-size: 0.82rem;
     padding-left: 36px;
   }
-  .jobs-toolbar .refresh-btn {
-    grid-column: 2;
-    width: 42px;
-    height: 42px;
-    min-height: 42px;
-  }
   .jobs-toolbar .filter-select-wrap {
-    grid-column: 1 / -1;
+    grid-area: filter;
     width: 100%;
+    min-width: 0;
   }
   .jobs-toolbar .filter-select-wrap select {
     min-height: 42px;
     font-size: 0.82rem;
     width: 100%;
+  }
+  .jobs-toolbar .refresh-btn {
+    grid-area: refresh;
+    width: 42px;
+    height: 42px;
+    min-height: 42px;
   }
 
   .bulk-actions {
@@ -3382,27 +3414,32 @@ a { color: inherit; text-decoration: none; }
     gap: 6px;
   }
   .bulk-buttons button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     min-height: 38px;
     height: 38px;
     padding: 0 4px;
     font-size: 0.74rem;
     font-weight: 700;
-    text-align: center;
     border-radius: 9px;
   }
 
   .job-row {
-    grid-template-columns: 24px minmax(0, 1fr);
+    grid-template-columns: 28px minmax(0, 1fr);
     gap: 8px 10px;
     padding: 12px 12px;
-    border-radius: 14px;
+    border-radius: 0;
   }
   .job-select {
     grid-column: 1;
     grid-row: 1;
-    align-self: start;
-    padding-top: 3px;
-    min-height: unset;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 34px;
+    min-height: 34px;
+    padding-top: 0;
   }
   .job-file {
     grid-column: 2;
@@ -3432,15 +3469,37 @@ a { color: inherit; text-decoration: none; }
   .status-pill {
     grid-column: 2;
     grid-row: 2;
-    align-self: start;
+    justify-self: start;
+    align-self: center;
     font-size: 0.68rem;
     padding: 2px 8px;
-    margin-top: -2px;
+    margin: 0;
+  }
+  .job-owner {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+    align-self: center;
+    max-width: 55%;
+    min-width: 0;
+    text-align: right;
+  }
+  .job-owner strong {
+    font-size: 0.72rem;
+    color: #64748b;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
+  }
+  .job-owner small {
+    display: none;
   }
   .job-progress {
     grid-column: 1 / -1;
     grid-row: 3;
-    margin-top: 2px;
+    margin-top: 4px;
   }
   .job-step {
     grid-column: 1 / -1;
@@ -3448,8 +3507,18 @@ a { color: inherit; text-decoration: none; }
     display: block;
     margin-top: 2px;
   }
-  .job-step strong { font-size: 0.72rem; }
-  .job-step small { font-size: 0.68rem; }
+  .job-step strong { font-size: 0.74rem; font-weight: 700; }
+  .job-step small {
+    font-size: 0.7rem;
+    white-space: normal;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+    word-break: break-word;
+    color: #64748b;
+  }
   .job-actions {
     grid-column: 1 / -1;
     grid-row: 5;
@@ -3457,7 +3526,7 @@ a { color: inherit; text-decoration: none; }
     flex-wrap: wrap;
     gap: 6px;
     width: 100%;
-    margin-top: 4px;
+    margin-top: 6px;
     padding-top: 8px;
     border-top: 1px dashed #e2e8f0;
   }
@@ -3475,15 +3544,15 @@ a { color: inherit; text-decoration: none; }
     box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
   }
   .job-actions .btn-job-action:not(.tiktok-review-action) {
-    flex: 1 1 calc(25% - 6px);
+    flex: 1 1 calc(50% - 6px);
     min-width: 0;
-    min-height: 34px;
-    height: 34px;
-    padding: 0 4px;
-    font-size: 0.72rem;
+    min-height: 36px;
+    height: 36px;
+    padding: 0 8px;
+    font-size: 0.74rem;
     font-weight: 650;
     justify-content: center;
-    border-radius: 8px;
+    border-radius: 9px;
   }
   .upload-row .job-actions button {
     width: 100%;

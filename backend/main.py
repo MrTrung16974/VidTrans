@@ -1025,9 +1025,13 @@ def transcribe_chinese_video(model_name: str, video_path: Path, job_id: str | No
 
 
 def transcribe_video(
-    model_name: str, video_path: Path, source_language: str, job_id: str | None = None,
+    model_name: str,
+    video_path: Path,
+    source_language: str,
+    job_id: str | None = None,
+    media_duration: float | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, float | None]:
-    progress = make_asr_progress_callback(job_id) if job_id else None
+    progress = make_asr_progress_callback(job_id, media_duration) if job_id else None
     result = ASR_SERVICE.transcribe(
         model_name, video_path, progress=progress, source_language=source_language
     )
@@ -1040,24 +1044,39 @@ def transcribe_video(
     return normalize_segments(result.segments), detected, result.language_probability
 
 
-def make_asr_progress_callback(job_id: str) -> Callable[[float, float | None], None]:
+def format_asr_duration(seconds: float | None) -> str:
+    value = max(0, int(seconds or 0))
+    hours, remainder = divmod(value, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+def asr_progress_detail(position: float, total: float | None) -> str:
+    current = format_asr_duration(position)
+    return f"Đã nhận diện {current} / {format_asr_duration(total)}" if total else f"Đã nhận diện {current}"
+
+
+def make_asr_progress_callback(
+    job_id: str, expected_duration: float | None = None,
+) -> Callable[[float, float | None], None]:
     """Report recognised audio time so a long transcription is visibly moving."""
 
     last_reported = -1
 
     def report(position: float, total: float | None) -> None:
         nonlocal last_reported
-        if not total:
+        effective_total = total or expected_duration
+        if not effective_total:
+            update_job(job_id, step_detail=asr_progress_detail(position, None))
             return
-        percent = min(100, int(100 * position / total))
+        percent = min(100, int(100 * position / effective_total))
         if percent - last_reported < 2 and percent != 100:
             return
         last_reported = percent
         update_job(
             job_id,
             progress=0.22 + 0.16 * percent / 100,
-            step_detail=f"Nhận diện giọng nói {int(position // 60)}:{int(position % 60):02d}"
-                        f"/{int(total // 60)}:{int(total % 60):02d}",
+            step_detail=asr_progress_detail(position, effective_total),
         )
 
     return report
@@ -1874,7 +1893,13 @@ def recognize_video_source(
             logger.warning("OCR subtitle extraction failed; using speech transcription", exc_info=True)
 
     ensure_job_active(job_id)
-    update_job(job_id, status="processing", step="transcribing", step_detail=None, progress=0.22)
+    update_job(
+        job_id,
+        status="processing",
+        step="transcribing",
+        step_detail=asr_progress_detail(0, video_duration),
+        progress=0.22,
+    )
     asr_segments: list[dict[str, Any]] = []
     detected_language: str | None = None
     detected_language_probability: float | None = None
@@ -1883,7 +1908,7 @@ def recognize_video_source(
             with _whisper_slots:
                 ensure_job_active(job_id)
                 asr_segments, detected_language, detected_language_probability = transcribe_video(
-                    whisper_model, video_path, source_language, job_id
+                    whisper_model, video_path, source_language, job_id, video_duration
                 )
         elif not ocr_segments:
             raise RuntimeError(
