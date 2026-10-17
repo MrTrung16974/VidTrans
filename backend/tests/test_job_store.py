@@ -165,6 +165,16 @@ class SQLiteJobStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "owners do not match"):
             self.store.attach_to_batch("job-b", "batch-a")
 
+    def test_backfill_migrates_legacy_batch_before_its_jobs(self) -> None:
+        self.store.create_batch("legacy-batch", name="Legacy", config={})
+        self.store.create("legacy-job", {"status": "completed", "filename": "old.mp4"})
+        self.store.attach_to_batch("legacy-job", "legacy-batch")
+
+        self.store.backfill_legacy_owner("owner-a")
+
+        self.assertEqual(self.store.get("legacy-job")["owner_user_id"], "owner-a")
+        self.assertEqual(self.store.get_batch("legacy-batch")["owner_user_id"], "owner-a")
+
     def test_database_triggers_lock_owner_and_batch_tenant(self) -> None:
         self.store.create_batch("batch-a", name="A", config={}, owner_user_id="user-a")
         self.store.create("job-a", {"status": "queued"}, owner_user_id="user-a")

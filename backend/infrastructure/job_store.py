@@ -520,6 +520,14 @@ class SQLiteJobStore:
             raise JobStoreError("owner_user_id is required")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # A job linked to a batch is protected by
+            # trg_jobs_batch_owner_update. Migrate the parent batch first so
+            # the child job continues to match throughout the transaction.
+            # The previous order made startup fail on every pre-tenant batch.
+            connection.execute(
+                "UPDATE batches SET owner_user_id=? WHERE owner_user_id='__legacy__'",
+                (owner_user_id,),
+            )
             rows = connection.execute("SELECT job_id,payload_json FROM jobs WHERE owner_user_id='__legacy__'").fetchall()
             for row in rows:
                 payload = self._decode(row["payload_json"])
@@ -527,7 +535,6 @@ class SQLiteJobStore:
                     "UPDATE jobs SET owner_user_id=?,payload_json=? WHERE job_id=?",
                     (owner_user_id, self._encode(payload), row["job_id"]),
                 )
-            connection.execute("UPDATE batches SET owner_user_id=? WHERE owner_user_id='__legacy__'", (owner_user_id,))
 
     def claim_next(self, worker_id: str) -> tuple[str, dict[str, Any]] | None:
         """Atomically claim the oldest highest-priority queued job."""
