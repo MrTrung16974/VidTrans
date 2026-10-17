@@ -47,6 +47,9 @@ read_env_value() {
         if [[ "$value" == \'*\' || "$value" == \"*\" ]]; then
             value="${value:1:${#value}-2}"
         fi
+        # Compose requires literal dollars in env-file interpolation to be
+        # written as $$. Convert them back before validating/reusing a hash.
+        value="${value//\$\$/\$}"
     fi
     printf '%s' "$value"
 }
@@ -167,7 +170,8 @@ unset admin_password password_confirmation
 
 update_env_line "$APP_ENV" VIDTRANS_AUTH_ENABLED "VIDTRANS_AUTH_ENABLED=1"
 update_env_line "$APP_ENV" VIDTRANS_AUTH_USERNAME "VIDTRANS_AUTH_USERNAME=$admin_username"
-update_env_line "$APP_ENV" VIDTRANS_AUTH_PASSWORD_HASH "VIDTRANS_AUTH_PASSWORD_HASH='$password_hash'"
+compose_password_hash="$(printf '%s' "$password_hash" | sed 's/\$/$$/g')"
+update_env_line "$APP_ENV" VIDTRANS_AUTH_PASSWORD_HASH "VIDTRANS_AUTH_PASSWORD_HASH='$compose_password_hash'"
 update_env_line "$APP_ENV" VIDTRANS_JWT_SECRET "VIDTRANS_JWT_SECRET=$jwt_secret"
 update_env_line "$APP_ENV" VIDTRANS_AUTH_COOKIE_SECURE "VIDTRANS_AUTH_COOKIE_SECURE=1"
 

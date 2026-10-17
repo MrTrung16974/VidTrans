@@ -12,6 +12,52 @@ PRODUCTION=0
 FORCE_LOCAL=0
 CORPORATE_CA=0
 
+# Older setup versions wrote PBKDF2 hashes with raw dollar signs. Docker
+# Compose treats those as variable references (for example $600000 and the
+# salt), truncating the password hash passed to the application. Repair that
+# line in place while leaving every other secret untouched.
+escape_password_hash_for_compose() {
+    local file="$1"
+    local line value escaped temporary changed=0
+    [[ -f "$file" ]] || return 0
+    temporary="$(mktemp "${file}.XXXXXX")"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == VIDTRANS_AUTH_PASSWORD_HASH=* ]]; then
+            value="${line#VIDTRANS_AUTH_PASSWORD_HASH=}"
+            if [[ "$value" == *'$'* && "$value" != *'$$'* ]]; then
+                escaped="$(printf '%s' "$value" | sed 's/\$/$$/g')"
+                line="VIDTRANS_AUTH_PASSWORD_HASH=$escaped"
+                changed=1
+            fi
+        fi
+        printf '%s\n' "$line"
+    done < "$file" > "$temporary"
+    if [[ "$changed" -eq 1 ]]; then
+        chmod --reference="$file" "$temporary" 2>/dev/null || chmod 600 "$temporary"
+        mv "$temporary" "$file"
+        printf 'Escaped literal dollar signs in %s for Docker Compose.\n' "$file"
+    else
+        rm -f "$temporary"
+    fi
+}
+
+# A cancelled `docker compose run` can keep the application's bind-mounted
+# SQLite files open. Remove only one-off containers belonging to this exact
+# Compose working directory before replacing the service containers.
+cleanup_compose_oneoffs() {
+    local -a containers=()
+    mapfile -t containers < <(docker ps -aq \
+        --filter "label=com.docker.compose.oneoff=True" \
+        --filter "label=com.docker.compose.project.working_dir=$PWD")
+    if (( ${#containers[@]} > 0 )); then
+        printf 'Removing %d stale Compose one-off container(s)...\n' "${#containers[@]}"
+        docker rm -f "${containers[@]}" >/dev/null
+    fi
+}
+
+escape_password_hash_for_compose .env
+escape_password_hash_for_compose .env.production
+
 for argument in "$@"; do
     case "$argument" in
         --full) FULL_REBUILD=1 ;;
@@ -65,6 +111,8 @@ fi
 # The interactive source browser has its own dependency image. Docker keeps
 # this layer cached, so normal code-only rebuilds remain fast after first use.
 "${compose[@]}" build social-browser tiktok-browser
+
+cleanup_compose_oneoffs
 
 if [[ "$PRODUCTION" -eq 1 ]]; then
     bash deploy/vps-first-run.sh
