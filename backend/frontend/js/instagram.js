@@ -1,3 +1,5 @@
+import { unconfiguredStatus, unconfiguredTitle } from './connection-copy.js?v=20261018-2';
+
 const ACTIVE_STATUSES = new Set(['READY', 'CLAIMED', 'UPLOADING', 'PROCESSING_REMOTE', 'SUBMITTING', 'NEEDS_RECONCILIATION', 'SCHEDULED_LOCAL']);
 const STATUS_LABELS = {
   READY: 'Sẵn sàng', SCHEDULED_LOCAL: 'Đã đặt lịch', CLAIMED: 'Đang nhận lịch',
@@ -27,11 +29,11 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
     auth = result;
     $('#instagramStatus').textContent = result.connected
       ? `Đã kết nối${result.username ? ` · @${result.username}` : ''}`
-      : result.configured ? 'Bấm Kết nối để đăng nhập tài khoản của bạn' : 'Kết nối chưa được quản trị viên kích hoạt';
+      : result.configured ? 'Bấm Kết nối để đăng nhập tài khoản của bạn' : unconfiguredStatus('instagram');
     $('#instagramConnect').disabled = !result.configured;
     $('#instagramConnect').title = result.configured
       ? 'Đăng nhập và cấp quyền Instagram ngay trên website'
-      : 'Chủ hệ thống cần kích hoạt ứng dụng OAuth và public HTTPS một lần';
+      : unconfiguredTitle();
     $('#instagramConnect').textContent = (result.accounts || []).length ? 'Thêm tài khoản' : 'Kết nối Instagram';
     const select = $('#instagramAccount'), previous = select.value || result.account_id || '';
     select.replaceChildren();

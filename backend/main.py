@@ -62,13 +62,14 @@ from infrastructure.payments import (
 from infrastructure.job_events import ALL_JOBS, JobEventHub
 from infrastructure.job_store import SQLiteJobStore
 from infrastructure.publishers.registry import PublisherRegistry
-from infrastructure.publishers.instagram import InstagramPublisher
+from infrastructure.publishers.instagram import InstagramPublisher, InstagramPublisherConfig
 from infrastructure.publishers.tiktok import TikTokSocialPublisher
 from infrastructure.publishers.threads import ThreadsPublisher
 from infrastructure.publishers.pinterest import PinterestPublisher
 from infrastructure.publishers.linkedin import LinkedInPublisher
-from infrastructure.publishers.facebook import FacebookPublisher, FacebookPublisherError
-from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisherError
+from infrastructure.publishers.facebook import FacebookPublisher, FacebookPublisherConfig, FacebookPublisherError
+from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisherConfig, YouTubePublisherError
+from infrastructure.platform_apps import PLATFORM_APPS, PlatformAppError, PlatformAppStore, load_or_create_key
 from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
@@ -99,7 +100,7 @@ from infrastructure.social_video_downloader import (
     extract_social_video_urls,
     social_platform,
 )
-from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherError
+from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherConfig, TikTokPublisherError
 from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
 from pipeline.checkpoint_payloads import (
     restore_file_checkpoint,
@@ -268,6 +269,24 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     douyin_proxy=os.environ.get("VIDTRANS_DOUYIN_PROXY", "").strip() or None,
     youtube_proxy=os.environ.get("VIDTRANS_YOUTUBE_PROXY", "").strip() or None,
 )
+# OAuth developer apps are configured once by an admin on the web; .env stays a fallback.
+PLATFORM_APP_STORE = PlatformAppStore(
+    WORK_DIR / "jobs.sqlite3",
+    CredentialCipher(load_or_create_key(WORK_DIR / "secrets" / "platform-apps.key"), key_id="platform-apps"),
+)
+_PLATFORM_CONFIG_FACTORIES = {
+    "TIKTOK": TikTokPublisherConfig.from_env,
+    "FACEBOOK": FacebookPublisherConfig.from_env,
+    "INSTAGRAM": InstagramPublisherConfig.from_env,
+    "YOUTUBE": YouTubePublisherConfig.from_env,
+}
+
+
+def platform_app_config(platform: str):
+    key = platform.upper()
+    return PLATFORM_APP_STORE.overlay(key, _PLATFORM_CONFIG_FACTORIES[key]())
+
+
 _TENANT_PUBLISHER_LOCK = threading.RLock()
 _TENANT_TIKTOK_PUBLISHERS: dict[str, TikTokPublisher] = {}
 _TENANT_SOCIAL_REGISTRIES: dict[str, PublisherRegistry] = {}
@@ -295,6 +314,7 @@ def tenant_tiktok_publisher(owner_user_id: str) -> TikTokPublisher:
         if publisher is None:
             publisher = TikTokPublisher(
                 tenant_social_auth_dir(owner_user_id, "tiktok"),
+                config=platform_app_config("TIKTOK"),
                 account_store=tenant_encrypted_oauth_store(owner_user_id, "TIKTOK"),
             )
             _TENANT_TIKTOK_PUBLISHERS[owner_user_id] = publisher
@@ -310,6 +330,7 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
                 InstagramPublisher(
                     tenant_social_auth_dir(owner_user_id, "instagram"),
                     SIGNED_MEDIA_URLS,
+                    config=platform_app_config("INSTAGRAM"),
                     account_store=tenant_encrypted_oauth_store(owner_user_id, "INSTAGRAM"),
                 ),
                 ThreadsPublisher(tenant_social_auth_dir(owner_user_id, "threads"), SIGNED_MEDIA_URLS),
@@ -317,10 +338,12 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
                 LINKEDIN_PUBLISHER,
                 FacebookPublisher(
                     tenant_social_auth_dir(owner_user_id, "facebook"),
+                    config=platform_app_config("FACEBOOK"),
                     account_store=tenant_encrypted_oauth_store(owner_user_id, "FACEBOOK"),
                 ),
                 YouTubePublisher(
                     tenant_social_auth_dir(owner_user_id, "youtube"),
+                    config=platform_app_config("YOUTUBE"),
                     account_store=tenant_encrypted_oauth_store(owner_user_id, "YOUTUBE"),
                 ),
                 TikTokSocialPublisher(tiktok),
@@ -329,7 +352,7 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
         return registry
 
 
-TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth")
+TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth", config=platform_app_config("TIKTOK"))
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
 TIKTOK_PUBLISH_STORE = SQLiteTikTokPublishStore(WORK_DIR / "jobs.sqlite3")
 TIKTOK_PUBLISHING = TikTokPublishingService(
@@ -366,12 +389,13 @@ SIGNED_MEDIA_URLS = SignedMediaUrlService(
 INSTAGRAM_PUBLISHER = InstagramPublisher(
     WORK_DIR / "instagram-auth",
     SIGNED_MEDIA_URLS,
+    config=platform_app_config("INSTAGRAM"),
 )
 THREADS_PUBLISHER = ThreadsPublisher(WORK_DIR / "threads-auth", SIGNED_MEDIA_URLS)
 PINTEREST_PUBLISHER = PinterestPublisher()
 LINKEDIN_PUBLISHER = LinkedInPublisher()
-FACEBOOK_PUBLISHER = FacebookPublisher(WORK_DIR / "facebook-auth")
-YOUTUBE_PUBLISHER = YouTubePublisher(WORK_DIR / "youtube-auth")
+FACEBOOK_PUBLISHER = FacebookPublisher(WORK_DIR / "facebook-auth", config=platform_app_config("FACEBOOK"))
+YOUTUBE_PUBLISHER = YouTubePublisher(WORK_DIR / "youtube-auth", config=platform_app_config("YOUTUBE"))
 TIKTOK_SOCIAL_PUBLISHER = TikTokSocialPublisher(TIKTOK_PUBLISHER)
 SOCIAL_PUBLISHERS = PublisherRegistry([
     INSTAGRAM_PUBLISHER, THREADS_PUBLISHER, PINTEREST_PUBLISHER, LINKEDIN_PUBLISHER,
@@ -3187,6 +3211,83 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
         if user_dir.exists() and user_dir.is_relative_to(base_dir.resolve()):
             shutil.rmtree(user_dir, ignore_errors=True)
     return JSONResponse({"deleted": True, "user_id": user_id}, headers={"Cache-Control": "no-store"})
+
+
+def live_platform_publishers(platform: str) -> list[Any]:
+    """Every in-memory publisher for ``platform`` so new credentials apply without restart."""
+    key = platform.upper()
+    with _TENANT_PUBLISHER_LOCK:
+        if key == "TIKTOK":
+            return [TIKTOK_PUBLISHER, *_TENANT_TIKTOK_PUBLISHERS.values()]
+        shared = {"FACEBOOK": FACEBOOK_PUBLISHER, "INSTAGRAM": INSTAGRAM_PUBLISHER, "YOUTUBE": YOUTUBE_PUBLISHER}[key]
+        return [shared, *(registry.get(key) for registry in _TENANT_SOCIAL_REGISTRIES.values())]
+
+
+def apply_platform_app_config(platform: str) -> None:
+    config = platform_app_config(platform)
+    for publisher in live_platform_publishers(platform):
+        publisher.config = config
+
+
+def platform_app_summary(platform: str) -> dict[str, Any]:
+    return PLATFORM_APP_STORE.describe(platform, platform_app_config(platform))
+
+
+@app.get("/api/v1/admin/platform-apps")
+def admin_list_platform_apps(request: Request) -> JSONResponse:
+    require_roles(request, "owner", "admin")
+    return JSONResponse(
+        {"items": [platform_app_summary(platform) for platform in PLATFORM_APPS]},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/v1/admin/platform-apps/{platform}")
+def admin_save_platform_app(
+    request: Request,
+    platform: str,
+    client_id: str = Form(..., max_length=256),
+    client_secret: str = Form("", max_length=512),
+    redirect_uri: str = Form(..., max_length=512),
+) -> JSONResponse:
+    actor = require_roles(request, "owner", "admin")
+    key = platform.upper()
+    try:
+        PLATFORM_APP_STORE.save(
+            key, client_id=client_id, client_secret=client_secret,
+            redirect_uri=redirect_uri, updated_by=str(actor["user_id"]),
+        )
+    except PlatformAppError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    apply_platform_app_config(key)
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=actor["user_id"],
+        action="platform_app.update",
+        resource_type="platform_app",
+        resource_id=key,
+        metadata={"client_id": client_id.strip(), "redirect_uri": redirect_uri.strip(),
+                  "secret_changed": bool(client_secret.strip())},
+    )
+    return JSONResponse(platform_app_summary(key), headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/v1/admin/platform-apps/{platform}")
+def admin_delete_platform_app(request: Request, platform: str) -> JSONResponse:
+    actor = require_roles(request, "owner", "admin")
+    key = platform.upper()
+    try:
+        PLATFORM_APP_STORE.delete(key)
+    except PlatformAppError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    apply_platform_app_config(key)
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=actor["user_id"],
+        action="platform_app.delete",
+        resource_type="platform_app",
+        resource_id=key,
+        metadata={},
+    )
+    return JSONResponse(platform_app_summary(key), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/v1/admin/jobs")

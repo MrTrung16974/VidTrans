@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261018-5" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261018-6" />
   </head>
   <body>
     <div class="app-shell">
@@ -1304,6 +1304,7 @@
             <button class="admin-subtab active" type="button" data-admin-subtab="accounts">👥 Tài khoản & Phân quyền</button>
             <button class="admin-subtab" type="button" data-admin-subtab="jobs">🔍 Giám sát Jobs toàn hệ thống</button>
             <button class="admin-subtab" type="button" data-admin-subtab="audit">🛡️ Nhật ký kiểm toán (Audit)</button>
+            <button class="admin-subtab" type="button" data-admin-subtab="platform-apps">🔌 Kết nối nền tảng</button>
           </div>
 
           <div id="adminSubtabAccounts" class="admin-subtab-pane">
@@ -1477,6 +1478,18 @@
             </section>
           </div>
 
+          <div id="adminSubtabPlatformApps" class="admin-subtab-pane is-hidden">
+            <section class="card admin-platform-apps-panel">
+              <div class="admin-list-title">
+                <strong>Ứng dụng OAuth của hệ thống</strong>
+                <small>Khai báo một lần cho toàn hệ thống. User chỉ cần bấm "Kết nối" và đăng nhập tài khoản của họ — không phải nhập gì, không cần liên hệ admin.</small>
+              </div>
+              <div id="adminPlatformAppsList" class="platform-apps-grid">
+                <div class="empty-state"><strong>Đang tải…</strong></div>
+              </div>
+            </section>
+          </div>
+
           <div id="adminSubtabAudit" class="admin-subtab-pane is-hidden">
             <section class="card admin-audit-panel">
               <div class="admin-toolbar admin-audit-toolbar">
@@ -1494,6 +1507,7 @@
                     <option value="account.create">account.create (Tạo tài khoản)</option>
                     <option value="account.delete">account.delete (Xóa tài khoản)</option>
                     <option value="billing.order_confirm">billing.order_confirm (Duyệt nạp tiền)</option>
+                    <option value="platform_app.update">platform_app.update (Cấu hình ứng dụng nền tảng)</option>
                   </select>
                 </div>
                 <button id="refreshAdminAudit" class="button secondary" type="button" title="Làm mới">
@@ -1652,6 +1666,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261018-4"></script>
+    <script type="module" src="/js/app.js?v=20261018-6"></script>
   </body>
 </html>

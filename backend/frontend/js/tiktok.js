@@ -1,6 +1,7 @@
 import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20261015-2";
-import { createInstagramWorkspace } from "./instagram.js?v=20261018-2";
-import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261018-1";
+import { createInstagramWorkspace } from "./instagram.js?v=20261018-4";
+import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261018-3";
+import { unconfiguredStatus, unconfiguredTitle } from "./connection-copy.js?v=20261018-2";
 export function createTikTokWorkspace({ requestJson, toast }) {
   const $ = selector => document.querySelector(selector);
   let status = null, apiStatus = null, draft = null, timer = null, apiTimer = null, refreshing = false, loading = false, submitting = false;
@@ -130,11 +131,11 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       apiStatus = await requestJson(`/api/v1/tiktok-auth${suffix}`);
       $('#tiktokApiStatus').textContent = apiStatus.can_direct_publish
         ? 'Đã kết nối · sẵn sàng đăng trực tiếp và gửi bản nháp'
-        : apiStatus.connected ? 'Cần kết nối lại và cấp quyền đăng video' : apiStatus.configured ? 'Bấm Kết nối để đăng nhập tài khoản của bạn' : 'Kết nối chưa được quản trị viên kích hoạt';
+        : apiStatus.connected ? 'Cần kết nối lại và cấp quyền đăng video' : apiStatus.configured ? 'Bấm Kết nối để đăng nhập tài khoản của bạn' : unconfiguredStatus('tiktok');
       $('#tiktokApiConnect').disabled = !apiStatus.configured;
       $('#tiktokApiConnect').title = apiStatus.configured
         ? 'Đăng nhập và cấp quyền TikTok ngay trên website'
-        : 'Chủ hệ thống cần kích hoạt ứng dụng OAuth một lần';
+        : unconfiguredTitle();
       $('#tiktokApiConnect').textContent = (apiStatus.accounts || []).length ? 'Thêm tài khoản' : 'Kết nối TikTok';
       $('#tiktokApiDisconnect').disabled = !apiStatus.connected;
       const accountSelect = $('#tiktokApiAccount');
