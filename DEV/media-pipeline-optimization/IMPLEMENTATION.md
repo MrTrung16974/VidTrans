@@ -119,3 +119,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=backend python3 -m unittest \
 - Chuẩn hóa/validate màu CSS trước khi chuyển sang ASS; drawtext và Pillow fallback cũng dùng cùng màu.
 - Cache-bust frontend lên `app.js?v=20261018-11`.
 - Regression tổng hợp 165 cases: lần đầu 164 PASS/1 FAIL do assertion cache version cũ; sửa assertion và retest nhóm ảnh hưởng 15/15 PASS.
+- UX follow-up: bỏ ô nhập độ đậm nền; frontend luôn gửi default 0,82, backend vẫn fallback 0,82. Cache frontend tăng lên `20261018-12`; static tests 9/9 PASS.

@@ -93,7 +93,9 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'data-source-browser-tab="{platform}"', html)
         self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
         self.assertIn("/api/v1/source-browser/${platform}/activate", javascript)
-        self.assertIn("/js/app.js?v=20261018-11", html)
+        self.assertIn("/js/app.js?v=20261018-12", html)
+        self.assertNotIn('id="subtitleBackgroundOpacity"', html)
+        self.assertIn("background_opacity: 0.82", javascript)
         self.assertIn('button.addEventListener("click", () => selectSourceBrowserTab', javascript)
 
     async def test_source_login_and_cookie_configuration_are_admin_only(self):

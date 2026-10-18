@@ -564,7 +564,7 @@ function subtitleStyle() {
     mask_original: $("#maskOriginal").checked,
     text_color_css: $("#subtitleTextColor").value,
     background_color_css: $("#subtitleBackgroundColor").value,
-    background_opacity: Number($("#subtitleBackgroundOpacity").value),
+    background_opacity: 0.82,
     background_box: $("#subtitleBackgroundBox").checked,
   };
 }
@@ -640,7 +640,7 @@ function updateFormSummary() {
   $("#previewVietnamese").style.fontSize = $("#matchSourceSize").checked ? "17px" : "21px";
   $("#previewVietnamese").style.color = $("#subtitleTextColor").value;
   const previewBackground = $("#subtitleBackgroundColor").value;
-  const previewOpacity = Math.max(0, Math.min(1, Number($("#subtitleBackgroundOpacity").value)));
+  const previewOpacity = 0.82;
   $("#previewVietnamese").style.backgroundColor = $("#subtitleBackgroundBox").checked
     ? `${previewBackground}${Math.round(previewOpacity * 255).toString(16).padStart(2, "0")}`
     : "transparent";
@@ -1018,7 +1018,7 @@ function renderAdminAccounts() {
       ${adminSelect("plan", item.plan, plans, "Gói dịch vụ")}
       ${adminSelect("payment_status", item.payment_status, payments, "Thanh toán")}
       ${adminSelect("video_retention_days", item.video_retention_days == null ? "default" : String(item.video_retention_days), adminRetentionOptions(item.video_retention_days), "Lưu video")}
-      <div class="admin-action-cell" style="display: flex; gap: 6px; align-items: center;">
+      <div class="admin-action-cell">
         <button class="button secondary btn-admin-save" type="button" data-admin-save title="Lưu thay đổi tài khoản này">
           <span class="save-icon" aria-hidden="true">✓</span>
           <span>Lưu</span>
@@ -1950,7 +1950,7 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
   } catch (error) { toast(error.message, true); }
 });
 [$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), document.querySelector('[name="voice_mode"]')].forEach(element => element.addEventListener("change", updateFormSummary));
-[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundOpacity"), $("#subtitleBackgroundBox")].forEach(element => element.addEventListener("change", updateFormSummary));
+[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundBox")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#refreshAdminAccounts").addEventListener("click", loadAdminAccounts);
 $("#adminApprovalFilter").addEventListener("change", loadAdminAccounts);

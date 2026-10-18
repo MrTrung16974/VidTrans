@@ -80,5 +80,6 @@ Tối ưu hiệu năng, chất lượng, checkpoint/retry và khả năng vận 
 - ASS, drawtext và Pillow fallback cùng sử dụng style màu đã validate.
 - Frontend cache version `20261018-11`; nhóm test ảnh hưởng 15/15 PASS.
 - Cần restart/rebuild backend và hard refresh frontend trước khi tạo job mới.
+- Follow-up UX: đã bỏ ô nhập opacity; dùng cố định default 0,82 và cache frontend `20261018-12`; static tests 9/9 PASS.
 
 Prompt tiếp tục: `Dùng $feature-delivery-workflow. Đọc BA_URD/media-pipeline-optimization/HANDOFF.md và các file được dẫn; kiểm tra trạng thái hiện tại, tiếp tục bước đã được duyệt, không lặp lại phần đã hoàn tất.`
