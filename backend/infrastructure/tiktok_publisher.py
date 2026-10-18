@@ -128,6 +128,7 @@ class TikTokPublisher:
         config: TikTokPublisherConfig | None = None,
         requester: RequestFunction | None = None,
         clock: Callable[[], float] = time.time,
+        account_store=None,
     ) -> None:
         self.auth_dir = auth_dir
         self.token_path = auth_dir / "token.json"
@@ -135,8 +136,16 @@ class TikTokPublisher:
         self.config = config or TikTokPublisherConfig.from_env()
         self._requester = requester or _default_request
         self._clock = clock
+        self.store = account_store
         self._states: dict[str, tuple[float, str | None]] = {}
         self._lock = threading.RLock()
+
+    def accept_consumed_state(self, state: str) -> None:
+        """Restage a state already consumed from the durable tenant OAuth session."""
+        if not state:
+            raise TikTokAPIError("Phiên kết nối TikTok không hợp lệ")
+        with self._lock:
+            self._states[state] = (self._clock() + 30, None)
 
     def connection_status(self, account_id: str | None = None) -> dict[str, Any]:
         token = self._load_token(account_id)
@@ -149,6 +158,7 @@ class TikTokPublisher:
         return {
             "configured": self.config.configured,
             "connected": connected,
+            "connection_id": token.get("connection_id") if connected and token else None,
             "open_id": token.get("open_id") if connected and token else None,
             "account_id": self._token_account_id(token) if connected and token else None,
             "scope": token.get("scope", "") if connected and token else "",
@@ -160,6 +170,12 @@ class TikTokPublisher:
 
     def accounts(self) -> list[dict[str, Any]]:
         """Return connected accounts without exposing OAuth credentials."""
+        if self.store is not None:
+            return [
+                self.connection_status(str(token["account_id"]))
+                for token in self.store.all()
+                if token.get("account_id")
+            ]
         candidates: list[dict[str, Any]] = []
         legacy = self._load_token()
         if legacy:
@@ -239,6 +255,10 @@ class TikTokPublisher:
 
     def disconnect(self, account_id: str | None = None) -> None:
         with self._lock:
+            if self.store is not None:
+                if account_id:
+                    self.store.delete(account_id)
+                return
             if account_id:
                 self._account_token_path(account_id).unlink(missing_ok=True)
                 legacy = self._load_token()
@@ -322,7 +342,7 @@ class TikTokPublisher:
 
         self._upload_file(video_path, upload_url, plan, on_progress=on_progress)
         try:
-            status = self.fetch_status(publish_id)
+            status = self.fetch_status(publish_id, account_id=account_id)
         except TikTokPublisherError as exc:
             # The upload is already accepted. Do not report the whole publish as
             # failed because retrying here could create a duplicate TikTok post.
@@ -367,7 +387,7 @@ class TikTokPublisher:
             on_initialized(publish_id)
         self._upload_file(video_path, upload_url, plan, on_progress=on_progress)
         try:
-            status = self.fetch_status(publish_id)
+            status = self.fetch_status(publish_id, account_id=account_id)
         except TikTokPublisherError as exc:
             status = {"status": "SUBMITTED", "status_check_error": str(exc)}
         return {
@@ -542,9 +562,17 @@ class TikTokPublisher:
         return payload if isinstance(payload, dict) else None
 
     def _load_token(self, account_id: str | None = None) -> dict[str, Any] | None:
+        if self.store is not None:
+            return self.store.load(account_id) if account_id else next(iter(self.store.all()), None)
         return self._read_token(self._account_token_path(account_id)) if account_id else self._read_token(self.token_path)
 
     def _save_token(self, payload: dict[str, Any], account_id: str | None = None) -> None:
+        if self.store is not None:
+            resolved_account = account_id or self._token_account_id(payload)
+            if not resolved_account:
+                raise TikTokAPIError("TikTok không trả về định danh tài khoản")
+            self.store.save(resolved_account, payload)
+            return
         path = self._account_token_path(account_id) if account_id else self.token_path
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")

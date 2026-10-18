@@ -23,6 +23,8 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/api/v1/instagram-auth/connect", javascript)
         self.assertIn("/social-publishes", javascript)
         self.assertIn("platform: 'INSTAGRAM'", javascript)
+        self.assertIn("connection_id: selectedConnection()", javascript)
+        self.assertIn("/api/v1/social-connections/", javascript)
 
     async def test_facebook_and_youtube_publishing_controls_are_shipped(self):
         backend = Path(__file__).resolve().parents[1]
@@ -35,6 +37,16 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("platform:'YOUTUBE'", javascript)
         self.assertIn('"/api/v1/facebook-auth/callback"', main)
         self.assertIn('"/api/v1/youtube-auth/callback"', main)
+
+        compose = (backend.parent / "docker-compose.yml").read_text(encoding="utf-8")
+        env_example = (backend.parent / ".env.example").read_text(encoding="utf-8")
+        for variable in (
+            "VIDTRANS_FACEBOOK_CLIENT_ID", "VIDTRANS_FACEBOOK_CLIENT_SECRET",
+            "VIDTRANS_FACEBOOK_REDIRECT_URI", "VIDTRANS_YOUTUBE_CLIENT_ID",
+            "VIDTRANS_YOUTUBE_CLIENT_SECRET", "VIDTRANS_YOUTUBE_REDIRECT_URI",
+        ):
+            self.assertIn(variable, compose)
+            self.assertIn(variable, env_example)
 
     async def test_tiktok_web_is_primary_and_api_is_fallback(self):
         frontend = Path(__file__).resolve().parents[1] / "frontend"
@@ -56,6 +68,8 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("vidtrans_social_platform_v2", javascript)
         self.assertIn('id="tiktokRepostButton"', html)
         self.assertIn("prepare({ repost: true })", javascript)
+        self.assertIn("body.set('connection_id'", javascript)
+        self.assertIn("/api/v1/social-connections/", javascript)
         self.assertIn("chắc chắn muốn tải lại", javascript)
         self.assertIn("resolvedBrowserUrl || lastBrowserUrl", javascript)
         self.assertIn('class="tiktok-repost-button"', html)
@@ -79,7 +93,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'data-source-browser-tab="{platform}"', html)
         self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
         self.assertIn("/api/v1/source-browser/${platform}/activate", javascript)
-        self.assertIn("/js/app.js?v=20261017-2", html)
+        self.assertIn("/js/app.js?v=20261018-3", html)
         self.assertIn('button.addEventListener("click", () => selectSourceBrowserTab', javascript)
 
     async def test_source_login_and_cookie_configuration_are_admin_only(self):

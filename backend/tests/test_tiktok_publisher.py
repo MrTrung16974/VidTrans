@@ -3,6 +3,11 @@ import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+from cryptography.fernet import Fernet
+from infrastructure.admin_accounts import AdminAccountStore
+from infrastructure.credential_cipher import CredentialCipher
+from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
+from infrastructure.social_credentials import SocialCredentialStore
 
 from infrastructure.tiktok_publisher import (
     MAX_CHUNK_SIZE,
@@ -191,6 +196,41 @@ class TikTokPublisherTests(unittest.TestCase):
         self.assertEqual([account["account_id"] for account in accounts], ["creator-id"])
         self.assertTrue(selected["connected"])
         self.assertNotIn("access_token", accounts[0])
+
+    def test_encrypted_connection_vertical_slice_connects_and_publishes(self) -> None:
+        database = Path(self.temporary.name) / "connections.sqlite3"
+        owner = AdminAccountStore(database, "owner").list()[0]
+        credentials = SocialCredentialStore(database)
+        store = EncryptedOAuthAccountStore(
+            credentials,
+            CredentialCipher(Fernet.generate_key().decode("ascii"), key_id="tiktok-key"),
+            user_id=str(owner["user_id"]),
+            platform="TIKTOK",
+            clock=lambda: 1000.0,
+        )
+        publisher = TikTokPublisher(
+            Path(self.temporary.name) / "encrypted-auth",
+            config=self.config,
+            requester=self.api,
+            clock=lambda: 1000.0,
+            account_store=store,
+        )
+        url = publisher.authorization_url()
+        state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+        status = publisher.exchange_code("oauth-code", state)
+
+        self.assertTrue(status["connected"])
+        self.assertTrue(status["connection_id"])
+        self.assertFalse((Path(self.temporary.name) / "encrypted-auth" / "token.json").exists())
+        encrypted = credentials.load_encrypted_tokens(
+            user_id=str(owner["user_id"]), connection_id=status["connection_id"]
+        )
+        self.assertNotIn(b"access", bytes(encrypted["access_token_ciphertext"]))
+
+        video = Path(self.temporary.name) / "encrypted.mp4"
+        video.write_bytes(b"rendered-video")
+        result = publisher.publish(video, "Encrypted TikTok", account_id="creator-id")
+        self.assertEqual(result["publish_id"], "publish-123")
 
     def test_account_id_cannot_escape_auth_directory(self) -> None:
         with self.assertRaisesRegex(TikTokPublisherError, "không hợp lệ"):

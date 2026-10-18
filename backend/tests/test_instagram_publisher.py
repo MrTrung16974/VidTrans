@@ -15,6 +15,11 @@ from infrastructure.publishers.instagram import (
     InstagramPublisherConfig,
 )
 from infrastructure.signed_media import SignedMediaError, SignedMediaUrlService
+from infrastructure.admin_accounts import AdminAccountStore
+from infrastructure.credential_cipher import CredentialCipher
+from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
+from infrastructure.social_credentials import SocialCredentialStore
+from cryptography.fernet import Fernet
 
 
 class FakeInstagramAPI:
@@ -97,6 +102,46 @@ class InstagramPublisherTests(unittest.TestCase):
         self.assertEqual(status["account_id"], "ig-123")
         self.assertEqual(status["username"], "creator")
         self.assertEqual(self.publisher.accounts()[0]["account_id"], "ig-123")
+
+    def test_encrypted_connection_vertical_slice_connects_and_publishes(self):
+        database = self.root / "connections.sqlite3"
+        owner = AdminAccountStore(database, "owner").list()[0]
+        credentials = SocialCredentialStore(database)
+        store = EncryptedOAuthAccountStore(
+            credentials,
+            CredentialCipher(Fernet.generate_key().decode("ascii"), key_id="instagram-key"),
+            user_id=str(owner["user_id"]),
+            platform="INSTAGRAM",
+            clock=lambda: self.now,
+        )
+        publisher = InstagramPublisher(
+            self.root / "encrypted-auth",
+            self.media_urls,
+            config=self.config,
+            requester=self.api,
+            clock=lambda: self.now,
+            sleeper=lambda _seconds: None,
+            account_store=store,
+        )
+        state = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(publisher.authorization_url()).query
+        )["state"][0]
+        status = publisher.exchange_code("auth-code", state)
+
+        self.assertTrue(status["connected"])
+        self.assertTrue(status["connection_id"])
+        self.assertFalse((self.root / "encrypted-auth" / "accounts" / "ig-123.json").exists())
+        encrypted = credentials.load_encrypted_tokens(
+            user_id=str(owner["user_id"]), connection_id=status["connection_id"]
+        )
+        self.assertNotIn(b"long-token", bytes(encrypted["access_token_ciphertext"]))
+
+        result = publisher.publish(
+            PublishRequest(video_path=self.video, caption="Encrypted Reel", account_id="ig-123"),
+            on_checkpoint=lambda _media_id, _post_id: None,
+        )
+        self.assertEqual(result.status, PublishStatus.PUBLISHED)
+        self.assertEqual(result.remote_post_id, "post-123")
 
     def test_publish_reel_checkpoints_container_and_post(self):
         self.connect()

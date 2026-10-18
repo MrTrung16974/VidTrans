@@ -1,4 +1,4 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20261015-5";
+import { createTikTokWorkspace } from "./tiktok.js?v=20261018-3";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 const $ = (selector, root = document) => root.querySelector(selector);

@@ -148,7 +148,12 @@ class TikTokPublishingTests(unittest.TestCase):
             "status": "completed", "output_video": self.video.name
         }})()
         app = FastAPI()
-        app.include_router(create_tiktok_publish_router(self.service, jobs, self.video.parent))
+        app.include_router(create_tiktok_publish_router(
+            self.service, jobs, self.video.parent,
+            connection_resolver=lambda _user, connection_id, _platform: {
+                "connection_id": connection_id, "provider_account_id": "creator-route"
+            },
+        ))
         client = TestClient(app)
         response = client.post(
             "/api/v1/jobs/job-1/tiktok-publishes",
@@ -160,6 +165,7 @@ class TikTokPublishingTests(unittest.TestCase):
                 "timezone_name": "Asia/Ho_Chi_Minh",
                 "idempotency_key": "route-request-123",
                 "reviewed": "true",
+                "connection_id": "connection-route-123",
             },
         )
 
@@ -168,6 +174,7 @@ class TikTokPublishingTests(unittest.TestCase):
         self.assertNotIn("video_path", payload)
         self.assertNotIn("idempotency_key", payload)
         self.assertEqual(payload["status"], "SCHEDULED_LOCAL")
+        self.assertEqual(payload["connection_id"], "connection-route-123")
 
 
 if __name__ == "__main__":

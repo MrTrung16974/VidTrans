@@ -16,7 +16,10 @@ from infrastructure.tiktok_publish_store import (
 )
 
 
-def create_tiktok_publish_router(service: TikTokPublishingService, jobs, output_dir: Path, owner_resolver=None) -> APIRouter:
+def create_tiktok_publish_router(
+    service: TikTokPublishingService, jobs, output_dir: Path,
+    owner_resolver=None, connection_resolver=None,
+) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["TikTok Publishing"])
     output_dir = output_dir.resolve()
     owner_resolver = owner_resolver or (lambda _request: "__legacy__")
@@ -29,7 +32,7 @@ def create_tiktok_publish_router(service: TikTokPublishingService, jobs, output_
             "attempt_id", "job_id", "mode", "status", "scheduled_for",
             "remote_publish_id", "created_at", "updated_at", "timezone",
             "privacy_level", "error", "status_detail", "schedule_lag_seconds",
-            "account_id",
+            "connection_id", "account_id",
         }
         return {key: value for key, value in attempt.items() if key in allowed}
 
@@ -55,11 +58,19 @@ def create_tiktok_publish_router(service: TikTokPublishingService, jobs, output_
         timezone_name: str = Form("UTC", max_length=64),
         idempotency_key: str = Form(..., min_length=8, max_length=128),
         reviewed: bool = Form(...),
-        account_id: str = Form("", max_length=128),
+        connection_id: str = Form(..., min_length=1, max_length=64),
     ):
         if not reviewed:
             raise HTTPException(422, "Hãy duyệt video, caption và tài khoản trước khi đăng")
         _, video = ready_job(request, job_id)
+        if connection_resolver is None:
+            raise HTTPException(503, "Hệ thống connection chưa sẵn sàng")
+        try:
+            connection = connection_resolver(
+                str(owner_resolver(request)), connection_id, "TIKTOK"
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, "Không tìm thấy kết nối TikTok") from exc
         try:
             attempt, created = service.create(
                 job_id=job_id,
@@ -72,7 +83,8 @@ def create_tiktok_publish_router(service: TikTokPublishingService, jobs, output_
                 idempotency_key=hashlib.sha256(
                     f"{owner_resolver(request)}:{idempotency_key}".encode("utf-8")
                 ).hexdigest(),
-                account_id=account_id or None,
+                connection_id=connection_id,
+                account_id=str(connection["provider_account_id"]),
             )
         except TikTokPublishingValidationError as exc:
             raise HTTPException(422, str(exc)) from exc

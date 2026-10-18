@@ -43,6 +43,8 @@ class SocialPublishingService:
     def create(
         self,
         *,
+        owner_user_id: str = "__legacy__",
+        connection_id: str | None = None,
         job_id: str,
         platform: str,
         video_path: Path,
@@ -109,6 +111,8 @@ class SocialPublishingService:
             "requested_at": utc_now(),
         }
         return self.store.create(
+            owner_user_id=owner_user_id,
+            connection_id=connection_id,
             job_id=job_id,
             platform=normalized_platform.value,
             account_id=account_id,

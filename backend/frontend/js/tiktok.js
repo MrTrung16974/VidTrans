@@ -1,6 +1,6 @@
 import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20261015-2";
-import { createInstagramWorkspace } from "./instagram.js?v=20261013-1";
-import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261014-1";
+import { createInstagramWorkspace } from "./instagram.js?v=20261018-2";
+import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261018-1";
 export function createTikTokWorkspace({ requestJson, toast }) {
   const $ = selector => document.querySelector(selector);
   let status = null, apiStatus = null, draft = null, timer = null, apiTimer = null, refreshing = false, loading = false, submitting = false;
@@ -130,15 +130,20 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       apiStatus = await requestJson(`/api/v1/tiktok-auth${suffix}`);
       $('#tiktokApiStatus').textContent = apiStatus.can_direct_publish
         ? 'Đã kết nối · sẵn sàng đăng trực tiếp và gửi bản nháp'
-        : apiStatus.connected ? 'Cần kết nối lại và cấp quyền video.publish' : apiStatus.configured ? 'Cần kết nối TikTok' : 'Máy chủ chưa cấu hình TikTok Developer App';
+        : apiStatus.connected ? 'Cần kết nối lại và cấp quyền đăng video' : apiStatus.configured ? 'Bấm Kết nối để đăng nhập tài khoản của bạn' : 'Kết nối chưa được quản trị viên kích hoạt';
       $('#tiktokApiConnect').disabled = !apiStatus.configured;
+      $('#tiktokApiConnect').title = apiStatus.configured
+        ? 'Đăng nhập và cấp quyền TikTok ngay trên website'
+        : 'Chủ hệ thống cần kích hoạt ứng dụng OAuth một lần';
       $('#tiktokApiConnect').textContent = (apiStatus.accounts || []).length ? 'Thêm tài khoản' : 'Kết nối TikTok';
       $('#tiktokApiDisconnect').disabled = !apiStatus.connected;
       const accountSelect = $('#tiktokApiAccount');
       const selected = accountSelect.value || apiStatus.account_id || '';
       accountSelect.replaceChildren();
       for (const account of apiStatus.accounts || []) {
-        accountSelect.add(new Option(account.open_id || account.account_id, account.account_id));
+        const option = new Option(account.open_id || account.account_id, account.account_id);
+        option.dataset.connectionId = account.connection_id || '';
+        accountSelect.add(option);
       }
       if ([...accountSelect.options].some(option => option.value === selected)) accountSelect.value = selected;
       accountSelect.classList.toggle('is-hidden', accountSelect.options.length < 2);
@@ -267,7 +272,8 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     body.set('reviewed', 'true');
     body.set('idempotency_key', publishKey);
     body.set('timezone_name', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-    body.set('account_id', $('#tiktokApiAccount').value || apiStatus?.account_id || '');
+    const selectedAccount = $('#tiktokApiAccount').selectedOptions?.[0];
+    body.set('connection_id', selectedAccount?.dataset.connectionId || apiStatus?.connection_id || '');
     if (mode === 'SCHEDULE') body.set('scheduled_for', new Date($('#tiktokScheduleAt').value).toISOString());
     try {
       const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}/tiktok-publishes`, { method: 'POST', body });
@@ -308,10 +314,17 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   });
   $('#tiktokApiDisconnect').addEventListener('click', async () => {
     try {
-      const accountId = $('#tiktokApiAccount').value || apiStatus?.account_id || '';
-      const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
-      const result = await requestJson(`/api/v1/tiktok-auth${suffix}`, { method: 'DELETE' });
-      await refreshApi(result.accounts?.[0]?.account_id || '');
+      const option = $('#tiktokApiAccount').selectedOptions?.[0];
+      const accountId = option?.value || apiStatus?.account_id || '';
+      const connectionId = option?.dataset.connectionId || apiStatus?.connection_id || '';
+      if (connectionId) {
+        await requestJson(`/api/v1/social-connections/${encodeURIComponent(connectionId)}`, { method: 'DELETE' });
+        await refreshApi();
+      } else {
+        const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+        const result = await requestJson(`/api/v1/tiktok-auth${suffix}`, { method: 'DELETE' });
+        await refreshApi(result.accounts?.[0]?.account_id || '');
+      }
     }
     catch (error) { toast(error.message, true); }
   });

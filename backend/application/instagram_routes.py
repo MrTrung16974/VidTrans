@@ -49,7 +49,7 @@ def create_instagram_router(
             active = callback_publisher_resolver("instagram", state) if callback_publisher_resolver else publisher
             active.exchange_code(code, state)
             return RedirectResponse(url="/?instagram=connected#tiktok", status_code=303)
-        except InstagramPublisherError as exc:
+        except (InstagramPublisherError, ValueError) as exc:
             message = quote_plus(str(exc))
             return RedirectResponse(
                 url=f"/?instagram_error={message}#tiktok", status_code=303

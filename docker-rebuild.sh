@@ -55,6 +55,17 @@ cleanup_compose_oneoffs() {
     fi
 }
 
+ensure_runtime_secret() {
+    local file="$1" key="$2" value="$3"
+    touch "$file"
+    chmod 600 "$file"
+    if grep -q "^${key}=." "$file"; then
+        return 0
+    fi
+    printf '%s=%s\n' "$key" "$value" >> "$file"
+    printf 'Generated missing production secret: %s\n' "$key"
+}
+
 escape_password_hash_for_compose .env
 escape_password_hash_for_compose .env.production
 
@@ -115,6 +126,11 @@ fi
 cleanup_compose_oneoffs
 
 if [[ "$PRODUCTION" -eq 1 ]]; then
+    credential_key="$(docker run --rm --entrypoint python "$APP_IMAGE" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+    media_secret="$(docker run --rm --entrypoint python "$APP_IMAGE" -c 'import secrets; print(secrets.token_urlsafe(48))')"
+    ensure_runtime_secret .env VIDTRANS_CREDENTIAL_ENCRYPTION_KEY "$credential_key"
+    ensure_runtime_secret .env VIDTRANS_MEDIA_SIGNING_SECRET "$media_secret"
+    unset credential_key media_secret
     bash deploy/vps-first-run.sh
     # Keep an already-configured VPS in sync when routes are added to the
     # versioned HTTPS template (vps-first-run intentionally runs only once).

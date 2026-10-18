@@ -33,6 +33,7 @@ from application.instagram_routes import create_instagram_router
 from application.threads_routes import create_threads_router
 from application.social_publish_routes import create_social_publish_router
 from application.social_account_routes import create_social_account_router
+from application.social_connection_routes import create_social_connection_router
 from application.social_publishing import SocialPublishScheduler, SocialPublishingService
 from application.tiktok_browser_routes import create_tiktok_browser_router
 from application.tiktok_publish_routes import create_tiktok_publish_router
@@ -68,6 +69,8 @@ from infrastructure.publishers.pinterest import PinterestPublisher
 from infrastructure.publishers.linkedin import LinkedInPublisher
 from infrastructure.publishers.facebook import FacebookPublisher, FacebookPublisherError
 from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisherError
+from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
+from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SQLiteSocialPublishStore
 from infrastructure.social_credentials import SocialCredentialStore
@@ -290,7 +293,10 @@ def tenant_tiktok_publisher(owner_user_id: str) -> TikTokPublisher:
     with _TENANT_PUBLISHER_LOCK:
         publisher = _TENANT_TIKTOK_PUBLISHERS.get(owner_user_id)
         if publisher is None:
-            publisher = TikTokPublisher(tenant_social_auth_dir(owner_user_id, "tiktok"))
+            publisher = TikTokPublisher(
+                tenant_social_auth_dir(owner_user_id, "tiktok"),
+                account_store=tenant_encrypted_oauth_store(owner_user_id, "TIKTOK"),
+            )
             _TENANT_TIKTOK_PUBLISHERS[owner_user_id] = publisher
         return publisher
 
@@ -301,12 +307,22 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
         if registry is None:
             tiktok = tenant_tiktok_publisher(owner_user_id)
             registry = PublisherRegistry([
-                InstagramPublisher(tenant_social_auth_dir(owner_user_id, "instagram"), SIGNED_MEDIA_URLS),
+                InstagramPublisher(
+                    tenant_social_auth_dir(owner_user_id, "instagram"),
+                    SIGNED_MEDIA_URLS,
+                    account_store=tenant_encrypted_oauth_store(owner_user_id, "INSTAGRAM"),
+                ),
                 ThreadsPublisher(tenant_social_auth_dir(owner_user_id, "threads"), SIGNED_MEDIA_URLS),
                 PINTEREST_PUBLISHER,
                 LINKEDIN_PUBLISHER,
-                FacebookPublisher(tenant_social_auth_dir(owner_user_id, "facebook")),
-                YouTubePublisher(tenant_social_auth_dir(owner_user_id, "youtube")),
+                FacebookPublisher(
+                    tenant_social_auth_dir(owner_user_id, "facebook"),
+                    account_store=tenant_encrypted_oauth_store(owner_user_id, "FACEBOOK"),
+                ),
+                YouTubePublisher(
+                    tenant_social_auth_dir(owner_user_id, "youtube"),
+                    account_store=tenant_encrypted_oauth_store(owner_user_id, "YOUTUBE"),
+                ),
                 TikTokSocialPublisher(tiktok),
             ])
             _TENANT_SOCIAL_REGISTRIES[owner_user_id] = registry
@@ -329,7 +345,15 @@ app.include_router(create_tiktok_browser_router(
     owner_resolver=lambda request: str(current_account(request)["user_id"]),
     publisher_resolver=lambda request: tenant_tiktok_publisher(str(current_account(request)["user_id"])),
 ))
-app.include_router(create_tiktok_publish_router(TIKTOK_PUBLISHING, JOB_SERVICE, OUTPUT_DIR, owner_resolver=lambda request: str(current_account(request)["user_id"])))
+app.include_router(create_tiktok_publish_router(
+    TIKTOK_PUBLISHING,
+    JOB_SERVICE,
+    OUTPUT_DIR,
+    owner_resolver=lambda request: str(current_account(request)["user_id"]),
+    connection_resolver=lambda user_id, connection_id, platform: resolve_social_connection(
+        user_id, connection_id, platform
+    ),
+))
 SOCIAL_PUBLISH_STORE = SQLiteSocialPublishStore(WORK_DIR / "jobs.sqlite3")
 _migrated_tiktok_history = SOCIAL_PUBLISH_STORE.migrate_legacy_tiktok_history()
 if _migrated_tiktok_history:
@@ -359,7 +383,15 @@ SOCIAL_PUBLISHING = SocialPublishingService(
     SOCIAL_PUBLISHERS,
     publisher_resolver=lambda platform, job_id: tenant_social_registry(job_owner_user_id(job_id)).get(platform),
 )
-app.include_router(create_social_publish_router(SOCIAL_PUBLISHING, JOB_SERVICE, OUTPUT_DIR, owner_resolver=lambda request: str(current_account(request)["user_id"])))
+app.include_router(create_social_publish_router(
+    SOCIAL_PUBLISHING,
+    JOB_SERVICE,
+    OUTPUT_DIR,
+    owner_resolver=lambda request: str(current_account(request)["user_id"]),
+    connection_resolver=lambda user_id, connection_id, platform: resolve_social_connection(
+        user_id, connection_id, platform
+    ),
+))
 app.include_router(create_instagram_router(
     INSTAGRAM_PUBLISHER, SIGNED_MEDIA_URLS,
     publisher_resolver=lambda request: tenant_publisher_for_request(request, "INSTAGRAM"),
@@ -521,6 +553,42 @@ _tenant_migration_manifest = {
 _tenant_manifest_path = WORK_DIR / "migrations" / "tenant-storage-v1.json"
 write_json_atomic(_tenant_manifest_path, _tenant_migration_manifest)
 SOCIAL_CREDENTIALS = SocialCredentialStore(WORK_DIR / "jobs.sqlite3")
+try:
+    SOCIAL_CREDENTIAL_CIPHER: CredentialCipher | None = CredentialCipher.from_env()
+except CredentialCipherError:
+    SOCIAL_CREDENTIAL_CIPHER = None
+    logger.warning(
+        "Encrypted social connection storage is disabled; set "
+        "VIDTRANS_CREDENTIAL_ENCRYPTION_KEY before enabling self-service OAuth"
+    )
+
+
+def tenant_encrypted_oauth_store(owner_user_id: str, platform: str):
+    if SOCIAL_CREDENTIAL_CIPHER is None:
+        return None
+    return EncryptedOAuthAccountStore(
+        SOCIAL_CREDENTIALS,
+        SOCIAL_CREDENTIAL_CIPHER,
+        user_id=owner_user_id,
+        platform=platform,
+    )
+
+
+def resolve_social_connection(user_id: str, connection_id: str, platform: str) -> dict[str, Any]:
+    connection = SOCIAL_CREDENTIALS.get_for_user(
+        user_id=user_id, connection_id=connection_id
+    )
+    if str(connection.get("status")) != "active":
+        raise ValueError("Kết nối mạng xã hội không còn hoạt động")
+    if str(connection.get("platform")) != platform.strip().upper():
+        raise ValueError("Kết nối không thuộc nền tảng đã chọn")
+    return connection
+
+
+app.include_router(create_social_connection_router(
+    SOCIAL_CREDENTIALS,
+    owner_resolver=lambda request: str(current_account(request)["user_id"]),
+))
 
 
 def tenant_publisher_for_request(request: Request, platform: str):
@@ -549,8 +617,16 @@ def tenant_publisher_for_oauth_callback(platform: str, state: str):
         raise ValueError("Phiên kết nối mạng xã hội không hợp lệ hoặc đã hết hạn")
     user_id = str(session["user_id"])
     if platform.upper() == "TIKTOK":
-        return tenant_tiktok_publisher(user_id)
-    return tenant_social_registry(user_id).get(platform.upper())
+        publisher = tenant_tiktok_publisher(user_id)
+        publisher.accept_consumed_state(state)
+        return publisher
+    publisher = tenant_social_registry(user_id).get(platform.upper())
+    if hasattr(publisher, "accept_consumed_state"):
+        publisher.accept_consumed_state(state)
+    account_store = getattr(publisher, "store", None)
+    if account_store is not None and hasattr(account_store, "accept_consumed_state"):
+        account_store.accept_consumed_state(state)
+    return publisher
 PAYMENT_CONFIG = PaymentConfig.from_env()
 PAYMENT_ORDERS = PaymentOrderStore(WORK_DIR / "jobs.sqlite3")
 PAYMENT_GATEWAY = PaymentGatewayClient(PAYMENT_CONFIG)

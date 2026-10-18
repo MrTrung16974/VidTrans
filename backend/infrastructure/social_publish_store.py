@@ -55,6 +55,8 @@ class SQLiteSocialPublishStore:
                 """
                 CREATE TABLE IF NOT EXISTS social_publish_attempts (
                     attempt_id TEXT PRIMARY KEY,
+                    owner_user_id TEXT NOT NULL DEFAULT '__legacy__',
+                    connection_id TEXT NOT NULL DEFAULT '',
                     job_id TEXT NOT NULL,
                     platform TEXT NOT NULL,
                     account_id TEXT NOT NULL DEFAULT '',
@@ -71,17 +73,36 @@ class SQLiteSocialPublishStore:
                     claimed_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    UNIQUE(platform, account_id, idempotency_key)
+                    UNIQUE(owner_user_id, platform, account_id, idempotency_key)
                 )
                 """
             )
+            columns = {
+                str(row[1]) for row in connection.execute(
+                    "PRAGMA table_info(social_publish_attempts)"
+                ).fetchall()
+            }
+            if "owner_user_id" not in columns:
+                connection.execute(
+                    "ALTER TABLE social_publish_attempts "
+                    "ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT '__legacy__'"
+                )
+            if "connection_id" not in columns:
+                connection.execute(
+                    "ALTER TABLE social_publish_attempts "
+                    "ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_social_publish_due "
                 "ON social_publish_attempts(status, scheduled_for)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_social_publish_job "
-                "ON social_publish_attempts(job_id, platform, created_at DESC)"
+                "ON social_publish_attempts(owner_user_id, job_id, platform, created_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_social_publish_owner "
+                "ON social_publish_attempts(owner_user_id, created_at DESC)"
             )
 
     @staticmethod
@@ -101,6 +122,7 @@ class SQLiteSocialPublishStore:
         payload = cls._decode(str(result.pop("payload_json")))
         result["status_detail"] = cls._decode(str(result.pop("status_detail_json")))
         result["account_id"] = result["account_id"] or None
+        result["connection_id"] = result.get("connection_id") or None
         # Persisted columns are authoritative; payload must never shadow status,
         # remote IDs or other state-machine fields.
         return {**payload, **result}
@@ -173,6 +195,8 @@ class SQLiteSocialPublishStore:
     def create(
         self,
         *,
+        owner_user_id: str = "__legacy__",
+        connection_id: str | None = None,
         job_id: str,
         platform: str,
         account_id: str | None,
@@ -190,17 +214,19 @@ class SQLiteSocialPublishStore:
                 connection.execute(
                     """
                     INSERT INTO social_publish_attempts(
-                        attempt_id, job_id, platform, account_id, mode, status,
+                        attempt_id, owner_user_id, connection_id, job_id, platform, account_id, mode, status,
                         scheduled_for, idempotency_key, payload_json, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        attempt_id, job_id, platform, normalized_account, mode, status,
+                        attempt_id, owner_user_id, connection_id or "", job_id, platform, normalized_account, mode, status,
                         scheduled_for, idempotency_key, self._encode(payload), now, now,
                     ),
                 )
         except sqlite3.IntegrityError:
-            existing = self.get_by_idempotency(platform, normalized_account, idempotency_key)
+            existing = self.get_by_idempotency(
+                platform, normalized_account, idempotency_key, owner_user_id=owner_user_id
+            )
             if existing is None:
                 raise
             if existing["job_id"] != job_id:
@@ -212,35 +238,38 @@ class SQLiteSocialPublishStore:
         assert created is not None
         return created, True
 
-    def get(self, attempt_id: str) -> dict[str, Any] | None:
+    def get(self, attempt_id: str, *, owner_user_id: str | None = None) -> dict[str, Any] | None:
+        query = "SELECT * FROM social_publish_attempts WHERE attempt_id = ?"
+        values: list[Any] = [attempt_id]
+        if owner_user_id is not None:
+            query += " AND owner_user_id = ?"
+            values.append(owner_user_id)
         with self._connection() as connection:
-            row = connection.execute(
-                "SELECT * FROM social_publish_attempts WHERE attempt_id = ?", (attempt_id,)
-            ).fetchone()
+            row = connection.execute(query, values).fetchone()
         return self._row(row) if row else None
 
     def get_by_idempotency(
-        self, platform: str, account_id: str | None, key: str
+        self, platform: str, account_id: str | None, key: str, *, owner_user_id: str = "__legacy__"
     ) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM social_publish_attempts
-                WHERE platform = ? AND account_id = ? AND idempotency_key = ?
+                WHERE owner_user_id = ? AND platform = ? AND account_id = ? AND idempotency_key = ?
                 """,
-                (platform, account_id or "", key),
+                (owner_user_id, platform, account_id or "", key),
             ).fetchone()
         return self._row(row) if row else None
 
-    def list_for_job(self, job_id: str) -> list[dict[str, Any]]:
+    def list_for_job(self, job_id: str, *, owner_user_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM social_publish_attempts WHERE job_id = ?"
+        values: list[Any] = [job_id]
+        if owner_user_id is not None:
+            query += " AND owner_user_id = ?"
+            values.append(owner_user_id)
+        query += " ORDER BY created_at DESC"
         with self._connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT * FROM social_publish_attempts
-                WHERE job_id = ? ORDER BY created_at DESC
-                """,
-                (job_id,),
-            ).fetchall()
+            rows = connection.execute(query, values).fetchall()
         return [self._row(row) for row in rows]
 
     def update(self, attempt_id: str, **fields: Any) -> dict[str, Any]:

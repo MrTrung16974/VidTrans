@@ -32,8 +32,8 @@ def _request(method,url,headers,body):
 class YouTubePublisher:
     platform=SocialPlatform.YOUTUBE
     capabilities=PublisherCapabilities(caption_limit=5000,supports_remote_status=True,supports_thumbnail=True)
-    def __init__(self,auth_dir:Path,*,config=None,requester=None,clock=time.time):
-        self.config=config or YouTubePublisherConfig.from_env(); self.store=OAuthAccountStore(auth_dir,clock=clock); self._requester=requester or _request; self._clock=clock
+    def __init__(self,auth_dir:Path,*,config=None,requester=None,clock=time.time,account_store=None):
+        self.config=config or YouTubePublisherConfig.from_env(); self.store=account_store or OAuthAccountStore(auth_dir,clock=clock); self._requester=requester or _request; self._clock=clock
     def authorization_url(self):
         self._require(); values={"client_id":self.config.client_id,"redirect_uri":self.config.redirect_uri,"response_type":"code","scope":"https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly","access_type":"offline","prompt":"consent","state":self.store.new_state()}; return f"{self.config.authorize_url}?{urllib.parse.urlencode(values)}"
     def exchange_code(self,code,state):
@@ -47,9 +47,9 @@ class YouTubePublisher:
         refresh_token = str(token.get("refresh_token") or previous.get("refresh_token") or "")
         self.store.save(account_id,{"account_id":account_id,"name":title,"access_token":access,"refresh_token":refresh_token,"expires_at":self._clock()+float(token.get("expires_in") or 3600)})
         return self.connection_status(account_id)
-    def accounts(self): return [{"account_id":x.get("account_id"),"name":x.get("name"),"connected":True} for x in self.store.all()]
+    def accounts(self): return [{"connection_id":x.get("connection_id"),"account_id":x.get("account_id"),"name":x.get("name"),"connected":True} for x in self.store.all()]
     def connection_status(self,account_id=None):
-        token=self.store.load(account_id) if account_id else next(iter(self.store.all()),None); return {"platform":"YOUTUBE","configured":self.config.configured,"connected":bool(token),"account_id":token.get("account_id") if token else account_id,"name":token.get("name") if token else None}
+        token=self.store.load(account_id) if account_id else next(iter(self.store.all()),None); return {"platform":"YOUTUBE","configured":self.config.configured,"connected":bool(token),"connection_id":token.get("connection_id") if token else None,"account_id":token.get("account_id") if token else account_id,"name":token.get("name") if token else None}
     def disconnect(self,account_id): self.store.delete(account_id)
     def publish(self,request,*,on_checkpoint,on_progress=None):
         token=self._token(request.account_id); access=self._access(token); options=dict(request.options); title=str(options.get("title") or "").strip()

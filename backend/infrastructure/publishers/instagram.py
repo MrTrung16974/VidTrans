@@ -113,6 +113,7 @@ class InstagramPublisher:
         requester: RequestFunction | None = None,
         clock: Callable[[], float] = time.time,
         sleeper: Callable[[float], None] = time.sleep,
+        account_store=None,
     ) -> None:
         self.auth_dir = Path(auth_dir)
         self.accounts_dir = self.auth_dir / "accounts"
@@ -121,8 +122,16 @@ class InstagramPublisher:
         self._requester = requester or _default_request
         self._clock = clock
         self._sleeper = sleeper
+        self.store = account_store
         self._states: dict[str, float] = {}
         self._lock = threading.RLock()
+
+    def accept_consumed_state(self, state: str) -> None:
+        """Restage a state already validated by the durable tenant OAuth session store."""
+        if not state:
+            raise InstagramAPIError("Phiên kết nối Instagram không hợp lệ")
+        with self._lock:
+            self._states[state] = self._clock() + 30
 
     def authorization_url(self) -> str:
         self._require_configured()
@@ -197,12 +206,19 @@ class InstagramPublisher:
             "platform": self.platform.value,
             "configured": self.config.configured and self.media_urls.configured,
             "connected": connected,
+            "connection_id": token.get("connection_id") if connected and token else None,
             "account_id": token.get("account_id") if connected and token else account_id,
             "username": token.get("username") if connected and token else None,
             "expires_at": token.get("expires_at") if connected and token else None,
         }
 
     def accounts(self) -> list[dict[str, Any]]:
+        if self.store is not None:
+            return [
+                self.connection_status(str(token["account_id"]))
+                for token in self.store.all()
+                if token.get("account_id")
+            ]
         try:
             paths = sorted(self.accounts_dir.glob("*.json"))
         except OSError:
@@ -215,6 +231,9 @@ class InstagramPublisher:
         return result
 
     def disconnect(self, account_id: str) -> None:
+        if self.store is not None:
+            self.store.delete(account_id)
+            return
         self._token_path(account_id).unlink(missing_ok=True)
 
     def publish(self, request, *, on_checkpoint, on_progress=None):
@@ -373,9 +392,13 @@ class InstagramPublisher:
         return payload if isinstance(payload, dict) else None
 
     def _load_token(self, account_id: str) -> dict[str, Any] | None:
+        if self.store is not None:
+            return self.store.load(account_id)
         return self._read_token(self._token_path(account_id))
 
     def _first_token(self) -> dict[str, Any] | None:
+        if self.store is not None:
+            return next(iter(self.store.all()), None)
         try:
             paths = sorted(self.accounts_dir.glob("*.json"))
         except OSError:
@@ -387,6 +410,9 @@ class InstagramPublisher:
         return None
 
     def _save_token(self, account_id: str, payload: dict[str, Any]) -> None:
+        if self.store is not None:
+            self.store.save(account_id, payload)
+            return
         path = self._token_path(account_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")

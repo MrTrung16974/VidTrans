@@ -47,8 +47,8 @@ def _request(method, url, headers, body):
 class FacebookPublisher:
     platform = SocialPlatform.FACEBOOK
     capabilities = PublisherCapabilities(caption_limit=5000, supports_remote_status=True)
-    def __init__(self, auth_dir: Path, *, config=None, requester=None, clock=time.time):
-        self.config = config or FacebookPublisherConfig.from_env(); self.store = OAuthAccountStore(auth_dir, clock=clock)
+    def __init__(self, auth_dir: Path, *, config=None, requester=None, clock=time.time, account_store=None):
+        self.config = config or FacebookPublisherConfig.from_env(); self.store = account_store or OAuthAccountStore(auth_dir, clock=clock)
         self._requester = requester or _request; self._clock = clock
     def authorization_url(self):
         self._require(); return f"{self.config.authorize_url}?{urllib.parse.urlencode({'client_id':self.config.client_id,'redirect_uri':self.config.redirect_uri,'scope':','.join(self.config.scopes),'response_type':'code','state':self.store.new_state()})}"
@@ -63,10 +63,10 @@ class FacebookPublisher:
                 self.store.save(str(page["id"]), {"account_id":str(page["id"]),"name":str(page.get("name") or ""),"access_token":str(page["access_token"])})
         if not pages: raise FacebookAPIError("Không tìm thấy Facebook Page có quyền đăng")
         return self.connection_status(str(pages[0]["id"]))
-    def accounts(self): return [{"account_id":x.get("account_id"),"name":x.get("name"),"connected":True} for x in self.store.all()]
+    def accounts(self): return [{"connection_id":x.get("connection_id"),"account_id":x.get("account_id"),"name":x.get("name"),"connected":True} for x in self.store.all()]
     def connection_status(self, account_id=None):
         token = self.store.load(account_id) if account_id else next(iter(self.store.all()), None)
-        return {"platform":"FACEBOOK","configured":self.config.configured,"connected":bool(token),"account_id":token.get("account_id") if token else account_id,"name":token.get("name") if token else None}
+        return {"platform":"FACEBOOK","configured":self.config.configured,"connected":bool(token),"connection_id":token.get("connection_id") if token else None,"account_id":token.get("account_id") if token else account_id,"name":token.get("name") if token else None}
     def disconnect(self, account_id): self.store.delete(account_id)
     def publish(self, request, *, on_checkpoint, on_progress=None):
         token = self._token(request.account_id); page_id = token["account_id"]

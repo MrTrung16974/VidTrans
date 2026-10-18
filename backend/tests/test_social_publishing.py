@@ -192,6 +192,46 @@ class SocialPublishingTests(unittest.TestCase):
         self.assertNotIn("options", payload)
         self.assertEqual(payload["status"], "SCHEDULED_LOCAL")
 
+    def test_routes_do_not_expose_another_users_publish_attempt(self):
+        jobs = type("Jobs", (), {"get_for_user": lambda _self, job_id, owner: (
+            {"status": "completed", "output_video": self.video.name}
+            if job_id == "job-1" and owner == "user-a" else None
+        )})()
+        app = FastAPI()
+        app.include_router(create_social_publish_router(
+            self.service, jobs, self.video.parent,
+            owner_resolver=lambda request: request.headers.get("x-test-user", "user-a"),
+            connection_resolver=lambda user_id, connection_id, platform: (
+                {"provider_account_id": "creator-one"}
+                if (user_id, connection_id, platform) == ("user-a", "connection-a", "INSTAGRAM")
+                else (_ for _ in ()).throw(ValueError("not found"))
+            ),
+        ))
+        client = TestClient(app)
+        created = client.post(
+            "/api/v1/jobs/job-1/social-publishes",
+            headers={"x-test-user": "user-a"},
+            json={
+                "platform": "INSTAGRAM", "connection_id": "connection-a",
+                "mode": "SCHEDULE_LOCAL", "caption": "Caption",
+                "scheduled_for": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+                "timezone": "Asia/Bangkok", "options": {}, "reviewed": True,
+                "idempotency_key": "tenant-route-key-123",
+            },
+        )
+        self.assertEqual(created.status_code, 202)
+        attempt_id = created.json()["attempt_id"]
+        self.assertEqual(created.json()["connection_id"], "connection-a")
+        self.assertEqual(created.json()["account_id"], "creator-one")
+        self.assertEqual(
+            client.get(f"/api/v1/social-publishes/{attempt_id}", headers={"x-test-user": "user-b"}).status_code,
+            404,
+        )
+        self.assertEqual(
+            client.get(f"/api/v1/social-publishes/{attempt_id}", headers={"x-test-user": "user-a"}).status_code,
+            200,
+        )
+
     def test_terminal_legacy_tiktok_history_migrates_once(self):
         with sqlite3.connect(self.store.database_path) as connection:
             connection.execute(

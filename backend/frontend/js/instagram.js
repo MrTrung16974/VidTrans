@@ -8,7 +8,9 @@ const STATUS_LABELS = {
 export function createInstagramWorkspace({ requestJson, toast, getDraft, getCaption }) {
   const $ = selector => document.querySelector(selector);
   let auth = null, attempt = null, key = null, timer = null, submitting = false, active = false;
-  const selectedAccount = () => $('#instagramAccount').value || auth?.account_id || '';
+  const selectedOption = () => $('#instagramAccount').selectedOptions?.[0] || null;
+  const selectedAccount = () => selectedOption()?.dataset.accountId || $('#instagramAccount').value || auth?.account_id || '';
+  const selectedConnection = () => selectedOption()?.dataset.connectionId || auth?.connection_id || '';
 
   function controls() {
     const draft = getDraft(), caption = getCaption(), mode = $('#instagramPublishMode').value;
@@ -25,12 +27,20 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
     auth = result;
     $('#instagramStatus').textContent = result.connected
       ? `Đã kết nối${result.username ? ` · @${result.username}` : ''}`
-      : result.configured ? 'Cần kết nối tài khoản Instagram' : 'Chưa cấu hình Instagram hoặc public HTTPS URL';
+      : result.configured ? 'Bấm Kết nối để đăng nhập tài khoản của bạn' : 'Kết nối chưa được quản trị viên kích hoạt';
     $('#instagramConnect').disabled = !result.configured;
+    $('#instagramConnect').title = result.configured
+      ? 'Đăng nhập và cấp quyền Instagram ngay trên website'
+      : 'Chủ hệ thống cần kích hoạt ứng dụng OAuth và public HTTPS một lần';
     $('#instagramConnect').textContent = (result.accounts || []).length ? 'Thêm tài khoản' : 'Kết nối Instagram';
     const select = $('#instagramAccount'), previous = select.value || result.account_id || '';
     select.replaceChildren();
-    for (const account of result.accounts || []) select.add(new Option(account.username ? `@${account.username}` : account.account_id, account.account_id));
+    for (const account of result.accounts || []) {
+      const option = new Option(account.username ? `@${account.username}` : account.account_id, account.account_id);
+      option.dataset.accountId = account.account_id || '';
+      option.dataset.connectionId = account.connection_id || '';
+      select.add(option);
+    }
     if ([...select.options].some(option => option.value === previous)) select.value = previous;
     select.classList.toggle('is-hidden', select.options.length < 2);
     $('#instagramDisconnect').disabled = !result.connected && !select.value;
@@ -82,7 +92,7 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
     const draft = getDraft(); submitting = true; controls(); key ||= crypto.randomUUID();
     const mode = $('#instagramPublishMode').value;
     const payload = {
-      platform: 'INSTAGRAM', account_id: selectedAccount(), mode, caption: getCaption(),
+      platform: 'INSTAGRAM', connection_id: selectedConnection(), mode, caption: getCaption(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       options: { share_to_feed: $('#instagramShareToFeed').checked }, reviewed: true,
       idempotency_key: key, scheduled_for: null,
@@ -103,8 +113,13 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
     catch (error) { toast(error.message, true); }
   });
   $('#instagramDisconnect').addEventListener('click', async () => {
-    const accountId = selectedAccount(); if (!accountId) return;
-    try { await requestJson(`/api/v1/instagram-auth?account_id=${encodeURIComponent(accountId)}`, { method: 'DELETE' }); await refreshAuth(); }
+    const accountId = selectedAccount(), connectionId = selectedConnection(); if (!accountId) return;
+    try {
+      const url = connectionId
+        ? `/api/v1/social-connections/${encodeURIComponent(connectionId)}`
+        : `/api/v1/instagram-auth?account_id=${encodeURIComponent(accountId)}`;
+      await requestJson(url, { method: 'DELETE' }); await refreshAuth();
+    }
     catch (error) { toast(error.message, true); }
   });
   $('#instagramAccount').addEventListener('change', event => { key = null; $('#instagramReviewConsent').checked = false; refreshAuth(event.target.value); });

@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261018-1" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261018-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -658,20 +658,22 @@
               </div>
             </div>
 
-            <div class="jobs-table-header" aria-hidden="true">
-              <span class="col-head col-select"></span>
-              <span class="col-head col-video">Video & Nguồn</span>
-              <span class="col-head col-owner">Người tạo</span>
-              <span class="col-head col-status">Trạng thái</span>
-              <span class="col-head col-progress">Tiến độ</span>
-              <span class="col-head col-detail">Chi tiết</span>
-              <span class="col-head col-actions">Thao tác</span>
-            </div>
+            <div class="jobs-table-container">
+              <div class="jobs-table-header" aria-hidden="true">
+                <span class="col-head col-select"></span>
+                <span class="col-head col-video">Video & Nguồn</span>
+                <span class="col-head col-owner">Người tạo</span>
+                <span class="col-head col-status">Trạng thái</span>
+                <span class="col-head col-progress">Tiến độ</span>
+                <span class="col-head col-detail">Chi tiết</span>
+                <span class="col-head col-actions">Thao tác</span>
+              </div>
 
-            <div id="jobsList" class="jobs-list">
-              <div class="empty-state">
-                <div class="empty-icon">⏳</div>
-                <strong>Đang tải tiến trình…</strong>
+              <div id="jobsList" class="jobs-list">
+                <div class="empty-state">
+                  <div class="empty-icon">⏳</div>
+                  <strong>Đang tải tiến trình…</strong>
+                </div>
               </div>
             </div>
           </section>
@@ -1649,6 +1651,6 @@
 
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261017-2"></script>
+    <script type="module" src="/js/app.js?v=20261018-3"></script>
   </body>
 </html>

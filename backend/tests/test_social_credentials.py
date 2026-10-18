@@ -7,6 +7,17 @@ from tempfile import TemporaryDirectory
 
 from infrastructure.admin_accounts import AdminAccountStore
 from infrastructure.social_credentials import SocialCredentialError, SocialCredentialStore
+from infrastructure.credential_cipher import CredentialCipher
+from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
+from cryptography.fernet import Fernet
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from application.social_connection_routes import create_social_connection_router
+from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisherConfig
+from infrastructure.publishers.facebook import FacebookPublisher, FacebookPublisherConfig
+from domain.social_publishing import PublishRequest, PublishStatus
+import json
+import urllib.parse
 
 
 class SocialCredentialStoreTests(unittest.TestCase):
@@ -102,6 +113,165 @@ class SocialCredentialStoreTests(unittest.TestCase):
                 "SELECT action FROM social_connection_audit_events ORDER BY created_at"
             ).fetchall()]
         self.assertEqual(actions, ["connected", "revoked"])
+
+    def test_encrypted_oauth_adapter_is_user_scoped_and_preserves_refresh_token(self) -> None:
+        cipher = CredentialCipher(Fernet.generate_key().decode("ascii"), key_id="test-key")
+        owner_store = EncryptedOAuthAccountStore(
+            self.store, cipher, user_id=self.owner["user_id"], platform="YOUTUBE"
+        )
+        other_store = EncryptedOAuthAccountStore(
+            self.store, cipher, user_id=self.other["user_id"], platform="YOUTUBE"
+        )
+        owner_store.save("channel-1", {
+            "account_id": "channel-1", "name": "Owner channel",
+            "access_token": "access-1", "refresh_token": "refresh-1",
+            "expires_at": 2_000_000_000, "scope": "youtube.upload youtube.readonly",
+        })
+        self.assertEqual(owner_store.load("channel-1")["access_token"], "access-1")
+        self.assertEqual(other_store.all(), [])
+
+        owner_store.save("channel-1", {
+            "account_id": "channel-1", "name": "Owner channel",
+            "access_token": "access-2", "expires_at": 2_000_000_100,
+        })
+        refreshed = owner_store.load("channel-1")
+        self.assertEqual(refreshed["access_token"], "access-2")
+        self.assertEqual(refreshed["refresh_token"], "refresh-1")
+
+        owner_store.delete("channel-1")
+        self.assertIsNone(owner_store.load("channel-1"))
+
+    def test_connection_api_never_returns_another_users_connection_or_tokens(self) -> None:
+        saved = self.store.upsert_connection(
+            user_id=self.owner["user_id"], platform="FACEBOOK", provider_account_id="page-1",
+            display_name="Owner Page", access_token_ciphertext=b"ciphertext",
+            encryption_key_id="primary",
+        )
+        app = FastAPI()
+        app.include_router(create_social_connection_router(
+            self.store, owner_resolver=lambda request: request.headers["x-test-user"]
+        ))
+        client = TestClient(app)
+        owner_list = client.get(
+            "/api/v1/social-connections", headers={"x-test-user": self.owner["user_id"]}
+        )
+        self.assertEqual(owner_list.status_code, 200)
+        self.assertEqual(owner_list.json()["items"][0]["display_name"], "Owner Page")
+        self.assertNotIn("access_token", str(owner_list.json()))
+        self.assertEqual(
+            client.get(
+                f"/api/v1/social-connections/{saved['connection_id']}",
+                headers={"x-test-user": self.other["user_id"]},
+            ).status_code,
+            404,
+        )
+
+    def test_youtube_self_service_oauth_encrypts_token_and_can_publish(self) -> None:
+        cipher = CredentialCipher(Fernet.generate_key().decode("ascii"), key_id="youtube-key")
+        account_store = EncryptedOAuthAccountStore(
+            self.store, cipher, user_id=self.owner["user_id"], platform="YOUTUBE"
+        )
+        video = self.database.parent / "youtube.mp4"
+        video.write_bytes(b"video")
+
+        def requester(method, url, headers, body):
+            if url == "https://oauth2.googleapis.com/token":
+                return 200, json.dumps({
+                    "access_token": "access-secret", "refresh_token": "refresh-secret",
+                    "expires_in": 3600,
+                }).encode()
+            if "/channels?" in url:
+                return 200, b'{"items":[{"id":"channel-1","snippet":{"title":"My Channel"}}]}'
+            if "upload/youtube" in url:
+                return 200, b'{"id":"video-1"}'
+            if "/videos?" in url:
+                return 200, b'{"items":[{"status":{"uploadStatus":"processed"},"processingDetails":{"processingStatus":"succeeded"}}]}'
+            return 404, b'{}'
+
+        publisher = YouTubePublisher(
+            self.database.parent / "unused-youtube-files",
+            config=YouTubePublisherConfig("client", "secret", "https://vidtrans.test/callback"),
+            requester=requester,
+            account_store=account_store,
+        )
+        authorization_url = publisher.authorization_url()
+        state = urllib.parse.parse_qs(urllib.parse.urlparse(authorization_url).query)["state"][0]
+        status = publisher.exchange_code("authorization-code", state)
+        self.assertTrue(status["connected"])
+        self.assertTrue(status["connection_id"])
+
+        public_connection = self.store.get_for_user(
+            user_id=self.owner["user_id"], connection_id=status["connection_id"]
+        )
+        self.assertNotIn("access_token_ciphertext", public_connection)
+        encrypted = self.store.load_encrypted_tokens(
+            user_id=self.owner["user_id"], connection_id=status["connection_id"]
+        )
+        self.assertNotIn(b"access-secret", bytes(encrypted["access_token_ciphertext"]))
+
+        result = publisher.publish(
+            PublishRequest(
+                video, "Description", account_id="channel-1",
+                options={"title": "Video title", "privacy": "private"},
+            ),
+            on_checkpoint=lambda *_args: None,
+        )
+        self.assertEqual(result.remote_post_id, "video-1")
+        reconciled = publisher.reconcile(
+            remote_media_id="video-1", remote_post_id="video-1", account_id="channel-1"
+        )
+        self.assertEqual(reconciled.status, PublishStatus.PUBLISHED)
+
+    def test_facebook_self_service_oauth_encrypts_page_token_and_can_publish(self) -> None:
+        cipher = CredentialCipher(Fernet.generate_key().decode("ascii"), key_id="facebook-key")
+        account_store = EncryptedOAuthAccountStore(
+            self.store, cipher, user_id=self.owner["user_id"], platform="FACEBOOK"
+        )
+        video = self.database.parent / "facebook.mp4"
+        video.write_bytes(b"video")
+
+        def requester(method, url, headers, body):
+            if "/oauth/access_token" in url:
+                return 200, b'{"access_token":"user-secret"}'
+            if "/me/accounts" in url:
+                return 200, b'{"data":[{"id":"page-1","name":"My Page","access_token":"page-secret"}]}'
+            if url.endswith("/page-1/video_reels") and b"upload_phase=start" in (body or b""):
+                return 200, b'{"video_id":"reel-1","upload_url":"https://upload.facebook.test/reel-1"}'
+            if url == "https://upload.facebook.test/reel-1":
+                return 200, b'{"success":true}'
+            if url.endswith("/page-1/video_reels"):
+                return 200, b'{"success":true}'
+            if "/reel-1?" in url:
+                return 200, b'{"status":{"video_status":"ready"}}'
+            return 404, b'{}'
+
+        publisher = FacebookPublisher(
+            self.database.parent / "unused-facebook-files",
+            config=FacebookPublisherConfig("client", "secret", "https://vidtrans.test/callback"),
+            requester=requester,
+            account_store=account_store,
+        )
+        authorization_url = publisher.authorization_url()
+        state = urllib.parse.parse_qs(urllib.parse.urlparse(authorization_url).query)["state"][0]
+        status = publisher.exchange_code("authorization-code", state)
+        self.assertTrue(status["connected"])
+        self.assertTrue(status["connection_id"])
+        encrypted = self.store.load_encrypted_tokens(
+            user_id=self.owner["user_id"], connection_id=status["connection_id"]
+        )
+        self.assertNotIn(b"page-secret", bytes(encrypted["access_token_ciphertext"]))
+
+        checkpoints = []
+        result = publisher.publish(
+            PublishRequest(video, "Caption", account_id="page-1"),
+            on_checkpoint=lambda media_id, post_id: checkpoints.append((media_id, post_id)),
+        )
+        self.assertEqual(result.remote_media_id, "reel-1")
+        self.assertEqual(checkpoints, [("reel-1", None)])
+        reconciled = publisher.reconcile(
+            remote_media_id="reel-1", remote_post_id="reel-1", account_id="page-1"
+        )
+        self.assertEqual(reconciled.status, PublishStatus.PUBLISHED)
 
 
 if __name__ == "__main__":

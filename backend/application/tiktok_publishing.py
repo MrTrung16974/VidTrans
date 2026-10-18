@@ -38,6 +38,7 @@ class TikTokPublishingService:
         scheduled_for: str | None,
         timezone_name: str,
         idempotency_key: str,
+        connection_id: str | None = None,
         account_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         if mode not in MODES:
@@ -98,6 +99,7 @@ class TikTokPublishingService:
             "requested_at": utc_now(),
             "schedule_lag_seconds": None,
             "error": None,
+            "connection_id": (connection_id or "").strip() or None,
             "account_id": (account_id or "").strip() or None,
         }
         attempt, created = self.store.create(
