@@ -32,3 +32,8 @@
 | TC_023 | UC_03/UC_04/NFR_06 | SIT/P0 | Network được phép; Pillow trong temp venv | Câu Trung + video test pattern 4 giây | Dịch thật → gTTS thật → burn/mux → ffprobe | MP4 H.264/AAC 640×360, duration 4 giây | PASS | `manual_real_media_smoke.py`; output temp `vidtrans-real-smoke-vrzeoqh4` |
 | TC_024 | UC_02/AC02_01-03 | Integration/P0 | Backend/SQLite/work/output cô lập | Kill sau TTS checkpoint | Requeue/resume cùng job sau `SIGKILL` | Transcript/translation/TTS hit; audio/render chạy lại; job completed | PASS | `manual_kill_restart_e2e.py`; process -9, restart_count=1 |
 | TC_025 | NFR_03/NFR_04 | Integration/P0 | Output từ TC_024 | Source 12 giây | ffprobe source/output | Duration delta ≤0,25 giây; A/V output không bị truncate | FAIL | Output 3,296 giây; delta 8,704 giây |
+| TC_026 | Đồng bộ cue | Unit/P0 | ASR có word timestamp | Dấu câu, pause và cụm cuối | Phân đoạn | Cue dùng timestamp từ word, ID duy nhất, cụm cuối không mất | PASS | `test_subtitle_segmentation.py` |
+| TC_027 | Đồng bộ cue | Unit/P0 | Cue không có word timestamp | OCR/legacy cue dài | Phân đoạn | Giữ nguyên timing; không chia đều giả tạo | PASS | `test_subtitle_segmentation.py` |
+| TC_028 | NFR_04 | Integration/P0 | Source 2s, voice 0,5s | FFmpeg local | Mix audio | WAV output 2s ±0,05s | PASS | `test_audio_duration.py` |
+| TC_029 | Regression | Unit/P1 | Code 2026-10-18 | 23 module test liên quan | Chạy suite | Không regression ASR/dịch/layout/checkpoint/job | PASS | 159/159 tests |
+| TC_030 | UC_02/NFR_06 | Integration/P0 | Harness tenant namespace | Kill sau TTS bundle ổn định | Restart | TTS checkpoint hit | FAIL | Fingerprint trước/sau giống nhau nhưng `stage_cache.tts=miss` |

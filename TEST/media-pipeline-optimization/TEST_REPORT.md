@@ -55,3 +55,17 @@ Tổng unit/regression mới nhất: 137/137 PASS.
 ## Kết luận
 
 Lát A–B2 đạt unit/regression, live provider/media smoke và checkpoint recovery sau `SIGKILL`. E2E chưa đạt media correctness vì `DF_001`; Docker build, UAT và benchmark corpus vẫn chưa chạy.
+
+## Retest 2026-10-18
+
+| Nhóm | Kết quả | Bằng chứng |
+|---|---|---|
+| Phân đoạn theo word timestamp/dấu câu/pause/final flush | PASS | 3 unit tests mới |
+| Audio ngắn hơn video | PASS | Source 2,000s; voice 0,500s; mixed audio 2,000s |
+| Regression chọn lọc mở rộng | PASS | 159/159 tests, 0 fail |
+| Hai video hiện có — kiểm kê baseline | PARTIAL | `27099424`: 62,501s, 2 cue, max 29,630s/cue; `c863fbc1`: 783,370s, 322 cue, câu cuối 783,300s |
+| Crash/restart sau TTS | FAIL | TTS fingerprint không đổi nhưng cache miss sau SIGKILL |
+
+`DF_001` đã được sửa ở contract audio bằng `apad` + `atrim`, đồng thời bump audio/render fingerprint. Không chạy đè lại hai job người dùng vì việc đó gọi ASR/provider và thay artifact hiện có; do đó chưa có số “sau sửa” end-to-end cho chính hai video.
+
+Video `27099424` không phải mẫu Trung→Việt hợp lệ: request ghi `zh-CN`, nhưng transcript có 0 ký tự Hán và 45 ký tự Latin. Kết quả video này chỉ là bằng chứng baseline vận hành, không dùng để kết luận chất lượng dịch Trung→Việt. Video `c863fbc1` có 1.841 ký tự Hán và phủ câu cuối tới 783,300/783,370 giây.

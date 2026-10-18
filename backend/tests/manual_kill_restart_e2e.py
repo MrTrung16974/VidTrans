@@ -8,6 +8,7 @@ kills the first worker after TTS commit, then resumes the persisted job.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -85,7 +86,7 @@ def prepare() -> None:
     store = StageCheckpointStore(main.WORK_DIR / JOB_ID)
     transcript_fingerprint = fingerprint_payload(
         {
-            "version": 1,
+            "version": 2,
             "source_checksum": source_checksum,
             "subtitle_source": "whisper",
             "source_language": "zh-CN",
@@ -99,6 +100,11 @@ def prepare() -> None:
             "ocr_sample_fps": 2.0,
             "ocr_roi_top": 0.55,
             "ocr_roi_bottom": 1.0,
+            "segmentation": {
+                "preferred_chars": 24,
+                "max_chars": 36,
+                "pause_seconds": 0.65,
+            },
             "filter": segment_filter_signature(),
         }
     )
@@ -128,7 +134,7 @@ def prepare() -> None:
             "transcript_checksum": transcript.checksum,
             "source_language": "zh-CN",
             "target_language": "vi",
-            "translation_pipeline_version": 1,
+            "translation_pipeline_version": 2,
             "max_batch_chars": 1200,
         }
     )
@@ -244,8 +250,8 @@ def main() -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    manifest_path = backend / "work" / JOB_ID / "stage_manifest.json"
     stages_at_kill: list[str] = []
+    tts_fingerprint_at_kill: str | None = None
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
         if first.poll() is not None:
@@ -257,11 +263,37 @@ def main() -> None:
                 + stderr[-4000:]
             )
         try:
+            matches = list((backend / "work").glob(f"users/*/{JOB_ID}/stage_manifest.json"))
+            manifest_path = matches[0] if matches else backend / "work" / JOB_ID / "stage_manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             stages_at_kill = sorted(manifest.get("stages", {}))
         except (OSError, json.JSONDecodeError):
             stages_at_kill = []
         if "tts" in stages_at_kill:
+            # The manifest is atomic, while large WAV dependency writes may
+            # still be reaching the filesystem. Confirm the committed bundle
+            # remains readable before injecting SIGKILL.
+            time.sleep(0.25)
+            try:
+                stable_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                tts_record = stable_manifest.get("stages", {}).get("tts", {})
+                tts_fingerprint_at_kill = tts_record.get("fingerprint")
+                dependencies = tts_record.get("dependencies", [])
+                dependency_paths = [manifest_path.parent / item["path"] for item in dependencies]
+                checksums_match = bool(dependencies)
+                for item, path in zip(dependencies, dependency_paths):
+                    if not path.is_file() or not path.stat().st_size:
+                        checksums_match = False
+                        break
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                    if digest != item.get("checksum"):
+                        checksums_match = False
+                        break
+                if not checksums_match:
+                    continue
+                stages_at_kill = sorted(stable_manifest.get("stages", {}))
+            except (OSError, KeyError, json.JSONDecodeError):
+                continue
             first.kill()
             first.wait(timeout=10)
             break
@@ -273,7 +305,8 @@ def main() -> None:
 
     restarted = run([sys.executable, "-B", str(worker), "restart"], cwd=backend, timeout=240)
     final_job = json.loads(restarted.stdout.strip().splitlines()[-1])
-    output_video = backend / "outputs" / f"output_{JOB_ID}.mp4"
+    output_matches = list((backend / "outputs").glob(f"users/*/{JOB_ID}/output_{JOB_ID}.mp4"))
+    output_video = output_matches[0] if output_matches else backend / "outputs" / f"output_{JOB_ID}.mp4"
     probe = run(
         [
             "ffprobe",
@@ -297,7 +330,15 @@ def main() -> None:
     if stage_cache.get("transcript") != "hit" or stage_cache.get("translation") != "hit":
         raise RuntimeError(f"upstream checkpoints were not reused: {stage_cache}")
     if stage_cache.get("tts") != "hit":
-        raise RuntimeError(f"TTS checkpoint was not reused after restart: {stage_cache}")
+        final_manifests = list((backend / "work").glob(f"users/*/{JOB_ID}/stage_manifest.json"))
+        final_tts_fingerprint = None
+        if final_manifests:
+            final_payload = json.loads(final_manifests[0].read_text(encoding="utf-8"))
+            final_tts_fingerprint = final_payload.get("stages", {}).get("tts", {}).get("fingerprint")
+        raise RuntimeError(
+            "TTS checkpoint was not reused after restart: "
+            f"{stage_cache}; before={tts_fingerprint_at_kill}; after={final_tts_fingerprint}"
+        )
     stream_types = {stream.get("codec_type") for stream in metadata.get("streams", [])}
     if stream_types != {"video", "audio"}:
         raise RuntimeError(f"unexpected output streams: {sorted(stream_types)}")

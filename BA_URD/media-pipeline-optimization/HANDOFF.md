@@ -2,8 +2,8 @@
 
 - Feature: `media-pipeline-optimization`
 - Workspace: VidTrans
-- Cập nhật: 2026-10-16
-- Giai đoạn: checkpoint recovery sau SIGKILL PASS; media-duration E2E FAIL; benchmark còn lại
+- Cập nhật: 2026-10-18
+- Giai đoạn: subtitle segmentation + audio duration đã triển khai; regression PASS; real-video rerun và checkpoint SIGKILL còn mở
 - Plan: version `0.1`, `APPROVED` bởi người dùng ngày 2026-10-16 với nội dung “bắt đầu làm”
 
 ## Mục tiêu và phạm vi
@@ -32,16 +32,16 @@ Tối ưu hiệu năng, chất lượng, checkpoint/retry và khả năng vận 
 
 - Lát A dùng metric không chứa nội dung, cache mặc định per-job, chưa bật Fast/hardware encoder.
 - Q01–Q05 vẫn OPEN; Q04/Q05 chặn benchmark và kết luận SLO, Q02/Q03 chặn profile/cross-job cache.
-- Kill/restart end-to-end cho TTS/audio/render chưa chạy; adaptive ASR/OCR và cross-job cache vẫn chờ quyết định liên quan.
+- Kill/restart đã chạy lại trên tenant namespace; adaptive ASR/OCR và cross-job cache vẫn chờ quyết định liên quan.
 
 ## Kiểm chứng đã chạy
 
-- Unit/feature/regression chọn lọc mới nhất: 137/137 PASS.
+- Unit/feature/regression chọn lọc mới nhất: 159/159 PASS.
 - AST parse, import main, media probe local và `git diff --check`: PASS.
 - Live provider/media smoke: PASS với Google/MyMemory chain, gTTS, FFmpeg và Pillow fallback; output H.264/AAC 640×360, 4 giây.
 - Host mặc định thiếu Pillow/edge-tts và FFmpeg thiếu subtitles/drawtext; Pillow được cài trong virtualenv tạm để xác minh fallback. Docker chưa chạy.
-- Kill/restart checkpoint: PASS trong backend/SQLite/work/output tạm; process -9, restart_count=1, transcript/translation/TTS hit.
-- Media correctness: FAIL; source 12 giây tạo output 3,296 giây do audio ngắn + render `-shortest` (`DF_001`).
+- Kill/restart checkpoint retest: FAIL vì transcript/translation hit nhưng TTS miss; fingerprint TTS trước/sau giống nhau.
+- Media duration integration: PASS; source 2 giây + voice 0,5 giây tạo mixed audio 2 giây. Kết quả cũ 12→3,296 giây là baseline trước sửa.
 - Benchmark/quality corpus: BLOCKED; không suy ra từ unit/live smoke.
 
 ## Ràng buộc
@@ -53,6 +53,15 @@ Tối ưu hiệu năng, chất lượng, checkpoint/retry và khả năng vận 
 
 ## Bước tiếp theo
 
-Sửa `DF_001` bằng contract pad/trim audio tới video duration và bump audio/render fingerprint version, rồi retest TC_024–025. Sau đó đo cold/warm retry; trước khi chốt SLO hoặc Lát C–E cần giải quyết Q02–Q05.
+Điều tra validator/dependency làm TTS cache miss sau SIGKILL, rồi chạy lại recovery và hai video benchmark trên bản sao. Trước khi chốt SLO hoặc Lát C–E cần giải quyết Q02–Q05.
+
+## Bổ sung 2026-10-18
+
+- Đã sửa `DF_001`: pad/trim voice/mixed audio theo source duration; integration tổng hợp PASS.
+- Đã thêm phân đoạn cue dựa trên word timestamp/dấu câu/pause, cue ID ổn định và final flush; không chia timing giả cho cue thiếu word timestamp.
+- Regression mở rộng 159/159 PASS.
+- Baseline hai job hiện có đã ghi trong `TEST/.../BASELINE.md`; chưa chạy đè artifact người dùng. `27099424` không phải corpus Trung→Việt hợp lệ dù request ghi `zh-CN`; `c863fbc1` là nội dung Hán và cue cuối phủ tới 783,300/783,370s.
+- TC_030 đang FAIL: sau SIGKILL, TTS fingerprint trước/sau giống nhau nhưng checkpoint bị miss. Không được tiếp tục ghi recovery PASS cho build hiện tại.
+- Bước kế tiếp: tìm nguyên nhân validator/dependency của TTS miss, sau đó chạy lại hai video trên bản sao/job benchmark có sự cho phép gọi provider; thu stage metrics trước/sau ít nhất 3 lần nếu cần kết luận SLO.
 
 Prompt tiếp tục: `Dùng $feature-delivery-workflow. Đọc BA_URD/media-pipeline-optimization/HANDOFF.md và các file được dẫn; kiểm tra trạng thái hiện tại, tiếp tục bước đã được duyệt, không lặp lại phần đã hoàn tất.`

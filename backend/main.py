@@ -114,6 +114,7 @@ from pipeline.checkpoint_payloads import (
 from pipeline.parallel import collect_indexed_futures
 from pipeline.stage_metrics import StageMeasurement, measure_stage
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
+from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, segment_subtitle_cues
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService
 from pipeline.translation import (
@@ -212,6 +213,9 @@ DEFAULT_SUB_STYLE = {
     "max_font_size": 72,
     "position_gap": 14,
     "mask_original": True,
+    "preferred_cue_chars": 24,
+    "max_cue_chars": 36,
+    "cue_pause_seconds": 0.65,
 }
 FONT_CANDIDATES = [
     "Noto Sans CJK SC",
@@ -1573,7 +1577,11 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
         input_index += 1
     if not labels:
         raise RuntimeError("No TTS segments were generated")
-    filter_parts.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,alimiter=limit=0.95[out]")
+    filter_parts.append(
+        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,"
+        f"alimiter=limit=0.95,apad=whole_dur={video_duration:.3f},"
+        f"atrim=duration={video_duration:.3f}[out]"
+    )
     run_ffmpeg(
         [
             FFMPEG,
@@ -1730,8 +1738,11 @@ def mix_audio(
     if not labels:
         return None
 
+    target_duration = source_probe.duration if source_probe is not None else get_media_duration(video_path)
     filter_parts.append(
-        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,loudnorm=I=-16:LRA=11:TP=-1.5[out]"
+        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,"
+        f"loudnorm=I=-16:LRA=11:TP=-1.5,apad=whole_dur={target_duration:.3f},"
+        f"atrim=duration={target_duration:.3f}[out]"
     )
     run_ffmpeg(
         [
@@ -2061,6 +2072,7 @@ def recognize_video_source(
     ocr_sample_fps: float,
     ocr_roi_top: float,
     ocr_roi_bottom: float,
+    segmentation_options: SubtitleSegmentationOptions | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, float | None, str, int]:
     """Run OCR/ASR and return filtered, checkpoint-ready source segments."""
 
@@ -2136,6 +2148,7 @@ def recognize_video_source(
             "Kiểm tra vùng OCR, ngôn ngữ nguồn hoặc thử Whisper model lớn hơn."
         )
 
+    segments = segment_subtitle_cues(segments, options=segmentation_options)
     segments = filter_meaningful_segments(segments)
     meaningful_count = sum(1 for segment in segments if not segment.get("skip_subtitle"))
     skipped_count = len(segments) - meaningful_count
@@ -2203,7 +2216,7 @@ def process_video(
         checkpoint_store = StageCheckpointStore(work_dir)
         transcript_fingerprint = fingerprint_payload(
             {
-                "version": 1,
+                "version": 2,
                 "source_checksum": source_checksum,
                 "subtitle_source": subtitle_source,
                 "source_language": source_language,
@@ -2217,6 +2230,11 @@ def process_video(
                 "ocr_sample_fps": ocr_sample_fps,
                 "ocr_roi_top": ocr_roi_top,
                 "ocr_roi_bottom": ocr_roi_bottom,
+                "segmentation": {
+                    "preferred_chars": int(subtitle_style["preferred_cue_chars"]),
+                    "max_chars": int(subtitle_style["max_cue_chars"]),
+                    "pause_seconds": float(subtitle_style["cue_pause_seconds"]),
+                },
                 "filter": segment_filter_signature(),
             }
         )
@@ -2239,6 +2257,11 @@ def process_video(
                 ocr_sample_fps=ocr_sample_fps,
                 ocr_roi_top=ocr_roi_top,
                 ocr_roi_bottom=ocr_roi_bottom,
+                segmentation_options=SubtitleSegmentationOptions(
+                    preferred_chars=int(subtitle_style["preferred_cue_chars"]),
+                    max_chars=int(subtitle_style["max_cue_chars"]),
+                    pause_seconds=float(subtitle_style["cue_pause_seconds"]),
+                ),
             )
             return {
                 "version": 1,
@@ -2291,7 +2314,7 @@ def process_video(
                 "transcript_checksum": transcript_checkpoint.checksum,
                 "source_language": effective_source_language,
                 "target_language": target_language,
-                "translation_pipeline_version": 1,
+                "translation_pipeline_version": 2,
                 "max_batch_chars": 1200,
             }
         )
@@ -2503,7 +2526,7 @@ def process_video(
                     "keep_original_audio": keep_original_audio,
                     "original_audio_volume": original_audio_volume,
                     "music_volume": music_volume,
-                    "audio_mix_version": 1,
+                    "audio_mix_version": 2,
                 }
             )
             audio_checkpoint = checkpoint_store.load_json(
@@ -2595,7 +2618,7 @@ def process_video(
                 "subtitle_style": subtitle_style,
                 "video_fps": source_probe.fps,
                 "mode": mode,
-                "render_pipeline_version": 1,
+                "render_pipeline_version": 2,
             }
         )
         render_artifact = (

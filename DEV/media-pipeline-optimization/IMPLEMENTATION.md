@@ -90,3 +90,13 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=backend python3 -m unittest \
 - Chưa phủ kill tại mọi stage, Docker build, ASR/OCR/provider model thật hoặc benchmark corpus.
 - ThreadPool TTS vẫn giữ 5 để tránh thay đổi tuning khi chưa có baseline.
 - Chưa chạy Docker/full end-to-end; unit test không thay thế SIT/UAT.
+
+## Bổ sung 2026-10-18 — đồng bộ phụ đề và duration
+
+- Thêm `pipeline/subtitle_segmentation.py`: tách cue ASR theo dấu kết câu, khoảng lặng và word timestamp; gán `cue_id` ổn định; luôn flush cụm cuối. Cue không có word timestamp được giữ nguyên, không chia đều thời gian giả tạo.
+- Cho phép cấu hình qua `subtitle_style`: `preferred_cue_chars` (24), `max_cue_chars` (36), `cue_pause_seconds` (0,65).
+- Bump transcript/translation fingerprint để checkpoint cũ không bỏ qua logic phân đoạn mới.
+- Pad rồi trim `voice_track` và `mixed_audio` đúng duration nguồn; bump audio/render fingerprint để không reuse output từng bị cắt bởi `-shortest`.
+- Thêm `test_subtitle_segmentation.py` và `test_audio_duration.py`; cập nhật harness tenant path/fingerprint.
+- Regression liên quan: 159/159 PASS. Audio integration: nguồn 2,000 giây, voice 0,500 giây, output mix 2,000 giây.
+- Crash/restart harness hiện hoàn tất output 12 giây nhưng checkpoint TTS vẫn báo `miss` sau SIGKILL dù fingerprint trước/sau giống nhau; ghi nhận là regression test FAIL cần điều tra tiếp, không báo PASS.
