@@ -37,3 +37,6 @@
 | TC_028 | NFR_04 | Integration/P0 | Source 2s, voice 0,5s | FFmpeg local | Mix audio | WAV output 2s ±0,05s | PASS | `test_audio_duration.py` |
 | TC_029 | Regression | Unit/P1 | Code 2026-10-18 | 23 module test liên quan | Chạy suite | Không regression ASR/dịch/layout/checkpoint/job | PASS | 159/159 tests |
 | TC_030 | UC_02/NFR_06 | Integration/P0 | Harness tenant namespace | Kill sau TTS bundle ổn định | Restart | TTS checkpoint hit | FAIL | Fingerprint trước/sau giống nhau nhưng `stage_cache.tts=miss` |
+| TC_031 | Đồng bộ hiển thị | Unit/P0 | Cue có source timing và TTS timing lệch | start 1–2s, TTS 4–6s | Ghi SRT | SRT dùng 1–2s | PASS | `test_audio_duration.py::test_srt_uses_source_timing_not_delayed_tts_timing` |
+| TC_032 | Không mất nội dung | Unit/P0 | Văn bản cần hơn hai dòng theo width cũ | Chuỗi tiếng Việt tổng hợp | Wrap | Tối đa hai dòng và giữ đủ từ | PASS | `test_audio_duration.py::test_wrap_text_keeps_every_word` |
+| TC_033 | Cue liên tục | Unit/P0 | Lời nói không dấu câu/không pause | Word timestamp dài 5,8s | Phân đoạn | Mỗi cue không vượt khoảng 3,2s | PASS | `test_subtitle_segmentation.py::test_splits_continuous_speech_at_max_timed_duration` |

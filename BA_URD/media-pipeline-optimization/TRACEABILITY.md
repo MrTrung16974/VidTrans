@@ -11,3 +11,4 @@
 | NFR_07 | SRC_02, SRC_04 | 0.2 | Thay đổi additive, helper cũ giữ lại | 159 selected tests | TC_011/TC_029 | RUNBOOK pending | PASS chọn lọc; full integration NOT_RUN |
 | Đồng bộ cue/final flush | Yêu cầu 2026-10-18 §3 | 0.2 | `pipeline/subtitle_segmentation.py`, `main.py::recognize_video_source` | `test_subtitle_segmentation.py` | TC_026–027 | N/A | PASS unit; real-video rerun NOT_RUN |
 | Duration output | Yêu cầu 2026-10-18 §3.3/§7 | 0.2 | `main.py::{build_voice_track,mix_audio}` | `test_audio_duration.py` | TC_028 | N/A | PASS integration tổng hợp; TC_030 checkpoint FAIL |
+| Đồng bộ video `3c10ceec` | Video thực tế 26,603s | 0.2 | `main.py::{write_srt,write_ass,wrap_text}`, `subtitle_segmentation.py` | `test_audio_duration.py`, `test_subtitle_segmentation.py` | TC_031–033 | N/A | PASS unit/regression; rerender BLOCKED thiếu source |

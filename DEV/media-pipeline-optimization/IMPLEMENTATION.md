@@ -100,3 +100,12 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=backend python3 -m unittest \
 - Thêm `test_subtitle_segmentation.py` và `test_audio_duration.py`; cập nhật harness tenant path/fingerprint.
 - Regression liên quan: 159/159 PASS. Audio integration: nguồn 2,000 giây, voice 0,500 giây, output mix 2,000 giây.
 - Crash/restart harness hiện hoàn tất output 12 giây nhưng checkpoint TTS vẫn báo `miss` sau SIGKILL dù fingerprint trước/sau giống nhau; ghi nhận là regression test FAIL cần điều tra tiếp, không báo PASS.
+
+## Bổ sung 2026-10-18 — phân tích `output_3c10ceec.mp4`
+
+- Video thực tế 26,603 giây, 576×1024, 30 fps cho thấy một cue Việt dài bốn dòng tồn tại khoảng 0–8 giây trong khi chữ Trung đã đổi nhiều lần.
+- Nguyên nhân code: SRT/ASS dùng `tts_start/tts_end`, làm timeline hiển thị trôi theo lịch TTS; ngưỡng cue nguồn 24/36 ký tự chưa phù hợp video dọc; `wrap_text` cắt bỏ các dòng sau dòng thứ hai.
+- Sửa SRT/ASS luôn dùng `start/end` nguồn; TTS timing chỉ phục vụ audio.
+- Giảm mặc định xuống preferred/max 14/20 ký tự nguồn, thêm `max_cue_duration_seconds=3.2` dựa trên word timestamp.
+- `wrap_text` cân bằng về tối đa hai dòng nhưng giữ đủ mọi từ.
+- Thêm test continuous speech, source-vs-TTS timing và không mất từ. Regression mới nhất 162/162 PASS.

@@ -69,3 +69,10 @@ Lát A–B2 đạt unit/regression, live provider/media smoke và checkpoint rec
 `DF_001` đã được sửa ở contract audio bằng `apad` + `atrim`, đồng thời bump audio/render fingerprint. Không chạy đè lại hai job người dùng vì việc đó gọi ASR/provider và thay artifact hiện có; do đó chưa có số “sau sửa” end-to-end cho chính hai video.
 
 Video `27099424` không phải mẫu Trung→Việt hợp lệ: request ghi `zh-CN`, nhưng transcript có 0 ký tự Hán và 45 ký tự Latin. Kết quả video này chỉ là bằng chứng baseline vận hành, không dùng để kết luận chất lượng dịch Trung→Việt. Video `c863fbc1` có 1.841 ký tự Hán và phủ câu cuối tới 783,300/783,370 giây.
+
+## Retest theo `output_3c10ceec.mp4`
+
+- Quan sát contact sheet mỗi 2 giây: cue Việt đầu tiên dài bốn dòng còn hiển thị qua nhiều lần chữ Trung thay đổi; lỗi tái hiện rõ.
+- Audio Việt được Whisper kiểm tra độc lập cho thấy có cụm nói liên tục 10,22 giây/42 từ, phù hợp với dấu hiệu nhiều câu bị gom vào một cue/TTS dài.
+- Sau sửa: test source timing, max cue duration và giữ đủ từ PASS; regression tổng 162/162 PASS.
+- Chưa thể render lại chính video này vì workspace không có job `3c10ceec`, video nguồn hoặc audio Trung; file được cung cấp đã burn phụ đề Việt và thay audio. Trạng thái real-video rerender: BLOCKED_BY_MISSING_SOURCE, không báo PASS giả.

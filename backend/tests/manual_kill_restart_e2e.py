@@ -101,9 +101,10 @@ def prepare() -> None:
             "ocr_roi_top": 0.55,
             "ocr_roi_bottom": 1.0,
             "segmentation": {
-                "preferred_chars": 24,
-                "max_chars": 36,
+                "preferred_chars": 14,
+                "max_chars": 20,
                 "pause_seconds": 0.65,
+                "max_duration_seconds": 3.2,
             },
             "filter": segment_filter_signature(),
         }

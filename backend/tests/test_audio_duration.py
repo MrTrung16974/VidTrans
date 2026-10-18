@@ -7,11 +7,28 @@ import unittest
 from pathlib import Path
 
 from infrastructure.media_probe import probe_media_file
-from main import FFMPEG, FFPROBE, get_media_duration, mix_audio
+from main import FFMPEG, FFPROBE, get_media_duration, mix_audio, wrap_text, write_srt
 
 
 @unittest.skipUnless(shutil.which(FFMPEG) and shutil.which(FFPROBE), "ffmpeg/ffprobe required")
 class AudioDurationIntegrationTests(unittest.TestCase):
+    def test_wrap_text_keeps_every_word(self) -> None:
+        text = "một hai ba bốn năm sáu bảy tám chín mười mười một mười hai"
+        wrapped = wrap_text(text, width=12)
+        self.assertEqual(wrapped.replace("\n", " "), text)
+        self.assertLessEqual(len(wrapped.splitlines()), 2)
+
+    def test_srt_uses_source_timing_not_delayed_tts_timing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vidtrans-srt-timing-") as directory:
+            output = Path(directory) / "sample.srt"
+            write_srt(
+                [{"start": 1.0, "end": 2.0, "tts_start": 4.0, "tts_end": 6.0, "text": "Xin chào"}],
+                output,
+            )
+            value = output.read_text(encoding="utf-8")
+            self.assertIn("00:00:01,000 --> 00:00:02,000", value)
+            self.assertNotIn("00:00:04,000", value)
+
     def test_generated_only_mix_is_padded_to_source_video_duration(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vidtrans-audio-duration-") as directory:
             root = Path(directory)

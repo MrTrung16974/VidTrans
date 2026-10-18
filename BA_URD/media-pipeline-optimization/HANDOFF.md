@@ -64,4 +64,13 @@ Tối ưu hiệu năng, chất lượng, checkpoint/retry và khả năng vận 
 - TC_030 đang FAIL: sau SIGKILL, TTS fingerprint trước/sau giống nhau nhưng checkpoint bị miss. Không được tiếp tục ghi recovery PASS cho build hiện tại.
 - Bước kế tiếp: tìm nguyên nhân validator/dependency của TTS miss, sau đó chạy lại hai video trên bản sao/job benchmark có sự cho phép gọi provider; thu stage metrics trước/sau ít nhất 3 lần nếu cần kết luận SLO.
 
+## Bổ sung từ video `output_3c10ceec.mp4`
+
+- Đã tái hiện trực quan cue Việt dài bốn dòng kéo qua nhiều câu Trung trong video 26,603 giây.
+- Đã sửa timeline SRT/ASS bám source `start/end`, không bám `tts_start/tts_end`.
+- Mặc định cue mới: preferred 14, max 20 ký tự nguồn, tối đa 3,2 giây theo word timestamp; cue thiếu timestamp vẫn không bị chia thời gian giả.
+- Đã sửa `wrap_text` không làm mất từ sau dòng thứ hai.
+- Regression mới nhất 162/162 PASS.
+- Không có source/job `3c10ceec` trong workspace nên chưa rerender chính video; cần video nguồn hoặc retry job trên hệ thống đã tạo output đó.
+
 Prompt tiếp tục: `Dùng $feature-delivery-workflow. Đọc BA_URD/media-pipeline-optimization/HANDOFF.md và các file được dẫn; kiểm tra trạng thái hiện tại, tiếp tục bước đã được duyệt, không lặp lại phần đã hoàn tất.`

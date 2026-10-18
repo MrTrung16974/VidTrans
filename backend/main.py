@@ -213,9 +213,10 @@ DEFAULT_SUB_STYLE = {
     "max_font_size": 72,
     "position_gap": 14,
     "mask_original": True,
-    "preferred_cue_chars": 24,
-    "max_cue_chars": 36,
+    "preferred_cue_chars": 14,
+    "max_cue_chars": 20,
     "cue_pause_seconds": 0.65,
+    "max_cue_duration_seconds": 3.2,
 }
 FONT_CANDIDATES = [
     "Noto Sans CJK SC",
@@ -954,7 +955,20 @@ def wrap_text(text: str, width: int = 34) -> str:
             current = word
     if current:
         lines.append(current)
-    return "\n".join(lines[:2] if len(lines) > 2 else lines)
+    if len(lines) <= 2:
+        return "\n".join(lines)
+    # Never discard overflow words. Segmentation normally keeps cues short;
+    # legacy/untimed cues are balanced into two lines as a safe fallback.
+    best_index = 1
+    best_delta: int | None = None
+    for index in range(1, len(words)):
+        left = " ".join(words[:index])
+        right = " ".join(words[index:])
+        delta = abs(len(left) - len(right))
+        if best_delta is None or delta < best_delta:
+            best_index = index
+            best_delta = delta
+    return " ".join(words[:best_index]) + "\n" + " ".join(words[best_index:])
 
 
 def find_font_file(preferred_name: str) -> Optional[str]:
@@ -987,8 +1001,7 @@ def write_srt(segments: list[dict[str, Any]], output_path: Path) -> None:
             "\n".join(
                 [
                     str(srt_index),
-                    f"{format_time(segment.get('tts_start', segment['start']))} --> "
-                    f"{format_time(segment.get('tts_end', segment['end']))}",
+                    f"{format_time(segment['start'])} --> {format_time(segment['end'])}",
                     text,
                 ]
             )
@@ -1027,8 +1040,11 @@ def write_ass(
     for segment in segments:
         if segment.get("skip_subtitle"):
             continue
-        render_start = segment.get("tts_start", segment["start"])
-        render_end = segment.get("tts_end", segment["end"])
+        # Visual subtitles must remain anchored to the source speech. TTS may
+        # be scheduled later to avoid audio overlap, but must not drag the
+        # translated line across subsequent source cues.
+        render_start = segment["start"]
+        render_end = segment["end"]
         layout = segment.get("subtitle_layout") if isinstance(segment.get("subtitle_layout"), dict) else {}
         raw_text = str(layout.get("render_text") or wrap_text(segment["text"]))
         text = raw_text.replace("\n", "\\N")
@@ -2234,6 +2250,7 @@ def process_video(
                     "preferred_chars": int(subtitle_style["preferred_cue_chars"]),
                     "max_chars": int(subtitle_style["max_cue_chars"]),
                     "pause_seconds": float(subtitle_style["cue_pause_seconds"]),
+                    "max_duration_seconds": float(subtitle_style["max_cue_duration_seconds"]),
                 },
                 "filter": segment_filter_signature(),
             }
@@ -2261,6 +2278,7 @@ def process_video(
                     preferred_chars=int(subtitle_style["preferred_cue_chars"]),
                     max_chars=int(subtitle_style["max_cue_chars"]),
                     pause_seconds=float(subtitle_style["cue_pause_seconds"]),
+                    max_duration_seconds=float(subtitle_style["max_cue_duration_seconds"]),
                 ),
             )
             return {
@@ -2567,9 +2585,8 @@ def process_video(
                 )
             record_job_stage_cache(job_id, "audio_mix", audio_cache_hit)
 
-        # Write subtitle artifacts only after TTS planning. In dubbing modes,
-        # tts_start/tts_end make the visible Vietnamese line follow the natural
-        # voice instead of the much shorter source-language cue.
+        # Write subtitle artifacts after TTS planning so diagnostics include
+        # TTS fields, while visual timing remains anchored to source speech.
         with measure_job_stage(job_id, "subtitle_artifacts", video_duration=video_duration):
             write_srt(translated_segments, srt_path)
             write_ass(

@@ -11,9 +11,10 @@ _CLAUSE_END_RE = re.compile(r"[，、；：,;:]+[\"'”’）】》]?$")
 
 @dataclass(frozen=True)
 class SubtitleSegmentationOptions:
-    preferred_chars: int = 24
-    max_chars: int = 36
+    preferred_chars: int = 14
+    max_chars: int = 20
     pause_seconds: float = 0.65
+    max_duration_seconds: float = 3.2
     min_duration: float = 0.10
 
     def validate(self) -> None:
@@ -21,6 +22,8 @@ class SubtitleSegmentationOptions:
             raise ValueError("subtitle character limits must satisfy 4 <= preferred <= max <= 120")
         if not 0.1 <= self.pause_seconds <= 5.0:
             raise ValueError("pause_seconds must be between 0.1 and 5.0")
+        if not 1.0 <= self.max_duration_seconds <= 15.0:
+            raise ValueError("max_duration_seconds must be between 1.0 and 15.0")
         if not 0.01 <= self.min_duration <= 1.0:
             raise ValueError("min_duration must be between 0.01 and 1.0")
 
@@ -65,7 +68,11 @@ def _split_timed_segment(
         natural_boundary = sentence_end or gap >= options.pause_seconds
         readable_boundary = clause_end and len(text) >= options.preferred_chars
         hard_boundary = len(text) >= options.max_chars
-        if natural_boundary or readable_boundary or hard_boundary:
+        timed_boundary = (
+            float(word.get("end") or 0.0) - float(current[0].get("start") or 0.0)
+            >= options.max_duration_seconds
+        )
+        if natural_boundary or readable_boundary or hard_boundary or timed_boundary:
             groups.append(current)
             current = []
     if current:  # Explicit final flush prevents the last spoken phrase being lost.

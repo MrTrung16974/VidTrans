@@ -50,6 +50,33 @@ class SubtitleSegmentationTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual((result[0]["start"], result[0]["end"]), (0.0, 8.0))
 
+    def test_splits_continuous_speech_at_max_timed_duration(self) -> None:
+        result = segment_subtitle_cues(
+            [
+                {
+                    "start": 0.0,
+                    "end": 6.0,
+                    "text": "连续说话没有标点也需要及时换字幕",
+                    "words": [
+                        {"word": "连续", "start": 0.0, "end": 0.8},
+                        {"word": "说话", "start": 0.8, "end": 1.6},
+                        {"word": "没有", "start": 1.6, "end": 2.4},
+                        {"word": "标点", "start": 2.4, "end": 3.2},
+                        {"word": "也需要", "start": 3.2, "end": 4.2},
+                        {"word": "及时", "start": 4.2, "end": 5.0},
+                        {"word": "换字幕", "start": 5.0, "end": 5.8},
+                    ],
+                }
+            ],
+            options=SubtitleSegmentationOptions(
+                preferred_chars=18,
+                max_chars=30,
+                max_duration_seconds=3.0,
+            ),
+        )
+        self.assertGreaterEqual(len(result), 2)
+        self.assertTrue(all(cue["end"] - cue["start"] <= 3.3 for cue in result))
+
 
 if __name__ == "__main__":
     unittest.main()
