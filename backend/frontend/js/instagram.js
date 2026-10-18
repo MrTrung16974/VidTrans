@@ -1,4 +1,4 @@
-import { unconfiguredStatus, unconfiguredTitle } from './connection-copy.js?v=20261018-2';
+import { unconfiguredStatus, unconfiguredTitle } from './connection-copy.js?v=20261018-3';
 
 const ACTIVE_STATUSES = new Set(['READY', 'CLAIMED', 'UPLOADING', 'PROCESSING_REMOTE', 'SUBMITTING', 'NEEDS_RECONCILIATION', 'SCHEDULED_LOCAL']);
 const STATUS_LABELS = {

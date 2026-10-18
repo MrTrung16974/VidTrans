@@ -1,4 +1,4 @@
-import { unconfiguredStatus, unconfiguredTitle } from './connection-copy.js?v=20261018-2';
+import { unconfiguredStatus, unconfiguredTitle } from './connection-copy.js?v=20261018-3';
 
 const ACTIVE = new Set(['READY','SCHEDULED_LOCAL','CLAIMED','UPLOADING','PROCESSING_REMOTE','SUBMITTING','NEEDS_RECONCILIATION']);
 const LABELS = {SCHEDULED_LOCAL:'Đã đặt lịch',UPLOADING:'Đang tải video',PROCESSING_REMOTE:'Nền tảng đang xử lý',PUBLISHED:'Đã đăng thành công',FAILED:'Đăng thất bại',CANCELLED:'Đã hủy',NEEDS_RECONCILIATION:'Cần đối soát'};

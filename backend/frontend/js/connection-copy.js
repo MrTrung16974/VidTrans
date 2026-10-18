@@ -1,15 +1,9 @@
-// Connection copy shared by every OAuth platform card. Customers never see
-// "contact admin" wording; operators are pointed to the admin setup tab.
-const isOperator = () => ['owner', 'admin'].includes(document.body.dataset.role);
-
+// Shown on a platform card while no OAuth app (App ID / Secret) is available.
+// Users fix this themselves in "Cấu hình ứng dụng của bạn"; no admin needed.
 export function unconfiguredStatus() {
-  return isOperator()
-    ? 'Chưa bật: vào Quản trị → Kết nối nền tảng để nhập App ID một lần'
-    : 'Đang mở kết nối cho nền tảng này, vui lòng quay lại sau';
+  return 'Chưa có App ID: mở "⚙️ Cấu hình ứng dụng của bạn" phía trên để nhập';
 }
 
 export function unconfiguredTitle() {
-  return isOperator()
-    ? 'Khai báo ứng dụng OAuth một lần trên trang Quản trị, sau đó mọi user tự kết nối'
-    : 'Nền tảng sẽ sẵn sàng sớm';
+  return 'Nhập App ID / Secret của bạn ở mục Cấu hình ứng dụng, sau đó bấm Kết nối';
 }

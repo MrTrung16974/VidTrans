@@ -269,7 +269,7 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     douyin_proxy=os.environ.get("VIDTRANS_DOUYIN_PROXY", "").strip() or None,
     youtube_proxy=os.environ.get("VIDTRANS_YOUTUBE_PROXY", "").strip() or None,
 )
-# OAuth developer apps are configured once by an admin on the web; .env stays a fallback.
+# Each user may enter their own OAuth developer apps on the web; .env stays the fallback.
 PLATFORM_APP_STORE = PlatformAppStore(
     WORK_DIR / "jobs.sqlite3",
     CredentialCipher(load_or_create_key(WORK_DIR / "secrets" / "platform-apps.key"), key_id="platform-apps"),
@@ -282,9 +282,10 @@ _PLATFORM_CONFIG_FACTORIES = {
 }
 
 
-def platform_app_config(platform: str):
+def platform_app_config(platform: str, user_id: str | None = None):
     key = platform.upper()
-    return PLATFORM_APP_STORE.overlay(key, _PLATFORM_CONFIG_FACTORIES[key]())
+    config = _PLATFORM_CONFIG_FACTORIES[key]()
+    return PLATFORM_APP_STORE.overlay(user_id, key, config) if user_id else config
 
 
 _TENANT_PUBLISHER_LOCK = threading.RLock()
@@ -314,7 +315,7 @@ def tenant_tiktok_publisher(owner_user_id: str) -> TikTokPublisher:
         if publisher is None:
             publisher = TikTokPublisher(
                 tenant_social_auth_dir(owner_user_id, "tiktok"),
-                config=platform_app_config("TIKTOK"),
+                config=platform_app_config("TIKTOK", owner_user_id),
                 account_store=tenant_encrypted_oauth_store(owner_user_id, "TIKTOK"),
             )
             _TENANT_TIKTOK_PUBLISHERS[owner_user_id] = publisher
@@ -330,7 +331,7 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
                 InstagramPublisher(
                     tenant_social_auth_dir(owner_user_id, "instagram"),
                     SIGNED_MEDIA_URLS,
-                    config=platform_app_config("INSTAGRAM"),
+                    config=platform_app_config("INSTAGRAM", owner_user_id),
                     account_store=tenant_encrypted_oauth_store(owner_user_id, "INSTAGRAM"),
                 ),
                 ThreadsPublisher(tenant_social_auth_dir(owner_user_id, "threads"), SIGNED_MEDIA_URLS),
@@ -338,12 +339,12 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
                 LINKEDIN_PUBLISHER,
                 FacebookPublisher(
                     tenant_social_auth_dir(owner_user_id, "facebook"),
-                    config=platform_app_config("FACEBOOK"),
+                    config=platform_app_config("FACEBOOK", owner_user_id),
                     account_store=tenant_encrypted_oauth_store(owner_user_id, "FACEBOOK"),
                 ),
                 YouTubePublisher(
                     tenant_social_auth_dir(owner_user_id, "youtube"),
-                    config=platform_app_config("YOUTUBE"),
+                    config=platform_app_config("YOUTUBE", owner_user_id),
                     account_store=tenant_encrypted_oauth_store(owner_user_id, "YOUTUBE"),
                 ),
                 TikTokSocialPublisher(tiktok),
@@ -3205,6 +3206,7 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
         target_user_id=user_id,
         metadata={"email": deleted.get("email")},
     )
+    PLATFORM_APP_STORE.delete_user(user_id)
     # Safely clean up user-specific storage directories
     for base_dir in (WORK_DIR, UPLOAD_DIR, OUTPUT_DIR):
         user_dir = base_dir / "users" / storage_owner_segment(user_id)
@@ -3213,81 +3215,62 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
     return JSONResponse({"deleted": True, "user_id": user_id}, headers={"Cache-Control": "no-store"})
 
 
-def live_platform_publishers(platform: str) -> list[Any]:
-    """Every in-memory publisher for ``platform`` so new credentials apply without restart."""
+def live_user_publishers(user_id: str, platform: str) -> list[Any]:
+    """The user's cached publishers, so new credentials apply without restart."""
     key = platform.upper()
     with _TENANT_PUBLISHER_LOCK:
         if key == "TIKTOK":
-            return [TIKTOK_PUBLISHER, *_TENANT_TIKTOK_PUBLISHERS.values()]
-        shared = {"FACEBOOK": FACEBOOK_PUBLISHER, "INSTAGRAM": INSTAGRAM_PUBLISHER, "YOUTUBE": YOUTUBE_PUBLISHER}[key]
-        return [shared, *(registry.get(key) for registry in _TENANT_SOCIAL_REGISTRIES.values())]
+            publisher = _TENANT_TIKTOK_PUBLISHERS.get(user_id)
+            return [publisher] if publisher is not None else []
+        registry = _TENANT_SOCIAL_REGISTRIES.get(user_id)
+        return [registry.get(key)] if registry is not None else []
 
 
-def apply_platform_app_config(platform: str) -> None:
-    config = platform_app_config(platform)
-    for publisher in live_platform_publishers(platform):
+def refresh_user_platform_app(user_id: str, platform: str) -> dict[str, Any]:
+    config = platform_app_config(platform, user_id)
+    for publisher in live_user_publishers(user_id, platform):
         publisher.config = config
+    return PLATFORM_APP_STORE.describe(user_id, platform, config)
 
 
-def platform_app_summary(platform: str) -> dict[str, Any]:
-    return PLATFORM_APP_STORE.describe(platform, platform_app_config(platform))
+@app.get("/api/v1/me/platform-apps")
+def list_my_platform_apps(request: Request) -> JSONResponse:
+    user_id = str(current_account(request)["user_id"])
+    items = [
+        PLATFORM_APP_STORE.describe(user_id, platform, platform_app_config(platform, user_id))
+        for platform in PLATFORM_APPS
+    ]
+    return JSONResponse({"items": items}, headers={"Cache-Control": "no-store"})
 
 
-@app.get("/api/v1/admin/platform-apps")
-def admin_list_platform_apps(request: Request) -> JSONResponse:
-    require_roles(request, "owner", "admin")
-    return JSONResponse(
-        {"items": [platform_app_summary(platform) for platform in PLATFORM_APPS]},
-        headers={"Cache-Control": "no-store"},
-    )
-
-
-@app.post("/api/v1/admin/platform-apps/{platform}")
-def admin_save_platform_app(
+@app.post("/api/v1/me/platform-apps/{platform}")
+def save_my_platform_app(
     request: Request,
     platform: str,
     client_id: str = Form(..., max_length=256),
     client_secret: str = Form("", max_length=512),
     redirect_uri: str = Form(..., max_length=512),
 ) -> JSONResponse:
-    actor = require_roles(request, "owner", "admin")
+    user_id = str(current_account(request)["user_id"])
     key = platform.upper()
     try:
         PLATFORM_APP_STORE.save(
-            key, client_id=client_id, client_secret=client_secret,
-            redirect_uri=redirect_uri, updated_by=str(actor["user_id"]),
+            user_id, key, client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri,
         )
     except PlatformAppError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    apply_platform_app_config(key)
-    TENANT_GOVERNANCE.audit(
-        actor_user_id=actor["user_id"],
-        action="platform_app.update",
-        resource_type="platform_app",
-        resource_id=key,
-        metadata={"client_id": client_id.strip(), "redirect_uri": redirect_uri.strip(),
-                  "secret_changed": bool(client_secret.strip())},
-    )
-    return JSONResponse(platform_app_summary(key), headers={"Cache-Control": "no-store"})
+    return JSONResponse(refresh_user_platform_app(user_id, key), headers={"Cache-Control": "no-store"})
 
 
-@app.delete("/api/v1/admin/platform-apps/{platform}")
-def admin_delete_platform_app(request: Request, platform: str) -> JSONResponse:
-    actor = require_roles(request, "owner", "admin")
+@app.delete("/api/v1/me/platform-apps/{platform}")
+def delete_my_platform_app(request: Request, platform: str) -> JSONResponse:
+    user_id = str(current_account(request)["user_id"])
     key = platform.upper()
     try:
-        PLATFORM_APP_STORE.delete(key)
+        PLATFORM_APP_STORE.delete(user_id, key)
     except PlatformAppError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    apply_platform_app_config(key)
-    TENANT_GOVERNANCE.audit(
-        actor_user_id=actor["user_id"],
-        action="platform_app.delete",
-        resource_type="platform_app",
-        resource_id=key,
-        metadata={},
-    )
-    return JSONResponse(platform_app_summary(key), headers={"Cache-Control": "no-store"})
+    return JSONResponse(refresh_user_platform_app(user_id, key), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/v1/admin/jobs")

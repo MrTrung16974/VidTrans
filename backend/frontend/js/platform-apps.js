@@ -1,7 +1,7 @@
-// Admin tab: register each platform's OAuth developer app once, on the web.
-// After that every user connects their own account with one click.
-export function createPlatformAppsAdmin({ requestJson, toast, escapeHtml }) {
-  const list = () => document.querySelector("#adminPlatformAppsList");
+// Each user enters their own OAuth developer app (App ID / Secret) per platform.
+// Values are stored per user in the database; secrets are never sent back.
+export function createPlatformAppsSettings({ requestJson, toast, escapeHtml, onChange = () => {} }) {
+  const list = () => document.querySelector("#platformAppsList");
 
   function callbackUrl(item) {
     return item.redirect_uri || `${location.origin}${item.callback_path}`;
@@ -10,7 +10,7 @@ export function createPlatformAppsAdmin({ requestJson, toast, escapeHtml }) {
   function render(items) {
     list().innerHTML = items.map(item => {
       const status = item.configured
-        ? `<span class="platform-app-badge ok">✓ Đang hoạt động${item.source === "env" ? " · từ .env" : ""}</span>`
+        ? `<span class="platform-app-badge ok">✓ ${item.source === "user" ? "Đang dùng app của bạn" : "Đang dùng app mặc định"}</span>`
         : '<span class="platform-app-badge off">Chưa cấu hình</span>';
       return `
       <form class="card platform-app-card" data-platform-app="${escapeHtml(item.platform)}">
@@ -20,7 +20,7 @@ export function createPlatformAppsAdmin({ requestJson, toast, escapeHtml }) {
         </div>
         <p class="platform-app-hint">
           Tạo ứng dụng tại <a href="${escapeHtml(item.console_url)}" target="_blank" rel="noopener">${escapeHtml(new URL(item.console_url).host)}</a>
-          và khai báo Callback URL bên dưới. Chỉ làm một lần; sau đó mọi user tự bấm <b>Kết nối</b>.
+          rồi khai báo đúng Callback URL bên dưới trong app. Lưu xong, bấm <b>Kết nối</b> ở thẻ nền tảng để đăng nhập.
         </p>
         <label>${escapeHtml(item.id_label)}
           <input name="client_id" required maxlength="256" autocomplete="off" value="${escapeHtml(item.client_id)}" />
@@ -34,7 +34,7 @@ export function createPlatformAppsAdmin({ requestJson, toast, escapeHtml }) {
         </label>
         <div class="platform-app-actions">
           <button class="button primary" type="submit">Lưu & kích hoạt</button>
-          ${item.source === "web" ? '<button class="button secondary" type="button" data-platform-app-reset>Xoá cấu hình web</button>' : ""}
+          ${item.source === "user" ? '<button class="button secondary" type="button" data-platform-app-reset>Xoá cấu hình</button>' : ""}
         </div>
       </form>`;
     }).join("");
@@ -42,7 +42,7 @@ export function createPlatformAppsAdmin({ requestJson, toast, escapeHtml }) {
 
   async function load() {
     try {
-      render((await requestJson("/api/v1/admin/platform-apps")).items || []);
+      render((await requestJson("/api/v1/me/platform-apps")).items || []);
     } catch (error) {
       list().innerHTML = `<div class="empty-state error"><strong>${escapeHtml(error.message)}</strong></div>`;
     }
@@ -52,11 +52,12 @@ export function createPlatformAppsAdmin({ requestJson, toast, escapeHtml }) {
     const button = form.querySelector('[type="submit"]');
     button.disabled = true;
     try {
-      await requestJson(`/api/v1/admin/platform-apps/${encodeURIComponent(form.dataset.platformApp)}`, {
+      await requestJson(`/api/v1/me/platform-apps/${encodeURIComponent(form.dataset.platformApp)}`, {
         method: "POST", body: new FormData(form),
       });
-      toast("Đã lưu. User có thể bấm Kết nối ngay.");
+      toast("Đã lưu. Bấm Kết nối ở thẻ nền tảng để đăng nhập.");
       await load();
+      onChange();
     } catch (error) {
       toast(error.message, true);
       button.disabled = false;
@@ -64,11 +65,12 @@ export function createPlatformAppsAdmin({ requestJson, toast, escapeHtml }) {
   }
 
   async function reset(form) {
-    if (!confirm("Xoá cấu hình ứng dụng lưu trên web cho nền tảng này?")) return;
+    if (!confirm("Xoá App ID / Secret bạn đã lưu cho nền tảng này?")) return;
     try {
-      await requestJson(`/api/v1/admin/platform-apps/${encodeURIComponent(form.dataset.platformApp)}`, { method: "DELETE" });
-      toast("Đã xoá cấu hình web");
+      await requestJson(`/api/v1/me/platform-apps/${encodeURIComponent(form.dataset.platformApp)}`, { method: "DELETE" });
+      toast("Đã xoá cấu hình");
       await load();
+      onChange();
     } catch (error) { toast(error.message, true); }
   }
 

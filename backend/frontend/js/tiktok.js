@@ -1,7 +1,7 @@
 import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20261015-2";
-import { createInstagramWorkspace } from "./instagram.js?v=20261018-4";
-import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261018-3";
-import { unconfiguredStatus, unconfiguredTitle } from "./connection-copy.js?v=20261018-2";
+import { createInstagramWorkspace } from "./instagram.js?v=20261018-5";
+import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261018-4";
+import { unconfiguredStatus, unconfiguredTitle } from "./connection-copy.js?v=20261018-3";
 export function createTikTokWorkspace({ requestJson, toast }) {
   const $ = selector => document.querySelector(selector);
   let status = null, apiStatus = null, draft = null, timer = null, apiTimer = null, refreshing = false, loading = false, submitting = false;

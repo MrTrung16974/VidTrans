@@ -17,8 +17,8 @@ class PlatformAppError(ValueError):
     pass
 
 
-# One OAuth developer app per platform for the whole VidTrans deployment.
-# End users never see these values; they only click "Kết nối" and sign in.
+# Each user registers their own OAuth developer app per platform; .env remains
+# the deployment-wide fallback for users who have not entered one.
 PLATFORM_APPS: dict[str, dict[str, str]] = {
     "TIKTOK": {
         "label": "TikTok", "id_field": "client_key", "id_label": "Client key",
@@ -60,20 +60,21 @@ def load_or_create_key(path: Path) -> str:
 
 
 class PlatformAppStore:
-    """OAuth app credentials managed from the admin page instead of .env."""
+    """Per-user OAuth app credentials entered on the web instead of .env."""
 
     def __init__(self, database_path: Path, cipher: CredentialCipher) -> None:
         self.database_path = Path(database_path)
         self.cipher = cipher
         with self._db() as db:
             db.execute("""
-                CREATE TABLE IF NOT EXISTS platform_oauth_apps (
-                    platform TEXT PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS user_platform_oauth_apps (
+                    user_id TEXT NOT NULL,
+                    platform TEXT NOT NULL,
                     client_id TEXT NOT NULL,
                     client_secret_ciphertext BLOB NOT NULL,
                     redirect_uri TEXT NOT NULL,
-                    updated_by TEXT,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, platform)
                 )
             """)
 
@@ -97,24 +98,32 @@ class PlatformAppStore:
             raise PlatformAppError("Nền tảng không hỗ trợ cấu hình ứng dụng")
         return key
 
-    def get(self, platform: str) -> dict[str, Any] | None:
-        key = self._platform(platform)
+    @staticmethod
+    def _user(user_id: str) -> str:
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            raise PlatformAppError("Thiếu người dùng")
+        return user_id
+
+    def get(self, user_id: str, platform: str) -> dict[str, Any] | None:
+        key, user_id = self._platform(platform), self._user(user_id)
         with self._db() as db:
-            row = db.execute("SELECT * FROM platform_oauth_apps WHERE platform=?", (key,)).fetchone()
+            row = db.execute(
+                "SELECT * FROM user_platform_oauth_apps WHERE user_id=? AND platform=?", (user_id, key)
+            ).fetchone()
         if row is None:
             return None
         return {
             "client_id": str(row["client_id"]),
             "client_secret": self.cipher.decrypt(bytes(row["client_secret_ciphertext"])),
             "redirect_uri": str(row["redirect_uri"]),
-            "updated_by": row["updated_by"],
             "updated_at": row["updated_at"],
         }
 
-    def save(self, platform: str, *, client_id: str, client_secret: str | None,
-             redirect_uri: str, updated_by: str) -> None:
+    def save(self, user_id: str, platform: str, *, client_id: str, client_secret: str | None,
+             redirect_uri: str) -> None:
         """Store credentials; an empty secret keeps the one already saved."""
-        key = self._platform(platform)
+        key, user_id = self._platform(platform), self._user(user_id)
         client_id, redirect_uri = client_id.strip(), redirect_uri.strip()
         if not client_id or len(client_id) > 256:
             raise PlatformAppError("App ID / Client ID không hợp lệ")
@@ -124,7 +133,7 @@ class PlatformAppStore:
             raise PlatformAppError(f"Callback URL phải kết thúc bằng {PLATFORM_APPS[key]['callback_path']}")
         secret = (client_secret or "").strip()
         if not secret:
-            current = self.get(key)
+            current = self.get(user_id, key)
             if current is None:
                 raise PlatformAppError("Cần nhập App Secret / Client Secret")
             secret = current["client_secret"]
@@ -132,22 +141,27 @@ class PlatformAppStore:
             raise PlatformAppError("App Secret quá dài")
         with self._db() as db:
             db.execute("""
-                INSERT INTO platform_oauth_apps(platform,client_id,client_secret_ciphertext,redirect_uri,updated_by,updated_at)
+                INSERT INTO user_platform_oauth_apps(user_id,platform,client_id,client_secret_ciphertext,redirect_uri,updated_at)
                 VALUES(?,?,?,?,?,?)
-                ON CONFLICT(platform) DO UPDATE SET client_id=excluded.client_id,
+                ON CONFLICT(user_id, platform) DO UPDATE SET client_id=excluded.client_id,
                     client_secret_ciphertext=excluded.client_secret_ciphertext,
-                    redirect_uri=excluded.redirect_uri, updated_by=excluded.updated_by,
-                    updated_at=excluded.updated_at
-            """, (key, client_id, self.cipher.encrypt(secret), redirect_uri, updated_by, utc_now()))
+                    redirect_uri=excluded.redirect_uri, updated_at=excluded.updated_at
+            """, (user_id, key, client_id, self.cipher.encrypt(secret), redirect_uri, utc_now()))
 
-    def delete(self, platform: str) -> bool:
-        key = self._platform(platform)
+    def delete(self, user_id: str, platform: str) -> bool:
+        key, user_id = self._platform(platform), self._user(user_id)
         with self._db() as db:
-            return db.execute("DELETE FROM platform_oauth_apps WHERE platform=?", (key,)).rowcount > 0
+            return db.execute(
+                "DELETE FROM user_platform_oauth_apps WHERE user_id=? AND platform=?", (user_id, key)
+            ).rowcount > 0
 
-    def overlay(self, platform: str, config: Any) -> Any:
-        """Return ``config`` with web-managed credentials taking precedence over .env."""
-        stored = self.get(platform)
+    def delete_user(self, user_id: str) -> None:
+        with self._db() as db:
+            db.execute("DELETE FROM user_platform_oauth_apps WHERE user_id=?", (self._user(user_id),))
+
+    def overlay(self, user_id: str, platform: str, config: Any) -> Any:
+        """Return ``config`` with the user's own app taking precedence over .env."""
+        stored = self.get(user_id, platform)
         if stored is None:
             return config
         return dataclasses.replace(config, **{
@@ -156,11 +170,11 @@ class PlatformAppStore:
             "redirect_uri": stored["redirect_uri"],
         })
 
-    def describe(self, platform: str, effective_config: Any) -> dict[str, Any]:
+    def describe(self, user_id: str, platform: str, effective_config: Any) -> dict[str, Any]:
+        """Public view of the user's settings; secrets and system values are never returned."""
         key = self._platform(platform)
         meta = PLATFORM_APPS[key]
-        stored = self.get(key)
-        client_id = str(getattr(effective_config, meta["id_field"], "") or "")
+        stored = self.get(user_id, key)
         return {
             "platform": key,
             "label": meta["label"],
@@ -168,9 +182,9 @@ class PlatformAppStore:
             "callback_path": meta["callback_path"],
             "console_url": meta["console_url"],
             "configured": bool(effective_config.configured),
-            "source": "web" if stored else ("env" if effective_config.configured else "none"),
-            "client_id": client_id,
-            "has_secret": bool(getattr(effective_config, "client_secret", "")),
-            "redirect_uri": str(getattr(effective_config, "redirect_uri", "") or ""),
+            "source": "user" if stored else ("system" if effective_config.configured else "none"),
+            "client_id": stored["client_id"] if stored else "",
+            "has_secret": bool(stored),
+            "redirect_uri": stored["redirect_uri"] if stored else "",
             "updated_at": stored["updated_at"] if stored else None,
         }
