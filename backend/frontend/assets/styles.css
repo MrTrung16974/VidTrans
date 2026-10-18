@@ -604,7 +604,7 @@ a { color: inherit; text-decoration: none; }
   .drop-zone { padding: 22px 14px; }
   .cookie-source-field input { min-height: 44px; }
   .file-remove { width: 44px; height: 44px; }
-  .jobs-toolbar {
+  .jobs-panel > .jobs-toolbar, .jobs-toolbar:not([class*="admin-"]) {
     display: grid;
     grid-template-columns: 1fr 42px;
     grid-template-areas:
@@ -613,9 +613,9 @@ a { color: inherit; text-decoration: none; }
     gap: 10px;
     padding: 12px;
   }
-  .jobs-toolbar .search-box { grid-area: search; width: 100%; }
-  .jobs-toolbar .filter-select-wrap { grid-area: filter; width: 100%; min-width: 0; }
-  .jobs-toolbar .refresh-btn { grid-area: refresh; width: 42px; height: 42px; min-height: 42px; }
+  .jobs-panel > .jobs-toolbar .search-box, .jobs-toolbar:not([class*="admin-"]) .search-box { grid-area: search; width: 100%; }
+  .jobs-panel > .jobs-toolbar .filter-select-wrap, .jobs-toolbar:not([class*="admin-"]) .filter-select-wrap { grid-area: filter; width: 100%; min-width: 0; }
+  .jobs-panel > .jobs-toolbar .refresh-btn, .jobs-toolbar:not([class*="admin-"]) .refresh-btn { grid-area: refresh; width: 42px; height: 42px; min-height: 42px; }
   .icon-button { min-height: 42px; }
   .bulk-actions { padding: 11px 13px; }
   .bulk-actions > strong { display: none; }
@@ -2344,7 +2344,13 @@ a { color: inherit; text-decoration: none; }
 
 /* Accounts Table Panel */
 .admin-accounts-panel { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 20px; background: #ffffff; box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04); }
+.admin-toolbar {
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
 .admin-account-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 320px) 200px; align-items: center; gap: 14px; padding: 18px 22px; border-bottom: 1px solid #f1f5f9; background: #ffffff; }
+.admin-jobs-toolbar { display: grid; grid-template-columns: minmax(200px, 1.2fr) minmax(180px, 1.5fr) minmax(150px, 1fr) minmax(150px, 1fr) auto; align-items: center; gap: 12px; padding: 16px 22px; border-bottom: 1px solid #f1f5f9; background: #ffffff; }
+.admin-audit-toolbar { display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(220px, 320px) auto; align-items: center; gap: 14px; padding: 16px 22px; border-bottom: 1px solid #f1f5f9; background: #ffffff; }
 .admin-list-title strong { display: block; font-size: 0.98rem; font-weight: 800; color: #0f172a; letter-spacing: -0.01em; }
 .admin-list-title small { display: block; color: #64748b; font-size: 0.74rem; margin-top: 1px; }
 
@@ -3113,16 +3119,16 @@ a { color: inherit; text-decoration: none; }
 @media(max-width: 860px) {
   .jobs-header { flex-direction: column; align-items: flex-start; gap: 14px; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
-  .jobs-toolbar {
+  .jobs-panel > .jobs-toolbar, .jobs-toolbar:not([class*="admin-"]) {
     grid-template-columns: 1fr 42px;
     grid-template-areas:
       "search search"
       "filter refresh";
     gap: 10px;
   }
-  .jobs-toolbar .search-box { grid-area: search; width: 100%; }
-  .jobs-toolbar .filter-select-wrap { grid-area: filter; width: 100%; min-width: 0; }
-  .jobs-toolbar .refresh-btn { grid-area: refresh; width: 42px; height: 42px; }
+  .jobs-panel > .jobs-toolbar .search-box, .jobs-toolbar:not([class*="admin-"]) .search-box { grid-area: search; width: 100%; }
+  .jobs-panel > .jobs-toolbar .filter-select-wrap, .jobs-toolbar:not([class*="admin-"]) .filter-select-wrap { grid-area: filter; width: 100%; min-width: 0; }
+  .jobs-panel > .jobs-toolbar .refresh-btn, .jobs-toolbar:not([class*="admin-"]) .refresh-btn { grid-area: refresh; width: 42px; height: 42px; }
   .job-row {
     grid-template-columns: 28px minmax(0, 1fr);
     gap: 10px 12px;
@@ -3358,7 +3364,7 @@ a { color: inherit; text-decoration: none; }
   .metric-badge { width: 24px; height: 24px; font-size: 0.75rem; border-radius: 7px; }
 
   .jobs-panel { border-radius: 16px; }
-  .jobs-toolbar {
+  .jobs-panel > .jobs-toolbar, .jobs-toolbar:not([class*="admin-"]) {
     display: grid;
     grid-template-columns: 1fr 42px;
     grid-template-areas:
@@ -3367,26 +3373,26 @@ a { color: inherit; text-decoration: none; }
     gap: 8px;
     padding: 10px 12px;
   }
-  .jobs-toolbar .search-box {
+  .jobs-panel > .jobs-toolbar .search-box, .jobs-toolbar:not([class*="admin-"]) .search-box {
     grid-area: search;
     width: 100%;
   }
-  .jobs-toolbar .search-box input {
+  .jobs-panel > .jobs-toolbar .search-box input, .jobs-toolbar:not([class*="admin-"]) .search-box input {
     min-height: 42px;
     font-size: 0.82rem;
     padding-left: 36px;
   }
-  .jobs-toolbar .filter-select-wrap {
+  .jobs-panel > .jobs-toolbar .filter-select-wrap, .jobs-toolbar:not([class*="admin-"]) .filter-select-wrap {
     grid-area: filter;
     width: 100%;
     min-width: 0;
   }
-  .jobs-toolbar .filter-select-wrap select {
+  .jobs-panel > .jobs-toolbar .filter-select-wrap select, .jobs-toolbar:not([class*="admin-"]) .filter-select-wrap select {
     min-height: 42px;
     font-size: 0.82rem;
     width: 100%;
   }
-  .jobs-toolbar .refresh-btn {
+  .jobs-panel > .jobs-toolbar .refresh-btn, .jobs-toolbar:not([class*="admin-"]) .refresh-btn {
     grid-area: refresh;
     width: 42px;
     height: 42px;
@@ -3828,6 +3834,31 @@ a { color: inherit; text-decoration: none; }
   }
   .admin-header-actions { width: 100%; }
   .admin-refresh-btn { width: 100%; justify-content: center; min-height: 40px; }
+
+  /* Subtabs: clean horizontal scrollable pills instead of squished text */
+  .admin-subtabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: 8px;
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+    scrollbar-width: none;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .admin-subtabs::-webkit-scrollbar {
+    display: none;
+  }
+  .admin-subtab {
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 8px 14px;
+    font-size: 0.8rem;
+    border-radius: 10px;
+  }
+
+  /* Metrics grid */
   .admin-metrics {
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 8px;
@@ -3839,25 +3870,113 @@ a { color: inherit; text-decoration: none; }
   }
   .metric-info strong { font-size: 1.55rem; }
   .admin-metric-icon { width: 36px; height: 36px; font-size: 1.05rem; border-radius: 10px; }
+
+  /* Create form */
   .admin-create-panel summary { padding: 12px 14px; min-height: 56px; }
   .admin-create-form { grid-template-columns: 1fr; gap: 10px; padding: 14px; }
   .admin-create-submit { width: 100%; min-height: 42px; justify-content: center; }
-  .admin-account-toolbar { grid-template-columns: 1fr; gap: 10px; padding: 14px; }
+
+  /* Admin Toolbars (Account, Jobs, Audit): Full-width 1-column layout */
+  .admin-toolbar,
+  .admin-account-toolbar,
+  .admin-jobs-toolbar,
+  .admin-audit-toolbar {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-template-columns: none !important;
+    grid-template-areas: none !important;
+    gap: 10px !important;
+    padding: 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .admin-list-title {
+    width: 100%;
+  }
+  .admin-search {
+    width: 100% !important;
+    position: relative;
+    box-sizing: border-box;
+  }
+  .admin-search input {
+    width: 100% !important;
+    min-height: 42px;
+    box-sizing: border-box;
+    font-size: 0.84rem;
+    padding-left: 36px;
+  }
+  .admin-filter-wrap {
+    width: 100% !important;
+    box-sizing: border-box;
+  }
+  .admin-filter-wrap select {
+    width: 100% !important;
+    min-height: 42px;
+    box-sizing: border-box;
+    font-size: 0.84rem;
+  }
+  .admin-toolbar button {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  /* Admin Account Table & Cards */
   .admin-account-head { display: none; }
   .admin-account-row {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
     padding: 14px;
     border-radius: 14px;
     margin: 8px 0;
     border: 1px solid #e2e8f0;
+    background: #ffffff;
+    box-sizing: border-box;
+  }
+  .admin-account-user {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .admin-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    flex-shrink: 0;
+  }
+  .user-meta-stack {
+    flex: 1;
+    min-width: 0;
+  }
+  .name-edit-wrap input {
+    font-size: 0.88rem;
+    padding: 2px 4px;
+    box-sizing: border-box;
+  }
+  .user-email {
+    font-size: 0.74rem;
+    padding: 0 4px;
+  }
+  .user-join-date {
+    font-size: 0.68rem;
+    padding: 0 4px;
+  }
+  .admin-user-quota {
+    font-size: 0.68rem;
+    padding: 1px 4px 0;
   }
   .admin-account-field {
     width: 100%;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
+    box-sizing: border-box;
   }
   .field-label-inline {
     display: block;
@@ -3865,9 +3984,94 @@ a { color: inherit; text-decoration: none; }
     font-weight: 750;
     color: #64748b;
     text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
-  .admin-action-cell { width: 100%; margin-top: 4px; }
-  .btn-admin-save { width: 100%; min-height: 42px; justify-content: center; }
+  .admin-account-field select {
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    height: 40px;
+    border-radius: 10px;
+    padding: 6px 26px 6px 10px;
+    font-size: 0.8rem;
+    box-sizing: border-box;
+  }
+  .admin-action-cell {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px dashed #f1f5f9;
+  }
+  .btn-admin-save {
+    flex: 1;
+    min-height: 40px;
+    height: 40px;
+    justify-content: center;
+    font-size: 0.82rem;
+    border-radius: 10px;
+  }
+  .admin-action-cell .mini-btn {
+    min-height: 40px;
+    min-width: 44px;
+    height: 40px;
+    padding: 0 14px;
+    border-radius: 10px;
+  }
+
+  /* Admin Jobs Table & Cards on Mobile */
+  .admin-jobs-head { display: none; }
+  .admin-jobs-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px;
+    border-radius: 14px;
+    margin: 8px 0;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    font-size: 0.82rem;
+  }
+  .admin-jobs-row code {
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: var(--brand);
+  }
+  .admin-jobs-row .job-filename {
+    font-size: 0.84rem;
+    font-weight: 650;
+    word-break: break-word;
+  }
+  .admin-jobs-row button {
+    width: 100%;
+    min-height: 38px;
+    justify-content: center;
+  }
+
+  /* Admin Audit Log Table & Cards on Mobile */
+  .admin-audit-head { display: none; }
+  .admin-audit-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px;
+    border-radius: 14px;
+    margin: 8px 0;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    font-size: 0.8rem;
+  }
+  .audit-warning-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    font-size: 0.78rem;
+    border-radius: 12px;
+  }
 
   /* 6. Billing View (#billingView) */
   .billing-header {

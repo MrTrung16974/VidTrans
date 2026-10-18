@@ -62,9 +62,9 @@ class LanguageCatalogTests(unittest.TestCase):
                 "calm", "cheerful",
             },
         )
-        self.assertEqual(voice_preset("warm").pitch_hz, -8)
-        self.assertEqual(voice_preset("storyteller").rate_percent, -6)
-        self.assertEqual(voice_preset("commercial").pitch_hz, 6)
+        self.assertEqual(voice_preset("warm").pitch_hz, -4)
+        self.assertEqual(voice_preset("storyteller").rate_percent, -5)
+        self.assertEqual(voice_preset("commercial").pitch_hz, 3)
         self.assertEqual(voice_preset("").key, "natural")
         with self.assertRaisesRegex(ValueError, "voice_style"):
             voice_preset("custom-injected-voice")

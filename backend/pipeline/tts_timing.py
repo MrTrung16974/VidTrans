@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 
-MAX_NATURAL_TEMPO = 1.16
+MAX_NATURAL_TEMPO = 1.08
 TEMPO_DEADBAND = 1.03
+MAX_SYNTHESIS_RATE_BOOST_PERCENT = 12
 MAX_BORROWED_PAUSE_SECONDS = 0.45
 MIN_TRANSITION_GAP_SECONDS = 0.08
 VOICE_GAP_SECONDS = 0.025
@@ -19,6 +20,17 @@ def bounded_tempo(rendered_duration: float, cue_duration: float) -> float:
     if required <= TEMPO_DEADBAND:
         return 1.0
     return min(required, MAX_NATURAL_TEMPO)
+
+
+def adaptive_synthesis_rate_percent(rendered_duration: float, cue_duration: float) -> int:
+    """Prefer TTS-native pacing over a large post-process tempo shift."""
+
+    if rendered_duration <= 0 or cue_duration <= 0:
+        return 0
+    required = rendered_duration / cue_duration
+    if required <= TEMPO_DEADBAND:
+        return 0
+    return min(MAX_SYNTHESIS_RATE_BOOST_PERCENT, max(1, round((required - 1.0) * 100)))
 
 
 def available_voice_window(segments: Sequence[dict[str, Any]], index: int) -> float:

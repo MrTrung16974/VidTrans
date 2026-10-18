@@ -118,7 +118,12 @@ from pipeline.translation import (
     segment_filter_signature,
     translate_segments,
 )
-from pipeline.tts_timing import available_voice_window, bounded_tempo, schedule_voice_segments
+from pipeline.tts_timing import (
+    adaptive_synthesis_rate_percent,
+    available_voice_window,
+    bounded_tempo,
+    schedule_voice_segments,
+)
 from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
 
 try:
@@ -1251,9 +1256,14 @@ def synthesize_tts_segments(
         profile = language_profile(target_language)
         voice_name = profile.edge_voice(selected_voice_type)
 
-        # Pass 1: Generate initial audio to gauge speaking duration
+        # Pass 1: generate at the requested expressive rate and measure it.
+        # When a line is too long, a second native TTS render is preferable to
+        # a large FFmpeg atempo shift, which flattens Vietnamese prosody.
+        edge_succeeded = False
+        effective_rate_percent = rate_percent
         try:
             asyncio.run(tts_edge_sync(text, output_path, voice_name, base_rate_string, pitch_string))
+            edge_succeeded = True
         except Exception as exc:
             logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
             tts_gtts_sync(text, output_path, slow=speech_rate < 0.95, language=target_language)
@@ -1285,6 +1295,45 @@ def synthesize_tts_segments(
             ]
         )
         rendered_duration = get_media_duration(trimmed_path)
+
+        native_rate_boost = adaptive_synthesis_rate_percent(rendered_duration, cue_duration)
+        applied_native_rate_boost = 0
+        if edge_succeeded and native_rate_boost:
+            adaptive_output_path = tts_dir / f"{index:04d}_adaptive.mp3"
+            adaptive_trimmed_path = tts_dir / f"{index:04d}_adaptive.wav"
+            candidate_rate_percent = rate_percent + native_rate_boost
+            candidate_rate_string = f"{candidate_rate_percent:+d}%"
+            try:
+                asyncio.run(
+                    tts_edge_sync(
+                        text, adaptive_output_path, voice_name, candidate_rate_string, pitch_string
+                    )
+                )
+                run_ffmpeg(
+                    [
+                        FFMPEG,
+                        "-y",
+                        "-i",
+                        str(adaptive_output_path),
+                        "-af",
+                        trim_filter,
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "24000",
+                        str(adaptive_trimmed_path),
+                    ]
+                )
+                adaptive_trimmed_path.replace(trimmed_path)
+                rendered_duration = get_media_duration(trimmed_path)
+                effective_rate_percent = candidate_rate_percent
+                applied_native_rate_boost = native_rate_boost
+            except Exception as exc:
+                logger.warning("Adaptive edge-tts render failed; keeping first pass: %s", type(exc).__name__)
+            finally:
+                adaptive_output_path.unlink(missing_ok=True)
+                adaptive_trimmed_path.unlink(missing_ok=True)
+
         speed_factor = bounded_tempo(rendered_duration, cue_duration)
         fitted_path = trimmed_path
         if speed_factor > 1.0:
@@ -1307,7 +1356,8 @@ def synthesize_tts_segments(
         segment["tts_speed_factor"] = round(speed_factor, 3)
         segment["tts_voice_style"] = preset.key
         segment["tts_voice_name"] = voice_name
-        segment["tts_voice_rate"] = base_rate_string
+        segment["tts_voice_rate"] = f"{effective_rate_percent:+d}%"
+        segment["tts_native_rate_boost"] = applied_native_rate_boost
         segment["tts_voice_pitch"] = pitch_string
         segment["tts_duration"] = round(get_media_duration(fitted_path), 3)
         segment["tts_target_duration"] = round(cue_duration, 3)
@@ -2231,7 +2281,7 @@ def process_video(
                         }
                         for segment in translated_segments
                     ],
-                    "tts_pipeline_version": 1,
+                    "tts_pipeline_version": 2,
                 }
             )
             tts_checkpoint = checkpoint_store.load_json(

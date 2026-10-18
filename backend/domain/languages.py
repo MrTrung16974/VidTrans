@@ -30,18 +30,20 @@ class VoicePreset:
 
 VOICE_PRESETS: dict[str, VoicePreset] = {
     "natural": VoicePreset("natural", "Tự nhiên", 0, 0),
-    "warm": VoicePreset("warm", "Ấm áp", -4, -8),
-    "bright": VoicePreset("bright", "Tươi sáng", 3, 8),
-    "deep": VoicePreset("deep", "Trầm", -6, -18),
-    "energetic": VoicePreset("energetic", "Năng động", 8, 4),
-    "gentle": VoicePreset("gentle", "Nhẹ nhàng", -8, -3),
-    "storyteller": VoicePreset("storyteller", "Kể chuyện", -6, -5),
-    "news": VoicePreset("news", "Bản tin", 2, -2),
-    "commercial": VoicePreset("commercial", "Quảng cáo", 7, 6),
-    "youthful": VoicePreset("youthful", "Trẻ trung", 5, 10),
-    "authoritative": VoicePreset("authoritative", "Uy tín", -4, -14),
-    "calm": VoicePreset("calm", "Điềm tĩnh", -10, -6),
-    "cheerful": VoicePreset("cheerful", "Vui vẻ", 8, 12),
+    # Edge voices already carry a trained speaking identity. Large pitch shifts
+    # make Vietnamese vowels sound metallic, so styles deliberately stay subtle.
+    "warm": VoicePreset("warm", "Ấm áp", -3, -4),
+    "bright": VoicePreset("bright", "Tươi sáng", 2, 4),
+    "deep": VoicePreset("deep", "Trầm", -4, -7),
+    "energetic": VoicePreset("energetic", "Năng động", 5, 2),
+    "gentle": VoicePreset("gentle", "Nhẹ nhàng", -5, -2),
+    "storyteller": VoicePreset("storyteller", "Kể chuyện", -5, -3),
+    "news": VoicePreset("news", "Bản tin", 1, -1),
+    "commercial": VoicePreset("commercial", "Quảng cáo", 4, 3),
+    "youthful": VoicePreset("youthful", "Trẻ trung", 3, 5),
+    "authoritative": VoicePreset("authoritative", "Uy tín", -3, -6),
+    "calm": VoicePreset("calm", "Điềm tĩnh", -6, -3),
+    "cheerful": VoicePreset("cheerful", "Vui vẻ", 5, 5),
 }
 
 
