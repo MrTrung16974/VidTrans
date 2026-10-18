@@ -669,6 +669,7 @@ class JobCancelled(RuntimeError):
 PUBLIC_AUTH_PATHS = {
     "/api/v1/auth/status",
     "/api/v1/auth/token",
+    "/api/v1/auth/refresh",
     "/api/v1/auth/register",
     "/api/v1/tiktok-auth/callback",
     "/api/v1/instagram-auth/callback",
@@ -746,6 +747,8 @@ async def authenticate_request(request: Request, call_next: Callable[..., Any]):
         account = ADMIN_ACCOUNTS.get(str(request.state.auth_claims["user_id"]))
     except AdminAccountError:
         return unauthorized_response()
+    if token_predates_password_change(request.state.auth_claims, account):
+        return unauthorized_response("Mật khẩu đã được thay đổi. Hãy đăng nhập lại.")
     if account["approval_status"] != "approved":
         return JSONResponse({"detail": "Tài khoản chưa được phê duyệt hoặc đã bị khóa"}, status_code=403)
     request.state.account = account
@@ -3189,6 +3192,42 @@ def update_admin_account(
     return JSONResponse(public_admin_account(account), headers={"Cache-Control": "no-store"})
 
 
+@app.post("/api/v1/admin/accounts/{user_id}/password")
+def reset_admin_account_password(
+    request: Request,
+    user_id: str,
+    new_password: str = Form(..., min_length=12, max_length=256),
+) -> JSONResponse:
+    """Set a new password for a user and sign them out of every existing session."""
+    actor = require_roles(request, "owner", "admin")
+    try:
+        target = ADMIN_ACCOUNTS.get(user_id)
+    except AdminAccountError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if (
+        actor["role"] != "owner"
+        and target["user_id"] != actor["user_id"]
+        and target["role"] in {"owner", "admin"}
+    ):
+        raise HTTPException(status_code=403, detail="Chỉ chủ sở hữu mới được đặt lại mật khẩu của quản trị viên")
+    try:
+        ADMIN_ACCOUNTS.set_password_hash(user_id, hash_password(new_password))
+    except (AdminAccountError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=actor["user_id"],
+        action="account.password_reset",
+        resource_type="account",
+        resource_id=user_id,
+        target_user_id=user_id,
+        metadata={"email": target["email"]},
+    )
+    return JSONResponse(
+        {"status": "success", "user_id": user_id, "message": "Đã đặt lại mật khẩu; các phiên đăng nhập cũ đã bị thu hồi"},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.delete("/api/v1/admin/accounts/{user_id}")
 def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONResponse:
     caller = require_roles(request, "owner", "admin")
@@ -3686,6 +3725,80 @@ def switch_free_plan(request: Request) -> JSONResponse:
 
 
 
+REFRESH_COOKIE_PATH = "/api/v1/auth/"
+
+
+def token_predates_password_change(claims: dict[str, Any], account: dict[str, Any]) -> bool:
+    """A password reset invalidates every access and refresh token issued before it."""
+    changed_at = account.get("password_changed_at")
+    if not changed_at:
+        return False
+    try:
+        changed_timestamp = int(datetime.fromisoformat(str(changed_at)).timestamp())
+    except ValueError:
+        return False
+    return int(claims["iat"]) < changed_timestamp
+
+
+def account_token_scope(account: dict[str, Any]) -> str:
+    return "admin" if account["role"] in {"owner", "admin"} else "user"
+
+
+def set_auth_cookies(
+    response: Response,
+    account: dict[str, Any],
+    access_token: str,
+    access_expires_in: int,
+    *,
+    remember: bool,
+) -> None:
+    """Set the access cookie and a refresh cookie scoped to the auth endpoints.
+
+    Without "remember me" both are session cookies that end with the browser.
+    """
+    refresh_token, refresh_expires_in = AUTH_MANAGER.issue_token(
+        account["email"],
+        user_id=account["user_id"],
+        role=account["role"],
+        scope=account_token_scope(account),
+        token_use="refresh",
+        remember=remember,
+    )
+    cookie_options = {
+        "httponly": True,
+        "secure": AUTH_MANAGER.config.cookie_secure,
+        "samesite": "strict",
+    }
+    response.set_cookie(
+        key=AUTH_MANAGER.config.cookie_name,
+        value=access_token,
+        max_age=access_expires_in if remember else None,
+        path="/",
+        **cookie_options,
+    )
+    response.set_cookie(
+        key=AUTH_MANAGER.config.refresh_cookie_name,
+        value=refresh_token,
+        max_age=refresh_expires_in if remember else None,
+        path=REFRESH_COOKIE_PATH,
+        **cookie_options,
+    )
+
+
+def clear_auth_cookies(response: Response) -> None:
+    for key, path in (
+        (AUTH_MANAGER.config.cookie_name, "/"),
+        (AUTH_MANAGER.config.refresh_cookie_name, REFRESH_COOKIE_PATH),
+    ):
+        response.delete_cookie(
+            key=key,
+            path=path,
+            secure=AUTH_MANAGER.config.cookie_secure,
+            httponly=True,
+            samesite="strict",
+        )
+
+
 @app.get("/api/v1/auth/status")
 def get_auth_status(request: Request) -> JSONResponse:
     payload = AUTH_MANAGER.status()
@@ -3711,6 +3824,7 @@ def get_auth_status(request: Request) -> JSONResponse:
 def create_auth_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
+    remember: bool = Form(default=False),
 ) -> JSONResponse:
     client_id = auth_client_id(request)
     account = ADMIN_ACCOUNTS.get_by_email(form_data.username)
@@ -3737,7 +3851,7 @@ def create_auth_token(
         )
     if account is None or account["approval_status"] != "approved":
         raise HTTPException(status_code=403, detail="Tài khoản chưa được phê duyệt hoặc đã bị khóa")
-    scope = "admin" if account["role"] in {"owner", "admin"} else "user"
+    scope = account_token_scope(account)
     token, expires_in = AUTH_MANAGER.issue_token(
         account["email"], user_id=account["user_id"], role=account["role"], scope=scope
     )
@@ -3748,13 +3862,55 @@ def create_auth_token(
             "expires_in": expires_in,
             "scope": scope,
             "role": account["role"],
+            "remember": remember,
         },
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
+    set_auth_cookies(response, account, token, expires_in, remember=remember)
+    return response
+
+
+@app.post("/api/v1/auth/refresh")
+def refresh_auth_token(request: Request) -> JSONResponse:
+    """Exchange the HttpOnly refresh cookie for a new short-lived access token."""
+
+    if not AUTH_MANAGER.config.configured:
+        raise HTTPException(status_code=503, detail="Xác thực đã bật nhưng cấu hình máy chủ chưa hợp lệ")
+    if request.headers.get("x-vidtrans-request") != "1":
+        return JSONResponse({"detail": "Thiếu tiêu đề chống CSRF"}, status_code=403, headers={"Cache-Control": "no-store"})
+    refresh_token = request.cookies.get(AUTH_MANAGER.config.refresh_cookie_name)
+    if not refresh_token:
+        return unauthorized_response()
+    try:
+        claims = AUTH_MANAGER.verify_token(refresh_token, token_use="refresh")
+        account = ADMIN_ACCOUNTS.get(str(claims["user_id"]))
+    except (AuthConfigurationError, InvalidTokenError, AdminAccountError):
+        response = unauthorized_response()
+        clear_auth_cookies(response)
+        return response
+    if account["approval_status"] != "approved":
+        response = JSONResponse({"detail": "Tài khoản chưa được phê duyệt hoặc đã bị khóa"}, status_code=403)
+        clear_auth_cookies(response)
+        return response
+    if token_predates_password_change(claims, account):
+        response = unauthorized_response("Mật khẩu đã được thay đổi. Hãy đăng nhập lại.")
+        clear_auth_cookies(response)
+        return response
+    scope = account_token_scope(account)
+    token, expires_in = AUTH_MANAGER.issue_token(
+        account["email"], user_id=account["user_id"], role=account["role"], scope=scope
+    )
+    remember = bool(claims.get("remember"))
+    response = JSONResponse(
+        {"token_type": "bearer", "expires_in": expires_in, "scope": scope, "role": account["role"], "remember": remember},
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+    # The refresh token keeps its original expiry, so a session lasts at most
+    # VIDTRANS_REFRESH_TOKEN_TTL_DAYS after the password login.
     response.set_cookie(
         key=AUTH_MANAGER.config.cookie_name,
         value=token,
-        max_age=expires_in,
+        max_age=expires_in if remember else None,
         httponly=True,
         secure=AUTH_MANAGER.config.cookie_secure,
         samesite="strict",
@@ -3792,15 +3948,7 @@ def register_account(
         status_code=201,
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
-    response.set_cookie(
-        key=AUTH_MANAGER.config.cookie_name,
-        value=token,
-        max_age=expires_in,
-        httponly=True,
-        secure=AUTH_MANAGER.config.cookie_secure,
-        samesite="strict",
-        path="/",
-    )
+    set_auth_cookies(response, account, token, expires_in, remember=False)
     return response
 
 
@@ -3810,13 +3958,7 @@ def delete_auth_session() -> JSONResponse:
         {"authenticated": False, "message": "Đã đăng xuất VidTrans"},
         headers={"Cache-Control": "no-store"},
     )
-    response.delete_cookie(
-        key=AUTH_MANAGER.config.cookie_name,
-        path="/",
-        secure=AUTH_MANAGER.config.cookie_secure,
-        httponly=True,
-        samesite="strict",
-    )
+    clear_auth_cookies(response)
     return response
 
 

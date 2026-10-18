@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261018-7" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261018-8" />
   </head>
   <body>
     <div class="app-shell">
@@ -1630,7 +1630,16 @@
           </label>
           <label>
             <span>Mật khẩu</span>
-            <input id="authPassword" name="password" type="password" autocomplete="current-password" required />
+            <span class="password-field">
+              <input id="authPassword" name="password" type="password" autocomplete="current-password" required />
+              <button class="password-toggle" type="button" data-password-toggle="authPassword" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+              </button>
+            </span>
+          </label>
+          <label class="auth-remember">
+            <input id="authRemember" name="remember" type="checkbox" />
+            <span>Ghi nhớ đăng nhập trong 5 ngày</span>
           </label>
           <button id="authSubmit" class="button primary full" type="submit">Đăng nhập</button>
         </form>
@@ -1661,7 +1670,34 @@
 
 
 
+    <dialog id="passwordResetDialog" class="password-reset-dialog" aria-labelledby="passwordResetTitle">
+      <form id="passwordResetForm" class="auth-form" method="dialog">
+        <div>
+          <h2 id="passwordResetTitle">Đặt lại mật khẩu</h2>
+          <p id="passwordResetTarget" class="password-reset-target"></p>
+        </div>
+        <label>
+          <span>Mật khẩu mới</span>
+          <span class="password-field">
+            <input id="passwordResetValue" name="new_password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
+            <button class="password-toggle" type="button" data-password-toggle="passwordResetValue" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+          </span>
+          <small>Tối thiểu 12 ký tự. Người dùng sẽ bị đăng xuất khỏi mọi phiên hiện tại.</small>
+        </label>
+        <div class="password-reset-actions">
+          <button id="passwordResetGenerate" class="button secondary small-btn" type="button">Tạo ngẫu nhiên</button>
+          <button id="passwordResetCopy" class="button secondary small-btn" type="button">Sao chép</button>
+        </div>
+        <div class="password-reset-footer">
+          <button id="passwordResetCancel" class="button secondary" type="button">Hủy</button>
+          <button id="passwordResetSubmit" class="button primary" type="submit">Đặt lại mật khẩu</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261018-7"></script>
+    <script type="module" src="/js/app.js?v=20261018-8"></script>
   </body>
 </html>

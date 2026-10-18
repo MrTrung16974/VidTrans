@@ -70,13 +70,38 @@ class AuthTests(unittest.TestCase):
 
     def test_rejects_tampered_and_expired_tokens(self) -> None:
         token, _ = self.manager.issue_token()
-        tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+        # Flip a middle signature character: the last base64url character also
+        # carries padding bits, so changing it does not always change the bytes.
+        index = len(token) - 10
+        tampered = token[:index] + ("A" if token[index] != "A" else "B") + token[index + 1:]
         with self.assertRaises(InvalidTokenError):
             self.manager.verify_token(tampered)
 
         self.clock.value += 331
         with self.assertRaises(InvalidTokenError):
             self.manager.verify_token(token)
+
+    def test_refresh_token_lives_five_days_and_cannot_be_used_as_access_token(self) -> None:
+        manager = AuthManager(
+            AuthConfig(**{**self.config.__dict__, "token_ttl_minutes": 30, "refresh_token_ttl_days": 5}),
+            clock=self.clock,
+        )
+        access, access_ttl = manager.issue_token("admin")
+        refresh, refresh_ttl = manager.issue_token("admin", token_use="refresh", remember=True)
+        self.assertEqual(access_ttl, 30 * 60)
+        self.assertEqual(refresh_ttl, 5 * 86_400)
+        self.assertTrue(manager.verify_token(refresh, token_use="refresh")["remember"])
+        with self.assertRaises(InvalidTokenError):
+            manager.verify_token(refresh)
+        with self.assertRaises(InvalidTokenError):
+            manager.verify_token(access, token_use="refresh")
+        self.clock.value += 31 * 60
+        with self.assertRaises(InvalidTokenError):
+            manager.verify_token(access)
+        manager.verify_token(refresh, token_use="refresh")
+        self.clock.value += 5 * 86_400
+        with self.assertRaises(InvalidTokenError):
+            manager.verify_token(refresh, token_use="refresh")
 
     def test_rate_limits_repeated_failed_logins(self) -> None:
         for _ in range(5):

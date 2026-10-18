@@ -18,6 +18,7 @@ PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 600_000
 JWT_ALGORITHM = "HS256"
 JWT_LEEWAY_SECONDS = 30
+TOKEN_USES = {"access", "refresh"}
 
 
 class AuthError(RuntimeError):
@@ -88,8 +89,10 @@ class AuthConfig:
     jwt_secret: str = ""
     issuer: str = "vidtrans"
     audience: str = "vidtrans-api"
-    token_ttl_minutes: int = 480
+    token_ttl_minutes: int = 30
+    refresh_token_ttl_days: int = 5
     cookie_name: str = "vidtrans_access_token"
+    refresh_cookie_name: str = "vidtrans_refresh_token"
     cookie_secure: bool = False
 
     @classmethod
@@ -101,9 +104,13 @@ class AuthConfig:
             "on",
         }
         try:
-            ttl = int(os.environ.get("VIDTRANS_JWT_TTL_MINUTES", "480"))
+            ttl = int(os.environ.get("VIDTRANS_JWT_TTL_MINUTES", "30"))
         except ValueError:
-            ttl = 480
+            ttl = 30
+        try:
+            refresh_days = int(os.environ.get("VIDTRANS_REFRESH_TOKEN_TTL_DAYS", "5"))
+        except ValueError:
+            refresh_days = 5
         return cls(
             enabled=enabled,
             username=os.environ.get("VIDTRANS_AUTH_USERNAME", "").strip(),
@@ -112,8 +119,11 @@ class AuthConfig:
             issuer=os.environ.get("VIDTRANS_JWT_ISSUER", "vidtrans").strip() or "vidtrans",
             audience=os.environ.get("VIDTRANS_JWT_AUDIENCE", "vidtrans-api").strip() or "vidtrans-api",
             token_ttl_minutes=ttl,
+            refresh_token_ttl_days=refresh_days,
             cookie_name=os.environ.get("VIDTRANS_AUTH_COOKIE_NAME", "vidtrans_access_token").strip()
             or "vidtrans_access_token",
+            refresh_cookie_name=os.environ.get("VIDTRANS_AUTH_REFRESH_COOKIE_NAME", "vidtrans_refresh_token").strip()
+            or "vidtrans_refresh_token",
             cookie_secure=os.environ.get("VIDTRANS_AUTH_COOKIE_SECURE", "0").strip().lower()
             in {"1", "true", "yes", "on"},
         )
@@ -130,6 +140,10 @@ class AuthConfig:
             errors.append("VIDTRANS_JWT_SECRET phải có ít nhất 32 byte")
         if not 5 <= self.token_ttl_minutes <= 10_080:
             errors.append("VIDTRANS_JWT_TTL_MINUTES phải từ 5 đến 10080")
+        if not 1 <= self.refresh_token_ttl_days <= 90:
+            errors.append("VIDTRANS_REFRESH_TOKEN_TTL_DAYS phải từ 1 đến 90")
+        if self.cookie_name == self.refresh_cookie_name:
+            errors.append("Tên cookie access và refresh token phải khác nhau")
         return errors
 
     @property
@@ -155,6 +169,7 @@ class AuthManager:
             "enabled": self.config.enabled,
             "configured": self.config.configured,
             "token_ttl_minutes": self.config.token_ttl_minutes if self.config.enabled else None,
+            "refresh_token_ttl_days": self.config.refresh_token_ttl_days if self.config.enabled else None,
             "configuration_errors": errors,
             "message": (
                 "Xác thực OAuth2/JWT đang tắt"
@@ -195,10 +210,18 @@ class AuthManager:
         user_id: str | None = None,
         role: str = "owner",
         scope: str = "admin",
+        token_use: str = "access",
+        remember: bool = False,
     ) -> tuple[str, int]:
         self._require_configured()
+        if token_use not in TOKEN_USES:
+            raise ValueError("token_use không hợp lệ")
         now = int(self._clock())
-        ttl_seconds = self.config.token_ttl_minutes * 60
+        ttl_seconds = (
+            self.config.refresh_token_ttl_days * 86_400
+            if token_use == "refresh"
+            else self.config.token_ttl_minutes * 60
+        )
         payload = {
             "sub": subject or self.config.username,
             "scope": scope,
@@ -210,7 +233,10 @@ class AuthManager:
             "iss": self.config.issuer,
             "aud": self.config.audience,
             "jti": uuid.uuid4().hex,
+            "token_use": token_use,
         }
+        if token_use == "refresh":
+            payload["remember"] = bool(remember)
         header = {"alg": JWT_ALGORITHM, "typ": "JWT"}
         signing_input = ".".join(
             [
@@ -225,7 +251,7 @@ class AuthManager:
         ).digest()
         return f"{signing_input}.{_b64url_encode(signature)}", ttl_seconds
 
-    def verify_token(self, token: str) -> dict[str, Any]:
+    def verify_token(self, token: str, *, token_use: str = "access") -> dict[str, Any]:
         self._require_configured()
         if not token or len(token) > 8192:
             raise InvalidTokenError("Token không hợp lệ")
@@ -270,6 +296,9 @@ class AuthManager:
             raise InvalidTokenError("JWT không có vai trò hợp lệ")
         if not isinstance(payload.get("user_id"), str) or not payload["user_id"]:
             raise InvalidTokenError("JWT thiếu user_id hợp lệ")
+        # Tokens issued before refresh support carry no token_use and are access tokens.
+        if payload.get("token_use", "access") != token_use:
+            raise InvalidTokenError("Loại JWT không được chấp nhận")
         return payload
 
     def _require_configured(self) -> None:

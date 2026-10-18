@@ -79,6 +79,8 @@ class AdminAccountStore:
                 db.execute("ALTER TABLE admin_accounts ADD COLUMN password_hash TEXT")
             if "video_retention_days" not in columns:
                 db.execute("ALTER TABLE admin_accounts ADD COLUMN video_retention_days INTEGER")
+            if "password_changed_at" not in columns:
+                db.execute("ALTER TABLE admin_accounts ADD COLUMN password_changed_at TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_admin_accounts_status ON admin_accounts(approval_status, payment_status)")
 
     @staticmethod
@@ -168,9 +170,11 @@ class AdminAccountStore:
         if not password_hash:
             raise AdminAccountError("Mật khẩu chưa được thiết lập")
         with self._db() as db:
+            now = utc_now()
+            # password_changed_at lets the API reject tokens issued before the change.
             result = db.execute(
-                "UPDATE admin_accounts SET password_hash=?,updated_at=? WHERE user_id=?",
-                (password_hash, utc_now(), user_id),
+                "UPDATE admin_accounts SET password_hash=?,password_changed_at=?,updated_at=? WHERE user_id=?",
+                (password_hash, now, now, user_id),
             )
         if result.rowcount != 1:
             raise AdminAccountError("Không tìm thấy người dùng")

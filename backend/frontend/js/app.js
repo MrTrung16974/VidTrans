@@ -53,7 +53,7 @@ function beginApiActionLoading() {
 const state = {
   files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
   tiktokAuth: null, appStarted: false,
-  douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false,
+  douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false, sessionRefreshTimer: null,
   sourceBrowserPlatform: "douyin", sourceBrowsers: {},
   adminAccounts: [], adminAccountSummary: null, adminRetentionDefaultDays: null, adminSearchTimer: null,
   billing: null,
@@ -84,11 +84,49 @@ function toast(message, isError = false) {
   toast.timer = setTimeout(() => element.classList.remove("show"), 3500);
 }
 
-function apiFetch(url, options = {}) {
-  const headers = new Headers(options.headers || {});
-  headers.set("X-VidTrans-Request", "1");
+let pendingSessionRefresh = null;
+
+// Exchange the HttpOnly refresh cookie for a new access token. Concurrent
+// callers share one request so a burst of 401s triggers a single refresh.
+function refreshSession() {
+  if (!pendingSessionRefresh) {
+    pendingSessionRefresh = fetch("/api/v1/auth/refresh", {
+      method: "POST",
+      headers: { "X-VidTrans-Request": "1" },
+      credentials: "same-origin",
+    })
+      .then(response => response.ok)
+      .catch(() => false)
+      .finally(() => { pendingSessionRefresh = null; });
+  }
+  return pendingSessionRefresh;
+}
+
+function scheduleSessionRefresh(ttlMinutes) {
+  clearInterval(state.sessionRefreshTimer);
+  state.sessionRefreshTimer = null;
+  if (!ttlMinutes) return;
+  // Renew two minutes before the access token expires.
+  const intervalMs = Math.max(60, ttlMinutes * 60 - 120) * 1000;
+  state.sessionRefreshTimer = setInterval(refreshSession, intervalMs);
+}
+
+async function apiFetch(url, options = {}) {
+  const send = () => {
+    const headers = new Headers(options.headers || {});
+    headers.set("X-VidTrans-Request", "1");
+    return fetch(url, { ...options, headers, credentials: "same-origin" });
+  };
   const endLoading = beginApiActionLoading();
-  return fetch(url, { ...options, headers, credentials: "same-origin" }).finally(endLoading);
+  try {
+    let response = await send();
+    if (response.status === 401 && !url.startsWith("/api/v1/auth/") && await refreshSession()) {
+      response = await send();
+    }
+    return response;
+  } finally {
+    endLoading();
+  }
 }
 
 function safeDownloadName(value, fallback = "vidtrans-download") {
@@ -127,8 +165,10 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   jobEvents.stop();
   clearInterval(state.pollTimer);
   clearInterval(state.douyinBrowserPollTimer);
+  clearInterval(state.sessionRefreshTimer);
   state.pollTimer = null;
   state.douyinBrowserPollTimer = null;
+  state.sessionRefreshTimer = null;
   state.appStarted = false;
   state.auth.authenticated = false;
   state.auth.role = "viewer";
@@ -159,7 +199,10 @@ async function requestJson(url, options = {}) {
 }
 
 async function refreshApplicationAuth() {
-  const status = await requestJson("/api/v1/auth/status");
+  let status = await requestJson("/api/v1/auth/status");
+  if (status.configured && !status.authenticated && await refreshSession()) {
+    status = await requestJson("/api/v1/auth/status");
+  }
   if (!status.enabled) {
     const account = await requestJson("/api/v1/me");
     Object.assign(status, { authenticated: true, username: account.email, role: account.role, user_id: account.user_id });
@@ -183,6 +226,7 @@ async function refreshApplicationAuth() {
     lockApplication("Nhập tài khoản quản trị để tiếp tục.", false);
     return false;
   }
+  scheduleSessionRefresh(status.token_ttl_minutes);
   $("#authGate").classList.add("is-hidden");
   applyPermissions();
   return true;
@@ -969,6 +1013,10 @@ function renderAdminAccounts() {
           <span class="save-icon" aria-hidden="true">✓</span>
           <span>Lưu</span>
         </button>
+        ${canResetPassword(item) ? `
+          <button class="button secondary mini-btn" type="button" data-admin-reset-password="${escapeHtml(item.user_id)}" data-email="${escapeHtml(item.email)}" title="Đặt lại mật khẩu">
+            <span aria-hidden="true">🔑</span>
+          </button>` : ""}
         ${item.role !== "owner" ? `
           <button class="button secondary mini-btn cancel-btn" type="button" data-admin-delete="${escapeHtml(item.user_id)}" title="Xóa tài khoản">
             <span>✕</span>
@@ -1032,6 +1080,62 @@ async function createAdminAccount(event) {
     await loadAdminAccounts();
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
+}
+
+// Mirrors the server rule: only the owner may reset another owner/admin.
+function canResetPassword(account) {
+  if (state.auth.role === "owner" || account.user_id === state.auth.user_id) return true;
+  return state.auth.role === "admin" && !["owner", "admin"].includes(account.role);
+}
+
+function setPasswordVisible(button, visible) {
+  if (!button) return;
+  const input = document.getElementById(button.dataset.passwordToggle);
+  input.type = visible ? "text" : "password";
+  const label = visible ? "Ẩn mật khẩu" : "Hiện mật khẩu";
+  button.setAttribute("aria-pressed", String(visible));
+  button.setAttribute("aria-label", label);
+  button.title = label;
+}
+
+function generatePassword(length = 16) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*?";
+  const values = crypto.getRandomValues(new Uint32Array(length));
+  return Array.from(values, value => alphabet[value % alphabet.length]).join("");
+}
+
+function openPasswordResetDialog(userId, email) {
+  const dialog = $("#passwordResetDialog");
+  dialog.dataset.userId = userId;
+  $("#passwordResetTarget").textContent = email;
+  $("#passwordResetValue").value = "";
+  setPasswordVisible($("[data-password-toggle=passwordResetValue]"), false);
+  $("#passwordResetSubmit").disabled = false;
+  dialog.showModal();
+  $("#passwordResetValue").focus();
+}
+
+async function submitPasswordReset(event) {
+  event.preventDefault();
+  const dialog = $("#passwordResetDialog");
+  const userId = dialog.dataset.userId;
+  const button = $("#passwordResetSubmit");
+  button.disabled = true;
+  try {
+    const body = new FormData();
+    body.set("new_password", $("#passwordResetValue").value);
+    const result = await requestJson(`/api/v1/admin/accounts/${encodeURIComponent(userId)}/password`, { method: "POST", body });
+    dialog.close();
+    $("#passwordResetValue").value = "";
+    if (userId === state.auth.user_id) {
+      lockApplication("Mật khẩu của bạn đã được đổi. Hãy đăng nhập lại.", false);
+      return;
+    }
+    toast(result.message || "Đã đặt lại mật khẩu");
+  } catch (error) {
+    toast(error.message, true);
+    button.disabled = false;
+  }
 }
 
 async function deleteAdminAccount(userId) {
@@ -1570,6 +1674,7 @@ $("#authLoginForm").addEventListener("submit", async event => {
     username: $("#authUsername").value.trim(),
     password: $("#authPassword").value,
     scope: "admin",
+    remember: $("#authRemember").checked ? "true" : "false",
   });
   button.disabled = true;
   message.textContent = "Đang xác thực…";
@@ -1581,6 +1686,7 @@ $("#authLoginForm").addEventListener("submit", async event => {
       body,
     });
     $("#authPassword").value = "";
+    setPasswordVisible($("[data-password-toggle=authPassword]"), false);
     if (await refreshApplicationAuth()) {
       await startProtectedApplication();
       toast("Đăng nhập VidTrans thành công");
@@ -1824,6 +1930,28 @@ $("#adminAccountsList").addEventListener("click", event => {
   if (button) saveAdminAccount(button.closest("[data-admin-account]"), button);
   const deleteBtn = event.target.closest("[data-admin-delete]");
   if (deleteBtn) deleteAdminAccount(deleteBtn.dataset.adminDelete);
+  const resetBtn = event.target.closest("[data-admin-reset-password]");
+  if (resetBtn) openPasswordResetDialog(resetBtn.dataset.adminResetPassword, resetBtn.dataset.email);
+});
+$("#passwordResetForm").addEventListener("submit", submitPasswordReset);
+$("#passwordResetCancel").addEventListener("click", () => $("#passwordResetDialog").close());
+$("#passwordResetGenerate").addEventListener("click", () => {
+  $("#passwordResetValue").value = generatePassword();
+  setPasswordVisible($("[data-password-toggle=passwordResetValue]"), true);
+});
+$("#passwordResetCopy").addEventListener("click", async () => {
+  const value = $("#passwordResetValue").value;
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("Đã sao chép mật khẩu");
+  } catch {
+    toast("Không thể sao chép. Hãy sao chép thủ công.", true);
+  }
+});
+document.addEventListener("click", event => {
+  const toggle = event.target.closest("[data-password-toggle]");
+  if (toggle) setPasswordVisible(toggle, toggle.getAttribute("aria-pressed") !== "true");
 });
 $$("[data-admin-subtab]").forEach(tabBtn => {
   tabBtn.addEventListener("click", () => {
