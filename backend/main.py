@@ -5182,5 +5182,13 @@ def custom_openapi() -> dict[str, Any]:
 app.openapi = custom_openapi
 
 
+@app.get("/googlefffecc69420e3aa8.html", include_in_schema=False)
+async def google_verification():
+    verification_path = FRONTEND_DIR / "googlefffecc69420e3aa8.html"
+    if verification_path.exists():
+        return FileResponse(verification_path, media_type="text/html")
+    return Response(content="google-site-verification: googlefffecc69420e3aa8.html\n", media_type="text/html")
+
+
 if FRONTEND_DIR.exists():
     app.mount("/", FrontendStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
