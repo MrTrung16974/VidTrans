@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+import numpy as np
+
 
 MAX_NATURAL_TEMPO = 1.08
 TEMPO_DEADBAND = 1.03
@@ -9,6 +11,8 @@ MAX_SYNTHESIS_RATE_BOOST_PERCENT = 12
 MAX_BORROWED_PAUSE_SECONDS = 0.45
 MIN_TRANSITION_GAP_SECONDS = 0.08
 VOICE_GAP_SECONDS = 0.025
+TARGET_SPEECH_RMS_DBFS = -17.0
+MAX_LEVEL_CORRECTION_DB = 6.0
 
 
 def bounded_tempo(rendered_duration: float, cue_duration: float) -> float:
@@ -91,3 +95,27 @@ def schedule_voice_segments(
         segment["tts_end"] = round(end, 3)
         segment["tts_drift"] = round(item["drift"], 3)
     return schedule
+
+
+def speech_level_gain(samples: np.ndarray) -> float:
+    """Linear gain bringing the voiced part of a clip to the target RMS.
+
+    Only the louder frames are measured so pauses inside a line do not make a
+    clip look quiet. The correction is bounded to keep dynamics natural.
+    """
+
+    if samples.size == 0:
+        return 1.0
+    frame = 480
+    usable = samples[: samples.size - samples.size % frame]
+    if usable.size == 0:
+        usable = samples
+        frame = samples.size
+    frame_rms = np.sqrt(np.mean(np.square(usable.reshape(-1, frame)), axis=1))
+    threshold = max(1e-4, 0.25 * float(np.max(frame_rms)))
+    voiced = frame_rms[frame_rms >= threshold]
+    if voiced.size == 0:
+        return 1.0
+    level_db = 20.0 * np.log10(float(np.sqrt(np.mean(np.square(voiced)))))
+    correction = max(-MAX_LEVEL_CORRECTION_DB, min(MAX_LEVEL_CORRECTION_DB, TARGET_SPEECH_RMS_DBFS - level_db))
+    return float(10.0 ** (correction / 20.0))

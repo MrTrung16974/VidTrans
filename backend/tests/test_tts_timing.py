@@ -2,18 +2,42 @@ from __future__ import annotations
 
 import unittest
 
+import numpy as np
+
 from pipeline.tts_timing import (
     MAX_BORROWED_PAUSE_SECONDS,
+    MAX_LEVEL_CORRECTION_DB,
+    TARGET_SPEECH_RMS_DBFS,
     MAX_NATURAL_TEMPO,
     MAX_SYNTHESIS_RATE_BOOST_PERCENT,
     adaptive_synthesis_rate_percent,
     available_voice_window,
     bounded_tempo,
     schedule_voice_segments,
+    speech_level_gain,
 )
 
 
+def tone(rms_dbfs: float, seconds: float = 1.0) -> np.ndarray:
+    time = np.arange(int(24000 * seconds)) / 24000
+    amplitude = np.sqrt(2) * 10 ** (rms_dbfs / 20)
+    return (amplitude * np.sin(2 * np.pi * 180 * time)).astype(np.float32)
+
+
 class TTSTimingTests(unittest.TestCase):
+    def test_level_gain_matches_quiet_and_loud_clips_to_target(self) -> None:
+        for level in (-21.0, -14.0):
+            gain = speech_level_gain(tone(level))
+            self.assertAlmostEqual(level + 20 * np.log10(gain), TARGET_SPEECH_RMS_DBFS, delta=0.2)
+
+    def test_level_gain_ignores_pauses_and_is_bounded(self) -> None:
+        with_pause = np.concatenate((tone(-20.0, 0.5), np.zeros(24000, dtype=np.float32), tone(-20.0, 0.5)))
+        self.assertAlmostEqual(speech_level_gain(with_pause * 10 ** (3 / 20)), 1.0, delta=0.03)
+        very_quiet = speech_level_gain(tone(-50.0))
+        self.assertAlmostEqual(20 * np.log10(very_quiet), MAX_LEVEL_CORRECTION_DB, delta=0.01)
+        self.assertEqual(speech_level_gain(np.zeros(100, dtype=np.float32)), 1.0)
+        self.assertEqual(speech_level_gain(np.zeros(0, dtype=np.float32)), 1.0)
+
     def test_tempo_never_exceeds_natural_limit(self) -> None:
         self.assertEqual(bounded_tempo(1.0, 1.0), 1.0)
         self.assertAlmostEqual(bounded_tempo(1.08, 1.0), 1.08)

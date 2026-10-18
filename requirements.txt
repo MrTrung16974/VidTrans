@@ -5,7 +5,7 @@ cryptography>=46,<51
 openai-whisper
 deep-translator
 gTTS
-edge-tts
+edge-tts>=7.3.1
 Pillow
 paddleocr==3.7.0
 # 3.3.1 has no CPython 3.11 Linux ARM64 wheel on PyPI. Docker Desktop on

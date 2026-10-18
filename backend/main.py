@@ -127,8 +127,9 @@ from pipeline.tts_timing import (
     available_voice_window,
     bounded_tempo,
     schedule_voice_segments,
+    speech_level_gain,
 )
-from pipeline.voice_routing import route_segments_by_pitch, route_segments_manually
+from pipeline.voice_routing import read_pcm_wav, route_segments_by_pitch, route_segments_manually
 
 try:
     import edge_tts
@@ -1278,6 +1279,29 @@ async def tts_edge_sync(
     await communicate.save(str(output_path))
 
 
+EDGE_TTS_ATTEMPTS = 4
+EDGE_TTS_RETRY_DELAY_SECONDS = 0.6
+
+
+def tts_edge_with_retry(
+    text: str, output_path: Path, voice_name: str, rate: str, pitch: str = "+0Hz"
+) -> None:
+    """Edge TTS drops requests intermittently; retry before giving up.
+
+    Falling back to gTTS swaps in an unrelated voice with no male/female or
+    pitch control, which is far more jarring than a short retry delay.
+    """
+    for attempt in range(1, EDGE_TTS_ATTEMPTS + 1):
+        try:
+            asyncio.run(tts_edge_sync(text, output_path, voice_name, rate, pitch))
+            return
+        except Exception as exc:
+            if attempt == EDGE_TTS_ATTEMPTS:
+                raise
+            logger.info("edge-tts attempt %d failed (%s); retrying", attempt, type(exc).__name__)
+            time.sleep(EDGE_TTS_RETRY_DELAY_SECONDS * attempt)
+
+
 def tts_gtts_sync(text: str, output_path: Path, slow: bool = False, language: str = "vi") -> None:
     gTTS(text=text, lang=language_profile(language).gtts_code, slow=slow).save(str(output_path))
 
@@ -1296,7 +1320,6 @@ def synthesize_tts_segments(
     preset = voice_preset(voice_style)
     rate_percent = int((speech_rate - 1.0) * 100) + preset.rate_percent
     base_rate_string = f"{rate_percent:+d}%"
-    pitch_string = f"{preset.pitch_hz:+d}Hz"
 
     import concurrent.futures
     import threading
@@ -1359,6 +1382,11 @@ def synthesize_tts_segments(
         selected_voice_type = str(segment.get("voice_type", voice_type))
         profile = language_profile(target_language)
         voice_name = profile.edge_voice(selected_voice_type)
+        # Auto voice routing nudges each speaker turn towards the source F0;
+        # Edge applies it inside synthesis, which keeps formants natural.
+        pitch_hz = preset.pitch_hz + int(segment.get("voice_pitch_offset_hz") or 0)
+        pitch_hz = max(-MAX_TTS_PITCH_OFFSET_HZ, min(MAX_TTS_PITCH_OFFSET_HZ, pitch_hz))
+        pitch_string = f"{pitch_hz:+d}Hz"
 
         # Pass 1: generate at the requested expressive rate and measure it.
         # When a line is too long, a second native TTS render is preferable to
@@ -1366,7 +1394,7 @@ def synthesize_tts_segments(
         edge_succeeded = False
         effective_rate_percent = rate_percent
         try:
-            asyncio.run(tts_edge_sync(text, output_path, voice_name, base_rate_string, pitch_string))
+            tts_edge_with_retry(text, output_path, voice_name, base_rate_string, pitch_string)
             edge_succeeded = True
         except Exception as exc:
             logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
@@ -1408,10 +1436,8 @@ def synthesize_tts_segments(
             candidate_rate_percent = rate_percent + native_rate_boost
             candidate_rate_string = f"{candidate_rate_percent:+d}%"
             try:
-                asyncio.run(
-                    tts_edge_sync(
-                        text, adaptive_output_path, voice_name, candidate_rate_string, pitch_string
-                    )
+                tts_edge_with_retry(
+                    text, adaptive_output_path, voice_name, candidate_rate_string, pitch_string
                 )
                 run_ffmpeg(
                     [
@@ -1498,6 +1524,11 @@ def synthesize_tts_segments(
     return paths
 
 
+MAX_TTS_PITCH_OFFSET_HZ = 40
+VOICE_FADE_IN_SECONDS = 0.012
+VOICE_FADE_OUT_SECONDS = 0.04
+
+
 def build_atempo_filter(speed_factor: float) -> str:
     """Build an FFmpeg atempo chain while keeping every factor in [0.5, 2]."""
     factor = max(0.5, float(speed_factor))
@@ -1528,8 +1559,15 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
             continue
         delay_ms = max(0, int(tts_start * 1000))
         input_args.extend(["-i", str(tts_path)])
+        gain = voice_clip_gain(Path(tts_path))
+        segment["tts_level_gain"] = round(gain, 3)
+        duration = float(segment.get("tts_duration") or 0.0)
+        # Short fades remove clicks where the trimmed clip starts/ends mid-wave.
+        fades = f"afade=t=in:d={VOICE_FADE_IN_SECONDS}"
+        if duration > VOICE_FADE_OUT_SECONDS * 2:
+            fades += f",afade=t=out:st={duration - VOICE_FADE_OUT_SECONDS:.3f}:d={VOICE_FADE_OUT_SECONDS}"
         filter_parts.append(
-            f"[{input_index}:a]adelay={delay_ms}|{delay_ms},volume=1.4[a{input_index}]"
+            f"[{input_index}:a]{fades},adelay={delay_ms}|{delay_ms},volume={1.4 * gain:.3f}[a{input_index}]"
         )
         labels.append(f"[a{input_index}]")
         input_index += 1
@@ -1590,6 +1628,19 @@ def has_audio_stream(video_path: Path) -> bool:
     return result.returncode == 0 and bool((result.stdout or "").strip())
 
 
+def voice_clip_gain(clip_path: Path) -> float:
+    """Gain that brings a TTS clip to the common speech level.
+
+    Male and female Edge voices, and lines rendered at different rates, come
+    out at noticeably different loudness; matching them avoids volume jumps.
+    """
+    try:
+        samples, _ = read_pcm_wav(clip_path)
+    except (OSError, ValueError, EOFError):
+        return 1.0
+    return speech_level_gain(samples)
+
+
 def extract_voice_analysis_audio(video_path: Path, output_path: Path) -> Path:
     """Create the compact mono PCM input used by the local pitch router."""
     run_ffmpeg(
@@ -1599,6 +1650,9 @@ def extract_voice_analysis_audio(video_path: Path, output_path: Path) -> Path:
             "-i",
             str(video_path),
             "-vn",
+            # Drop mains hum/bass and hiss outside the voice F0 + low harmonics.
+            "-af",
+            "highpass=f=65,lowpass=f=1500",
             "-ac",
             "1",
             "-ar",
@@ -2385,7 +2439,7 @@ def process_video(
                         }
                         for segment in translated_segments
                     ],
-                    "tts_pipeline_version": 2,
+                    "tts_pipeline_version": 3,
                 }
             )
             tts_checkpoint = checkpoint_store.load_json(
