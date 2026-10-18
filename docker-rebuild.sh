@@ -46,7 +46,11 @@ escape_password_hash_for_compose() {
 # Compose working directory before replacing the service containers.
 cleanup_compose_oneoffs() {
     local -a containers=()
-    mapfile -t containers < <(docker ps -aq \
+    local container
+    # `mapfile` needs bash 4+; macOS ships bash 3.2, so read line by line.
+    while IFS= read -r container; do
+        [[ -n "$container" ]] && containers+=("$container")
+    done < <(docker ps -aq \
         --filter "label=com.docker.compose.oneoff=True" \
         --filter "label=com.docker.compose.project.working_dir=$PWD")
     if (( ${#containers[@]} > 0 )); then

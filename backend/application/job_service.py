@@ -96,8 +96,8 @@ class JobService:
         self._changed(job_id)
         return deleted
 
-    def prune_terminal(self, cutoff: str) -> dict[str, Any]:
-        removed = self._store.prune_terminal(cutoff)
+    def prune_terminal(self, cutoff: str, **scope: Any) -> dict[str, Any]:
+        removed = self._store.prune_terminal(cutoff, **scope)
         if removed["jobs"]:
             self._changed("*")
         return removed

@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 
 class JobStoreError(RuntimeError):
@@ -663,15 +663,45 @@ class SQLiteJobStore:
             connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
         return payload
 
-    def prune_terminal(self, cutoff: str) -> dict[str, Any]:
-        """Delete terminal jobs older than cutoff and return their storage identity."""
+    def prune_terminal(
+        self,
+        cutoff: str,
+        *,
+        owner_user_id: str | None = None,
+        exclude_owner_user_ids: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        """Delete terminal jobs older than cutoff and return their storage identity.
+
+        ``owner_user_id`` limits pruning to one tenant; ``exclude_owner_user_ids``
+        skips tenants governed by their own retention policy. Jobs with a social
+        publish attempt that has not finished yet are kept so scheduled posts
+        never lose their video.
+        """
         terminal = ("completed", "failed", "cancelled")
+        excluded = sorted({str(item) for item in exclude_owner_user_ids if str(item)})
+        owner_clause, owner_values = "", []
+        if owner_user_id is not None:
+            owner_clause = " AND owner_user_id=?"
+            owner_values.append(owner_user_id)
+        if excluded:
+            owner_clause += f" AND owner_user_id NOT IN ({','.join('?' * len(excluded))})"
+            owner_values.extend(excluded)
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            publish_clause = ""
+            for table in ("tiktok_publish_attempts", "social_publish_attempts"):
+                exists = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                ).fetchone()
+                if exists is not None:
+                    publish_clause += (
+                        f" AND NOT EXISTS (SELECT 1 FROM {table} p WHERE p.job_id=jobs.job_id "
+                        "AND p.status NOT IN ('PUBLISH_COMPLETE','SEND_TO_USER_INBOX','FAILED','CANCELLED'))"
+                    )
             rows = connection.execute(
                 "SELECT job_id,owner_user_id,payload_json FROM jobs "
-                "WHERE status IN (?,?,?) AND updated_at < ?",
-                (*terminal, cutoff),
+                f"WHERE status IN (?,?,?) AND updated_at < ?{owner_clause}{publish_clause}",
+                (*terminal, cutoff, *owner_values),
             ).fetchall()
             removed = [
                 {
@@ -686,16 +716,15 @@ class SQLiteJobStore:
                     "DELETE FROM jobs WHERE job_id=?",
                     [(str(row["job_id"]),) for row in rows],
                 )
-            orphan_batches = connection.execute(
-                "SELECT batch_id,owner_user_id FROM batches WHERE updated_at < ? "
-                "AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.batch_id=batches.batch_id)",
-                (cutoff,),
-            ).fetchall()
-            connection.execute(
-                "DELETE FROM batches WHERE updated_at < ? "
-                "AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.batch_id=batches.batch_id)",
-                (cutoff,),
+            batch_filter = (
+                f"WHERE updated_at < ?{owner_clause} "
+                "AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.batch_id=batches.batch_id)"
             )
+            orphan_batches = connection.execute(
+                f"SELECT batch_id,owner_user_id FROM batches {batch_filter}",
+                (cutoff, *owner_values),
+            ).fetchall()
+            connection.execute(f"DELETE FROM batches {batch_filter}", (cutoff, *owner_values))
         return {
             "jobs": removed,
             "batches": [

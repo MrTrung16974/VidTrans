@@ -2922,17 +2922,16 @@ def retention_days(name: str, default: int) -> int:
         return default
 
 
-def apply_retention_policy() -> None:
-    """Prune old terminal tenant data only when explicitly enabled."""
-    if os.environ.get("VIDTRANS_RETENTION_ENABLED", "0").lower() not in {"1", "true", "yes"}:
-        return
-    now = datetime.now(timezone.utc)
-    job_cutoff = (now - timedelta(days=retention_days("VIDTRANS_JOB_RETENTION_DAYS", 30))).isoformat()
-    audit_cutoff = (now - timedelta(days=retention_days("VIDTRANS_AUDIT_RETENTION_DAYS", 365))).isoformat()
-    released_quota_cutoff = (
-        now - timedelta(days=retention_days("VIDTRANS_RELEASED_QUOTA_RETENTION_DAYS", 90))
-    ).isoformat()
-    removed = JOB_SERVICE.prune_terminal(job_cutoff)
+def retention_enabled() -> bool:
+    return os.environ.get("VIDTRANS_RETENTION_ENABLED", "0").lower() in {"1", "true", "yes"}
+
+
+def default_video_retention_days() -> int | None:
+    """System-wide job/video retention, or None when automatic deletion is off."""
+    return retention_days("VIDTRANS_JOB_RETENTION_DAYS", 30) if retention_enabled() else None
+
+
+def remove_pruned_storage(removed: dict[str, Any]) -> None:
     for job in removed["jobs"]:
         for root in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR):
             path = tenant_storage_path(root, job["owner_user_id"], job["job_id"])
@@ -2942,6 +2941,32 @@ def apply_retention_policy() -> None:
         path = tenant_storage_path(UPLOAD_DIR, batch["owner_user_id"], batch["batch_id"])
         if path.is_dir():
             shutil.rmtree(path)
+
+
+def apply_retention_policy() -> None:
+    """Prune old terminal jobs per account policy, then the system-wide policy if enabled."""
+    now = datetime.now(timezone.utc)
+    overrides = ADMIN_ACCOUNTS.video_retention_overrides()
+    account_removed = 0
+    for user_id, days in overrides.items():
+        if days <= 0:
+            continue
+        removed = JOB_SERVICE.prune_terminal(
+            (now - timedelta(days=days)).isoformat(), owner_user_id=user_id
+        )
+        remove_pruned_storage(removed)
+        account_removed += len(removed["jobs"])
+    if account_removed:
+        logger.info("Per-account video retention removed %d jobs", account_removed)
+    if not retention_enabled():
+        return
+    job_cutoff = (now - timedelta(days=retention_days("VIDTRANS_JOB_RETENTION_DAYS", 30))).isoformat()
+    audit_cutoff = (now - timedelta(days=retention_days("VIDTRANS_AUDIT_RETENTION_DAYS", 365))).isoformat()
+    released_quota_cutoff = (
+        now - timedelta(days=retention_days("VIDTRANS_RELEASED_QUOTA_RETENTION_DAYS", 90))
+    ).isoformat()
+    removed = JOB_SERVICE.prune_terminal(job_cutoff, exclude_owner_user_ids=overrides.keys())
+    remove_pruned_storage(removed)
     governance_removed = TENANT_GOVERNANCE.prune(
         audit_cutoff=audit_cutoff,
         released_quota_cutoff=released_quota_cutoff,
@@ -2951,10 +2976,26 @@ def apply_retention_policy() -> None:
         len(removed["jobs"]), len(removed["batches"]), governance_removed["audit_events"],
         governance_removed["released_quota_rows"],
     )
+
+
+async def run_retention_loop() -> None:
+    try:
+        interval = max(5, int(os.environ.get("VIDTRANS_RETENTION_INTERVAL_MINUTES", "60"))) * 60
+    except ValueError:
+        interval = 3600
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(apply_retention_policy)
+        except Exception:
+            logger.exception("Retention sweep failed")
+
+
 @app.on_event("startup")
 async def start_job_scheduler() -> None:
     await JOB_EVENTS.start()
     apply_retention_policy()
+    app.state.retention_task = asyncio.create_task(run_retention_loop())
     if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() in {"1", "true", "yes"}:
         requeued = JOB_SERVICE.requeue_interrupted()
         if requeued:
@@ -2979,6 +3020,9 @@ async def start_job_scheduler() -> None:
 @app.on_event("shutdown")
 async def stop_job_scheduler() -> None:
     await JOB_EVENTS.stop()
+    retention_task = getattr(app.state, "retention_task", None)
+    if retention_task is not None:
+        retention_task.cancel()
     scheduler = getattr(app.state, "job_scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
@@ -3007,7 +3051,7 @@ def notify_workflow_dispatcher() -> None:
 def public_admin_account(account: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "user_id", "email", "display_name", "role", "approval_status", "plan",
-        "payment_status", "approved_at", "created_at", "updated_at",
+        "payment_status", "approved_at", "created_at", "updated_at", "video_retention_days",
     }
     return {key: account.get(key) for key in allowed}
 
@@ -3033,7 +3077,14 @@ def list_admin_accounts(
             items.append(item)
     except AdminAccountError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return JSONResponse({"items": items, "total": len(items)}, headers={"Cache-Control": "no-store"})
+    return JSONResponse(
+        {
+            "items": items,
+            "total": len(items),
+            "video_retention": {"default_days": default_video_retention_days()},
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/api/v1/admin/accounts", status_code=201)
@@ -3073,8 +3124,15 @@ def update_admin_account(
     approval_status: str = Form(..., max_length=32),
     plan: str = Form(..., max_length=32),
     payment_status: str = Form(..., max_length=32),
+    video_retention_days: str | None = Form(None, max_length=16),
 ) -> JSONResponse:
+    """``video_retention_days``: "default" follows the system policy, "0" never deletes."""
     actor = require_roles(request, "owner", "admin")
+    changes: dict[str, Any] = {}
+    if video_retention_days is not None:
+        changes["video_retention_days"] = (
+            None if video_retention_days.strip().lower() == "default" else video_retention_days.strip()
+        )
     try:
         account = ADMIN_ACCOUNTS.update(
             user_id,
@@ -3083,6 +3141,7 @@ def update_admin_account(
             approval_status=approval_status,
             plan=plan,
             payment_status=payment_status,
+            **changes,
         )
         TENANT_GOVERNANCE.audit(
             actor_user_id=actor["user_id"],
@@ -3096,6 +3155,7 @@ def update_admin_account(
                 "approval_status": approval_status,
                 "plan": plan,
                 "payment_status": payment_status,
+                "video_retention_days": account.get("video_retention_days"),
             },
         )
     except AdminAccountError as exc:

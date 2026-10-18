@@ -24,6 +24,22 @@ class AdminAccountStoreTests(unittest.TestCase):
             {"total": 1, "approved": 1, "pending": 0, "payment_attention": 0},
         )
 
+    def test_video_retention_days_per_account(self) -> None:
+        account = self.store.create(email="ret@example.com", display_name="Ret")
+        self.assertIsNone(account["video_retention_days"])
+        self.assertEqual(self.store.video_retention_overrides(), {})
+        updated = self.store.update(account["user_id"], video_retention_days="7")
+        self.assertEqual(updated["video_retention_days"], 7)
+        self.store.update(account["user_id"], plan="pro")
+        self.assertEqual(self.store.video_retention_overrides(), {account["user_id"]: 7})
+        self.store.update(account["user_id"], video_retention_days=0)
+        self.assertEqual(self.store.video_retention_overrides(), {account["user_id"]: 0})
+        for bad in ("-1", "abc", "99999"):
+            with self.assertRaises(AdminAccountError):
+                self.store.update(account["user_id"], video_retention_days=bad)
+        self.store.update(account["user_id"], video_retention_days=None)
+        self.assertEqual(self.store.video_retention_overrides(), {})
+
     def test_create_search_filter_and_reject_duplicate_email(self) -> None:
         account = self.store.create(
             email="Creator@Example.com", display_name="Nhà sáng tạo", role="editor", plan="creator"

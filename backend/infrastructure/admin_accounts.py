@@ -12,6 +12,8 @@ ROLES = {"owner", "admin", "editor", "viewer"}
 APPROVAL_STATUSES = {"pending", "approved", "suspended", "rejected"}
 PAYMENT_STATUSES = {"trial", "active", "past_due", "cancelled", "exempt"}
 PLANS = {"free", "creator", "pro", "enterprise"}
+# NULL = follow the system-wide policy, 0 = never delete automatically.
+MAX_VIDEO_RETENTION_DAYS = 3650
 
 
 class AdminAccountError(ValueError):
@@ -75,6 +77,8 @@ class AdminAccountStore:
             columns = {row[1] for row in db.execute("PRAGMA table_info(admin_accounts)").fetchall()}
             if "password_hash" not in columns:
                 db.execute("ALTER TABLE admin_accounts ADD COLUMN password_hash TEXT")
+            if "video_retention_days" not in columns:
+                db.execute("ALTER TABLE admin_accounts ADD COLUMN video_retention_days INTEGER")
             db.execute("CREATE INDEX IF NOT EXISTS idx_admin_accounts_status ON admin_accounts(approval_status, payment_status)")
 
     @staticmethod
@@ -99,6 +103,18 @@ class AdminAccountStore:
         if payment_status not in PAYMENT_STATUSES:
             raise AdminAccountError("Trạng thái thanh toán không hợp lệ")
         return email, display_name
+
+    @staticmethod
+    def _validate_retention(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            days = int(value)
+        except (TypeError, ValueError) as exc:
+            raise AdminAccountError("Thời gian lưu video không hợp lệ") from exc
+        if isinstance(value, bool) or not 0 <= days <= MAX_VIDEO_RETENTION_DAYS:
+            raise AdminAccountError(f"Thời gian lưu video phải từ 0 đến {MAX_VIDEO_RETENTION_DAYS} ngày")
+        return days
 
     def ensure_owner(self, username: str, password_hash: str = "") -> None:
         email = username if "@" in username else f"{username}@local.vidtrans"
@@ -179,7 +195,10 @@ class AdminAccountStore:
 
     def update(self, user_id: str, **changes: Any) -> dict[str, Any]:
         current = self.get(user_id)
-        allowed = {"display_name", "role", "approval_status", "plan", "payment_status", "provider_customer_ref"}
+        allowed = {
+            "display_name", "role", "approval_status", "plan", "payment_status",
+            "provider_customer_ref", "video_retention_days",
+        }
         unknown = set(changes) - allowed
         if unknown:
             raise AdminAccountError("Trường cập nhật không hợp lệ")
@@ -196,6 +215,7 @@ class AdminAccountStore:
         provider_ref = merged.get("provider_customer_ref")
         if provider_ref is not None and len(str(provider_ref)) > 200:
             raise AdminAccountError("Mã khách hàng thanh toán quá dài")
+        video_retention_days = self._validate_retention(merged.get("video_retention_days"))
         now = utc_now()
         approved_at = current.get("approved_at")
         if merged["approval_status"] == "approved" and not approved_at:
@@ -203,10 +223,18 @@ class AdminAccountStore:
         with self._db() as db:
             db.execute("""
                 UPDATE admin_accounts SET display_name=?,role=?,approval_status=?,plan=?,payment_status=?,
-                    provider_customer_ref=?,approved_at=?,updated_at=? WHERE user_id=?
+                    provider_customer_ref=?,video_retention_days=?,approved_at=?,updated_at=? WHERE user_id=?
             """, (display_name, merged["role"], merged["approval_status"], merged["plan"],
-                  merged["payment_status"], provider_ref, approved_at, now, user_id))
+                  merged["payment_status"], provider_ref, video_retention_days, approved_at, now, user_id))
         return self.get(user_id)
+
+    def video_retention_overrides(self) -> dict[str, int]:
+        """Return user_id -> retention days for accounts with their own policy."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT user_id,video_retention_days FROM admin_accounts WHERE video_retention_days IS NOT NULL"
+            ).fetchall()
+        return {str(row["user_id"]): int(row["video_retention_days"]) for row in rows}
 
     def summary(self) -> dict[str, Any]:
         with self._db() as db:

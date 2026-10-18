@@ -203,6 +203,25 @@ class SQLiteJobStoreTests(unittest.TestCase):
         self.assertIsNotNone(self.store.get("recent-done"))
         self.assertIsNotNone(self.store.get("old-active"))
 
+    def test_prune_terminal_scopes_by_owner_and_keeps_pending_publishes(self) -> None:
+        for job_id, owner in (("a-old", "user-a"), ("b-old", "user-b"), ("a-scheduled", "user-a")):
+            self.store.create(job_id, {"status": "completed"}, owner_user_id=owner)
+        old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        with self.store._connection() as conn:
+            conn.execute("UPDATE jobs SET updated_at=?", (old,))
+            conn.execute("CREATE TABLE social_publish_attempts (job_id TEXT, status TEXT)")
+            conn.execute("INSERT INTO social_publish_attempts VALUES ('a-scheduled','SCHEDULED_LOCAL')")
+
+        removed = self.store.prune_terminal(cutoff, owner_user_id="user-a")
+        self.assertEqual([item["job_id"] for item in removed["jobs"]], ["a-old"])
+        self.assertIsNotNone(self.store.get("b-old"))
+        self.assertIsNotNone(self.store.get("a-scheduled"))
+
+        removed = self.store.prune_terminal(cutoff, exclude_owner_user_ids=["user-b"])
+        self.assertEqual(removed["jobs"], [])
+        self.assertIsNotNone(self.store.get("b-old"))
+
     def test_triggers_reject_empty_or_null_owner(self) -> None:
         import sqlite3
         with self.store._connection() as conn:

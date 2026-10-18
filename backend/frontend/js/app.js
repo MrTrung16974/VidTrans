@@ -54,7 +54,7 @@ const state = {
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false,
   sourceBrowserPlatform: "douyin", sourceBrowsers: {},
-  adminAccounts: [], adminAccountSummary: null, adminSearchTimer: null,
+  adminAccounts: [], adminAccountSummary: null, adminRetentionDefaultDays: null, adminSearchTimer: null,
   billing: null,
   auth: { enabled: false, configured: false, authenticated: false, username: null, role: "viewer", user_id: null },
 };
@@ -912,6 +912,18 @@ function adminSelect(name, value, options, label, disabled = false) {
   </label>`;
 }
 
+const ADMIN_RETENTION_DAYS = [1, 3, 7, 14, 30, 60, 90, 180, 365];
+
+function adminRetentionOptions(current) {
+  const defaultDays = state.adminRetentionDefaultDays;
+  const options = [["default", `Mặc định (${defaultDays ? `${defaultDays} ngày` : "không xoá"})`]];
+  const days = new Set(ADMIN_RETENTION_DAYS);
+  if (current != null && Number(current) > 0) days.add(Number(current));
+  [...days].sort((a, b) => a - b).forEach(value => options.push([String(value), `Xoá sau ${value} ngày`]));
+  options.push(["0", "Không tự xoá"]);
+  return options;
+}
+
 function renderAdminAccounts() {
   const summary = state.adminAccountSummary || {};
   $("#adminTotalCount").textContent = summary.total || 0;
@@ -950,6 +962,7 @@ function renderAdminAccounts() {
       ${adminSelect("approval_status", item.approval_status, approvals, "Phê duyệt", item.role === "owner")}
       ${adminSelect("plan", item.plan, plans, "Gói dịch vụ")}
       ${adminSelect("payment_status", item.payment_status, payments, "Thanh toán")}
+      ${adminSelect("video_retention_days", item.video_retention_days == null ? "default" : String(item.video_retention_days), adminRetentionOptions(item.video_retention_days), "Lưu video")}
       <div class="admin-action-cell" style="display: flex; gap: 6px; align-items: center;">
         <button class="button secondary btn-admin-save" type="button" data-admin-save title="Lưu thay đổi tài khoản này">
           <span class="save-icon" aria-hidden="true">✓</span>
@@ -985,6 +998,7 @@ async function loadAdminAccounts() {
     ]);
     state.adminAccountSummary = summary;
     state.adminAccounts = accounts.items || [];
+    state.adminRetentionDefaultDays = accounts.video_retention?.default_days ?? null;
     renderAdminAccounts();
   } catch (error) {
     $("#adminAccountsList").innerHTML = `<div class="empty-state error"><strong>${escapeHtml(error.message)}</strong></div>`;
@@ -995,7 +1009,7 @@ async function saveAdminAccount(row, button) {
   button.disabled = true;
   try {
     const formData = new FormData();
-    ["display_name", "role", "approval_status", "plan", "payment_status"].forEach(name => formData.set(name, row.querySelector(`[name="${name}"]`).value));
+    ["display_name", "role", "approval_status", "plan", "payment_status", "video_retention_days"].forEach(name => formData.set(name, row.querySelector(`[name="${name}"]`).value));
     await requestJson(`/api/v1/admin/accounts/${encodeURIComponent(row.dataset.adminAccount)}`, { method: "POST", body: formData });
     toast("Đã cập nhật tài khoản");
     await loadAdminAccounts();
