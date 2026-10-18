@@ -1228,18 +1228,39 @@ function renderAdminAudit(events) {
   }
   list.innerHTML = events.map(evt => {
     const time = evt.created_at ? new Date(evt.created_at).toLocaleString("vi-VN") : "—";
-    const actor = evt.actor_email || evt.actor_user_id;
+    const actor = evt.actor_email || evt.actor_user_id || "—";
     const target = evt.target_email || evt.target_user_id || "—";
     const metaStr = JSON.stringify(evt.metadata || {});
+    const resourceType = evt.resource_type || "—";
+    const resourceId = evt.resource_id ? `:${evt.resource_id}` : "";
+    const resourceFull = `${resourceType}${resourceId}`;
 
     return `
       <div class="admin-audit-row">
-        <small>${time}</small>
-        <strong>${escapeHtml(actor)}</strong>
-        <div><span class="badge badge-info">${escapeHtml(evt.action)}</span></div>
-        <div><small>${escapeHtml(evt.resource_type || "—")}${evt.resource_id ? `:${escapeHtml(evt.resource_id)}` : ""}</small></div>
-        <div>${escapeHtml(target)}</div>
-        <div class="audit-metadata-code" title="${escapeHtml(metaStr)}">${escapeHtml(metaStr)}</div>
+        <div class="audit-col audit-col-time">
+          <span class="audit-col-label">Thời gian</span>
+          <span class="audit-time-val">${escapeHtml(time)}</span>
+        </div>
+        <div class="audit-col audit-col-actor">
+          <span class="audit-col-label">Quản trị viên</span>
+          <strong class="audit-actor-val" title="${escapeHtml(actor)}">${escapeHtml(actor)}</strong>
+        </div>
+        <div class="audit-col audit-col-action">
+          <span class="audit-col-label">Hành động</span>
+          <span class="badge badge-info audit-badge" title="${escapeHtml(evt.action || "—")}">${escapeHtml(evt.action || "—")}</span>
+        </div>
+        <div class="audit-col audit-col-resource">
+          <span class="audit-col-label">Tài nguyên</span>
+          <span class="audit-resource-val" title="${escapeHtml(resourceFull)}">${escapeHtml(resourceFull)}</span>
+        </div>
+        <div class="audit-col audit-col-target">
+          <span class="audit-col-label">Mục tiêu</span>
+          <span class="audit-target-val" title="${escapeHtml(target)}">${escapeHtml(target)}</span>
+        </div>
+        <div class="audit-col audit-col-meta">
+          <span class="audit-col-label">Chi tiết</span>
+          <div class="audit-metadata-code" title="${escapeHtml(metaStr)}">${escapeHtml(metaStr)}</div>
+        </div>
       </div>
     `;
   }).join("");

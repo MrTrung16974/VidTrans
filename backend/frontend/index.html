@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261018-8" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261018-9" />
   </head>
   <body>
     <div class="app-shell">
@@ -1418,17 +1418,19 @@
                   </select>
                 </div>
               </div>
-              <div class="admin-account-head" aria-hidden="true">
-                <span>Người dùng</span>
-                <span>Vai trò</span>
-                <span>Phê duyệt</span>
-                <span>Gói dịch vụ</span>
-                <span>Thanh toán</span>
-                <span title="Tự động xoá video đã build (job hoàn tất/lỗi/huỷ) sau số ngày cấu hình">Lưu video</span>
-                <span class="col-action-title">Hành động</span>
-              </div>
-              <div id="adminAccountsList" class="admin-accounts-list">
-                <div class="empty-state"><strong>Đang tải tài khoản…</strong></div>
+              <div class="admin-table-container">
+                <div class="admin-account-head" aria-hidden="true">
+                  <span>Người dùng</span>
+                  <span>Vai trò</span>
+                  <span>Phê duyệt</span>
+                  <span>Gói dịch vụ</span>
+                  <span>Thanh toán</span>
+                  <span title="Tự động xoá video đã build (job hoàn tất/lỗi/huỷ) sau số ngày cấu hình">Lưu video</span>
+                  <span class="col-action-title">Hành động</span>
+                </div>
+                <div id="adminAccountsList" class="admin-accounts-list">
+                  <div class="empty-state"><strong>Đang tải tài khoản…</strong></div>
+                </div>
               </div>
             </section>
           </div>
@@ -1472,17 +1474,19 @@
                 </button>
               </div>
 
-              <div class="admin-jobs-head" aria-hidden="true">
-                <span>Job ID</span>
-                <span>Người dùng</span>
-                <span>Tên video</span>
-                <span>Trạng thái</span>
-                <span>Tiến độ</span>
-                <span>Thời gian tạo</span>
-                <span class="col-action-title">Thao tác</span>
-              </div>
-              <div id="adminJobsList" class="admin-jobs-list">
-                <div class="empty-state"><strong>Đang tải danh sách jobs…</strong></div>
+              <div class="admin-table-container">
+                <div class="admin-jobs-head" aria-hidden="true">
+                  <span>Job ID</span>
+                  <span>Người dùng</span>
+                  <span>Tên video</span>
+                  <span>Trạng thái</span>
+                  <span>Tiến độ</span>
+                  <span>Thời gian tạo</span>
+                  <span class="col-action-title">Thao tác</span>
+                </div>
+                <div id="adminJobsList" class="admin-jobs-list">
+                  <div class="empty-state"><strong>Đang tải danh sách jobs…</strong></div>
+                </div>
               </div>
             </section>
           </div>
@@ -1511,16 +1515,18 @@
                 </button>
               </div>
 
-              <div class="admin-audit-head" aria-hidden="true">
-                <span>Thời gian (UTC)</span>
-                <span>Quản trị viên (Actor)</span>
-                <span>Hành động</span>
-                <span>Tài nguyên</span>
-                <span>Người dùng mục tiêu</span>
-                <span>Chi tiết</span>
-              </div>
-              <div id="adminAuditList" class="admin-audit-list">
-                <div class="empty-state"><strong>Đang tải nhật ký kiểm toán…</strong></div>
+              <div class="admin-table-container">
+                <div class="admin-audit-head" aria-hidden="true">
+                  <span>Thời gian (UTC)</span>
+                  <span>Quản trị viên (Actor)</span>
+                  <span>Hành động</span>
+                  <span>Tài nguyên</span>
+                  <span>Người dùng mục tiêu</span>
+                  <span>Chi tiết</span>
+                </div>
+                <div id="adminAuditList" class="admin-audit-list">
+                  <div class="empty-state"><strong>Đang tải nhật ký kiểm toán…</strong></div>
+                </div>
               </div>
             </section>
           </div>
@@ -1698,6 +1704,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261018-8"></script>
+    <script type="module" src="/js/app.js?v=20261018-9"></script>
   </body>
 </html>
