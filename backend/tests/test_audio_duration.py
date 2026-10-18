@@ -7,11 +7,56 @@ import unittest
 from pathlib import Path
 
 from infrastructure.media_probe import probe_media_file
-from main import FFMPEG, FFPROBE, get_media_duration, mix_audio, wrap_text, write_srt
+from main import (
+    DEFAULT_ORIGINAL_AUDIO_VOLUME,
+    DEFAULT_VOICE_MIX_GAIN,
+    FFMPEG,
+    FFPROBE,
+    get_media_duration,
+    mix_audio,
+    normalize_subtitle_style,
+    wrap_text,
+    write_ass,
+    write_srt,
+)
 
 
 @unittest.skipUnless(shutil.which(FFMPEG) and shutil.which(FFPROBE), "ffmpeg/ffprobe required")
 class AudioDurationIntegrationTests(unittest.TestCase):
+    def test_balanced_default_voice_and_original_audio_levels(self) -> None:
+        self.assertEqual(DEFAULT_VOICE_MIX_GAIN, 1.10)
+        self.assertEqual(DEFAULT_ORIGINAL_AUDIO_VOLUME, 0.50)
+
+    def test_colored_box_style_is_normalized_for_ass(self) -> None:
+        style = normalize_subtitle_style(
+            {
+                "text_color_css": "#FFEE00",
+                "background_color_css": "#102030",
+                "background_opacity": 0.8,
+                "background_box": True,
+            }
+        )
+        self.assertEqual(style["primary_color"], "&H0000EEFF")
+        self.assertEqual(style["back_color"], "&H33302010")
+        self.assertEqual(style["border_style"], 3)
+
+    def test_ass_writes_opaque_box_style_from_css_colors(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vidtrans-ass-color-") as directory:
+            output = Path(directory) / "sample.ass"
+            write_ass(
+                [{"start": 0.0, "end": 1.0, "text": "Vietsub có màu"}],
+                output,
+                {
+                    "text_color_css": "#FFFFFF",
+                    "background_color_css": "#000000",
+                    "background_opacity": 0.82,
+                    "background_box": True,
+                },
+            )
+            value = output.read_text(encoding="utf-8")
+            self.assertIn(",3,5,0,", value)
+            self.assertIn("&H00FFFFFF", value)
+
     def test_wrap_text_keeps_every_word(self) -> None:
         text = "một hai ba bốn năm sáu bảy tám chín mười mười một mười hai"
         wrapped = wrap_text(text, width=12)

@@ -109,3 +109,13 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=backend python3 -m unittest \
 - Giảm mặc định xuống preferred/max 14/20 ký tự nguồn, thêm `max_cue_duration_seconds=3.2` dựa trên word timestamp.
 - `wrap_text` cân bằng về tối đa hai dòng nhưng giữ đủ mọi từ.
 - Thêm test continuous speech, source-vs-TTS timing và không mất từ. Regression mới nhất 162/162 PASS.
+
+## Bổ sung 2026-10-18 — cân bằng audio và màu vietsub
+
+- Đo `output_3c10ceec (1).mp4`: integrated loudness -15,9 LUFS, true peak -1,2 dBFS; file chỉ còn một track mix nên không thể tách chính xác loudness voice/source sau render.
+- Đổi voice mix gain từ 1,40 xuống 1,10 và default tiếng gốc từ 0,18 lên 0,50; checkbox giữ tiếng gốc vẫn bật mặc định.
+- Thêm màu chữ, màu nền, opacity và bật/tắt nền hộp trong UI; preview cập nhật trực tiếp.
+- Mặc định theo ảnh tham chiếu: chữ trắng, hộp đen opacity 0,82, ASS BorderStyle 3.
+- Chuẩn hóa/validate màu CSS trước khi chuyển sang ASS; drawtext và Pillow fallback cũng dùng cùng màu.
+- Cache-bust frontend lên `app.js?v=20261018-11`.
+- Regression tổng hợp 165 cases: lần đầu 164 PASS/1 FAIL do assertion cache version cũ; sửa assertion và retest nhóm ảnh hưởng 15/15 PASS.

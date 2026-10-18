@@ -76,3 +76,10 @@ Video `27099424` không phải mẫu Trung→Việt hợp lệ: request ghi `zh-
 - Audio Việt được Whisper kiểm tra độc lập cho thấy có cụm nói liên tục 10,22 giây/42 từ, phù hợp với dấu hiệu nhiều câu bị gom vào một cue/TTS dài.
 - Sau sửa: test source timing, max cue duration và giữ đủ từ PASS; regression tổng 162/162 PASS.
 - Chưa thể render lại chính video này vì workspace không có job `3c10ceec`, video nguồn hoặc audio Trung; file được cung cấp đã burn phụ đề Việt và thay audio. Trạng thái real-video rerender: BLOCKED_BY_MISSING_SOURCE, không báo PASS giả.
+
+## Retest audio/màu theo `output_3c10ceec (1).mp4`
+
+- Loudness đầu ra hiện tại: -15,9 LUFS, true peak -1,2 dBFS. Do chỉ có một track AAC đã mix, không thể đo độc lập voice và source.
+- Default mới: voice gain 1,10; tiếng gốc 0,50; mục tiêu là voice nhỉnh khoảng 6–7 dB trước loudnorm thay vì chênh gần 18 dB ở cấu hình cũ 1,40/0,18.
+- Màu/hộp vietsub: PASS unit cho CSS→ASS, chữ trắng/hộp đen mặc định và màu tùy chọn.
+- Full selected suite sau thay đổi chạy 165 cases: 164 PASS, 1 FAIL chỉ vì test còn chờ cache URL `-10`; sau khi cập nhật test sang `-11`, nhóm ảnh hưởng retest 15/15 PASS.

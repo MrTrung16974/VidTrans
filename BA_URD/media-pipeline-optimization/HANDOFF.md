@@ -73,4 +73,12 @@ Tối ưu hiệu năng, chất lượng, checkpoint/retry và khả năng vận 
 - Regression mới nhất 162/162 PASS.
 - Không có source/job `3c10ceec` trong workspace nên chưa rerender chính video; cần video nguồn hoặc retry job trên hệ thống đã tạo output đó.
 
+## Bổ sung audio/màu vietsub
+
+- Voice mix gain mặc định 1,10; tiếng gốc mặc định 0,50 và giữ tiếng gốc bật.
+- UI có color picker chữ/nền, opacity và checkbox nền hộp; mặc định chữ trắng trên hộp đen 82% theo ảnh tham chiếu.
+- ASS, drawtext và Pillow fallback cùng sử dụng style màu đã validate.
+- Frontend cache version `20261018-11`; nhóm test ảnh hưởng 15/15 PASS.
+- Cần restart/rebuild backend và hard refresh frontend trước khi tạo job mới.
+
 Prompt tiếp tục: `Dùng $feature-delivery-workflow. Đọc BA_URD/media-pipeline-optimization/HANDOFF.md và các file được dẫn; kiểm tra trạng thái hiện tại, tiếp tục bước đã được duyệt, không lặp lại phần đã hoàn tất.`

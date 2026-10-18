@@ -12,3 +12,4 @@
 | Đồng bộ cue/final flush | Yêu cầu 2026-10-18 §3 | 0.2 | `pipeline/subtitle_segmentation.py`, `main.py::recognize_video_source` | `test_subtitle_segmentation.py` | TC_026–027 | N/A | PASS unit; real-video rerun NOT_RUN |
 | Duration output | Yêu cầu 2026-10-18 §3.3/§7 | 0.2 | `main.py::{build_voice_track,mix_audio}` | `test_audio_duration.py` | TC_028 | N/A | PASS integration tổng hợp; TC_030 checkpoint FAIL |
 | Đồng bộ video `3c10ceec` | Video thực tế 26,603s | 0.2 | `main.py::{write_srt,write_ass,wrap_text}`, `subtitle_segmentation.py` | `test_audio_duration.py`, `test_subtitle_segmentation.py` | TC_031–033 | N/A | PASS unit/regression; rerender BLOCKED thiếu source |
+| Audio + màu vietsub | Yêu cầu 2026-10-18 + ảnh tham chiếu | 0.2 | `main.py`, `frontend/index.html`, `frontend/js/app.js` | `test_audio_duration.py`, `test_frontend_static.py` | TC_034–036 | N/A | PASS unit/frontend; listening test trên source NOT_RUN |

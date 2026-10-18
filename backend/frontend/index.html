@@ -382,7 +382,7 @@
                         <div class="field-grid processing-grid">
                           <label id="originalVolumeField" class="field">
                             <span>Âm lượng tiếng gốc</span>
-                            <input type="number" name="original_audio_volume" min="0" max="1" step="0.01" value="0.18" />
+                            <input type="number" name="original_audio_volume" min="0" max="1" step="0.01" value="0.50" />
                           </label>
                           <label id="musicVolumeField" class="field">
                             <span>Âm lượng nhạc nền</span>
@@ -390,7 +390,7 @@
                           </label>
                           <label id="originalAudioField" class="field checkbox-field wide">
                             <input type="checkbox" name="keep_original_audio" value="true" checked />
-                            <span>Giữ tiếng gốc ở mức nhỏ</span>
+                            <span>Giữ tiếng gốc đủ nghe dưới giọng thuyết minh</span>
                           </label>
                           <label id="musicField" class="field wide is-hidden">
                             <span>Nhạc nền dùng chung</span>
@@ -436,6 +436,10 @@
                     <label class="field wide"><span>Khoảng cách phía trên</span><input id="positionGap" type="number" min="0" max="300" value="14" /></label>
                     <label class="field checkbox-field"><input id="matchSourceSize" type="checkbox" checked /><span>Khớp cỡ chữ trên video</span></label>
                     <label class="field checkbox-field"><input id="maskOriginal" type="checkbox" checked /><span>Che chữ nguồn khi thay thế</span></label>
+                    <label class="field"><span>Màu chữ vietsub</span><input id="subtitleTextColor" type="color" value="#ffffff" /></label>
+                    <label class="field"><span>Màu nền vietsub</span><input id="subtitleBackgroundColor" type="color" value="#000000" /></label>
+                    <label class="field"><span>Độ đậm nền</span><input id="subtitleBackgroundOpacity" type="number" min="0" max="1" step="0.05" value="0.82" /></label>
+                    <label class="field checkbox-field"><input id="subtitleBackgroundBox" type="checkbox" checked /><span>Nền hộp như ảnh mẫu</span></label>
                   </div>
 
                   <div class="subtitle-preview-shell">
@@ -1704,6 +1708,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261018-10"></script>
+    <script type="module" src="/js/app.js?v=20261018-11"></script>
   </body>
 </html>

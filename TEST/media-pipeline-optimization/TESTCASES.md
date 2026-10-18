@@ -40,3 +40,6 @@
 | TC_031 | Đồng bộ hiển thị | Unit/P0 | Cue có source timing và TTS timing lệch | start 1–2s, TTS 4–6s | Ghi SRT | SRT dùng 1–2s | PASS | `test_audio_duration.py::test_srt_uses_source_timing_not_delayed_tts_timing` |
 | TC_032 | Không mất nội dung | Unit/P0 | Văn bản cần hơn hai dòng theo width cũ | Chuỗi tiếng Việt tổng hợp | Wrap | Tối đa hai dòng và giữ đủ từ | PASS | `test_audio_duration.py::test_wrap_text_keeps_every_word` |
 | TC_033 | Cue liên tục | Unit/P0 | Lời nói không dấu câu/không pause | Word timestamp dài 5,8s | Phân đoạn | Mỗi cue không vượt khoảng 3,2s | PASS | `test_subtitle_segmentation.py::test_splits_continuous_speech_at_max_timed_duration` |
+| TC_034 | Audio mix | Unit/P1 | Default lồng tiếng | Constants | Kiểm tra cấu hình | Voice 1,10; tiếng gốc 0,50 | PASS | `test_audio_duration.py::test_balanced_default_voice_and_original_audio_levels` |
+| TC_035 | Màu vietsub | Unit/P1 | CSS colors + opacity | Vàng/đen | Normalize ASS | Màu BGR/alpha đúng, BorderStyle 3 | PASS | `test_audio_duration.py::test_colored_box_style_is_normalized_for_ass` |
+| TC_036 | Render vietsub | Unit/P1 | Hộp màu bật | ASS synthetic | Ghi ASS | Style chứa màu chữ và opaque box | PASS | `test_audio_duration.py::test_ass_writes_opaque_box_style_from_css_colors` |

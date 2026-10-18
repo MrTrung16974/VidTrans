@@ -202,9 +202,10 @@ DEFAULT_SUB_STYLE = {
     "font_size": 36,
     "primary_color": "&H00FFFFFF",
     "outline_color": "&H00000000",
-    "back_color": "&H66000000",
-    "outline": 3,
+    "back_color": "&H2E000000",
+    "outline": 5,
     "shadow": 0,
+    "border_style": 3,
     "alignment": 2,
     "margin_v": 60,
     "placement_mode": "replace_original",
@@ -217,6 +218,10 @@ DEFAULT_SUB_STYLE = {
     "max_cue_chars": 20,
     "cue_pause_seconds": 0.65,
     "max_cue_duration_seconds": 3.2,
+    "text_color_css": "#FFFFFF",
+    "background_color_css": "#000000",
+    "background_opacity": 0.82,
+    "background_box": True,
 }
 FONT_CANDIDATES = [
     "Noto Sans CJK SC",
@@ -228,6 +233,40 @@ FONT_CANDIDATES = [
 ]
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 BUNDLED_FONT = FONT_DIR / "NotoSansCJKsc-Regular.otf"
+DEFAULT_VOICE_MIX_GAIN = 1.10
+DEFAULT_ORIGINAL_AUDIO_VOLUME = 0.50
+
+
+def _validated_css_color(value: Any, fallback: str) -> str:
+    candidate = str(value or "").strip().upper()
+    return candidate if re.fullmatch(r"#[0-9A-F]{6}", candidate) else fallback
+
+
+def _css_color_to_ass(value: str, opacity: float = 1.0) -> str:
+    color = _validated_css_color(value, "#FFFFFF")
+    opacity = max(0.0, min(1.0, float(opacity)))
+    red, green, blue = color[1:3], color[3:5], color[5:7]
+    alpha = round((1.0 - opacity) * 255)
+    return f"&H{alpha:02X}{blue}{green}{red}"
+
+
+def normalize_subtitle_style(style: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(style)
+    text_color = _validated_css_color(style.get("text_color_css"), "#FFFFFF")
+    background_color = _validated_css_color(style.get("background_color_css"), "#000000")
+    background_opacity = max(0.0, min(1.0, float(style.get("background_opacity", 0.82))))
+    background_box = bool(style.get("background_box", True))
+    normalized.update(
+        text_color_css=text_color,
+        background_color_css=background_color,
+        background_opacity=background_opacity,
+        background_box=background_box,
+        primary_color=_css_color_to_ass(text_color),
+        back_color=_css_color_to_ass(background_color, background_opacity),
+        border_style=3 if background_box else 1,
+        outline=5 if background_box else int(style.get("outline", 3)),
+    )
+    return normalized
 
 app = FastAPI(title="VidTrans", version="2.0.0")
 app.add_middleware(
@@ -1017,9 +1056,10 @@ def write_ass(
     video_width: int = 1280,
     video_height: int = 720,
 ) -> None:
+    style = normalize_subtitle_style({**DEFAULT_SUB_STYLE, **style})
     style_line = (
         "Style: Default,{font_name},{font_size},{primary_color},{primary_color},"
-        "{outline_color},{back_color},0,0,0,0,100,100,0,0,1,{outline},{shadow},"
+        "{outline_color},{back_color},0,0,0,0,100,100,0,0,{border_style},{outline},{shadow},"
         "{alignment},10,10,{margin_v},1"
     ).format(**style)
     lines = [
@@ -1587,7 +1627,7 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
         if duration > VOICE_FADE_OUT_SECONDS * 2:
             fades += f",afade=t=out:st={duration - VOICE_FADE_OUT_SECONDS:.3f}:d={VOICE_FADE_OUT_SECONDS}"
         filter_parts.append(
-            f"[{input_index}:a]{fades},adelay={delay_ms}|{delay_ms},volume={1.4 * gain:.3f}[a{input_index}]"
+            f"[{input_index}:a]{fades},adelay={delay_ms}|{delay_ms},volume={DEFAULT_VOICE_MIX_GAIN * gain:.3f}[a{input_index}]"
         )
         labels.append(f"[a{input_index}]")
         input_index += 1
@@ -1794,12 +1834,12 @@ def build_drawtext_filter(segments: list[dict[str, Any]], subtitle_style: dict[s
         parts = [
             f"text='{escaped_text}'",
             f"fontsize={active_font_size}",
-            "fontcolor=white",
+            f"fontcolor={subtitle_style.get('text_color_css', '#FFFFFF')}",
             "line_spacing=6",
             f"x={x_expression}",
             f"y={y_expression}",
-            "box=1",
-            "boxcolor=black@0.45",
+            f"box={1 if subtitle_style.get('background_box', True) else 0}",
+            f"boxcolor={subtitle_style.get('background_color_css', '#000000')}@{float(subtitle_style.get('background_opacity', 0.82)):.2f}",
             "boxborderw=12",
             f"enable='between(t,{segment['start']:.3f},{segment['end']:.3f})'",
         ]
@@ -1850,6 +1890,15 @@ def burn_subtitles_with_pillow(
     font_size = int(subtitle_style.get("font_size", 22))
     margin_v = int(subtitle_style.get("margin_v", 30))
     font_path = find_font_file(subtitle_style.get("font_name", "Arial"))
+    text_rgb = tuple(
+        int(subtitle_style.get("text_color_css", "#FFFFFF")[offset:offset + 2], 16)
+        for offset in (1, 3, 5)
+    )
+    background_rgb = tuple(
+        int(subtitle_style.get("background_color_css", "#000000")[offset:offset + 2], 16)
+        for offset in (1, 3, 5)
+    )
+    background_alpha = round(float(subtitle_style.get("background_opacity", 0.82)) * 255)
     frame_paths = sorted(frames_dir.glob("frame_*.png"))
 
     for index, frame_path in enumerate(frame_paths):
@@ -1893,13 +1942,13 @@ def burn_subtitles_with_pillow(
                 radius=max(4, active_font_size // 4),
                 fill=(0, 0, 0, 150),
             )
-        else:
+        if subtitle_style.get("background_box", True):
             draw.rounded_rectangle(
                 (x - pad_x, y - pad_y, x + text_w + pad_x, y + text_h + pad_y),
                 radius=18,
-                fill=(0, 0, 0, 140),
+                fill=(*background_rgb, background_alpha),
             )
-        draw.multiline_text((x, y), text, font=font, fill=(255, 255, 255, 255), spacing=6, align="center")
+        draw.multiline_text((x, y), text, font=font, fill=(*text_rgb, 255), spacing=6, align="center")
         combined = Image.alpha_composite(image, overlay).convert("RGB")
         combined.save(output_frame)
 
@@ -2211,7 +2260,7 @@ def process_video(
     work_dir = tenant_job_dir(WORK_DIR, owner_user_id, job_id)
     output_dir = tenant_job_dir(OUTPUT_DIR, owner_user_id, job_id)
     work_dir.mkdir(parents=True, exist_ok=True)
-    subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
+    subtitle_style = normalize_subtitle_style({**DEFAULT_SUB_STYLE, **(subtitle_style or {})})
     subtitle_style["font_name"] = language_profile(target_language).font_family
     try:
         JOB_SERVICE.update(job_id, stage_metrics={}, stage_cache={})
@@ -4225,7 +4274,7 @@ async def process_video_endpoint(
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
     keep_original_audio: bool = Form(True),
-    original_audio_volume: float = Form(0.18),
+    original_audio_volume: float = Form(DEFAULT_ORIGINAL_AUDIO_VOLUME),
     music_volume: float = Form(0.28),
     subtitle_style: str | None = Form(default=None),
     subtitle_source: str = Form("speech"),
@@ -4395,7 +4444,7 @@ async def create_batch_endpoint(
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
     keep_original_audio: bool = Form(True),
-    original_audio_volume: float = Form(0.18),
+    original_audio_volume: float = Form(DEFAULT_ORIGINAL_AUDIO_VOLUME),
     music_volume: float = Form(0.28),
     subtitle_style: str | None = Form(default=None),
     subtitle_source: str = Form("speech"),

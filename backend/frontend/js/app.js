@@ -562,6 +562,10 @@ function subtitleStyle() {
     max_font_size: Number($("#maxFontSize").value),
     position_gap: Number($("#positionGap").value),
     mask_original: $("#maskOriginal").checked,
+    text_color_css: $("#subtitleTextColor").value,
+    background_color_css: $("#subtitleBackgroundColor").value,
+    background_opacity: Number($("#subtitleBackgroundOpacity").value),
+    background_box: $("#subtitleBackgroundBox").checked,
   };
 }
 
@@ -634,6 +638,12 @@ function updateFormSummary() {
   preview.classList.remove("mode-replace", "mode-above", "mode-bottom");
   preview.classList.add(placement === "replace_original" ? "mode-replace" : placement === "above_original" ? "mode-above" : "mode-bottom");
   $("#previewVietnamese").style.fontSize = $("#matchSourceSize").checked ? "17px" : "21px";
+  $("#previewVietnamese").style.color = $("#subtitleTextColor").value;
+  const previewBackground = $("#subtitleBackgroundColor").value;
+  const previewOpacity = Math.max(0, Math.min(1, Number($("#subtitleBackgroundOpacity").value)));
+  $("#previewVietnamese").style.backgroundColor = $("#subtitleBackgroundBox").checked
+    ? `${previewBackground}${Math.round(previewOpacity * 255).toString(16).padStart(2, "0")}`
+    : "transparent";
 }
 
 function initWorkflowModeCards() {
@@ -1940,7 +1950,7 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
   } catch (error) { toast(error.message, true); }
 });
 [$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), document.querySelector('[name="voice_mode"]')].forEach(element => element.addEventListener("change", updateFormSummary));
-[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal")].forEach(element => element.addEventListener("change", updateFormSummary));
+[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundOpacity"), $("#subtitleBackgroundBox")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#refreshAdminAccounts").addEventListener("click", loadAdminAccounts);
 $("#adminApprovalFilter").addEventListener("change", loadAdminAccounts);
