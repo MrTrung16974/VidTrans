@@ -90,7 +90,13 @@ services:
       # Keep the FastAPI port private to the VPS. Production traffic must enter via Nginx.
       - "127.0.0.1:5200:8000"
     environment:
-      VIDTRANS_DATABASE_URL: "${VIDTRANS_DATABASE_URL:-postgresql://vidtrans:vidtrans@postgres:5432/vidtrans}"
+      # Build the internal DSN from the same credentials used to initialize
+      # PostgreSQL, preventing a stale VIDTRANS_DATABASE_URL password.
+      VIDTRANS_POSTGRES_HOST: postgres
+      VIDTRANS_POSTGRES_DB: "${VIDTRANS_POSTGRES_DB:-vidtrans}"
+      VIDTRANS_POSTGRES_USER: "${VIDTRANS_POSTGRES_USER:-vidtrans}"
+      VIDTRANS_POSTGRES_PASSWORD: "${VIDTRANS_POSTGRES_PASSWORD:-vidtrans}"
+      VIDTRANS_POSTGRES_INTERNAL_PORT: "5432"
       VIDTRANS_RECOVER_INTERRUPTED_JOBS: "1"
       VIDTRANS_OCR_BACKEND: "${VIDTRANS_OCR_BACKEND:-auto}"
       VIDTRANS_WORKER_CONCURRENCY: "2"

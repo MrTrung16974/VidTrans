@@ -72,8 +72,11 @@ if [[ ! -f "$source_absolute" ]]; then
     exit 0
 fi
 
-database_url="$(docker compose run --rm --no-deps --entrypoint python vidtrans -c \
-    'import os; print(os.environ.get("VIDTRANS_DATABASE_URL", ""))')"
+database_url="$(docker compose run --rm --no-deps --entrypoint python vidtrans -c '
+from infrastructure.database import database_target
+from pathlib import Path
+print(database_target(Path("work/jobs.sqlite3")))
+')"
 if [[ "$database_url" != postgresql://* && "$database_url" != postgres://* ]]; then
     printf '%s\n' "Refusing deletion: vidtrans is not configured with a PostgreSQL URL" >&2
     exit 1

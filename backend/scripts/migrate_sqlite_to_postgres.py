@@ -6,7 +6,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from infrastructure.database import connect
+from infrastructure.database import connect, database_target
 
 
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -138,9 +138,10 @@ def main() -> None:
         help="PostgreSQL URL (defaults to VIDTRANS_DATABASE_URL)",
     )
     args = parser.parse_args()
-    if not args.target:
-        parser.error("--target or VIDTRANS_DATABASE_URL is required")
-    result = migrate(args.source.resolve(), args.target)
+    target = args.target or database_target(Path("work/jobs.sqlite3"))
+    if isinstance(target, Path):
+        parser.error("--target, VIDTRANS_DATABASE_URL, or VIDTRANS_POSTGRES_HOST is required")
+    result = migrate(args.source.resolve(), target)
     for table, count in result.items():
         print(f"{table}: {count}")
 

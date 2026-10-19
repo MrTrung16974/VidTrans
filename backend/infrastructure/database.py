@@ -5,6 +5,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
+from urllib.parse import quote
 
 
 DatabaseTarget = str | Path
@@ -19,6 +20,18 @@ def database_target(default_path: Path) -> DatabaseTarget:
     do not need a running PostgreSQL server.
     """
 
+    host = os.environ.get("VIDTRANS_POSTGRES_HOST", "").strip()
+    if host:
+        user = os.environ.get("VIDTRANS_POSTGRES_USER", "vidtrans").strip() or "vidtrans"
+        password = os.environ.get("VIDTRANS_POSTGRES_PASSWORD", "")
+        database = os.environ.get("VIDTRANS_POSTGRES_DB", "vidtrans").strip() or "vidtrans"
+        port = os.environ.get("VIDTRANS_POSTGRES_INTERNAL_PORT", "5432").strip() or "5432"
+        if not port.isdigit():
+            raise ValueError("VIDTRANS_POSTGRES_INTERNAL_PORT must be numeric")
+        return (
+            f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}@"
+            f"{host}:{port}/{quote(database, safe='')}"
+        )
     value = os.environ.get("VIDTRANS_DATABASE_URL", "").strip()
     return value or default_path
 
