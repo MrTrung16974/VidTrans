@@ -248,6 +248,9 @@ VIDTRANS_WHISPER_CONCURRENCY=1
 VIDTRANS_OCR_CONCURRENCY=1
 VIDTRANS_RECOVER_INTERRUPTED_JOBS=1
 VIDTRANS_DATABASE_URL=postgresql://vidtrans:change-me@postgres:5432/vidtrans
+# Đặt 0.0.0.0 nếu cần kết nối trực tiếp từ ngoài VPS; giới hạn IP bằng firewall.
+VIDTRANS_POSTGRES_BIND_ADDRESS=127.0.0.1
+VIDTRANS_POSTGRES_PORT=5432
 # Tùy chọn: phát event upload/download/dịch/publish sang n8n
 VIDTRANS_N8N_WEBHOOK_URL=https://n8n.example.com/webhook/vidtrans
 VIDTRANS_N8N_WEBHOOK_SECRET=...

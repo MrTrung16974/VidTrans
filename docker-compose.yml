@@ -7,7 +7,9 @@ services:
       POSTGRES_USER: "${VIDTRANS_POSTGRES_USER:-vidtrans}"
       POSTGRES_PASSWORD: "${VIDTRANS_POSTGRES_PASSWORD:-vidtrans}"
     ports:
-      - "127.0.0.1:${VIDTRANS_POSTGRES_PORT:-5432}:5432"
+      # Keep loopback-only by default. Set VIDTRANS_POSTGRES_BIND_ADDRESS=0.0.0.0
+      # only when a VPS/network firewall restricts port 5432 to trusted clients.
+      - "${VIDTRANS_POSTGRES_BIND_ADDRESS:-127.0.0.1}:${VIDTRANS_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
