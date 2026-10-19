@@ -20,6 +20,28 @@ TABLE_PRIORITY = {
 }
 
 
+def _create_if_missing(sql: str) -> str:
+    """Make SQLite schema DDL safe when the app already initialized PostgreSQL."""
+
+    if re.match(r"^\s*CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS)", sql, re.IGNORECASE):
+        return re.sub(
+            r"^(\s*CREATE\s+TABLE\s+)",
+            r"\1IF NOT EXISTS ",
+            sql,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    if re.match(r"^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?!IF\s+NOT\s+EXISTS)", sql, re.IGNORECASE):
+        return re.sub(
+            r"^(\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+)",
+            r"\1IF NOT EXISTS ",
+            sql,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return sql
+
+
 def _identifier(value: str) -> str:
     if not IDENTIFIER.fullmatch(value):
         raise ValueError(f"Unsafe SQLite identifier: {value!r}")
@@ -47,14 +69,14 @@ def migrate(source_path: Path, target_dsn: str) -> dict[str, int]:
         )
         for table, create_sql in tables:
             _identifier(table)
-            target.execute(create_sql)
+            target.execute(_create_if_missing(create_sql))
 
         index_rows = source.execute(
             "SELECT sql FROM sqlite_master "
             "WHERE type='index' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL"
         ).fetchall()
         for row in index_rows:
-            target.execute(str(row["sql"]))
+            target.execute(_create_if_missing(str(row["sql"])))
 
         for table, _ in tables:
             columns = [
