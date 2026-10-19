@@ -203,6 +203,16 @@ docker compose run --rm vidtrans python -m scripts.migrate_sqlite_to_postgres \
 Lệnh có thể chạy lại an toàn: các khóa đã tồn tại được bỏ qua. Chỉ xóa file SQLite sau khi đã
 kiểm tra số lượng job/tài khoản và khởi động ứng dụng thành công với PostgreSQL.
 
+Sau khi đã xác nhận ứng dụng chạy ổn định và dữ liệu migration đầy đủ, xóa database SQLite cũ:
+
+```bash
+bash deploy/remove-legacy-sqlite.sh --confirm DELETE_SQLITE
+```
+
+Script từ chối xóa nếu ứng dụng không dùng URL PostgreSQL, PostgreSQL không kết nối được hoặc
+thiếu các bảng VidTrans chính. Ngoài `jobs.sqlite3`, script dọn cả file `-wal`, `-shm` và
+`-journal`; thao tác này không thể hoàn tác nên vẫn nên giữ một bản backup ngoài VPS.
+
 Ngay khi bấm **Bắt đầu xử lý**, giao diện chuyển sang trang **Tiến trình** và hiển thị một dòng
 upload tạm theo phần trăm. Giữ tab mở cho đến khi upload đạt 100%; sau khi server tạo job, dòng
 tạm tự được thay bằng các job bền vững và từ thời điểm đó có thể đóng trình duyệt.
