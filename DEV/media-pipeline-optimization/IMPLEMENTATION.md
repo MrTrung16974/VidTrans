@@ -120,3 +120,36 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=backend python3 -m unittest \
 - Cache-bust frontend lên `app.js?v=20261018-11`.
 - Regression tổng hợp 165 cases: lần đầu 164 PASS/1 FAIL do assertion cache version cũ; sửa assertion và retest nhóm ảnh hưởng 15/15 PASS.
 - UX follow-up: bỏ ô nhập độ đậm nền; frontend luôn gửi default 0,82, backend vẫn fallback 0,82. Cache frontend tăng lên `20261018-12`; static tests 9/9 PASS.
+
+## Bổ sung 2026-10-18 — lỗi `No text to send to TTS API`
+
+- Thêm `is_speakable_tts_text`: chỉ gửi provider khi cue có ít nhất một ký tự Unicode thuộc nhóm letter/number.
+- Cue chỉ chứa dấu câu/ký hiệu được giữ cho luồng phụ đề nhưng bỏ TTS có kiểm soát với `tts_skip_reason=no_speakable_text`.
+- Khi mọi cue đều bị bỏ TTS, tạo silent voice track bằng FFmpeg đúng duration video để pipeline vẫn hoàn tất.
+- Tăng `tts_pipeline_version` từ 3 lên 4.
+- Nhóm regression TTS/OCR/checkpoint/frontend: 37/37 PASS trong image VidTrans.
+
+## Bổ sung 2026-10-18 — OCR + ASR độc lập
+
+- Thêm lựa chọn `subtitle_source=independent` trong domain/API/UI; không đổi hành vi `auto`, `burned`, `speech`.
+- OCR caption Trung và ASR audio auto-detect chạy như hai modality độc lập. OCR thắng khi overlap; không ghi `asr_text` hoặc so similarity xuyên ngôn ngữ. Cue ASR không overlap được giữ làm fallback.
+- Gắn `source_language` theo cue (`zh-CN` cho OCR, language detect cho audio) và dịch theo từng nhóm ngôn ngữ, sau đó phục hồi đúng thứ tự timeline.
+- Chế độ mới fail-fast nếu OCR bị tắt; transcript fingerprint 4, merge contract 2 và translation pipeline version 3 để không reuse cache cũ.
+- Frontend cache-bust `app.js?v=20261018-14`.
+- Nhóm ảnh hưởng 63/63 PASS. Full backend 420/422 PASS; 1 FAIL + 1 ERROR tồn tại ngoài phạm vi ở social publishing/Douyin QR.
+
+## Bổ sung 2026-10-18 — hủy job tức thời
+
+- `SQLiteJobStore.request_cancel` chuyển cả job đang `processing` thẳng sang `cancelled`, ghi `finished_at` và thông báo “Đã hủy theo yêu cầu” trong cùng transaction.
+- Job đã hủy bỏ qua mọi update đến muộn không xác nhận `cancelled`, ngăn worker ghi đè thành `completed`, `failed` hoặc cập nhật progress sau hủy.
+- Frontend hiển thị toast “Đã hủy job”; cache-bust `app.js?v=20261018-15`.
+- Worker vẫn dùng cooperative cancellation tại callback/checkpoint; native ASR/FFmpeg đang ở giữa một call không bị kill cưỡng bức, nhưng kết quả không thể thay đổi trạng thái terminal.
+- Nhóm ảnh hưởng 43/43 PASS. Full backend 421/423 PASS; hai lỗi nền ngoài phạm vi không đổi.
+
+## Bổ sung 2026-10-19 — OCR ổn định trên Linux ARM
+
+- Thêm `VIDTRANS_OCR_BACKEND=auto|paddle|tesseract|off`; `auto` chọn Tesseract trên Linux `arm64/aarch64`, các nền tảng còn lại giữ PaddleOCR.
+- Thêm `TesseractOCRReader`, đọc TSV từ CLI `tesseract`, gom token theo dòng và trả về contract `OCRLine` hiện có.
+- Image cài `tesseract-ocr` và model tiếng Trung giản thể `tesseract-ocr-chi-sim`; không còn yêu cầu bật PaddleOCR trên runtime ARM dễ crash.
+- Transcript fingerprint chứa OCR backend để checkpoint của Paddle/Tesseract không dùng lẫn nhau.
+- Unit/regression liên quan: 38/38 PASS trong image mới. Runtime xác nhận có `chi_sim`, backend là `tesseract`, API `/docs` trả HTTP 200.

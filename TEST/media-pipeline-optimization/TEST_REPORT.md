@@ -83,3 +83,46 @@ Video `27099424` không phải mẫu Trung→Việt hợp lệ: request ghi `zh-
 - Default mới: voice gain 1,10; tiếng gốc 0,50; mục tiêu là voice nhỉnh khoảng 6–7 dB trước loudnorm thay vì chênh gần 18 dB ở cấu hình cũ 1,40/0,18.
 - Màu/hộp vietsub: PASS unit cho CSS→ASS, chữ trắng/hộp đen mặc định và màu tùy chọn.
 - Full selected suite sau thay đổi chạy 165 cases: 164 PASS, 1 FAIL chỉ vì test còn chờ cache URL `-10`; sau khi cập nhật test sang `-11`, nhóm ảnh hưởng retest 15/15 PASS.
+
+## Retest mất phụ đề/voice nhỏ theo `video_2026-10-18_23-22-03.mp4`
+
+- Contact sheet 1 fps xác nhận Vietsub mất trong khoảng xấp xỉ 8–14 giây dù chữ Trung vẫn hiện trên hình.
+- Whisper cưỡng bức tiếng Trung nhận lời đến 8,78 giây và trở lại từ 15,24 giây; đây là khoảng caption cháy không có lời thoại đủ rõ, nên ASR-only không thể sinh cue.
+- Chế độ mặc định nguồn Trung đổi sang `auto`: OCR và Whisper được hợp nhất theo timeline; OCR thắng khi trùng thời gian, còn cue Whisper không trùng vẫn được giữ.
+- Transcript fingerprint tăng từ 2 lên 3 để không dùng lại checkpoint ASR-only cũ.
+- Default audio đổi thành voice gain 1,30 và tiếng gốc 0,30; mục tiêu là giọng Việt nổi rõ nhưng vẫn giữ được nền gốc.
+- Test đúng tình huống khoảng im tiếng 8,8–14,8 giây PASS; nhóm ảnh hưởng 35/35 PASS trong image dự án.
+- Full suite trên source hiện tại: 413 PASS, 1 FAIL và 1 ERROR không thuộc thay đổi này (`test_social_publishing` trả 422; thiếu module `infrastructure.douyin_qr_auth`).
+- Chưa render lại file đã cung cấp: đây là output đã mix/burn, workspace không có source/job tương ứng; cần chạy lại video nguồn sau khi deploy image mới để nhận artifact cuối.
+
+## Retest lỗi `No text to send to TTS API`
+
+- Nguyên nhân: cue chỉ có dấu câu/ký hiệu vượt qua kiểm tra chuỗi không rỗng; khi Edge fallback sang gTTS, tokenizer loại hết nội dung và provider từ chối request.
+- Sau sửa: cue `…?! --` không gọi provider, có `skip_tts=true`, `tts_skip_reason=no_speakable_text`; voice track im lặng được tạo đủ 1,000 giây.
+- Unicode guard PASS với tiếng Việt, chữ Hán và punctuation-only.
+- Nhóm ảnh hưởng chạy trong image dự án: 37/37 PASS.
+
+## Retest chế độ OCR + ASR độc lập
+
+- Contract/UI: lựa chọn `OCR + ASR độc lập — video đa ngôn ngữ` được validate; chỉ bật với caption source Trung.
+- Fusion: caption `这个世界上怎么会` overlap lời Hàn được giữ làm source dịch; ASR Hàn overlap bị loại, cue Hàn không overlap vẫn được giữ với `source_language=ko`.
+- Translation: nhóm `zh-CN` và `ko` dùng translator theo source riêng, kết quả ghép lại giữ đúng timeline.
+- Regression ảnh hưởng: 63/63 PASS trong image dự án.
+- Full backend: 422 tests, 420 PASS, 1 FAIL và 1 ERROR đã tồn tại ngoài phạm vi (`test_social_publishing` nhận 422; thiếu `infrastructure.douyin_qr_auth`).
+- Chưa chạy provider/OCR/model thật trên video người dùng; real-video E2E vẫn NOT_RUN và cần OCR được bật trong runtime.
+
+## Retest hủy job tức thời
+
+- Job queued và processing đều trả `status=cancelled` ngay trong transaction hủy; không còn trạng thái trung gian `cancelling` cho request mới.
+- Update `completed/progress=1.0` giả lập từ worker đến muộn bị bỏ qua; job giữ `cancelled`.
+- Tenant isolation, job event và frontend regression: 43/43 PASS.
+- Full backend: 423 tests, 421 PASS; 1 FAIL social publishing và 1 ERROR thiếu Douyin QR module là lỗi nền ngoài phạm vi.
+- Chưa đo thời gian giải phóng CPU của native Whisper/FFmpeg đang chạy; đây là cooperative cancellation, không phải process kill cưỡng bức.
+
+## Retest OCR Linux ARM — 2026-10-19
+
+- `tesseract --list-langs` trong image mới: `chi_sim`, `eng`, `osd`.
+- Config `auto` trong container Linux ARM chọn `tesseract`; không import/khởi tạo PaddleOCR.
+- Unit/regression config + OCR + domain + checkpoint: 38/38 PASS.
+- Smoke gọi Tesseract trên frame video/ảnh tham chiếu chạy hoàn tất, không làm server crash; chất lượng frame đơn thấp nên chưa dùng làm kết luận accuracy.
+- Container triển khai với PostgreSQL healthy; Uvicorn startup complete và `/docs` trả HTTP 200 từ trong container.

@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import threading
 import unicodedata
+import csv
+import io
 from collections import defaultdict
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -153,6 +155,83 @@ def annotate_ocr_segments_with_asr(
             or (asr_text and similarity < 0.45)
         )
     return ocr_segments
+
+
+def merge_ocr_and_asr_segments(
+    ocr_segments: list[dict[str, Any]],
+    asr_segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Combine visible captions with speech cues, preferring OCR on overlap.
+
+    Burned captions can remain on screen while the soundtrack is silent.  OCR
+    therefore supplies cues that ASR cannot produce, while non-overlapping ASR
+    cues preserve dialogue that has no visible caption.
+    """
+
+    annotated_ocr = annotate_ocr_segments_with_asr(ocr_segments, asr_segments)
+    for cue in annotated_ocr:
+        cue.setdefault("source_method", "ocr")
+    merged: list[dict[str, Any]] = list(annotated_ocr)
+    for segment in asr_segments:
+        start = float(segment["start"])
+        end = float(segment["end"])
+        duration = max(end - start, 0.001)
+        covered_by_ocr = any(
+            max(
+                0.0,
+                min(end, float(cue["end"])) - max(start, float(cue["start"])),
+            )
+            >= min(0.5, duration * 0.35)
+            for cue in annotated_ocr
+        )
+        if not covered_by_ocr:
+            segment.setdefault("source_method", "speech")
+            merged.append(segment)
+
+    return sorted(
+        merged,
+        key=lambda item: (float(item["start"]), float(item["end"])),
+    )
+
+
+def merge_independent_ocr_asr_segments(
+    ocr_segments: list[dict[str, Any]],
+    asr_segments: list[dict[str, Any]],
+    *,
+    ocr_language: str = "zh-CN",
+    asr_language: str | None = None,
+) -> list[dict[str, Any]]:
+    """Merge independent visual/audio sources without cross-language comparison."""
+
+    visual = []
+    for cue in ocr_segments:
+        item = dict(cue)
+        item["source_method"] = "ocr"
+        item["source_language"] = ocr_language
+        item["modality"] = "visual"
+        visual.append(item)
+
+    merged: list[dict[str, Any]] = list(visual)
+    for cue in asr_segments:
+        start = float(cue["start"])
+        end = float(cue["end"])
+        duration = max(end - start, 0.001)
+        covered_by_visual = any(
+            max(0.0, min(end, float(item["end"])) - max(start, float(item["start"])))
+            >= min(0.5, duration * 0.35)
+            for item in visual
+        )
+        if covered_by_visual:
+            continue
+        item = dict(cue)
+        item["source_method"] = "speech"
+        item["source_language"] = asr_language or "auto"
+        item["modality"] = "audio"
+        if not asr_language:
+            item["needs_review"] = True
+        merged.append(item)
+
+    return sorted(merged, key=lambda item: (float(item["start"]), float(item["end"])))
 
 
 def select_subtitle_text(lines: Sequence[OCRLine], min_confidence: float) -> tuple[str, float]:
@@ -446,6 +525,7 @@ class PaddleOCRReader:
                     )
                 )
         return lines
+
     def _read_v2(self, image_path: Path) -> list[OCRLine]:
         output = self._engine.ocr(str(image_path), cls=False)
         raw_lines = output[0] if output and isinstance(output[0], list) else output
@@ -467,17 +547,92 @@ class PaddleOCRReader:
         return lines
 
 
-_DEFAULT_READER: PaddleOCRReader | None = None
+class TesseractOCRReader:
+    """Chinese OCR adapter backed by the stable Tesseract CLI."""
+
+    def __init__(self, *, executable: str = "tesseract", language: str = "chi_sim") -> None:
+        resolved = shutil.which(executable)
+        if not resolved:
+            raise RuntimeError(
+                "Tesseract OCR is not installed. Rebuild the image with tesseract-ocr-chi-sim."
+            )
+        self._executable = resolved
+        self._language = language
+
+    def read(self, image_path: Path) -> list[OCRLine]:
+        result = subprocess.run(
+            [
+                self._executable,
+                str(image_path),
+                "stdout",
+                "-l",
+                self._language,
+                "--psm",
+                "6",
+                "tsv",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip()[-600:]
+            raise RuntimeError(f"Tesseract OCR failed: {detail}")
+
+        grouped: dict[tuple[str, str, str, str], list[tuple[str, float, tuple[float, float, float, float]]]] = defaultdict(list)
+        for row in csv.DictReader(io.StringIO(result.stdout), delimiter="\t"):
+            text = str(row.get("text") or "").strip()
+            confidence = _to_float(row.get("conf"), -1.0)
+            if not text or confidence < 0:
+                continue
+            left = _to_float(row.get("left"))
+            top = _to_float(row.get("top"))
+            width = _to_float(row.get("width"))
+            height = _to_float(row.get("height"))
+            key = (
+                str(row.get("page_num") or "0"),
+                str(row.get("block_num") or "0"),
+                str(row.get("par_num") or "0"),
+                str(row.get("line_num") or "0"),
+            )
+            grouped[key].append((text, confidence / 100.0, (left, top, left + width, top + height)))
+
+        lines: list[OCRLine] = []
+        for words in grouped.values():
+            texts = [word[0] for word in words]
+            separator = "" if any(contains_cjk(text) for text in texts) else " "
+            boxes = [word[2] for word in words]
+            total_chars = sum(max(len(word[0]), 1) for word in words)
+            confidence = sum(word[1] * max(len(word[0]), 1) for word in words) / total_chars
+            lines.append(
+                OCRLine(
+                    separator.join(texts),
+                    confidence,
+                    (
+                        min(box[0] for box in boxes),
+                        min(box[1] for box in boxes),
+                        max(box[2] for box in boxes),
+                        max(box[3] for box in boxes),
+                    ),
+                )
+            )
+        return lines
+
+
+_DEFAULT_READERS: dict[str, OCRReader] = {}
 _DEFAULT_READER_LOCK = threading.Lock()
 
 
-def get_default_reader() -> PaddleOCRReader:
-    global _DEFAULT_READER
-    if _DEFAULT_READER is None:
+def get_default_reader(backend: str = "paddle") -> OCRReader:
+    if backend not in {"paddle", "tesseract"}:
+        raise ValueError("OCR backend must be paddle or tesseract")
+    if backend not in _DEFAULT_READERS:
         with _DEFAULT_READER_LOCK:
-            if _DEFAULT_READER is None:
-                _DEFAULT_READER = PaddleOCRReader()
-    return _DEFAULT_READER
+            if backend not in _DEFAULT_READERS:
+                _DEFAULT_READERS[backend] = (
+                    PaddleOCRReader() if backend == "paddle" else TesseractOCRReader()
+                )
+    return _DEFAULT_READERS[backend]
 
 
 def extract_ocr_frames(
@@ -589,6 +744,7 @@ def extract_burned_subtitle_segments(
     ffmpeg: str,
     config: OCRConfig | None = None,
     reader: OCRReader | None = None,
+    reader_backend: str = "paddle",
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     config = config or OCRConfig()
@@ -600,7 +756,7 @@ def extract_burned_subtitle_segments(
     )
     if not frame_paths:
         return []
-    active_reader = reader or get_default_reader()
+    active_reader = reader or get_default_reader(reader_backend)
     try:
         observations = scan_subtitle_frames(
             frame_paths,

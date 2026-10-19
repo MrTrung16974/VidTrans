@@ -21,7 +21,7 @@ class JobEventHub:
     Pipeline stages update jobs from worker threads many times per second.
     ``notify`` only records the job id; one broadcaster task turns every burst
     into a single message per ``interval``, and builds it once no matter how
-    many browser tabs are connected. Nothing is read from SQLite while nobody
+    many browser tabs are connected. Nothing is read from PostgreSQL while nobody
     is listening.
     """
 

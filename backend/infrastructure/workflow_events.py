@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 import urllib.error
 import urllib.request
 import uuid
@@ -114,16 +116,14 @@ class N8nWebhookConfig:
 
 
 class WorkflowEventStore:
-    """Durable SQLite outbox for non-blocking workflow integrations."""
+    """Durable PostgreSQL outbox for non-blocking workflow integrations."""
 
     def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_target(database_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
+        connection = connect(self.database_path)
         connection.execute("PRAGMA busy_timeout = 30000")
         return connection
 

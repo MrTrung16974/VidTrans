@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -32,15 +34,13 @@ class AdminAccountStore:
     """
 
     def __init__(self, database_path: Path, bootstrap_username: str = "", bootstrap_password_hash: str = "") -> None:
-        self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_target(database_path)
         self._initialize()
         if bootstrap_username.strip():
             self.ensure_owner(bootstrap_username.strip(), bootstrap_password_hash)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
+        connection = connect(self.database_path)
         connection.execute("PRAGMA busy_timeout=30000")
         return connection
 

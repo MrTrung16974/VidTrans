@@ -256,10 +256,26 @@ class SQLiteJobStoreTests(unittest.TestCase):
         queued = self.store.request_cancel("running-cancel")
         running = self.store.request_cancel("queued-cancel")
 
-        statuses = {queued["status"], running["status"]}
-        self.assertEqual(statuses, {"cancelled", "cancelling"})
+        self.assertEqual(queued["status"], "cancelled")
+        self.assertEqual(running["status"], "cancelled")
         self.assertTrue(self.store.is_cancel_requested("queued-cancel"))
         self.assertTrue(self.store.is_cancel_requested("running-cancel"))
+
+    def test_cancelled_job_ignores_late_worker_updates(self) -> None:
+        self.store.create("late-worker", {"status": "queued", "progress": 0.0})
+        self.store.claim_next("worker")
+        cancelled = self.store.request_cancel("late-worker")
+
+        late = self.store.update(
+            "late-worker",
+            status="completed",
+            progress=1.0,
+            step="completed",
+        )
+
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertEqual(late["status"], "cancelled")
+        self.assertNotEqual(late["progress"], 1.0)
 
     def test_claims_due_schedule_before_regular_queue(self) -> None:
         self.store.create("regular", {"status": "queued"})

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Mapping
 
-from infrastructure.job_store import SQLiteJobStore
+from infrastructure.job_store import JobStore
 
 
 class JobService:
@@ -14,7 +14,7 @@ class JobService:
     preserve this interface when processing moves out of the API process.
     """
 
-    def __init__(self, store: SQLiteJobStore, *, on_change: Callable[[str], None] | None = None) -> None:
+    def __init__(self, store: JobStore, *, on_change: Callable[[str], None] | None = None) -> None:
         self._store = store
         self._on_change = on_change
 

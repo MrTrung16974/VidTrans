@@ -21,7 +21,8 @@ elif [[ -n "${1:-}" ]]; then
 fi
 
 if [[ -f "$STATE_FILE" && "$FORCE_SETUP" -eq 0 ]]; then
-    if [[ -s "$APP_ENV" && -s "$PRODUCTION_ENV" && -s "$RUNTIME_TEMPLATE" ]]; then
+    if [[ -s "$APP_ENV" && -s "$PRODUCTION_ENV" && -s "$RUNTIME_TEMPLATE" \
+        && -n "$(awk -F= '$1 == "VIDTRANS_POSTGRES_PASSWORD" && length($2) >= 16 { print $2; exit }' "$APP_ENV")" ]]; then
         printf '%s\n' "VPS/Nginx was configured previously; keeping the existing domain and secrets."
         exit 0
     fi
@@ -74,6 +75,7 @@ existing_username="$(read_env_value "$APP_ENV" VIDTRANS_AUTH_USERNAME)"
 existing_password_hash="$(read_env_value "$APP_ENV" VIDTRANS_AUTH_PASSWORD_HASH)"
 existing_jwt_secret="$(read_env_value "$APP_ENV" VIDTRANS_JWT_SECRET)"
 existing_auth_enabled="$(read_env_value "$APP_ENV" VIDTRANS_AUTH_ENABLED)"
+existing_postgres_password="$(read_env_value "$APP_ENV" VIDTRANS_POSTGRES_PASSWORD)"
 
 public_host="${VIDTRANS_SETUP_DOMAIN:-$existing_public_host}"
 letsencrypt_email="${VIDTRANS_SETUP_EMAIL:-$existing_email}"
@@ -166,6 +168,7 @@ else
     password_hash="$(printf '%s' "$admin_password" | docker run --rm -i --entrypoint python vidtrans-vidtrans -c 'import sys; from infrastructure.auth import hash_password; print(hash_password(sys.stdin.read()))')"
     jwt_secret="$(docker run --rm --entrypoint python vidtrans-vidtrans -c 'import secrets; print(secrets.token_urlsafe(48))')"
 fi
+postgres_password="${existing_postgres_password:-$(docker run --rm --entrypoint python vidtrans-vidtrans -c 'import secrets; print(secrets.token_urlsafe(32))')}"
 unset admin_password password_confirmation
 
 update_env_line "$APP_ENV" VIDTRANS_AUTH_ENABLED "VIDTRANS_AUTH_ENABLED=1"
@@ -174,6 +177,8 @@ compose_password_hash="$(printf '%s' "$password_hash" | sed 's/\$/$$/g')"
 update_env_line "$APP_ENV" VIDTRANS_AUTH_PASSWORD_HASH "VIDTRANS_AUTH_PASSWORD_HASH='$compose_password_hash'"
 update_env_line "$APP_ENV" VIDTRANS_JWT_SECRET "VIDTRANS_JWT_SECRET=$jwt_secret"
 update_env_line "$APP_ENV" VIDTRANS_AUTH_COOKIE_SECURE "VIDTRANS_AUTH_COOKIE_SECURE=1"
+update_env_line "$APP_ENV" VIDTRANS_POSTGRES_PASSWORD "VIDTRANS_POSTGRES_PASSWORD=$postgres_password"
+update_env_line "$APP_ENV" VIDTRANS_DATABASE_URL "VIDTRANS_DATABASE_URL=postgresql://vidtrans:$postgres_password@postgres:5432/vidtrans"
 
 touch "$PRODUCTION_ENV"
 chmod 600 "$PRODUCTION_ENV"

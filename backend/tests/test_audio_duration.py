@@ -8,24 +8,49 @@ from pathlib import Path
 
 from infrastructure.media_probe import probe_media_file
 from main import (
+    build_voice_track,
     DEFAULT_ORIGINAL_AUDIO_VOLUME,
     DEFAULT_VOICE_MIX_GAIN,
     FFMPEG,
     FFPROBE,
     get_media_duration,
+    is_speakable_tts_text,
     mix_audio,
     normalize_subtitle_style,
     wrap_text,
     write_ass,
     write_srt,
+    synthesize_tts_segments,
 )
 
 
 @unittest.skipUnless(shutil.which(FFMPEG) and shutil.which(FFPROBE), "ffmpeg/ffprobe required")
 class AudioDurationIntegrationTests(unittest.TestCase):
+    def test_tts_skips_punctuation_only_cue_before_calling_provider(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vidtrans-empty-tts-") as directory:
+            work_dir = Path(directory)
+            segments = [{"start": 0.0, "end": 1.0, "text": "…?! --"}]
+            paths = synthesize_tts_segments(
+                segments,
+                work_dir,
+                voice_type="female",
+                speech_rate=1.0,
+            )
+            voice_track = build_voice_track(segments, work_dir, video_duration=1.0)
+            duration = get_media_duration(voice_track)
+        self.assertEqual(paths, [])
+        self.assertTrue(segments[0]["skip_tts"])
+        self.assertEqual(segments[0]["tts_skip_reason"], "no_speakable_text")
+        self.assertAlmostEqual(duration, 1.0, places=2)
+
+    def test_tts_speakable_check_supports_vietnamese_and_chinese(self) -> None:
+        self.assertTrue(is_speakable_tts_text("Được rồi"))
+        self.assertTrue(is_speakable_tts_text("有这么完美的女人"))
+        self.assertFalse(is_speakable_tts_text("  …?! --  "))
+
     def test_balanced_default_voice_and_original_audio_levels(self) -> None:
-        self.assertEqual(DEFAULT_VOICE_MIX_GAIN, 1.10)
-        self.assertEqual(DEFAULT_ORIGINAL_AUDIO_VOLUME, 0.50)
+        self.assertEqual(DEFAULT_VOICE_MIX_GAIN, 1.30)
+        self.assertEqual(DEFAULT_ORIGINAL_AUDIO_VOLUME, 0.30)
 
     def test_colored_box_style_is_normalized_for_ass(self) -> None:
         style = normalize_subtitle_style(

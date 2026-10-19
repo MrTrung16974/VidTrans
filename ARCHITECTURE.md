@@ -28,7 +28,8 @@ backend/
 ├── domain/
 │   └── models.py              # Processing-mode and request contracts
 ├── infrastructure/
-│   ├── job_store.py           # Persistent SQLite job repository
+│   ├── database.py            # PostgreSQL connection/dialect adapter
+│   ├── job_store.py           # Persistent PostgreSQL job repository
 │   ├── artifact_io.py         # Atomic JSON artifact writes
 │   ├── media_probe.py         # Single-pass source media metadata probe
 │   ├── stage_checkpoint.py    # Per-job fingerprint/checksum checkpoints
@@ -50,14 +51,13 @@ logic must not be added directly to API route functions.
 
 ## Job state
 
-Job state is stored in `backend/work/jobs.sqlite3`, which is already covered by
-the existing Docker volume and `.gitignore` rules.
+Job state is stored in PostgreSQL configured by `VIDTRANS_DATABASE_URL`. Docker
+Compose persists it in the `postgres-data` volume.
 
 Properties:
 
-- one SQLite connection per operation;
-- atomic read/merge/write updates with `BEGIN IMMEDIATE`;
-- WAL mode for readers while a background task updates progress;
+- one PostgreSQL connection per operation;
+- atomic read/merge/write updates in database transactions;
 - JSON payload keeps the current `/status/{job_id}` response compatible;
 - unfinished in-process jobs are requeued and restarted from their persisted request after restart.
 - transcript, complete translation, TTS, mixed-audio and rendered-video checkpoints are reused
@@ -68,7 +68,7 @@ Properties:
 - batch and job list queries support pagination, status filters and search.
 
 `VIDTRANS_RECOVER_INTERRUPTED_JOBS=1` requeues unfinished jobs at startup. The local
-scheduler uses atomic SQLite claims and configurable worker concurrency. CPU-heavy
+scheduler uses atomic PostgreSQL claims and configurable worker concurrency. CPU-heavy
 pipelines may overlap while Whisper and OCR are protected by dedicated semaphores.
 
 ## Module boundaries to preserve

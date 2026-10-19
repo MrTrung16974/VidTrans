@@ -15,6 +15,7 @@ class ProcessingMode(IntEnum):
 
 class SubtitleSource(StrEnum):
     AUTO = "auto"
+    INDEPENDENT = "independent"
     BURNED = "burned"
     SPEECH = "speech"
 
@@ -88,7 +89,7 @@ class ProcessingRequest:
         try:
             resolved_source = SubtitleSource(subtitle_source)
         except ValueError as exc:
-            raise ValueError("subtitle_source must be auto, burned, or speech") from exc
+            raise ValueError("subtitle_source must be auto, independent, burned, or speech") from exc
         try:
             resolved_voice_mode = VoiceRoutingMode(voice_mode)
         except ValueError as exc:
@@ -101,9 +102,9 @@ class ProcessingRequest:
         resolved_source_language, resolved_target_language = validate_language_pair(
             source_language, target_language
         )
-        if resolved_source is SubtitleSource.BURNED:
+        if resolved_source in {SubtitleSource.BURNED, SubtitleSource.INDEPENDENT}:
             if resolved_source_language == "auto" or not language_profile(resolved_source_language).ocr_supported:
-                raise ValueError("burned subtitle OCR currently requires source_language=zh-CN")
+                raise ValueError("selected subtitle OCR mode currently requires source_language=zh-CN")
         if not 80 <= tiktok_max_summary_chars <= 1500:
             raise ValueError("tiktok_max_summary_chars must be between 80 and 1500")
         if not 0 <= tiktok_hashtag_count <= 12:

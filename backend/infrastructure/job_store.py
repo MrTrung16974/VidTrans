@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,22 +32,20 @@ def _json_default(value: Any) -> str:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
-class SQLiteJobStore:
-    """Small, process-safe JSON job repository backed by SQLite.
+class JobStore:
+    """Small, process-safe JSON job repository backed by PostgreSQL.
 
-    A new SQLite connection is used for every operation. This avoids sharing a
+    A new database connection is used for every operation. This avoids sharing a
     connection between FastAPI request threads and background worker threads.
-    Updates use ``BEGIN IMMEDIATE`` so read/merge/write is atomic.
+    Updates use explicit transactions so read/merge/write is atomic.
     """
 
     def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_target(database_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
+        connection = connect(self.database_path)
         connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA synchronous = NORMAL")
         return connection
@@ -85,7 +85,7 @@ class SQLiteJobStore:
             }
             for name, definition in {
                 "batch_id": "TEXT",
-                "owner_user_id": "TEXT",
+                "owner_user_id": "TEXT CHECK(owner_user_id IS NULL OR TRIM(owner_user_id) <> '')",
                 "priority": "INTEGER NOT NULL DEFAULT 0",
                 "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
                 "worker_id": "TEXT",
@@ -165,7 +165,10 @@ class SQLiteJobStore:
                 for row in connection.execute("PRAGMA table_info(batches)").fetchall()
             }
             if "owner_user_id" not in batch_columns:
-                connection.execute("ALTER TABLE batches ADD COLUMN owner_user_id TEXT")
+                connection.execute(
+                    "ALTER TABLE batches ADD COLUMN owner_user_id TEXT "
+                    "CHECK(owner_user_id IS NULL OR TRIM(owner_user_id) <> '')"
+                )
             connection.execute("UPDATE batches SET owner_user_id='__legacy__' WHERE owner_user_id IS NULL OR owner_user_id=''")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_batches_owner_updated ON batches(owner_user_id, updated_at DESC)"
@@ -448,14 +451,14 @@ class SQLiteJobStore:
             "name": str(row["name"]),
             "status": str(row["status"]),
             "owner_user_id": str(row["owner_user_id"]),
-            "config": SQLiteJobStore._decode(str(row["config_json"])),
+            "config": JobStore._decode(str(row["config_json"])),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
         }
 
     @staticmethod
     def _job_row(row: sqlite3.Row) -> dict[str, Any]:
-        payload = SQLiteJobStore._decode(str(row["payload_json"]))
+        payload = JobStore._decode(str(row["payload_json"]))
         return {
             "job_id": str(row["job_id"]),
             "batch_id": row["batch_id"],
@@ -477,6 +480,8 @@ class SQLiteJobStore:
                 raise JobNotFoundError(f"Job not found: {job_id}")
 
             payload = self._decode(row["payload_json"])
+            if payload.get("status") == "cancelled" and fields.get("status") != "cancelled":
+                return payload
             payload.update(fields)
             status = str(payload.get("status", "queued"))
             scheduled_for = (
@@ -600,25 +605,16 @@ class SQLiteJobStore:
             status = str(row["status"])
             if status in {"completed", "failed", "cancelled"}:
                 return payload
-            if status in {"queued", "ready", "scheduled"}:
-                payload.update(
-                    {
-                        "status": "cancelled",
-                        "step": "cancelled",
-                        "cancel_requested": True,
-                        "finished_at": now,
-                    }
-                )
-                next_status = "cancelled"
-            else:
-                payload.update(
-                    {
-                        "status": "cancelling",
-                        "step_detail": "Đang dừng an toàn sau công đoạn hiện tại",
-                        "cancel_requested": True,
-                    }
-                )
-                next_status = "cancelling"
+            payload.update(
+                {
+                    "status": "cancelled",
+                    "step": "cancelled",
+                    "step_detail": "Đã hủy theo yêu cầu",
+                    "cancel_requested": True,
+                    "finished_at": now,
+                }
+            )
+            next_status = "cancelled"
             connection.execute(
                 """
                 UPDATE jobs
@@ -804,3 +800,7 @@ class SQLiteJobStore:
                 )
                 requeued.append((str(row["job_id"]), payload))
         return requeued
+
+
+# Backward-compatible import for isolated SQLite repository tests.
+SQLiteJobStore = JobStore

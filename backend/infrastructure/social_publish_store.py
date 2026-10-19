@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -21,17 +23,15 @@ class SocialPublishNotFoundError(SocialPublishStoreError):
     pass
 
 
-class SQLiteSocialPublishStore:
+class SocialPublishStore:
     """Durable store for normalized multi-platform publishing attempts."""
 
     def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_target(database_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
+        connection = connect(self.database_path)
         connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA synchronous = NORMAL")
         return connection
@@ -369,3 +369,7 @@ class SQLiteSocialPublishStore:
         assert cancelled is not None
         return cancelled
 
+
+
+# Backward-compatible import for existing integrations.
+SQLiteSocialPublishStore = SocialPublishStore

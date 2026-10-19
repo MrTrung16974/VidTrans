@@ -83,3 +83,34 @@ Tối ưu hiệu năng, chất lượng, checkpoint/retry và khả năng vận 
 - Follow-up UX: đã bỏ ô nhập opacity; dùng cố định default 0,82 và cache frontend `20261018-12`; static tests 9/9 PASS.
 
 Prompt tiếp tục: `Dùng $feature-delivery-workflow. Đọc BA_URD/media-pipeline-optimization/HANDOFF.md và các file được dẫn; kiểm tra trạng thái hiện tại, tiếp tục bước đã được duyệt, không lặp lại phần đã hoàn tất.`
+
+## Bổ sung lỗi TTS text rỗng
+
+- Đã chặn cue chỉ có dấu câu/ký hiệu trước Edge TTS/gTTS bằng Unicode letter/number guard.
+- Cue không đọc được có `skip_tts=true`, `tts_skip_reason=no_speakable_text`; nếu không còn cue voice, pipeline tạo silent track đúng duration thay vì fail.
+- TTS fingerprint version tăng lên 4; nhóm ảnh hưởng 37/37 PASS.
+- Cần rebuild/restart service trước khi retry job lỗi.
+
+## Bổ sung chế độ OCR + ASR độc lập
+
+- Người dùng đã duyệt bắt đầu phát triển và yêu cầu đây là lựa chọn opt-in.
+- Đã thêm `subtitle_source=independent`: OCR Trung là source ưu tiên; ASR tự detect ngôn ngữ audio, không so sánh xuyên ngôn ngữ; fallback cue mang source language riêng.
+- Translation dịch theo nhóm ngôn ngữ từng cue và giữ nguyên timeline. Runtime thiếu OCR sẽ fail-fast, không âm thầm dùng speech-only.
+- Cache version: transcript 4, OCR/ASR merge 2, translation 3, frontend `20261018-14`.
+- Test ảnh hưởng 63/63 PASS; full backend 420/422 PASS với 2 lỗi nền ngoài phạm vi.
+- Chưa deploy/restart và chưa chạy E2E video thật. Bước tiếp theo: build image, bật/kiểm tra PaddleOCR trên runtime, rồi chạy video mẫu với lựa chọn mới.
+
+## Bổ sung hủy job tức thời
+
+- Job chưa terminal chuyển thẳng sang `cancelled` khi API nhận yêu cầu; UI không còn chờ “Đang hủy”.
+- Store và `update_job` chặn update worker đến muộn ghi đè terminal state. Hủy lặp lại vẫn idempotent và tenant check giữ nguyên.
+- Frontend cache `20261018-15`; nhóm ảnh hưởng 43/43 PASS, full backend 421/423 PASS với hai lỗi nền cũ.
+- Cancellation vẫn cooperative: native Whisper/FFmpeg đang giữa call có thể cần tới callback/checkpoint kế tiếp mới giải phóng CPU, nhưng UI/job/artifact không chờ và không thể hoàn tất lại.
+
+## Bổ sung OCR Linux ARM 2026-10-19
+
+- Đã thay lỗi fail-fast PaddleOCR bằng backend Tesseract ổn định: `VIDTRANS_OCR_BACKEND=auto` tự chọn `tesseract` trên Linux ARM; có thể ép `paddle`, `tesseract` hoặc `off`.
+- Dockerfile cài Tesseract cùng model `chi_sim`; OCR TSV được chuẩn hóa về `OCRLine`, fingerprint ghi backend.
+- 38/38 test liên quan PASS; image runtime có `chi_sim`, config chọn `tesseract`, Uvicorn startup hoàn tất và `/docs` trả 200.
+- Do proxy TLS chặn tải lại PyTorch, máy local hiện triển khai bằng image overlay từ image sẵn có; Dockerfile chuẩn đã cập nhật để CI/VPS build sạch. File overlay tạm không thuộc source bàn giao.
+- Việc tiếp theo: retry job video bằng lựa chọn `OCR + ASR độc lập`; thu output thật để đánh giá accuracy và tinh chỉnh crop/preprocess nếu cần.

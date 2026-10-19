@@ -135,3 +135,36 @@ Không gọi provider thật, không tải model, không đọc DB/config/secret
 - Render artifact tồn tại cả trong work và output để giữ ranh giới checkpoint/public artifact; đổi lại tăng tạm thời dung lượng đĩa gần bằng một output video.
 - Probe tổng hợp không thay thế validation upload; nó cung cấp metadata runtime và phát hiện source bị thay/hỏng trước xử lý.
 - Open questions Q01–Q05 không chặn Lát A; chúng chặn các lựa chọn thuật toán/cache/hardware tiếp theo.
+
+## 9. Guard cho cue TTS không có nội dung đọc được
+
+- Trước khi gọi Edge TTS/gTTS, cue phải chứa ít nhất một Unicode letter hoặc number; chuỗi chỉ có khoảng trắng, dấu câu hay ký hiệu được đánh dấu `skip_tts` với lý do `no_speakable_text`.
+- Guard dùng Unicode category để áp dụng đồng nhất cho tiếng Việt, chữ Hán và các ngôn ngữ đã hỗ trợ; không phụ thuộc regex Latin.
+- Nếu không còn cue đọc được, `build_voice_track` tạo mono silence đúng duration nguồn. Job tiếp tục mix tiếng gốc/render thay vì gọi provider với text rỗng hoặc fail ở bước dựng voice.
+- Bump `tts_pipeline_version` để không reuse checkpoint trước contract mới.
+
+## 10. Chế độ OCR và ASR độc lập theo cue
+
+- Thêm `subtitle_source=independent` như lựa chọn opt-in; `auto`, `burned`, `speech` giữ contract cũ.
+- Chế độ này yêu cầu `source_language=zh-CN` vì đó là ngôn ngữ của caption OCR, nhưng ASR được gọi với language `auto` để không giả định lời thoại cũng là tiếng Trung.
+- OCR cue là nguồn nội dung ưu tiên và mang `source_language=zh-CN`. ASR cue trùng OCR bị loại, không được dùng để chú thích/đánh giá OCR xuyên ngôn ngữ. ASR cue không trùng được giữ làm fallback và mang ngôn ngữ audio đã detect.
+- Translation gom cue theo `source_language`, gọi translator phù hợp từng nhóm rồi ghép lại đúng index/timeline. Cue không có ngôn ngữ xác định được đánh dấu review/fail thay vì dịch bằng giả định sai.
+- Nếu runtime không bật OCR, chế độ `independent` fail-fast với hướng dẫn rõ; không âm thầm hạ xuống speech-only.
+- Transcript/translation fingerprint được bump và bao gồm merge contract mới. Không đổi DB, endpoint hay authz; chỉ mở rộng enum/form value đã validate.
+- Test bao phủ: parsing lựa chọn mới, OCR Trung + ASR Hàn trùng nhau, ASR fallback không trùng, dịch nhiều source language giữ thứ tự, UI và backward compatibility.
+
+## 11. Hủy job tức thời
+
+- `request_cancel` chuyển mọi job chưa terminal (`queued`, `scheduled`, `processing`, legacy `cancelling`) thẳng sang `cancelled` trong cùng transaction, đặt `cancel_requested=true` và `finished_at` ngay.
+- Worker không bị kill cưỡng bức giữa native ASR/FFmpeg call; cờ hủy vẫn được kiểm tra tại callback/checkpoint gần nhất để dừng tài nguyên an toàn.
+- Khi job đã `cancelled`, `update_job` bỏ qua mọi update đến muộn không phải xác nhận `cancelled`; progress, `failed` hoặc `completed` từ worker không được ghi đè trạng thái terminal.
+- Endpoint vẫn kiểm tra ownership/tenant như hiện tại. Hủy lặp lại idempotent và trả cùng trạng thái terminal.
+- UI nhận event/API response `cancelled` ngay nên không còn chờ ở nhãn “Đang hủy”. Giá trị legacy `cancelling` vẫn được đọc để tương thích dữ liệu cũ.
+
+## 12. OCR an toàn trên Linux ARM
+
+- Thêm backend `tesseract` dùng CLI/TSV với language pack `chi_sim`; không import native Paddle runtime nên tránh crash process trên Docker Desktop ARM64.
+- Chọn backend qua contract `VIDTRANS_OCR_BACKEND=auto|paddle|tesseract|off`. `auto` dùng Tesseract trên Linux ARM, Paddle ở runtime khác; biến legacy bật Paddle vẫn được tôn trọng.
+- Docker image cài `tesseract-ocr` và `tesseract-ocr-chi-sim`. Reader gom word TSV theo line, chuẩn hóa confidence 0–1 và union bbox để dùng lại toàn bộ temporal consensus hiện tại.
+- OCR backend là thành phần transcript fingerprint; đổi backend làm cache miss đúng cách.
+- Nếu binary/language pack thiếu, lỗi chỉ dừng job OCR với thông báo provisioning cụ thể, không crash server.

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore, utc_now
+from infrastructure.tiktok_publish_store import TikTokPublishStore, utc_now
 from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherError
 
 
@@ -19,7 +19,7 @@ class TikTokPublishingValidationError(ValueError):
 
 
 class TikTokPublishingService:
-    def __init__(self, store: SQLiteTikTokPublishStore, publisher: TikTokPublisher, publisher_resolver=None) -> None:
+    def __init__(self, store: TikTokPublishStore, publisher: TikTokPublisher, publisher_resolver=None) -> None:
         self.store = store
         self.publisher = publisher
         self._publisher_resolver = publisher_resolver

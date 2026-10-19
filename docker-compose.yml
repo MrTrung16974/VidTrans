@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: vidtrans-postgres
+    environment:
+      POSTGRES_DB: "${VIDTRANS_POSTGRES_DB:-vidtrans}"
+      POSTGRES_USER: "${VIDTRANS_POSTGRES_USER:-vidtrans}"
+      POSTGRES_PASSWORD: "${VIDTRANS_POSTGRES_PASSWORD:-vidtrans}"
+    ports:
+      - "127.0.0.1:${VIDTRANS_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${VIDTRANS_POSTGRES_USER:-vidtrans} -d ${VIDTRANS_POSTGRES_DB:-vidtrans}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   social-browser:
     image: vidtrans-social-browser
     build:
@@ -60,6 +78,8 @@ services:
       dockerfile: Dockerfile
     container_name: vidtrans
     depends_on:
+      postgres:
+        condition: service_healthy
       social-browser:
         condition: service_healthy
       tiktok-browser:
@@ -68,8 +88,9 @@ services:
       # Keep the FastAPI port private to the VPS. Production traffic must enter via Nginx.
       - "127.0.0.1:5200:8000"
     environment:
+      VIDTRANS_DATABASE_URL: "${VIDTRANS_DATABASE_URL:-postgresql://vidtrans:vidtrans@postgres:5432/vidtrans}"
       VIDTRANS_RECOVER_INTERRUPTED_JOBS: "1"
-      VIDTRANS_ENABLE_PADDLE_OCR: "0"
+      VIDTRANS_OCR_BACKEND: "${VIDTRANS_OCR_BACKEND:-auto}"
       VIDTRANS_WORKER_CONCURRENCY: "2"
       # Retention is opt-in to avoid deleting existing deployments unexpectedly.
       VIDTRANS_RETENTION_ENABLED: "${VIDTRANS_RETENTION_ENABLED:-0}"
@@ -156,6 +177,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   tiktok-browser-profile:
   douyin-browser-profile:
   whisper-models:

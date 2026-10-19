@@ -79,6 +79,34 @@ class ProcessingRequestTests(unittest.TestCase):
                 voice_type="female",
             )
 
+    def test_accepts_independent_ocr_asr_for_chinese_captions(self) -> None:
+        request = ProcessingRequest.from_form(
+            mode=2,
+            subtitle_source="independent",
+            ocr_sample_fps=3.0,
+            ocr_roi_top=0.68,
+            ocr_roi_bottom=0.96,
+            voice_mode="auto",
+            voice_type="female",
+            source_language="zh-CN",
+            target_language="vi",
+        )
+        self.assertIs(request.subtitle_source, SubtitleSource.INDEPENDENT)
+
+    def test_independent_mode_rejects_non_chinese_caption_language(self) -> None:
+        with self.assertRaisesRegex(ValueError, "OCR"):
+            ProcessingRequest.from_form(
+                mode=2,
+                subtitle_source="independent",
+                ocr_sample_fps=3.0,
+                ocr_roi_top=0.68,
+                ocr_roi_bottom=0.96,
+                voice_mode="auto",
+                voice_type="female",
+                source_language="ko",
+                target_language="vi",
+            )
+
     def test_rejects_invalid_tiktok_limits(self) -> None:
         with self.assertRaisesRegex(ValueError, "tiktok_max_summary_chars"):
             ProcessingRequest.from_form(

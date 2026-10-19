@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -25,13 +27,12 @@ class QuotaExceededError(ValueError):
 
 class TenantGovernanceStore:
     def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
+        self.database_path = prepare_target(database_path)
         self._initialize()
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.database_path, timeout=30)
-        db.row_factory = sqlite3.Row
+        db = connect(self.database_path)
         db.execute("PRAGMA busy_timeout=30000")
         try:
             with db:
@@ -52,7 +53,9 @@ class TenantGovernanceStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(user_id) REFERENCES admin_accounts(user_id) ON DELETE CASCADE,
-                    CHECK(status IN ('reserved','consumed','released'))
+                    CHECK(status IN ('reserved','consumed','released')),
+                    CHECK(reserved_minutes >= 0),
+                    CHECK(consumed_minutes >= 0)
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_quota_user_period ON quota_job_usage(user_id,period,status)")

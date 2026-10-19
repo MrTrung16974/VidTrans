@@ -50,6 +50,14 @@ RUN pip install -r requirements-downloader.txt
 COPY requirements-asr.txt ./
 RUN pip install -r requirements-asr.txt
 
+# Install the stable CLI OCR fallback after the expensive Python dependency
+# layers so enabling it does not invalidate the cached Torch/Paddle build.
+RUN apt-get update -o Acquire::Retries=3 \
+    && apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+        tesseract-ocr \
+        tesseract-ocr-chi-sim \
+    && rm -rf /var/lib/apt/lists/*
+
 # Chromium is isolated in its own late layer so adding QR login does not
 # invalidate the expensive Torch/Paddle dependency installation above.
 RUN apt-get update -o Acquire::Retries=3 \

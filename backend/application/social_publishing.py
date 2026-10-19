@@ -14,7 +14,7 @@ from domain.social_publishing import (
     SocialPlatform,
 )
 from infrastructure.publishers.registry import PublisherRegistry
-from infrastructure.social_publish_store import SQLiteSocialPublishStore, utc_now
+from infrastructure.social_publish_store import SocialPublishStore, utc_now
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class SocialPublishingValidationError(ValueError):
 class SocialPublishingService:
     def __init__(
         self,
-        store: SQLiteSocialPublishStore,
+        store: SocialPublishStore,
         publishers: PublisherRegistry,
         publisher_resolver=None,
     ) -> None:

@@ -1,6 +1,11 @@
 import unittest
 
-from pipeline.translation import contains_han, segment_filter_signature, translate_segments
+from pipeline.translation import (
+    contains_han,
+    segment_filter_signature,
+    translate_segments,
+    translate_segments_by_source_language,
+)
 
 
 class MarkerTranslator:
@@ -103,6 +108,34 @@ class TranslationPipelineTests(unittest.TestCase):
         )
         self.assertEqual(translated[0]["text"], "你好世界")
         self.assertEqual(translated[0]["target_language"], "zh-CN")
+
+    def test_translates_each_source_language_and_restores_timeline_order(self) -> None:
+        class CueTranslator:
+            supports_markers = False
+
+            def __init__(self, source: str) -> None:
+                self.source = source
+
+            def translate(self, text: str) -> str:
+                return "Bản dịch tiếng Trung" if self.source == "zh-CN" else "Bản dịch tiếng Hàn"
+
+        segments = [
+            {"start": 0, "end": 1, "text": "中文字幕", "source_language": "zh-CN"},
+            {"start": 1, "end": 2, "text": "한국어 음성", "source_language": "ko"},
+            {"start": 2, "end": 3, "text": "下一句", "source_language": "zh-CN"},
+        ]
+        translated = translate_segments_by_source_language(
+            segments,
+            target_language="vi",
+            default_source_language="zh-CN",
+            translator_factory=lambda source, _target: CueTranslator(source),
+            sleeper=lambda _: None,
+        )
+        self.assertEqual(
+            [item["text"] for item in translated],
+            ["Bản dịch tiếng Trung", "Bản dịch tiếng Hàn", "Bản dịch tiếng Trung"],
+        )
+        self.assertEqual([item["start"] for item in translated], [0.0, 1.0, 2.0])
 
 
 if __name__ == "__main__":

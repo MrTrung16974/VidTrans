@@ -13,7 +13,7 @@ JobRunner = Callable[[str, dict[str, Any]], None]
 
 
 class JobScheduler:
-    """Persistent SQLite-backed worker pool for a single VidTrans deployment."""
+    """Persistent PostgreSQL-backed worker pool for a VidTrans deployment."""
 
     def __init__(
         self,

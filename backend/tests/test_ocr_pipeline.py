@@ -1,12 +1,17 @@
 import unittest
 import threading
+from pathlib import Path
+from unittest.mock import patch
 
 from pipeline.ocr import (
     FrameObservation,
     OCRConfig,
     OCRLine,
     PaddleOCRReader,
+    TesseractOCRReader,
     annotate_ocr_segments_with_asr,
+    merge_ocr_and_asr_segments,
+    merge_independent_ocr_asr_segments,
     normalize_zh_text,
     observations_to_cues,
     select_subtitle_text,
@@ -66,6 +71,21 @@ class OCRTextTests(unittest.TestCase):
         lines = reader.read(None)
         self.assertEqual(lines, [OCRLine("我愿意把自己变成什么样子", 0.97, (10, 20, 200, 50))])
 
+    def test_tesseract_adapter_groups_chinese_words_into_one_line(self) -> None:
+        tsv = (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            "5\t1\t1\t1\t1\t1\t10\t20\t40\t20\t96\t这个世界\n"
+            "5\t1\t1\t1\t1\t2\t52\t20\t35\t20\t94\t怎么会\n"
+        )
+        completed = type("Completed", (), {"returncode": 0, "stdout": tsv, "stderr": ""})()
+        with patch("pipeline.ocr.shutil.which", return_value="/usr/bin/tesseract"), patch(
+            "pipeline.ocr.subprocess.run", return_value=completed
+        ):
+            lines = TesseractOCRReader().read(Path("frame.jpg"))
+        self.assertEqual(lines[0].text, "这个世界怎么会")
+        self.assertAlmostEqual(lines[0].confidence, 0.95, places=2)
+        self.assertEqual(lines[0].bbox, (10.0, 20.0, 87.0, 40.0))
+
     def test_normalizes_union_bbox_for_selected_chinese_lines(self) -> None:
         text, confidence, bbox = select_subtitle_geometry(
             [
@@ -94,6 +114,47 @@ class OCRTextTests(unittest.TestCase):
         self.assertEqual(result[0]["text"], "我愿意把自己变成什么样子")
         self.assertTrue(result[0]["needs_review"])
         self.assertLess(result[0]["asr_similarity"], 0.45)
+
+    def test_auto_merge_fills_silent_caption_gap_and_keeps_spoken_cues(self) -> None:
+        ocr = [{
+            "start": 8.8,
+            "end": 14.8,
+            "text": "有这么完美的女人",
+            "ocr_confidence": 0.96,
+        }]
+        asr = [
+            {"start": 6.8, "end": 8.7, "text": "前一句"},
+            {"start": 15.2, "end": 16.8, "text": "后一句"},
+        ]
+        result = merge_ocr_and_asr_segments(ocr, asr)
+        self.assertEqual([item["text"] for item in result], ["前一句", "有这么完美的女人", "后一句"])
+        self.assertEqual(result[1]["source_method"], "ocr")
+
+    def test_auto_merge_prefers_visible_caption_when_asr_overlaps(self) -> None:
+        ocr = [{
+            "start": 1.0,
+            "end": 2.0,
+            "text": "画面字幕",
+            "ocr_confidence": 0.95,
+        }]
+        asr = [{"start": 1.1, "end": 1.9, "text": "错误听写"}]
+        result = merge_ocr_and_asr_segments(ocr, asr)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "画面字幕")
+
+    def test_independent_merge_keeps_chinese_caption_over_korean_speech(self) -> None:
+        ocr = [{"start": 1.0, "end": 2.0, "text": "这个世界上怎么会"}]
+        asr = [
+            {"start": 1.1, "end": 1.9, "text": "어떻게 이럴 수가"},
+            {"start": 2.5, "end": 3.2, "text": "정말 놀랍다"},
+        ]
+        result = merge_independent_ocr_asr_segments(
+            ocr, asr, ocr_language="zh-CN", asr_language="ko"
+        )
+        self.assertEqual([item["text"] for item in result], ["这个世界上怎么会", "정말 놀랍다"])
+        self.assertEqual([item["source_language"] for item in result], ["zh-CN", "ko"])
+        self.assertNotIn("asr_text", result[0])
+        self.assertEqual([item["modality"] for item in result], ["visual", "audio"])
 
 
 class TemporalConsensusTests(unittest.TestCase):

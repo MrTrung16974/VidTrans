@@ -10,6 +10,7 @@ import subprocess
 import textwrap
 import threading
 import time
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -52,6 +53,7 @@ from infrastructure.auth import (
     hash_password,
 )
 from infrastructure.admin_accounts import AdminAccountError, AdminAccountStore
+from infrastructure.database import database_target
 from infrastructure.payments import (
     PLAN_CATALOG,
     PaymentConfig,
@@ -60,7 +62,7 @@ from infrastructure.payments import (
     PaymentOrderStore,
 )
 from infrastructure.job_events import ALL_JOBS, JobEventHub
-from infrastructure.job_store import SQLiteJobStore
+from infrastructure.job_store import JobStore
 from infrastructure.publishers.registry import PublisherRegistry
 from infrastructure.publishers.instagram import InstagramPublisher, InstagramPublisherConfig
 from infrastructure.publishers.tiktok import TikTokSocialPublisher
@@ -73,10 +75,10 @@ from infrastructure.platform_apps import PLATFORM_APPS, PlatformAppError, Platfo
 from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
-from infrastructure.social_publish_store import SQLiteSocialPublishStore
+from infrastructure.social_publish_store import SocialPublishStore
 from infrastructure.social_credentials import SocialCredentialStore
 from infrastructure.tenant_governance import QuotaExceededError, TenantGovernanceStore
-from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
+from infrastructure.tiktok_publish_store import TikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
 from infrastructure.media_probe import MediaProbe, probe_media_file
@@ -101,7 +103,13 @@ from infrastructure.social_video_downloader import (
     social_platform,
 )
 from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherConfig, TikTokPublisherError
-from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
+from pipeline.ocr import (
+    OCRConfig,
+    annotate_ocr_segments_with_asr,
+    extract_burned_subtitle_segments,
+    merge_independent_ocr_asr_segments,
+    merge_ocr_and_asr_segments,
+)
 from pipeline.checkpoint_payloads import (
     restore_file_checkpoint,
     restore_tts_checkpoint,
@@ -122,6 +130,7 @@ from pipeline.translation import (
     filter_meaningful_segments,
     segment_filter_signature,
     translate_segments,
+    translate_segments_by_source_language,
 )
 from pipeline.tts_timing import (
     adaptive_synthesis_rate_percent,
@@ -150,6 +159,7 @@ FRONTEND_DIR = SETTINGS.frontend_dir
 UPLOAD_DIR = SETTINGS.upload_dir
 OUTPUT_DIR = SETTINGS.output_dir
 WORK_DIR = SETTINGS.work_dir
+DATABASE_TARGET = database_target(WORK_DIR / "jobs.sqlite3")
 FFMPEG = SETTINGS.ffmpeg
 FFPROBE = SETTINGS.ffprobe
 
@@ -233,8 +243,8 @@ FONT_CANDIDATES = [
 ]
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 BUNDLED_FONT = FONT_DIR / "NotoSansCJKsc-Regular.otf"
-DEFAULT_VOICE_MIX_GAIN = 1.10
-DEFAULT_ORIGINAL_AUDIO_VOLUME = 0.50
+DEFAULT_VOICE_MIX_GAIN = 1.30
+DEFAULT_ORIGINAL_AUDIO_VOLUME = 0.30
 
 
 def _validated_css_color(value: Any, fallback: str) -> str:
@@ -279,9 +289,9 @@ app.add_middleware(
 # job_change_snapshot is defined with the job routes below; it is only
 # called once the broadcaster runs, after the module has loaded.
 JOB_EVENTS = JobEventHub(lambda job_ids: job_change_snapshot(job_ids))
-JOB_SERVICE = JobService(SQLiteJobStore(WORK_DIR / "jobs.sqlite3"), on_change=JOB_EVENTS.notify)
+JOB_SERVICE = JobService(JobStore(DATABASE_TARGET), on_change=JOB_EVENTS.notify)
 N8N_WORKFLOW_CONFIG = N8nWebhookConfig.from_env()
-WORKFLOW_EVENT_STORE = WorkflowEventStore(WORK_DIR / "jobs.sqlite3")
+WORKFLOW_EVENT_STORE = WorkflowEventStore(DATABASE_TARGET)
 WORKFLOW_EVENTS = WorkflowEventSink(WORKFLOW_EVENT_STORE)
 N8N_WORKFLOW_DISPATCHER = N8nWorkflowDispatcher(
     WORKFLOW_EVENT_STORE,
@@ -316,7 +326,7 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
 )
 # Each user may enter their own OAuth developer apps on the web; .env stays the fallback.
 PLATFORM_APP_STORE = PlatformAppStore(
-    WORK_DIR / "jobs.sqlite3",
+    DATABASE_TARGET,
     CredentialCipher(load_or_create_key(WORK_DIR / "secrets" / "platform-apps.key"), key_id="platform-apps"),
 )
 _PLATFORM_CONFIG_FACTORIES = {
@@ -400,7 +410,7 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
 
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth", config=platform_app_config("TIKTOK"))
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
-TIKTOK_PUBLISH_STORE = SQLiteTikTokPublishStore(WORK_DIR / "jobs.sqlite3")
+TIKTOK_PUBLISH_STORE = TikTokPublishStore(DATABASE_TARGET)
 TIKTOK_PUBLISHING = TikTokPublishingService(
     TIKTOK_PUBLISH_STORE,
     TIKTOK_PUBLISHER,
@@ -423,7 +433,7 @@ app.include_router(create_tiktok_publish_router(
         user_id, connection_id, platform
     ),
 ))
-SOCIAL_PUBLISH_STORE = SQLiteSocialPublishStore(WORK_DIR / "jobs.sqlite3")
+SOCIAL_PUBLISH_STORE = SocialPublishStore(DATABASE_TARGET)
 _migrated_tiktok_history = SOCIAL_PUBLISH_STORE.migrate_legacy_tiktok_history()
 if _migrated_tiktok_history:
     logger.info("Migrated %d terminal TikTok publish attempts", _migrated_tiktok_history)
@@ -488,7 +498,7 @@ app.include_router(create_social_account_router(
 ))
 AUTH_MANAGER = AuthManager()
 ADMIN_ACCOUNTS = AdminAccountStore(
-    WORK_DIR / "jobs.sqlite3",
+    DATABASE_TARGET,
     AUTH_MANAGER.config.username if AUTH_MANAGER.config.enabled else "admin",
     AUTH_MANAGER.config.password_hash if AUTH_MANAGER.config.enabled else "",
 )
@@ -622,7 +632,7 @@ _tenant_migration_manifest = {
 }
 _tenant_manifest_path = WORK_DIR / "migrations" / "tenant-storage-v1.json"
 write_json_atomic(_tenant_manifest_path, _tenant_migration_manifest)
-SOCIAL_CREDENTIALS = SocialCredentialStore(WORK_DIR / "jobs.sqlite3")
+SOCIAL_CREDENTIALS = SocialCredentialStore(DATABASE_TARGET)
 try:
     SOCIAL_CREDENTIAL_CIPHER: CredentialCipher | None = CredentialCipher.from_env()
 except CredentialCipherError:
@@ -698,9 +708,9 @@ def tenant_publisher_for_oauth_callback(platform: str, state: str):
         account_store.accept_consumed_state(state)
     return publisher
 PAYMENT_CONFIG = PaymentConfig.from_env()
-PAYMENT_ORDERS = PaymentOrderStore(WORK_DIR / "jobs.sqlite3")
+PAYMENT_ORDERS = PaymentOrderStore(DATABASE_TARGET)
 PAYMENT_GATEWAY = PaymentGatewayClient(PAYMENT_CONFIG)
-TENANT_GOVERNANCE = TenantGovernanceStore(WORK_DIR / "jobs.sqlite3")
+TENANT_GOVERNANCE = TenantGovernanceStore(DATABASE_TARGET)
 ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
@@ -1254,6 +1264,8 @@ def make_asr_progress_callback(
 
 def update_job(job_id: str, **fields: Any) -> None:
     current = JOB_SERVICE.get(job_id)
+    if current and current.get("status") == "cancelled" and fields.get("status") != "cancelled":
+        return
     if current and current.get("cancel_requested"):
         if fields.get("status") == "processing":
             fields.pop("status")
@@ -1366,6 +1378,18 @@ def tts_gtts_sync(text: str, output_path: Path, slow: bool = False, language: st
     gTTS(text=text, lang=language_profile(language).gtts_code, slow=slow).save(str(output_path))
 
 
+def is_speakable_tts_text(value: Any) -> bool:
+    """Return true when text contains at least one letter or number.
+
+    Some translation/OCR cues contain only punctuation.  They are non-empty
+    strings, but gTTS removes every token and raises "No text to send to TTS
+    API".  Unicode categories keep this check language-independent.
+    """
+
+    text = " ".join(str(value or "").split())
+    return any(unicodedata.category(character)[0] in {"L", "N"} for character in text)
+
+
 def synthesize_tts_segments(
     segments: list[dict[str, Any]],
     work_dir: Path,
@@ -1384,7 +1408,11 @@ def synthesize_tts_segments(
     import concurrent.futures
     import threading
     completed_count = 0
-    total_valid = sum(1 for s in segments if not s.get("skip_tts") and " ".join(s["text"].split()))
+    total_valid = sum(
+        1
+        for segment in segments
+        if not segment.get("skip_tts") and is_speakable_tts_text(segment.get("text"))
+    )
     progress_lock = threading.Lock()
 
     def process_segment(index: int, segment: dict[str, Any]) -> Path | None:
@@ -1397,8 +1425,10 @@ def synthesize_tts_segments(
             return None
 
         # Clean text
-        raw_text = " ".join(segment["text"].split())
-        if not raw_text:
+        raw_text = " ".join(str(segment.get("text") or "").split())
+        if not is_speakable_tts_text(raw_text):
+            segment["skip_tts"] = True
+            segment["tts_skip_reason"] = "no_speakable_text"
             return None
 
         # Optimize Translation text pacing using Original Word Timestamps
@@ -1632,7 +1662,20 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
         labels.append(f"[a{input_index}]")
         input_index += 1
     if not labels:
-        raise RuntimeError("No TTS segments were generated")
+        run_ffmpeg(
+            [
+                FFMPEG,
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=24000:cl=mono",
+                "-t",
+                f"{video_duration:.3f}",
+                str(voice_track),
+            ]
+        )
+        return voice_track
     filter_parts.append(
         f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,"
         f"alimiter=limit=0.95,apad=whole_dur={video_duration:.3f},"
@@ -2143,13 +2186,13 @@ def recognize_video_source(
 
     video_duration = source_probe.duration
     ocr_segments: list[dict[str, Any]] = []
-    ocr_requested = subtitle_source in {"auto", "burned"} and source_language == "zh-CN"
-    if ocr_requested and not SETTINGS.paddle_ocr_enabled:
-        message = "OCR is disabled on this Linux ARM64 runtime; using Whisper speech recognition"
-        if subtitle_source == "burned":
+    ocr_requested = subtitle_source in {"auto", "independent", "burned"} and source_language == "zh-CN"
+    if ocr_requested and SETTINGS.ocr_backend == "off":
+        message = "OCR is disabled on this runtime; using Whisper speech recognition"
+        if subtitle_source in {"burned", "independent"}:
             raise RuntimeError(
-                "Burned-subtitle OCR is disabled on this runtime because PaddleOCR crashes the server. "
-                "Choose Whisper or Auto, or set VIDTRANS_ENABLE_PADDLE_OCR=1 only after validating PaddleOCR."
+                "OCR is disabled on this runtime. Set VIDTRANS_OCR_BACKEND=tesseract or paddle "
+                "after installing the selected OCR runtime."
             )
         logger.warning(message)
         update_job(job_id, status="processing", step="transcribing", step_detail=message, progress=0.22)
@@ -2168,12 +2211,13 @@ def recognize_video_source(
                             roi_top=ocr_roi_top,
                             roi_bottom=ocr_roi_bottom,
                         ),
+                        reader_backend=SETTINGS.ocr_backend,
                         progress_callback=make_ocr_progress_callback(job_id),
                     )
         except JobCancelled:
             raise
         except Exception:
-            if subtitle_source == "burned":
+            if subtitle_source in {"burned", "independent"}:
                 raise
             logger.warning("OCR subtitle extraction failed; using speech transcription", exc_info=True)
 
@@ -2192,8 +2236,9 @@ def recognize_video_source(
         if source_probe.has_audio:
             with _whisper_slots:
                 ensure_job_active(job_id)
+                asr_language = "auto" if subtitle_source == "independent" else source_language
                 asr_segments, detected_language, detected_language_probability = transcribe_video(
-                    whisper_model, video_path, source_language, job_id, video_duration
+                    whisper_model, video_path, asr_language, job_id, video_duration
                 )
         elif not ocr_segments:
             raise RuntimeError(
@@ -2201,7 +2246,18 @@ def recognize_video_source(
                 "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
                 "nếu không, hãy chọn video có âm thanh."
             )
-    if ocr_segments:
+    if ocr_segments and subtitle_source == "independent":
+        segments = merge_independent_ocr_asr_segments(
+            ocr_segments,
+            asr_segments,
+            ocr_language=source_language,
+            asr_language=detected_language,
+        )
+        source_method = "independent"
+    elif ocr_segments and subtitle_source == "auto":
+        segments = merge_ocr_and_asr_segments(ocr_segments, asr_segments)
+        source_method = "hybrid"
+    elif ocr_segments:
         segments = annotate_ocr_segments_with_asr(ocr_segments, asr_segments)
         source_method = "ocr"
     else:
@@ -2281,7 +2337,7 @@ def process_video(
         checkpoint_store = StageCheckpointStore(work_dir)
         transcript_fingerprint = fingerprint_payload(
             {
-                "version": 2,
+                "version": 4,
                 "source_checksum": source_checksum,
                 "subtitle_source": subtitle_source,
                 "source_language": source_language,
@@ -2291,10 +2347,12 @@ def process_video(
                 "asr_beam_size": ASR_SERVICE.config.beam_size,
                 "asr_vad": ASR_SERVICE.config.vad,
                 "asr_vad_min_silence_ms": ASR_SERVICE.config.vad_min_silence_ms,
-                "ocr_enabled": SETTINGS.paddle_ocr_enabled,
+                "ocr_enabled": SETTINGS.ocr_backend != "off",
+                "ocr_backend": SETTINGS.ocr_backend,
                 "ocr_sample_fps": ocr_sample_fps,
                 "ocr_roi_top": ocr_roi_top,
                 "ocr_roi_bottom": ocr_roi_bottom,
+                "ocr_asr_merge": 2,
                 "segmentation": {
                     "preferred_chars": int(subtitle_style["preferred_cue_chars"]),
                     "max_chars": int(subtitle_style["max_cue_chars"]),
@@ -2381,7 +2439,7 @@ def process_video(
                 "transcript_checksum": transcript_checkpoint.checksum,
                 "source_language": effective_source_language,
                 "target_language": target_language,
-                "translation_pipeline_version": 2,
+                "translation_pipeline_version": 3,
                 "max_batch_chars": 1200,
             }
         )
@@ -2395,17 +2453,27 @@ def process_video(
             translated_segments = list(translation_checkpoint.payload["segments"])
         else:
             with measure_job_stage(job_id, "translation", video_duration=video_duration):
-                translated_segments = translate_segments(
-                    segments,
-                    source_language=effective_source_language,
-                    target_language=target_language,
-                    check_active=lambda: ensure_job_active(job_id),
-                    progress_callback=lambda completed, total: update_job(
+                translation_kwargs = {
+                    "target_language": target_language,
+                    "check_active": lambda: ensure_job_active(job_id),
+                    "progress_callback": lambda completed, total: update_job(
                         job_id,
                         progress=0.4 + 0.06 * completed / max(1, total),
                         step_detail=f"Đã kiểm tra bản dịch {completed}/{total} câu",
                     ),
-                )
+                }
+                if subtitle_source == "independent":
+                    translated_segments = translate_segments_by_source_language(
+                        segments,
+                        default_source_language=effective_source_language,
+                        **translation_kwargs,
+                    )
+                else:
+                    translated_segments = translate_segments(
+                        segments,
+                        source_language=effective_source_language,
+                        **translation_kwargs,
+                    )
         record_job_stage_cache(job_id, "translation", translation_cache_hit)
         if translation_cache_hit:
             update_job(job_id, step_detail="Đã dùng lại bản dịch hợp lệ", progress=0.46)
@@ -2529,7 +2597,7 @@ def process_video(
                         }
                         for segment in translated_segments
                     ],
-                    "tts_pipeline_version": 3,
+                    "tts_pipeline_version": 4,
                 }
             )
             tts_checkpoint = checkpoint_store.load_json(
@@ -4763,7 +4831,7 @@ def list_jobs_endpoint(
     status: str | None = Query(default=None),
     batch_id: str | None = Query(default=None),
     search: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> JSONResponse:
     account = current_account(request)

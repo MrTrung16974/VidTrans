@@ -25,6 +25,7 @@ pip install -r requirements.txt -r requirements-downloader.txt
 ## Chạy server
 
 ```bash
+export VIDTRANS_DATABASE_URL=postgresql://vidtrans:vidtrans@127.0.0.1:5432/vidtrans
 cd backend
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -101,10 +102,10 @@ mật khẩu mới.
 10. Bấm **Bắt đầu xử lý**, sau đó chuyển sang trang **Tiến trình**
 11. Hủy, retry, xóa hoặc tải toàn bộ kết quả ZIP cho từng video
 
-Lần OCR đầu tiên sẽ tải model nhận diện chữ Trung và có thể mất nhiều thời gian hơn các lần sau.
-Docker Compose lưu model này trong volume `paddle-models`.
-Docker Apple Silicon tắt PaddleOCR mặc định (`VIDTRANS_ENABLE_PADDLE_OCR=0`) vì Paddle có thể làm
-process Linux ARM64 bị crash. Chỉ bật lại sau khi đã kiểm tra runtime Paddle tương thích.
+Linux ARM/Apple Silicon dùng Tesseract với model `chi_sim` đã đóng gói trong image, nên không tải
+model ở request đầu và không khởi tạo PaddleOCR dễ làm process ARM64 bị crash. Cấu hình
+`VIDTRANS_OCR_BACKEND=auto` tự chọn Tesseract trên ARM và Paddle trên nền tảng khác; có thể ép
+`tesseract`, `paddle` hoặc `off` sau khi đã kiểm tra runtime tương ứng.
 Mỗi job còn xuất file `*.translation.json` chứa chữ Trung, bản dịch Việt, confidence OCR,
 kết quả đối chiếu ASR, cờ `needs_review` và thông tin chọn giọng cho từng câu.
 
@@ -178,7 +179,8 @@ authorization URL. Luồng publish tạo Reels container, lưu checkpoint trư�
 publish khi container `FINISHED`. Nếu timeout sau checkpoint, attempt chuyển sang
 `NEEDS_RECONCILIATION` để tránh tạo bài trùng.
 
-Trạng thái batch và job được lưu bền vững tại `backend/work/jobs.sqlite3`; restart server không
+Trạng thái batch, job, tài khoản và lịch đăng được lưu bền vững trong PostgreSQL qua
+`VIDTRANS_DATABASE_URL`; restart server không
 làm mất hàng đợi. Scheduler mặc định chạy tối đa hai pipeline, nhưng Whisper và OCR chỉ có một
 slot để tránh tràn RAM/GPU. File nguồn được giữ để hỗ trợ retry và chỉ bị xóa khi người dùng xóa
 job. Transcript, bản dịch hoàn chỉnh, TTS, mixed audio và video render được checkpoint riêng trong
@@ -187,6 +189,19 @@ vẫn khớp. Bản dịch lỗi/fallback hoặc media dependency thiếu/corrup
 sau vẫn chạy lại đúng stage bị invalid và downstream. Trạng thái job còn lưu thời gian/RTF theo stage
 để xác định bottleneck mà không ghi nội dung transcript vào metric. Xem [ARCHITECTURE.md](ARCHITECTURE.md)
 để biết ranh giới module.
+
+### Chuyển dữ liệu SQLite cũ sang PostgreSQL
+
+Docker Compose tự khởi động PostgreSQL và lưu dữ liệu trong volume `postgres-data`. Trước lần
+deploy đầu tiên sau nâng cấp, dừng worker cũ, sao lưu `backend/work/jobs.sqlite3`, rồi nhập dữ liệu:
+
+```bash
+docker compose run --rm vidtrans python -m scripts.migrate_sqlite_to_postgres \
+  --source work/jobs.sqlite3
+```
+
+Lệnh có thể chạy lại an toàn: các khóa đã tồn tại được bỏ qua. Chỉ xóa file SQLite sau khi đã
+kiểm tra số lượng job/tài khoản và khởi động ứng dụng thành công với PostgreSQL.
 
 Ngay khi bấm **Bắt đầu xử lý**, giao diện chuyển sang trang **Tiến trình** và hiển thị một dòng
 upload tạm theo phần trăm. Giữ tab mở cho đến khi upload đạt 100%; sau khi server tạo job, dòng
@@ -222,6 +237,7 @@ VIDTRANS_WORKER_CONCURRENCY=2
 VIDTRANS_WHISPER_CONCURRENCY=1
 VIDTRANS_OCR_CONCURRENCY=1
 VIDTRANS_RECOVER_INTERRUPTED_JOBS=1
+VIDTRANS_DATABASE_URL=postgresql://vidtrans:change-me@postgres:5432/vidtrans
 # Tùy chọn: phát event upload/download/dịch/publish sang n8n
 VIDTRANS_N8N_WEBHOOK_URL=https://n8n.example.com/webhook/vidtrans
 VIDTRANS_N8N_WEBHOOK_SECRET=...
