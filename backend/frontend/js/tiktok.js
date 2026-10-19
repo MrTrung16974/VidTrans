@@ -28,8 +28,8 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   }
   const busyStates = new Set(['queued', 'opening', 'uploading', 'publishing']);
   const labels = { queued: 'Đang chuẩn bị', opening: 'Đang mở TikTok Web', uploading: 'Đang chuyển video', awaiting_review: 'Sẵn sàng đăng bài', publishing: 'Đang đăng bài', publish_submitted: 'Đã gửi yêu cầu đăng', needs_login: 'Cần đăng nhập TikTok', needs_review: 'Cần bạn kiểm tra' };
-  const publishLabels = { READY: 'Sẵn sàng', SCHEDULED_LOCAL: 'Đã đặt lịch', UPLOADING: 'Đang tải video', PROCESSING_UPLOAD: 'TikTok đang xử lý', SUBMITTED: 'TikTok đã nhận yêu cầu', SEND_TO_USER_INBOX: 'Bản nháp đã tới TikTok', PUBLISH_COMPLETE: 'Đã đăng thành công', NEEDS_RECONCILIATION: 'Cần kiểm tra trên TikTok', FAILED: 'Đăng thất bại', CANCELLED: 'Đã hủy lịch' };
-  const publishBusy = new Set(['READY', 'UPLOADING', 'PROCESSING_UPLOAD', 'PROCESSING_DOWNLOAD', 'SUBMITTED', 'NEEDS_RECONCILIATION']);
+  const publishLabels = { READY: 'Sẵn sàng', SCHEDULED_LOCAL: 'Đã đặt lịch', CLAIMED: 'Đang nhận lịch', UPLOADING: 'Đang tải video', PROCESSING_REMOTE: 'TikTok đang xử lý', SUBMITTING: 'Đang gửi yêu cầu', DRAFT_DELIVERED: 'Bản nháp đã tới TikTok', PUBLISHED: 'Đã đăng thành công', NEEDS_RECONCILIATION: 'Cần kiểm tra trên TikTok', FAILED: 'Đăng thất bại', CANCELLED: 'Đã hủy lịch' };
+  const publishBusy = new Set(['READY', 'CLAIMED', 'UPLOADING', 'PROCESSING_REMOTE', 'SUBMITTING', 'NEEDS_RECONCILIATION']);
 
   function controls() {
     const caption = $('#tiktokCaption').value;
@@ -221,10 +221,10 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     panel.classList.toggle('is-hidden', !publishAttempt);
     if (!publishAttempt) { controls(); return; }
     $('#tiktokPublishStatusTitle').textContent = publishLabels[publishAttempt.status] || publishAttempt.status;
-    let message = publishAttempt.error || '';
+    let message = publishAttempt.error_message || '';
     if (!message && publishAttempt.status === 'SCHEDULED_LOCAL') message = `VidTrans sẽ đăng lúc ${new Date(publishAttempt.scheduled_for).toLocaleString('vi-VN')}.`;
-    if (!message && publishAttempt.status === 'SEND_TO_USER_INBOX') message = 'Mở ứng dụng TikTok để chỉnh sửa và hoàn tất bài đăng.';
-    if (!message && publishAttempt.status === 'PUBLISH_COMPLETE') message = 'TikTok đã xác nhận bài đăng hoàn tất.';
+    if (!message && publishAttempt.status === 'DRAFT_DELIVERED') message = 'Mở ứng dụng TikTok để chỉnh sửa và hoàn tất bài đăng.';
+    if (!message && publishAttempt.status === 'PUBLISHED') message = 'TikTok đã xác nhận bài đăng hoàn tất.';
     if (!message && publishAttempt.status === 'UPLOADING' && publishAttempt.status_detail?.percent != null) {
       message = `Đang tải video lên TikTok · ${publishAttempt.status_detail.percent}%`;
     }
@@ -238,16 +238,18 @@ export function createTikTokWorkspace({ requestJson, toast }) {
 
   async function loadLatestPublish(jobId) {
     try {
-      const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(jobId)}/tiktok-publishes/latest`);
-      if (draft?.job_id === jobId) renderPublish(result);
+      const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(jobId)}/social-publishes`);
+      const latest = (result.items || []).find(item => item.platform === 'TIKTOK') || null;
+      if (draft?.job_id === jobId) renderPublish(latest);
     } catch (error) { toast(error.message, true); }
   }
 
   async function refreshPublish(remote = false) {
     if (!publishAttempt) return;
     try {
-      const suffix = remote && publishAttempt.remote_publish_id ? '?refresh=true' : '';
-      renderPublish(await requestJson(`/api/v1/tiktok-publishes/${publishAttempt.attempt_id}${suffix}`));
+      const shouldRefresh = remote && (publishAttempt.remote_media_id || publishAttempt.remote_post_id);
+      const path = `/api/v1/social-publishes/${publishAttempt.attempt_id}${shouldRefresh ? '/refresh' : ''}`;
+      renderPublish(await requestJson(path, shouldRefresh ? { method: 'POST' } : {}));
     } catch (error) { toast(error.message, true); }
   }
 
@@ -266,18 +268,20 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     publishSubmitting = true; controls();
     publishKey ||= crypto.randomUUID();
     const mode = $('#tiktokPublishMode').value;
-    const body = new FormData();
-    body.set('caption', $('#tiktokCaption').value);
-    body.set('mode', mode);
-    body.set('privacy_level', $('#tiktokPrivacy').value);
-    body.set('reviewed', 'true');
-    body.set('idempotency_key', publishKey);
-    body.set('timezone_name', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     const selectedAccount = $('#tiktokApiAccount').selectedOptions?.[0];
-    body.set('connection_id', selectedAccount?.dataset.connectionId || apiStatus?.connection_id || '');
-    if (mode === 'SCHEDULE') body.set('scheduled_for', new Date($('#tiktokScheduleAt').value).toISOString());
+    const body = {
+      platform: 'TIKTOK',
+      caption: $('#tiktokCaption').value,
+      mode: mode === 'SCHEDULE' ? 'SCHEDULE_LOCAL' : mode === 'INBOX_DRAFT' ? 'DRAFT' : 'DIRECT_NOW',
+      scheduled_for: mode === 'SCHEDULE' ? new Date($('#tiktokScheduleAt').value).toISOString() : null,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      options: { privacy_level: $('#tiktokPrivacy').value },
+      reviewed: true,
+      idempotency_key: publishKey,
+      connection_id: selectedAccount?.dataset.connectionId || apiStatus?.connection_id || null,
+    };
     try {
-      const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}/tiktok-publishes`, { method: 'POST', body });
+      const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}/social-publishes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       renderPublish(result);
       $('#tiktokReviewConsent').checked = false;
       toast(mode === 'SCHEDULE' ? 'Đã lưu lịch đăng TikTok.' : mode === 'INBOX_DRAFT' ? 'Đang gửi bản nháp tới TikTok.' : 'Đang đăng video lên TikTok.');
@@ -380,7 +384,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   $('#tiktokCancelSchedule').addEventListener('click', async () => {
     if (!publishAttempt || publishAttempt.status !== 'SCHEDULED_LOCAL') return;
     try {
-      renderPublish(await requestJson(`/api/v1/tiktok-publishes/${publishAttempt.attempt_id}/cancel`, { method: 'POST' }));
+      renderPublish(await requestJson(`/api/v1/social-publishes/${publishAttempt.attempt_id}/cancel`, { method: 'POST' }));
       toast('Đã hủy lịch đăng TikTok.');
     } catch (error) { toast(error.message, true); }
   });

@@ -685,7 +685,7 @@ class JobStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             publish_clause = ""
-            for table in ("tiktok_publish_attempts", "social_publish_attempts"):
+            for table in ("social_publish_attempts",):
                 exists = connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
                 ).fetchone()

@@ -37,8 +37,6 @@ from application.social_account_routes import create_social_account_router
 from application.social_connection_routes import create_social_connection_router
 from application.social_publishing import SocialPublishScheduler, SocialPublishingService
 from application.tiktok_browser_routes import create_tiktok_browser_router
-from application.tiktok_publish_routes import create_tiktok_publish_router
-from application.tiktok_publishing import TikTokPublishScheduler, TikTokPublishingService
 from infrastructure.tiktok_browser import TikTokBrowserManager
 from domain.models import ProcessingMode, ProcessingRequest
 from domain.languages import language_profile, languages_from_config, normalize_language, voice_preset
@@ -78,7 +76,6 @@ from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SocialPublishStore
 from infrastructure.social_credentials import SocialCredentialStore
 from infrastructure.tenant_governance import QuotaExceededError, TenantGovernanceStore
-from infrastructure.tiktok_publish_store import TikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
 from infrastructure.media_probe import MediaProbe, probe_media_file
@@ -410,12 +407,6 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
 
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth", config=platform_app_config("TIKTOK"))
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
-TIKTOK_PUBLISH_STORE = TikTokPublishStore(DATABASE_TARGET)
-TIKTOK_PUBLISHING = TikTokPublishingService(
-    TIKTOK_PUBLISH_STORE,
-    TIKTOK_PUBLISHER,
-    publisher_resolver=lambda job_id: tenant_tiktok_publisher(job_owner_user_id(job_id)),
-)
 app.include_router(create_tiktok_browser_router(
     TIKTOK_BROWSER,
     JOB_SERVICE,
@@ -424,19 +415,7 @@ app.include_router(create_tiktok_browser_router(
     owner_resolver=lambda request: str(current_account(request)["user_id"]),
     publisher_resolver=lambda request: tenant_tiktok_publisher(str(current_account(request)["user_id"])),
 ))
-app.include_router(create_tiktok_publish_router(
-    TIKTOK_PUBLISHING,
-    JOB_SERVICE,
-    OUTPUT_DIR,
-    owner_resolver=lambda request: str(current_account(request)["user_id"]),
-    connection_resolver=lambda user_id, connection_id, platform: resolve_social_connection(
-        user_id, connection_id, platform
-    ),
-))
 SOCIAL_PUBLISH_STORE = SocialPublishStore(DATABASE_TARGET)
-_migrated_tiktok_history = SOCIAL_PUBLISH_STORE.migrate_legacy_tiktok_history()
-if _migrated_tiktok_history:
-    logger.info("Migrated %d terminal TikTok publish attempts", _migrated_tiktok_history)
 SIGNED_MEDIA_URLS = SignedMediaUrlService(
     OUTPUT_DIR,
     public_base_url=os.environ.get("VIDTRANS_PUBLIC_BASE_URL", "").strip(),
@@ -3162,7 +3141,7 @@ def retention_days(name: str, default: int) -> int:
 
 
 def retention_enabled() -> bool:
-    return os.environ.get("VIDTRANS_RETENTION_ENABLED", "0").lower() in {"1", "true", "yes"}
+    return os.environ.get("VIDTRANS_RETENTION_ENABLED", "1").lower() in {"1", "true", "yes"}
 
 
 def default_video_retention_days() -> int | None:
@@ -3246,9 +3225,6 @@ async def start_job_scheduler() -> None:
     )
     app.state.job_scheduler = scheduler
     await scheduler.start()
-    publish_scheduler = TikTokPublishScheduler(TIKTOK_PUBLISHING)
-    app.state.tiktok_publish_scheduler = publish_scheduler
-    await publish_scheduler.start()
     social_publish_scheduler = SocialPublishScheduler(SOCIAL_PUBLISHING)
     app.state.social_publish_scheduler = social_publish_scheduler
     await social_publish_scheduler.start()
@@ -3265,9 +3241,6 @@ async def stop_job_scheduler() -> None:
     scheduler = getattr(app.state, "job_scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
-    publish_scheduler = getattr(app.state, "tiktok_publish_scheduler", None)
-    if publish_scheduler is not None:
-        await publish_scheduler.stop()
     social_publish_scheduler = getattr(app.state, "social_publish_scheduler", None)
     if social_publish_scheduler is not None:
         await social_publish_scheduler.stop()

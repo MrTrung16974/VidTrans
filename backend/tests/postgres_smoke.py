@@ -18,7 +18,6 @@ from infrastructure.payments import PaymentOrderStore
 from infrastructure.social_credentials import SocialCredentialStore
 from infrastructure.social_publish_store import SQLiteSocialPublishStore
 from infrastructure.tenant_governance import TenantGovernanceStore
-from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.workflow_events import WorkflowEventStore
 from scripts.migrate_sqlite_to_postgres import migrate
 
@@ -46,7 +45,6 @@ def main() -> None:
     assert claimed is not None and claimed["event_id"] == event["event_id"]
     events.mark_delivered(event["event_id"])
 
-    SQLiteTikTokPublishStore(dsn)
     SQLiteSocialPublishStore(dsn)
     SocialCredentialStore(dsn)
     PaymentOrderStore(dsn)

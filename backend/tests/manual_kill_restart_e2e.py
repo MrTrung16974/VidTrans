@@ -190,7 +190,7 @@ def run(command: list[str], *, cwd: Path, timeout: float = 180.0) -> subprocess.
     environment = dict(os.environ)
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["PYTHONPATH"] = str(cwd)
-    environment["VIDTRANS_ENABLE_PADDLE_OCR"] = "0"
+    environment["VIDTRANS_OCR_BACKEND"] = "off"
     return subprocess.run(
         command,
         cwd=cwd,
@@ -243,7 +243,7 @@ def main() -> None:
     environment = dict(os.environ)
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["PYTHONPATH"] = str(backend)
-    environment["VIDTRANS_ENABLE_PADDLE_OCR"] = "0"
+    environment["VIDTRANS_OCR_BACKEND"] = "off"
     first = subprocess.Popen(
         [sys.executable, "-B", str(worker), "run"],
         cwd=backend,

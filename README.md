@@ -109,6 +109,10 @@ model ở request đầu và không khởi tạo PaddleOCR dễ làm process ARM
 Mỗi job còn xuất file `*.translation.json` chứa chữ Trung, bản dịch Việt, confidence OCR,
 kết quả đối chiếu ASR, cờ `needs_review` và thông tin chọn giọng cho từng câu.
 
+Video và job đã kết thúc (`completed`, `failed`, `cancelled`) mặc định được tự động xoá sau
+30 ngày. Có thể đổi thời hạn bằng `VIDTRANS_JOB_RETENTION_DAYS` hoặc tắt bằng
+`VIDTRANS_RETENTION_ENABLED=0`; video còn lịch đăng/publish chưa kết thúc không bị xoá.
+
 Phần dịch gom nhiều cue vào một request có marker ổn định để tránh giới hạn do gọi Google theo
 từng câu. Nếu marker bị thay đổi, hệ thống tự dịch lại riêng các cue của batch đó; câu vẫn không
 dịch được được gắn `translation_status=source_fallback`, `needs_review=true` và đếm trên job thay
