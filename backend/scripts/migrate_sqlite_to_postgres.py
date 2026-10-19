@@ -18,6 +18,7 @@ TABLE_PRIORITY = {
     "social_oauth_sessions": 4,
     "social_connection_audit_events": 5,
 }
+USER_ID_COLUMNS = {"user_id", "owner_user_id", "actor_user_id", "target_user_id"}
 
 
 def _create_if_missing(sql: str) -> str:
@@ -78,6 +79,21 @@ def migrate(source_path: Path, target_dsn: str) -> dict[str, int]:
         for row in index_rows:
             target.execute(_create_if_missing(str(row["sql"])))
 
+        user_id_map: dict[str, str] = {}
+        source_tables = {table for table, _ in tables}
+        if "admin_accounts" in source_tables:
+            for account in source.execute(
+                "SELECT user_id,email FROM admin_accounts"
+            ).fetchall():
+                old_user_id = str(account["user_id"])
+                existing = target.execute(
+                    "SELECT user_id FROM admin_accounts WHERE LOWER(email)=LOWER(?)",
+                    (str(account["email"]),),
+                ).fetchone()
+                user_id_map[old_user_id] = (
+                    str(existing["user_id"]) if existing is not None else old_user_id
+                )
+
         for table, _ in tables:
             columns = [
                 _identifier(str(row["name"]))
@@ -89,9 +105,18 @@ def migrate(source_path: Path, target_dsn: str) -> dict[str, int]:
             column_sql = ",".join(columns)
             rows = source.execute(f'SELECT {column_sql} FROM "{table}"').fetchall()
             if rows:
+                values = []
+                for row in rows:
+                    migrated_row = []
+                    for column in columns:
+                        value = row[column]
+                        if column in USER_ID_COLUMNS and value is not None:
+                            value = user_id_map.get(str(value), value)
+                        migrated_row.append(value)
+                    values.append(tuple(migrated_row))
                 target.executemany(
                     f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders}) ON CONFLICT DO NOTHING",
-                    [tuple(row[column] for column in columns) for row in rows],
+                    values,
                 )
             copied[table] = len(rows)
         target.commit()

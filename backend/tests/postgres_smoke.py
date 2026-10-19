@@ -56,7 +56,41 @@ def main() -> None:
         source = Path(temporary) / "legacy.sqlite3"
         table = f"migration_probe_{suffix}"
         legacy = sqlite3.connect(source)
-        legacy.execute(f"CREATE TABLE {table} (id TEXT PRIMARY KEY, value BLOB NOT NULL)")
+        legacy.executescript(f"""
+            CREATE TABLE admin_accounts (
+                user_id TEXT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                approval_status TEXT NOT NULL,
+                plan TEXT NOT NULL,
+                payment_status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE admin_audit_events (
+                event_id TEXT PRIMARY KEY,
+                actor_user_id TEXT NOT NULL,
+                target_user_id TEXT,
+                action TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource_id TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(actor_user_id) REFERENCES admin_accounts(user_id)
+            );
+            CREATE TABLE {table} (id TEXT PRIMARY KEY, value BLOB NOT NULL);
+        """)
+        legacy.execute(
+            "INSERT INTO admin_accounts(user_id,email,display_name,role,approval_status,plan,payment_status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            ("legacy-owner", f"smoke-{suffix}@local.vidtrans", "Legacy", "owner", "approved", "enterprise", "exempt", "now", "now"),
+        )
+        legacy.execute(
+            "INSERT INTO admin_audit_events(event_id,actor_user_id,action,resource_type,metadata_json,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (f"audit-{suffix}", "legacy-owner", "smoke", "test", "{}", "now"),
+        )
         legacy.execute(f"INSERT INTO {table}(id,value) VALUES(?,?)", (suffix, b"ok"))
         legacy.commit()
         legacy.close()
