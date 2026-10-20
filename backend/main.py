@@ -134,6 +134,7 @@ from pipeline.parallel import collect_indexed_futures
 from pipeline.stage_metrics import StageMeasurement, measure_stage
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
 from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, segment_subtitle_cues
+from pipeline.caption_alignment import CaptionAlignmentConfig, align_speech_to_burned_captions
 from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService
@@ -2310,6 +2311,21 @@ def recognize_video_source(
     else:
         segments = asr_segments
         source_method = "speech"
+        if segments and source_probe.width and source_probe.height:
+            ensure_job_active(job_id)
+            try:
+                with measure_job_stage(job_id, "caption_alignment", video_duration=video_duration):
+                    segments = align_speech_to_burned_captions(
+                        video_path,
+                        segments,
+                        ffmpeg=FFMPEG,
+                        frame_size=(source_probe.width, source_probe.height),
+                        config=CaptionAlignmentConfig(roi_top=ocr_roi_top, roi_bottom=ocr_roi_bottom),
+                    )
+            except JobCancelled:
+                raise
+            except Exception:
+                logger.warning("Caption alignment failed; keeping Whisper timing", exc_info=True)
     if not segments:
         raise RuntimeError(
             "Không nhận diện được phụ đề hoặc lời thoại nguồn. "

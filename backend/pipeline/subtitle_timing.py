@@ -8,7 +8,11 @@ SUBTITLE_TRANSITION_GAP_SECONDS = 0.02
 
 
 def _is_visual_cue(segment: dict[str, Any]) -> bool:
-    return segment.get("source_method") == "ocr" or segment.get("modality") == "visual"
+    return (
+        segment.get("source_method") == "ocr"
+        or segment.get("modality") == "visual"
+        or segment.get("timing_source") == "caption"
+    )
 
 
 def subtitle_render_window(

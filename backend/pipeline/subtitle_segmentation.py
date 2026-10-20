@@ -51,7 +51,9 @@ def _split_timed_segment(
     segment: dict[str, Any], options: SubtitleSegmentationOptions
 ) -> list[dict[str, Any]]:
     words = [word for word in (segment.get("words") or []) if _word_text(word)]
-    if len(words) < 2:
+    # A cue aligned to a burned-in caption already has the caption's line
+    # breaks and timing; splitting it would desynchronise it again.
+    if len(words) < 2 or segment.get("timing_source") == "caption":
         return [dict(segment)]
 
     groups: list[list[dict[str, Any]]] = []

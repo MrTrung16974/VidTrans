@@ -15,6 +15,7 @@ STAGE_NAMES = frozenset(
         "preflight",
         "ocr",
         "asr",
+        "caption_alignment",
         "translation",
         "summary",
         "voice_routing",
