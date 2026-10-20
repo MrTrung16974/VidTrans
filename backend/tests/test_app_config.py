@@ -6,10 +6,16 @@ from app.config import AppSettings
 
 
 class AppSettingsTests(unittest.TestCase):
-    def test_uses_tesseract_backend_by_default_on_linux_arm64(self) -> None:
+    def test_prefers_paddle_on_linux_arm64_when_installed(self) -> None:
         with patch.dict(os.environ, {}, clear=True), patch("platform.system", return_value="Linux"), patch(
             "platform.machine", return_value="aarch64"
-        ):
+        ), patch("importlib.util.find_spec", return_value=object()):
+            self.assertEqual(AppSettings._ocr_backend(), "paddle")
+
+    def test_falls_back_to_tesseract_on_linux_arm64_without_paddle(self) -> None:
+        with patch.dict(os.environ, {}, clear=True), patch("platform.system", return_value="Linux"), patch(
+            "platform.machine", return_value="aarch64"
+        ), patch("importlib.util.find_spec", return_value=None):
             self.assertEqual(AppSettings._ocr_backend(), "tesseract")
 
     def test_explicit_ocr_backend_is_validated(self) -> None:

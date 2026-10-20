@@ -88,9 +88,9 @@ class AudioDurationIntegrationTests(unittest.TestCase):
         self.assertEqual(wrapped.replace("\n", " "), text)
         self.assertLessEqual(len(wrapped.splitlines()), 2)
 
-    def test_srt_follows_scheduled_tts_window_when_dubbed(self) -> None:
-        # Subtitles track the dubbed voice (pipeline/subtitle_timing.py), so a
-        # line scheduled later than its source cue is shown with the voice.
+    def test_srt_starts_with_source_cue_when_dub_drifts(self) -> None:
+        # Subtitles appear with the source caption (pipeline/subtitle_timing.py)
+        # and stay up while a later-scheduled dubbed line is still speaking.
         with tempfile.TemporaryDirectory(prefix="vidtrans-srt-timing-") as directory:
             output = Path(directory) / "sample.srt"
             write_srt(
@@ -98,8 +98,7 @@ class AudioDurationIntegrationTests(unittest.TestCase):
                 output,
             )
             value = output.read_text(encoding="utf-8")
-            self.assertIn("00:00:04,000 --> 00:00:06,180", value)
-            self.assertNotIn("00:00:01,000", value)
+            self.assertIn("00:00:01,000 --> 00:00:06,180", value)
 
     def test_srt_uses_source_timing_without_tts(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vidtrans-srt-timing-") as directory:

@@ -17,6 +17,7 @@ from pipeline.ocr import (
     merge_independent_ocr_asr_segments,
     normalize_zh_text,
     observations_to_cues,
+    refine_cue_boundaries,
     scan_subtitle_frames,
     select_subtitle_text,
     select_subtitle_geometry,
@@ -353,8 +354,10 @@ class TemporalConsensusTests(unittest.TestCase):
         self.assertEqual(len(cues), 1)
         self.assertEqual(cues[0].text, "我愿意把自己变成什么样子")
         self.assertEqual(cues[0].samples, 4)
+        # Each sample shows the picture half an interval after its nominal
+        # time, so the cue runs until midway to the next (blank) sample.
         self.assertAlmostEqual(cues[0].start, 0.0)
-        self.assertAlmostEqual(cues[0].end, 0.7)
+        self.assertAlmostEqual(cues[0].end, 0.8)
 
     def test_preserves_stable_median_bbox_in_video_coordinates(self) -> None:
         observations = [
@@ -401,6 +404,81 @@ class TemporalConsensusTests(unittest.TestCase):
         cues = observations_to_cues(observations, self.config)
         self.assertEqual(len(cues), 1)
         self.assertEqual(cues[0].samples, 4)
+
+    def test_merges_fade_in_misread_into_one_caption(self) -> None:
+        box = (0.4, 0.5, 0.6, 0.7)
+        observations = [
+            FrameObservation(0.0, "卜一个", 0.6, box),
+            FrameObservation(0.2, "卜一个", 0.7, box),
+            FrameObservation(0.4, "下一个", 0.95, box),
+            FrameObservation(0.6, "下一个", 0.96, box),
+            FrameObservation(0.8, "下一个", 0.97, box),
+        ]
+        cues = observations_to_cues(observations, self.config)
+        self.assertEqual(len(cues), 1)
+        self.assertEqual(cues[0].text, "下一个")
+        self.assertEqual(cues[0].samples, 5)
+        self.assertAlmostEqual(cues[0].first_sample, 0.0)
+        self.assertAlmostEqual(cues[0].last_sample, 0.8)
+
+    def test_keeps_caption_that_gains_characters_separate(self) -> None:
+        box = (0.4, 0.5, 0.6, 0.7)
+        observations = [
+            FrameObservation(0.0, "爸好看呢", 0.95, box),
+            FrameObservation(0.2, "爸好看呢", 0.95, box),
+            FrameObservation(0.4, "身体好看呢", 0.95, box),
+            FrameObservation(0.6, "身体好看呢", 0.95, box),
+        ]
+        cues = observations_to_cues(observations, self.config)
+        self.assertEqual([cue.text for cue in cues], ["爸好看呢", "身体好看呢"])
+
+    def test_refines_boundaries_to_the_frames_where_caption_changes(self) -> None:
+        width, height, rate = 320, 60, 30
+        first_visible, last_visible = 17, 44
+
+        def frame(index: int) -> bytes:
+            image = Image.new("L", (width, height), 0)
+            if first_visible <= index <= last_visible:
+                draw = ImageDraw.Draw(image)
+                for x in range(100, 220, 10):
+                    draw.rectangle((x, 20, x + 4, 40), fill=255)
+            return image.tobytes()
+
+        class _FakeProcess:
+            def __init__(self, *_args, **_kwargs) -> None:
+                import io
+
+                self.stdout = io.BytesIO(b"".join(frame(index) for index in range(60)))
+
+            def kill(self) -> None:
+                pass
+
+            def wait(self) -> int:
+                return 0
+
+        # Sample k of the 5 fps scan shows source frame 6k + 2, so samples
+        # 0.6 s .. 1.4 s are the ones that saw the caption.
+        observations = [
+            FrameObservation(index / 5, "字幕" if first_visible <= 6 * index + 2 <= last_visible else "", 0.95)
+            for index in range(10)
+        ]
+        config = OCRConfig(sample_fps=5, refine_fps=rate)
+        cues = observations_to_cues(observations, config)
+        self.assertEqual(len(cues), 1)
+        self.assertAlmostEqual(cues[0].start, 0.6)
+        self.assertAlmostEqual(cues[0].end, 1.6)
+
+        with patch("pipeline.ocr.subprocess.Popen", _FakeProcess):
+            refined = refine_cue_boundaries(
+                cues,
+                Path("video.mp4"),
+                ffmpeg="ffmpeg",
+                config=config,
+                roi_size=(width, height),
+            )
+
+        self.assertAlmostEqual(refined[0].start, first_visible / rate)
+        self.assertAlmostEqual(refined[0].end, (last_visible + 1) / rate)
 
 
 if __name__ == "__main__":

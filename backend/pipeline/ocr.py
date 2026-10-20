@@ -33,12 +33,23 @@ class OCRConfig:
     roi_bottom: float = 0.96
     min_confidence: float = 0.55
     text_similarity: float = 0.82
+    # Adjacent cues of equal length at the same position whose text is at
+    # least this similar are one caption read twice (typically a misread
+    # during a fade-in), not two captions.
+    variant_similarity: float = 0.6
     blank_tolerance_frames: int = 1
     min_stable_frames: int = 2
     upscale: float = 2.0
     # Frames at least this wide are read as-is: upscaling a 1080p strip made
     # PaddleOCR ~3x slower on CPU without measurable accuracy gain.
     upscale_below_width: int = 1000
+    # Sampled OCR only knows a cue boundary to within one sample interval.
+    # A cheap low-resolution pass at this rate snaps boundaries to the frame
+    # where the caption actually appears and disappears.
+    refine_boundaries: bool = True
+    refine_fps: float = 30.0
+    refine_width: int = 640
+    refine_min_overlap: float = 0.5
 
     def inference_scale(self, frame_width: int) -> float:
         if frame_width <= 0 or frame_width >= self.upscale_below_width:
@@ -54,6 +65,14 @@ class OCRConfig:
             raise ValueError("ocr min_confidence must be in [0, 1]")
         if not 0 <= self.text_similarity <= 1:
             raise ValueError("ocr text_similarity must be in [0, 1]")
+        if not 0 <= self.variant_similarity <= 1:
+            raise ValueError("ocr variant_similarity must be in [0, 1]")
+        if not 0 < self.refine_fps <= 120:
+            raise ValueError("ocr refine_fps must be in (0, 120]")
+        if self.refine_width < 32:
+            raise ValueError("ocr refine_width must be at least 32")
+        if not 0 < self.refine_min_overlap <= 1:
+            raise ValueError("ocr refine_min_overlap must be in (0, 1]")
         if self.blank_tolerance_frames < 0:
             raise ValueError("ocr blank_tolerance_frames cannot be negative")
         if self.min_stable_frames < 1:
@@ -89,6 +108,9 @@ class SubtitleCue:
     variants: dict[str, int] = field(default_factory=dict)
     bbox: tuple[float, float, float, float] | None = None
     position_confidence: float = 0.0
+    # Timestamps of the first and last sampled frames that showed the cue.
+    first_sample: float | None = None
+    last_sample: float | None = None
 
     def as_segment(self) -> dict[str, Any]:
         segment: dict[str, Any] = {
@@ -326,6 +348,40 @@ def _choose_consensus(observations: Sequence[FrameObservation]) -> tuple[str, fl
     return display_text[winner], confidence, variants
 
 
+def _bbox_overlap(
+    left: tuple[float, float, float, float] | None,
+    right: tuple[float, float, float, float] | None,
+) -> float:
+    if left is None or right is None:
+        return 1.0
+    width = min(left[2], right[2]) - max(left[0], right[0])
+    height = min(left[3], right[3]) - max(left[1], right[1])
+    if width <= 0 or height <= 0:
+        return 0.0
+    intersection = width * height
+    union = (
+        (left[2] - left[0]) * (left[3] - left[1])
+        + (right[2] - right[0]) * (right[3] - right[1])
+        - intersection
+    )
+    return intersection / union if union > 0 else 0.0
+
+
+def _is_misread_variant(previous: SubtitleCue, current: SubtitleCue, config: OCRConfig) -> bool:
+    """Whether two adjacent cues are the same on-screen caption read differently."""
+
+    left = normalize_zh_text(previous.text)
+    right = normalize_zh_text(current.text)
+    # Misreads substitute glyphs; a caption that grows or shrinks by a
+    # character ("爸好看呢" -> "身体好看呢") is a new line.
+    if len(left) < 2 or len(left) != len(right):
+        return False
+    return (
+        text_similarity(left, right) >= config.variant_similarity
+        and _bbox_overlap(previous.bbox, current.bbox) >= 0.5
+    )
+
+
 def observations_to_cues(
     observations: Sequence[FrameObservation],
     config: OCRConfig,
@@ -369,16 +425,22 @@ def observations_to_cues(
                     x2,
                     config.roi_top + y2 * roi_height,
                 )
+            # ffmpeg's fps filter fills sample k with the last source frame
+            # before (k + 0.5) / fps, so a sample shows the picture half an
+            # interval after its nominal timestamp. Boundaries are therefore
+            # midway between samples measured on that shifted clock.
             cues.append(
                 SubtitleCue(
-                    start=max(0.0, active[0].timestamp - frame_duration / 2),
-                    end=active[-1].timestamp + frame_duration / 2,
+                    start=max(0.0, active[0].timestamp),
+                    end=active[-1].timestamp + frame_duration,
                     text=text,
                     confidence=confidence,
                     samples=len(active),
                     variants=variants,
                     bbox=normalized_box,
                     position_confidence=confidence if normalized_box else 0.0,
+                    first_sample=active[0].timestamp,
+                    last_sample=active[-1].timestamp,
                 )
             )
         active = []
@@ -415,7 +477,10 @@ def observations_to_cues(
         if (
             merged
             and cue.start - merged[-1].end <= max_reconnect_gap
-            and text_similarity(merged[-1].text, cue.text) >= config.text_similarity
+            and (
+                text_similarity(merged[-1].text, cue.text) >= config.text_similarity
+                or _is_misread_variant(merged[-1], cue, config)
+            )
         ):
             previous = merged[-1]
             total_samples = previous.samples + cue.samples
@@ -423,9 +488,18 @@ def observations_to_cues(
                 previous.confidence * previous.samples + cue.confidence * cue.samples
             ) / total_samples
             previous.end = cue.end
+            previous.last_sample = cue.last_sample
+            if cue.samples > previous.samples and cue.bbox is not None:
+                previous.bbox = cue.bbox
+                previous.position_confidence = cue.position_confidence
             previous.samples = total_samples
             for variant, count in cue.variants.items():
                 previous.variants[variant] = previous.variants.get(variant, 0) + count
+            # The most frequently read variant wins; earlier reads win ties.
+            previous.text = max(
+                previous.variants,
+                key=lambda variant: previous.variants[variant],
+            )
         else:
             merged.append(cue)
     cues = merged
@@ -741,14 +815,14 @@ def extract_ocr_frames(
     return sorted(frames_dir.glob("frame_*.jpg"))
 
 
-def _subtitle_change_signature(image: Any) -> Any:
+def _subtitle_change_signature(image: Any, max_width: int = 320) -> Any:
     """Return a compact mask biased toward bright, high-contrast subtitle strokes."""
 
     import numpy as np
     from PIL import ImageFilter
 
     grayscale = image.convert("L")
-    target_width = min(grayscale.width, 320)
+    target_width = min(grayscale.width, max_width)
     target_height = max(1, round(grayscale.height * target_width / max(grayscale.width, 1)))
     if grayscale.size != (target_width, target_height):
         grayscale = grayscale.resize((target_width, target_height))
@@ -769,6 +843,161 @@ def _signatures_are_similar(previous: Any, current: Any) -> bool:
         return True
     changed = np.count_nonzero(previous ^ current)
     return changed / union < 0.12
+
+
+def _mask_overlap(left: Any, right: Any) -> float:
+    import numpy as np
+
+    union = np.count_nonzero(left | right)
+    if union == 0:
+        return 1.0
+    return np.count_nonzero(left & right) / union
+
+
+def _cue_signature_box(
+    cue: SubtitleCue,
+    config: OCRConfig,
+    width: int,
+    height: int,
+) -> tuple[int, int, int, int]:
+    """Map a cue bbox to padded signature pixels so background motion is ignored."""
+
+    if cue.bbox is None:
+        return 0, 0, width, height
+    x1, y1, x2, y2 = cue.bbox
+    roi_height = config.roi_bottom - config.roi_top
+    top = (y1 - config.roi_top) / roi_height * height
+    bottom = (y2 - config.roi_top) / roi_height * height
+    pad = max(2.0, (bottom - top) * 0.35)
+    left = int(max(0, math.floor(x1 * width - pad)))
+    right = int(min(width, math.ceil(x2 * width + pad)))
+    upper = int(max(0, math.floor(top - pad)))
+    lower = int(min(height, math.ceil(bottom + pad)))
+    if right - left < 2 or lower - upper < 2:
+        return 0, 0, width, height
+    return left, upper, right, lower
+
+
+def refine_cue_boundaries(
+    cues: list[SubtitleCue],
+    video_path: Path,
+    *,
+    ffmpeg: str,
+    config: OCRConfig,
+    roi_size: tuple[int, int],
+) -> list[SubtitleCue]:
+    """Snap sampled cue boundaries to the frames where the caption changes.
+
+    Each boundary lies between a sample that showed the cue and its neighbour
+    sample. Only frames inside those intervals are kept, as bit-packed
+    stroke masks, so memory stays small on long videos. A frame belongs to
+    the cue while its strokes inside the cue bbox overlap the anchor sample.
+    """
+
+    import numpy as np
+    from PIL import Image
+
+    if not cues or roi_size[0] <= 0 or roi_size[1] <= 0:
+        return cues
+    rate = config.refine_fps
+    step = 1.0 / config.sample_fps
+    width = min(config.refine_width, roi_size[0])
+    height = max(2, round(roi_size[1] * width / roi_size[0] / 2) * 2)
+
+    def shown_frame(sample_time: float) -> int:
+        # Both decodes use the fps filter, which keeps the last source frame
+        # before the middle of each output slot; map a sample to that frame.
+        return max(0, math.ceil((sample_time + step / 2) * rate - 0.5 - 1e-6) - 1)
+
+    # (cue index, direction, first frame, last frame, anchor frame)
+    probes: list[tuple[int, int, int, int, int]] = []
+    for index, cue in enumerate(cues):
+        if cue.first_sample is None or cue.last_sample is None:
+            continue
+        anchor = shown_frame(cue.first_sample)
+        probes.append((index, -1, shown_frame(cue.first_sample - step) + 1, anchor, anchor))
+        anchor = shown_frame(cue.last_sample)
+        probes.append((index, 1, anchor, shown_frame(cue.last_sample + step) - 1, anchor))
+    if not probes:
+        return cues
+    needed = {frame for probe in probes for frame in range(probe[2], probe[3] + 1)}
+    last_needed = max(needed)
+
+    roi_height = config.roi_bottom - config.roi_top
+    video_filter = (
+        f"fps={rate:.6f},"
+        f"crop=iw:floor(ih*{roi_height:.6f}/2)*2:0:floor(ih*{config.roi_top:.6f}/2)*2,"
+        f"scale={width}:{height},format=gray"
+    )
+    process = subprocess.Popen(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-i",
+            str(video_path),
+            "-vf",
+            video_filter,
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    frame_bytes = width * height
+    packed: dict[int, Any] = {}
+    try:
+        assert process.stdout is not None
+        frame_index = 0
+        while frame_index <= last_needed:
+            buffer = process.stdout.read(frame_bytes)
+            if len(buffer) < frame_bytes:
+                break
+            if frame_index in needed:
+                image = Image.frombytes("L", (width, height), buffer)
+                packed[frame_index] = np.packbits(_subtitle_change_signature(image, width))
+            frame_index += 1
+    finally:
+        if process.stdout is not None:
+            process.stdout.close()
+        process.kill()
+        process.wait()
+
+    def mask(frame: int, box: tuple[int, int, int, int]) -> Any | None:
+        if frame not in packed:
+            return None
+        full = np.unpackbits(packed[frame], count=width * height).reshape(height, width).astype(bool)
+        left, upper, right, lower = box
+        return full[upper:lower, left:right]
+
+    refined = [replace(cue) for cue in cues]
+    for index, direction, first, last, anchor in probes:
+        box = _cue_signature_box(cues[index], config, width, height)
+        reference = mask(anchor, box)
+        if reference is None or np.count_nonzero(reference) < 8:
+            continue
+        frame = anchor
+        while first <= frame + direction <= last:
+            candidate = mask(frame + direction, box)
+            if candidate is None or _mask_overlap(candidate, reference) < config.refine_min_overlap:
+                break
+            frame += direction
+        if direction < 0:
+            refined[index].start = max(0.0, frame / rate)
+        else:
+            refined[index].end = (frame + 1) / rate
+
+    for cue in refined:
+        cue.end = max(cue.end, cue.start + 1.0 / rate)
+    for previous, current in zip(refined, refined[1:]):
+        if previous.end > current.start:
+            boundary = (previous.end + current.start) / 2
+            previous.end = boundary
+            current.start = boundary
+    return refined
 
 
 def _prepare_inference_images(
@@ -921,6 +1150,21 @@ def extract_burned_subtitle_segments(
             progress_callback=progress_callback,
         )
         cues = observations_to_cues(observations, config)
+        if config.refine_boundaries and cues:
+            try:
+                from PIL import Image
+
+                with Image.open(frame_paths[0]) as first_frame:
+                    roi_size = first_frame.size
+                cues = refine_cue_boundaries(
+                    cues,
+                    video_path,
+                    ffmpeg=ffmpeg,
+                    config=config,
+                    roi_size=roi_size,
+                )
+            except Exception:
+                logger.warning("OCR cue boundary refinement failed; keeping sampled timing", exc_info=True)
     finally:
         shutil.rmtree(work_dir / "ocr_frames", ignore_errors=True)
     logger.info(

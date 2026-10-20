@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import platform
 import shutil
@@ -72,8 +73,11 @@ class AppSettings:
             if backend != "auto":
                 return backend
 
+        # PaddleOCR reads stylised burned-in captions far more accurately
+        # than Tesseract, and it now runs on Linux ARM too. Tesseract is only
+        # the fallback where the Paddle wheels are not installed.
         if platform.system() == "Linux" and platform.machine().lower() in {"arm64", "aarch64"}:
-            return "tesseract"
+            return "paddle" if importlib.util.find_spec("paddleocr") else "tesseract"
         return "paddle"
 
     @staticmethod
