@@ -8,6 +8,7 @@ from pathlib import Path
 from infrastructure.job_store import (
     JobAlreadyExistsError,
     JobNotFoundError,
+    JobStateConflictError,
     SQLiteJobStore,
 )
 
@@ -108,6 +109,25 @@ class SQLiteJobStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get("running")["step"], "queued")
         self.assertEqual(self.store.get("running")["restart_count"], 1)
         self.assertEqual(self.store.get("done")["status"], "completed")
+
+    def test_requeue_finalizes_cancelling_job_instead_of_running_it_again(self) -> None:
+        self.store.create(
+            "stopping",
+            {
+                "status": "cancelling",
+                "step": "cancelling",
+                "progress": 0.5,
+                "cancel_requested": True,
+            },
+        )
+
+        requeued = self.store.requeue_interrupted()
+
+        self.assertEqual(requeued, [])
+        stopped = self.store.get("stopping")
+        self.assertEqual(stopped["status"], "cancelled")
+        self.assertEqual(stopped["step"], "cancelled")
+        self.assertIsNotNone(stopped["finished_at"])
 
     def test_concurrent_updates_do_not_lose_fields(self) -> None:
         self.store.create("concurrent", {"status": "processing"})
@@ -257,14 +277,20 @@ class SQLiteJobStoreTests(unittest.TestCase):
         running = self.store.request_cancel("queued-cancel")
 
         self.assertEqual(queued["status"], "cancelled")
-        self.assertEqual(running["status"], "cancelled")
+        self.assertEqual(running["status"], "cancelling")
+        self.assertIsNotNone(queued["finished_at"])
+        self.assertIsNone(running["finished_at"])
+        self.assertEqual(
+            self.store.request_cancel("queued-cancel")["status"],
+            "cancelling",
+        )
         self.assertTrue(self.store.is_cancel_requested("queued-cancel"))
         self.assertTrue(self.store.is_cancel_requested("running-cancel"))
 
     def test_cancelled_job_ignores_late_worker_updates(self) -> None:
         self.store.create("late-worker", {"status": "queued", "progress": 0.0})
         self.store.claim_next("worker")
-        cancelled = self.store.request_cancel("late-worker")
+        cancelling = self.store.request_cancel("late-worker")
 
         late = self.store.update(
             "late-worker",
@@ -273,9 +299,99 @@ class SQLiteJobStoreTests(unittest.TestCase):
             step="completed",
         )
 
-        self.assertEqual(cancelled["status"], "cancelled")
-        self.assertEqual(late["status"], "cancelled")
+        self.assertEqual(cancelling["status"], "cancelling")
+        self.assertEqual(late["status"], "cancelling")
         self.assertNotEqual(late["progress"], 1.0)
+
+        cancelled = self.store.update(
+            "late-worker",
+            status="cancelled",
+            step="cancelled",
+            finished_at="2026-10-20T00:00:00+00:00",
+        )
+        self.assertEqual(cancelled["status"], "cancelled")
+
+    def test_cancel_state_matrix(self) -> None:
+        expected = {
+            "queued": "cancelled",
+            "scheduled": "cancelled",
+            "processing": "cancelling",
+            "cancelling": "cancelling",
+            "completed": "completed",
+            "failed": "failed",
+            "cancelled": "cancelled",
+        }
+        for status in expected:
+            self.store.create(f"matrix-{status}", {"status": status})
+
+        for status, next_status in expected.items():
+            with self.subTest(status=status):
+                self.assertEqual(self.store.request_cancel(f"matrix-{status}")["status"], next_status)
+
+        self.assertIsNone(self.store.claim_next("worker"))
+
+    def test_cancel_during_tiktok_upload_warns_that_it_cannot_be_recalled(self) -> None:
+        self.store.create("uploading", {"status": "processing", "step": "publishing-tiktok"})
+
+        cancelling = self.store.request_cancel("uploading")
+
+        self.assertEqual(cancelling["status"], "cancelling")
+        self.assertIn("TikTok", cancelling["step_detail"])
+
+    def test_retry_and_delete_are_refused_until_worker_acknowledges(self) -> None:
+        self.store.create("running", {"status": "queued"})
+        self.store.claim_next("worker")
+        self.store.request_cancel("running")
+
+        with self.assertRaises(JobStateConflictError):
+            self.store.retry("running", progress=0.0)
+        with self.assertRaises(JobStateConflictError):
+            self.store.delete("running", require_terminal=True)
+        self.assertEqual(self.store.get("running")["status"], "cancelling")
+        self.assertTrue(self.store.is_cancel_requested("running"))
+
+        finalized, changed = self.store.finalize_cancellation("running")
+        self.assertTrue(changed)
+        self.assertEqual(finalized["status"], "cancelled")
+        self.assertIsNotNone(finalized["finished_at"])
+        _, changed_again = self.store.finalize_cancellation("running")
+        self.assertFalse(changed_again)
+
+        retried = self.store.retry("running", progress=0.0)
+        self.assertEqual(retried["status"], "queued")
+        self.assertFalse(self.store.is_cancel_requested("running"))
+        self.assertEqual(self.store.claim_next("worker-2")[0], "running")
+
+    def test_finalize_cancellation_ignores_jobs_that_are_not_cancelling(self) -> None:
+        self.store.create("done", {"status": "completed"})
+
+        payload, changed = self.store.finalize_cancellation("done")
+
+        self.assertFalse(changed)
+        self.assertEqual(payload["status"], "completed")
+
+    def test_concurrent_retries_requeue_a_cancelled_job_once(self) -> None:
+        self.store.create("again", {"status": "cancelled", "cancel_requested": True})
+
+        def attempt(_index: int) -> bool:
+            try:
+                self.store.retry("again")
+            except JobStateConflictError:
+                return False
+            return True
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            outcomes = list(executor.map(attempt, range(4)))
+
+        self.assertEqual(outcomes.count(True), 1)
+        self.assertEqual(self.store.get("again")["status"], "queued")
+
+    def test_terminal_delete_removes_job(self) -> None:
+        self.store.create("old", {"status": "cancelled"})
+
+        self.store.delete("old", require_terminal=True)
+
+        self.assertIsNone(self.store.get("old"))
 
     def test_claims_due_schedule_before_regular_queue(self) -> None:
         self.store.create("regular", {"status": "queued"})

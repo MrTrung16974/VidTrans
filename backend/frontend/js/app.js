@@ -1393,7 +1393,7 @@ function jobActions(job) {
     const zipName = `${job.job_id}.artifacts.zip`;
     downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg><span>ZIP</span></button>`;
   }
-  const cancel = ["queued", "scheduled", "processing", "cancelling"].includes(job.status)
+  const cancel = ["queued", "scheduled", "processing"].includes(job.status)
     ? `<button type="button" class="btn-job-action btn-cancel" data-action="cancel" data-job="${job.job_id}" title="Hủy tiến trình"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
     : "";
   const retry = terminal
@@ -1749,7 +1749,7 @@ async function jobAction(action, jobId) {
     if (response.status === 401) lockApplication();
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || `Không thể ${action} job`);
-    toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "cancel" ? "Đã hủy job" : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
+    toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "cancel" ? (data.status === "cancelling" ? "Đang dừng job an toàn…" : "Đã hủy job") : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
     await loadJobs();
   } catch (error) { toast(error.message, true); }
 }

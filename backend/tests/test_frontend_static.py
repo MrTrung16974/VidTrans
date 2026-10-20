@@ -99,7 +99,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/js/app.js?v=20261018-15", html)
         self.assertIn('<option value="auto" selected>', html)
         self.assertIn('<option value="independent">OCR + ASR độc lập', html)
-        self.assertIn('action === "cancel" ? "Đã hủy job"', javascript)
+        self.assertIn('data.status === "cancelling" ? "Đang dừng job an toàn…" : "Đã hủy job"', javascript)
         self.assertIn('name="original_audio_volume" min="0" max="1" step="0.01" value="0.30"', html)
         self.assertNotIn('id="subtitleBackgroundOpacity"', html)
         self.assertIn("background_opacity: 0.82", javascript)

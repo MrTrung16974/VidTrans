@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from application.job_service import JobService
+from infrastructure.job_store import JobNotFoundError
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class JobScheduler:
         *,
         concurrency: int = 1,
         poll_interval: float = 1.0,
+        on_cancelled: Callable[[str], None] | None = None,
     ) -> None:
         if concurrency < 1:
             raise ValueError("scheduler concurrency must be at least 1")
@@ -29,6 +31,7 @@ class JobScheduler:
         self._runner = runner
         self._concurrency = concurrency
         self._poll_interval = poll_interval
+        self._on_cancelled = on_cancelled
         self._wake_event = asyncio.Event()
         self._tasks: list[asyncio.Task[None]] = []
         self._stopping = False
@@ -87,6 +90,7 @@ class JobScheduler:
                         step="failed",
                         error="Worker gặp lỗi ngoài pipeline",
                     )
+                await asyncio.to_thread(self._acknowledge_cancellation, job_id)
                 continue
 
             self._wake_event.clear()
@@ -94,3 +98,15 @@ class JobScheduler:
                 await asyncio.wait_for(self._wake_event.wait(), timeout=self._poll_interval)
             except TimeoutError:
                 pass
+
+    def _acknowledge_cancellation(self, job_id: str) -> None:
+        """Finish a job left in ``cancelling`` now that its runner returned."""
+
+        try:
+            _, finalized = self._service.finalize_cancellation(job_id)
+            if finalized and self._on_cancelled is not None:
+                self._on_cancelled(job_id)
+        except JobNotFoundError:
+            return
+        except Exception:
+            logger.exception("Unable to acknowledge cancellation for job %s", job_id)

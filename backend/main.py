@@ -60,7 +60,7 @@ from infrastructure.payments import (
     PaymentOrderStore,
 )
 from infrastructure.job_events import ALL_JOBS, JobEventHub
-from infrastructure.job_store import JobStore
+from infrastructure.job_store import JobNotFoundError, JobStateConflictError, JobStore
 from infrastructure.publishers.registry import PublisherRegistry
 from infrastructure.publishers.instagram import InstagramPublisher, InstagramPublisherConfig
 from infrastructure.publishers.tiktok import TikTokSocialPublisher
@@ -696,6 +696,12 @@ _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
 _job_context = threading.local()
 
 
+TIKTOK_CANCEL_UNCERTAIN_DETAIL = (
+    "Đã hủy khi video đang được gửi lên TikTok; TikTok có thể đã nhận video, "
+    "hãy kiểm tra và xóa thủ công trên TikTok nếu cần"
+)
+
+
 class JobCancelled(RuntimeError):
     pass
 
@@ -924,7 +930,9 @@ def ff_escape_text(value: str) -> str:
     return escaped
 
 
-def run_ffmpeg(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def run_ffmpeg(
+    args: list[str], *, check: bool = True, job_id: str | None = None
+) -> subprocess.CompletedProcess[str]:
     logger.info("Running ffmpeg command: %s", " ".join(args))
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     while True:
@@ -932,8 +940,8 @@ def run_ffmpeg(args: list[str], *, check: bool = True) -> subprocess.CompletedPr
             stdout, stderr = process.communicate(timeout=0.5)
             break
         except subprocess.TimeoutExpired:
-            job_id = getattr(_job_context, "job_id", None)
-            if job_id and JOB_SERVICE.is_cancel_requested(job_id):
+            active_job_id = job_id or getattr(_job_context, "job_id", None)
+            if active_job_id and JOB_SERVICE.is_cancel_requested(active_job_id):
                 process.terminate()
                 try:
                     process.communicate(timeout=3)
@@ -1224,6 +1232,7 @@ def make_asr_progress_callback(
 
     def report(position: float, total: float | None) -> None:
         nonlocal last_reported
+        ensure_job_active(job_id)
         effective_total = total or expected_duration
         if not effective_total:
             update_job(job_id, step_detail=asr_progress_detail(position, None))
@@ -1250,6 +1259,15 @@ def update_job(job_id: str, **fields: Any) -> None:
             fields.pop("status")
         elif fields.get("status") == "completed":
             raise JobCancelled("Job đã được yêu cầu hủy trước khi hoàn tất")
+        elif fields.get("status") == "failed" and current.get("status") == "cancelling":
+            # The worker stopped because of an error after the user cancelled;
+            # report the cancellation instead of leaving the job in cancelling.
+            fields = {
+                "status": "cancelled",
+                "step": "cancelled",
+                "step_detail": "Đã hủy theo yêu cầu",
+                "finished_at": fields.get("finished_at") or utc_now(),
+            }
     updated = JOB_SERVICE.update(job_id, **fields)
     if N8N_WORKFLOW_CONFIG.enabled:
         WORKFLOW_EVENTS.emit_transition(job_id, current, updated)
@@ -1308,6 +1326,7 @@ def make_ocr_progress_callback(job_id: str) -> Callable[[int, int], None]:
 
     def report(completed: int, total: int) -> None:
         nonlocal last_reported
+        ensure_job_active(job_id)
         report_interval = max(1, total // 100)
         if completed != total and completed - last_reported < report_interval:
             return
@@ -1393,6 +1412,14 @@ def synthesize_tts_segments(
         if not segment.get("skip_tts") and is_speakable_tts_text(segment.get("text"))
     )
     progress_lock = threading.Lock()
+
+    def run_tts_ffmpeg(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if job_id:
+            ensure_job_active(job_id)
+        result = run_ffmpeg(args, job_id=job_id)
+        if job_id:
+            ensure_job_active(job_id)
+        return result
 
     def process_segment(index: int, segment: dict[str, Any]) -> Path | None:
         nonlocal completed_count
@@ -1480,7 +1507,9 @@ def synthesize_tts_segments(
             "silenceremove=start_periods=1:start_duration=0.08:start_threshold=-50dB,"
             "areverse"
         )
-        run_ffmpeg(
+        if job_id:
+            ensure_job_active(job_id)
+        run_tts_ffmpeg(
             [
                 FFMPEG,
                 "-y",
@@ -1508,7 +1537,7 @@ def synthesize_tts_segments(
                 tts_edge_with_retry(
                     text, adaptive_output_path, voice_name, candidate_rate_string, pitch_string
                 )
-                run_ffmpeg(
+                run_tts_ffmpeg(
                     [
                         FFMPEG,
                         "-y",
@@ -1527,6 +1556,8 @@ def synthesize_tts_segments(
                 rendered_duration = get_media_duration(trimmed_path)
                 effective_rate_percent = candidate_rate_percent
                 applied_native_rate_boost = native_rate_boost
+            except JobCancelled:
+                raise
             except Exception as exc:
                 logger.warning("Adaptive edge-tts render failed; keeping first pass: %s", type(exc).__name__)
             finally:
@@ -1537,7 +1568,7 @@ def synthesize_tts_segments(
         fitted_path = trimmed_path
         if speed_factor > 1.0:
             fitted_path = tts_dir / f"{index:04d}_fitted.wav"
-            run_ffmpeg(
+            run_tts_ffmpeg(
                 [
                     FFMPEG,
                     "-y",
@@ -2813,6 +2844,7 @@ def process_video(
 
         tiktok_publish_fields: dict[str, Any] = {}
         if auto_publish_tiktok:
+            ensure_job_active(job_id)
             update_job(
                 job_id,
                 step="publishing-tiktok",
@@ -2843,6 +2875,10 @@ def process_video(
                     "tiktok_publish_status": "FAILED",
                     "tiktok_publish_error": str(exc),
                 }
+
+        if tiktok_publish_fields.get("tiktok_publish_id") and JOB_SERVICE.is_cancel_requested(job_id):
+            finish_cancelled_after_publish(job_id, **artifact_fields, **tiktok_publish_fields)
+            return
 
         completion_fields: dict[str, Any] = {
             "status": "completed",
@@ -2883,6 +2919,27 @@ def process_video(
             del _job_context.job_id
 
 
+def finish_cancelled_after_publish(job_id: str, **fields: Any) -> None:
+    """Close a job cancelled while TikTok was already receiving the video.
+
+    The upload cannot be rolled back from here, so the job is marked cancelled
+    with the publish result kept and a warning to verify it on TikTok. The
+    rendering work was delivered, so the quota is consumed, not released.
+    """
+
+    current = JOB_SERVICE.get(job_id) or {}
+    update_job(
+        job_id,
+        status="cancelled",
+        step="cancelled",
+        progress=float(current.get("progress", 0.99)),
+        step_detail=TIKTOK_CANCEL_UNCERTAIN_DETAIL,
+        finished_at=utc_now(),
+        **fields,
+    )
+    TENANT_GOVERNANCE.consume(job_id)
+
+
 def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> None:
     """Publish an already-rendered video claimed from the durable schedule."""
 
@@ -2906,6 +2963,18 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             title,
             privacy_level=privacy_level,
         )
+        publish_fields = {
+            "tiktok_publish_id": publish_result["publish_id"],
+            "tiktok_publish_title": publish_result["title"],
+            "tiktok_publish_privacy_level": publish_result["privacy_level"],
+            "tiktok_publish_status": publish_result["status"],
+            "tiktok_publish_detail": publish_result.get("status_payload"),
+        }
+        if JOB_SERVICE.is_cancel_requested(job_id):
+            finish_cancelled_after_publish(
+                job_id, job_action=None, publish_request=None, **publish_fields
+            )
+            return
         update_job(
             job_id,
             status="completed",
@@ -2915,11 +2984,7 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             finished_at=utc_now(),
             job_action=None,
             publish_request=None,
-            tiktok_publish_id=publish_result["publish_id"],
-            tiktok_publish_title=publish_result["title"],
-            tiktok_publish_privacy_level=publish_result["privacy_level"],
-            tiktok_publish_status=publish_result["status"],
-            tiktok_publish_detail=publish_result.get("status_payload"),
+            **publish_fields,
         )
         TENANT_GOVERNANCE.consume(job_id)
     except JobCancelled:
@@ -2934,9 +2999,23 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             job_action=None,
             publish_request=None,
         )
-        TENANT_GOVERNANCE.consume(job_id)
+        TENANT_GOVERNANCE.release(job_id)
     except Exception as exc:
         logger.warning("Scheduled TikTok publish failed for job %s", job_id, exc_info=True)
+        if JOB_SERVICE.is_cancel_requested(job_id):
+            update_job(
+                job_id,
+                status="cancelled",
+                step="cancelled",
+                step_detail="Đã hủy lịch đăng TikTok",
+                finished_at=utc_now(),
+                job_action=None,
+                publish_request=None,
+                tiktok_publish_status="FAILED",
+                tiktok_publish_error=str(exc),
+            )
+            TENANT_GOVERNANCE.release(job_id)
+            return
         update_job(
             job_id,
             status="completed",
@@ -3121,6 +3200,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             step_detail=str(exc),
             finished_at=utc_now(),
         )
+        TENANT_GOVERNANCE.release(job_id)
     except (KeyError, TypeError, ValueError, FileNotFoundError, SocialVideoDownloadError) as exc:
         logger.warning("Unable to resume job %s: %s", job_id, exc)
         update_job(
@@ -3218,10 +3298,21 @@ async def start_job_scheduler() -> None:
         requeued = JOB_SERVICE.requeue_interrupted()
         if requeued:
             logger.info("Requeued %d interrupted jobs after server restart", len(requeued))
+        offset = 0
+        while True:
+            cancelled_jobs, total = JOB_SERVICE.list_jobs(
+                status="cancelled", limit=500, offset=offset
+            )
+            for cancelled_job in cancelled_jobs:
+                TENANT_GOVERNANCE.release(str(cancelled_job["job_id"]))
+            offset += len(cancelled_jobs)
+            if not cancelled_jobs or offset >= total:
+                break
     scheduler = JobScheduler(
         JOB_SERVICE,
         resume_process_video,
         concurrency=SETTINGS.worker_concurrency,
+        on_cancelled=TENANT_GOVERNANCE.release,
     )
     app.state.job_scheduler = scheduler
     await scheduler.start()
@@ -5056,7 +5147,8 @@ def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     if job_for_request(request, job_id) is None:
         raise HTTPException(status_code=404, detail="job not found")
     job = JOB_SERVICE.request_cancel(job_id)
-    TENANT_GOVERNANCE.release(job_id)
+    if job.get("status") == "cancelled":
+        TENANT_GOVERNANCE.release(job_id)
     return JSONResponse(job_response(job_id, job))
 
 
@@ -5097,16 +5189,25 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         "tiktok_publish_status": None,
         "tiktok_publish_detail": None,
     }
+    artifact_keys = ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file")
+    for key in artifact_keys:
+        update_payload[key] = None
 
-    for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
+    # The status check above is a fast path; the store re-checks it atomically
+    # so a job whose worker has not stopped can never be requeued twice.
+    try:
+        JOB_SERVICE.retry(job_id, **update_payload)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    except JobStateConflictError:
+        raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý") from None
+
+    for key in artifact_keys:
         filename = source.get(key)
         if filename:
             target = stored_artifact_path(str(filename))
             if target.is_relative_to(OUTPUT_DIR.resolve()):
                 target.unlink(missing_ok=True)
-        update_payload[key] = None
-
-    JOB_SERVICE.update(job_id, **update_payload)
     notify_scheduler()
     return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
 
@@ -5121,6 +5222,14 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         raise HTTPException(status_code=409, detail="Hãy kết thúc lượt chuẩn bị TikTok trước khi xóa video")
     if job.get("status") in {"queued", "processing", "scheduled", "cancelling"}:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa")
+    # Remove the row first, atomically requiring a terminal status, so files are
+    # only deleted once no worker can still be using them.
+    try:
+        JOB_SERVICE.delete(job_id, require_terminal=True)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    except JobStateConflictError:
+        raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa") from None
     for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
         filename = job.get(key)
         if filename:
@@ -5139,7 +5248,6 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     job_work_dir = tenant_job_dir(WORK_DIR, str(job.get("owner_user_id") or _bootstrap_owner["user_id"]), job_id)
     if job_work_dir.is_relative_to(WORK_DIR.resolve()) and job_work_dir.exists():
         shutil.rmtree(job_work_dir)
-    JOB_SERVICE.delete(job_id)
     TENANT_GOVERNANCE.release(job_id)
     return JSONResponse({"job_id": job_id, "deleted": True})
 
