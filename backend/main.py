@@ -2222,6 +2222,7 @@ def recognize_video_source(
                             roi_bottom=ocr_roi_bottom,
                         ),
                         reader_backend=SETTINGS.ocr_backend,
+                        reader_model=SETTINGS.ocr_model,
                         progress_callback=make_ocr_progress_callback(job_id),
                     )
         except JobCancelled:

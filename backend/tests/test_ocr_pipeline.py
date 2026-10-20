@@ -210,6 +210,57 @@ class OCRTextTests(unittest.TestCase):
 
         self.assertEqual(reader.sizes, [(160, 60)])
 
+    def test_wide_frames_are_not_upscaled(self) -> None:
+        class SizeReader:
+            def __init__(self) -> None:
+                self.sizes = []
+
+            def read(self, image_path):
+                with Image.open(image_path) as image:
+                    self.sizes.append(image.size)
+                return []
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "frame.jpg"
+            Image.new("L", (1080, 300), 30).save(path)
+            reader = SizeReader()
+            scan_subtitle_frames([path], reader=reader, config=OCRConfig(sample_fps=3.0, upscale=2.0))
+
+        self.assertEqual(reader.sizes, [(1080, 300)])
+
+    def test_inference_scale_reaches_target_width_without_exceeding_upscale(self) -> None:
+        config = OCRConfig(upscale=2.0, upscale_below_width=1000)
+        self.assertEqual(config.inference_scale(1920), 1.0)
+        self.assertAlmostEqual(config.inference_scale(720), 1000 / 720)
+        self.assertEqual(config.inference_scale(320), 2.0)
+
+    def test_single_frame_reader_reports_progress_after_every_frame(self) -> None:
+        class Reader:
+            def read(self, _image_path):
+                return []
+
+        progress = []
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index, left in enumerate((5, 30, 55)):
+                image = Image.new("L", (96, 40), 30)
+                ImageDraw.Draw(image).rectangle((left, 12, left + 30, 28), fill=245)
+                path = Path(directory) / f"frame-{index}.jpg"
+                image.save(path, quality=95)
+                paths.append(path)
+            scan_subtitle_frames(
+                paths,
+                reader=Reader(),
+                config=OCRConfig(sample_fps=3.0, upscale=1.0),
+                progress_callback=lambda done, total: progress.append((done, total)),
+            )
+
+        self.assertEqual(progress, [(1, 3), (2, 3), (3, 3)])
+
+    def test_paddle_reader_rejects_unknown_model(self) -> None:
+        with self.assertRaises(ValueError):
+            PaddleOCRReader(model="large")
+
     def test_normalizes_union_bbox_for_selected_chinese_lines(self) -> None:
         text, confidence, bbox = select_subtitle_geometry(
             [

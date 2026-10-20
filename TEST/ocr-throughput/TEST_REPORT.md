@@ -18,3 +18,17 @@ Môi trường: Docker image `vidtrans-vidtrans`, dữ liệu unit tổng hợp.
 - Chưa đo cue recall/CER trên golden corpus.
 - Chưa deploy vì build bị chặn bởi CA proxy và PostgreSQL Compose hiện thiếu nguồn dữ liệu.
 - Unit test không thay thế UAT video thật sau deploy.
+
+## Cập nhật 2026-10-20 — bỏ upscale cho frame rộng, model mobile
+
+Benchmark CPU (image `vidtrans-vidtrans`, 24 strip 1080×302 chữ Trung tổng hợp, nền nhiễu):
+
+| Cấu hình | ms/frame | Độ chính xác |
+|---|---|---|
+| v6_medium + upscale 2× (cũ) | 4992 | 24/24 |
+| v6_medium, không upscale (mặc định mới cho frame ≥1000px) | 1580 | 24/24 |
+| PP-OCRv5_mobile, không upscale (`VIDTRANS_OCR_MODEL=mobile`) | 273 | 20/24, similarity 0.982 |
+
+- Smoke `scan_subtitle_frames` với reader Paddle thật: medium 1326 ms, mobile 248 ms/frame; 3/3 câu đúng.
+- Full backend: 447 test, 446 PASS, 1 lỗi import `test_douyin_qr_auth` có sẵn.
+- Chưa đo trên video thật.

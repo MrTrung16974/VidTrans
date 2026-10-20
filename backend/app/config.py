@@ -19,6 +19,7 @@ class AppSettings:
     ffmpeg: str
     ffprobe: str
     ocr_backend: str
+    ocr_model: str
     worker_concurrency: int
     whisper_concurrency: int
     ocr_concurrency: int
@@ -41,6 +42,7 @@ class AppSettings:
             ffmpeg=cls._resolve_binary(base_dir, "ffmpeg"),
             ffprobe=cls._resolve_binary(base_dir, "ffprobe"),
             ocr_backend=ocr_backend,
+            ocr_model=cls._ocr_model(),
             worker_concurrency=cls._positive_int("VIDTRANS_WORKER_CONCURRENCY", 2),
             whisper_concurrency=cls._positive_int("VIDTRANS_WHISPER_CONCURRENCY", 1),
             ocr_concurrency=cls._positive_int("VIDTRANS_OCR_CONCURRENCY", 1),
@@ -73,6 +75,13 @@ class AppSettings:
         if platform.system() == "Linux" and platform.machine().lower() in {"arm64", "aarch64"}:
             return "tesseract"
         return "paddle"
+
+    @staticmethod
+    def _ocr_model() -> str:
+        model = os.environ.get("VIDTRANS_OCR_MODEL", "medium").strip().lower()
+        if model not in {"medium", "mobile"}:
+            raise ValueError("VIDTRANS_OCR_MODEL must be medium or mobile")
+        return model
 
     @staticmethod
     def _positive_int(name: str, default: int) -> int:

@@ -36,6 +36,14 @@ class OCRConfig:
     blank_tolerance_frames: int = 1
     min_stable_frames: int = 2
     upscale: float = 2.0
+    # Frames at least this wide are read as-is: upscaling a 1080p strip made
+    # PaddleOCR ~3x slower on CPU without measurable accuracy gain.
+    upscale_below_width: int = 1000
+
+    def inference_scale(self, frame_width: int) -> float:
+        if frame_width <= 0 or frame_width >= self.upscale_below_width:
+            return 1.0
+        return max(1.0, min(self.upscale, self.upscale_below_width / frame_width))
 
     def validate(self) -> None:
         if not 0 < self.sample_fps <= 30:
@@ -52,6 +60,8 @@ class OCRConfig:
             raise ValueError("ocr min_stable_frames must be at least 1")
         if self.upscale < 1:
             raise ValueError("ocr upscale must be at least 1")
+        if self.upscale_below_width < 0:
+            raise ValueError("ocr upscale_below_width cannot be negative")
 
 
 @dataclass(frozen=True)
@@ -474,10 +484,23 @@ def _result_list(data: dict[str, Any], key: str) -> list[Any]:
     return list(value)
 
 
+# "medium" keeps PaddleOCR's default models. "mobile" was ~5.8x faster on CPU
+# in a synthetic Chinese subtitle benchmark at the cost of a few misread glyphs.
+PADDLE_MODEL_NAMES: dict[str, dict[str, str]] = {
+    "medium": {},
+    "mobile": {
+        "text_detection_model_name": "PP-OCRv5_mobile_det",
+        "text_recognition_model_name": "PP-OCRv5_mobile_rec",
+    },
+}
+
+
 class PaddleOCRReader:
     """Compatibility adapter for PaddleOCR 2.x and 3.x result formats."""
 
-    def __init__(self, *, language: str = "ch", device: str = "cpu") -> None:
+    def __init__(self, *, language: str = "ch", device: str = "cpu", model: str = "medium") -> None:
+        if model not in PADDLE_MODEL_NAMES:
+            raise ValueError(f"OCR model must be one of: {', '.join(PADDLE_MODEL_NAMES)}")
         try:
             from paddleocr import PaddleOCR
         except ImportError as exc:  # pragma: no cover - depends on deployment image
@@ -492,6 +515,7 @@ class PaddleOCRReader:
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
+                **PADDLE_MODEL_NAMES[model],
             )
             self._api_version = 3
         except TypeError:  # PaddleOCR 2.x
@@ -659,20 +683,21 @@ class TesseractOCRReader:
         return pages
 
 
-_DEFAULT_READERS: dict[str, OCRReader] = {}
+_DEFAULT_READERS: dict[tuple[str, str], OCRReader] = {}
 _DEFAULT_READER_LOCK = threading.Lock()
 
 
-def get_default_reader(backend: str = "paddle") -> OCRReader:
+def get_default_reader(backend: str = "paddle", model: str = "medium") -> OCRReader:
     if backend not in {"paddle", "tesseract"}:
         raise ValueError("OCR backend must be paddle or tesseract")
-    if backend not in _DEFAULT_READERS:
+    key = (backend, model if backend == "paddle" else "")
+    if key not in _DEFAULT_READERS:
         with _DEFAULT_READER_LOCK:
-            if backend not in _DEFAULT_READERS:
-                _DEFAULT_READERS[backend] = (
-                    PaddleOCRReader() if backend == "paddle" else TesseractOCRReader()
+            if key not in _DEFAULT_READERS:
+                _DEFAULT_READERS[key] = (
+                    PaddleOCRReader(model=model) if backend == "paddle" else TesseractOCRReader()
                 )
-    return _DEFAULT_READERS[backend]
+    return _DEFAULT_READERS[key]
 
 
 def extract_ocr_frames(
@@ -788,12 +813,15 @@ def scan_subtitle_frames(
     frame_metadata: list[tuple[int, int]] = []
     ocr_indexes: list[int] = []
     forced_refresh_frames = max(1, math.ceil(config.sample_fps * 1.5))
+    inference_scale: float | None = None
 
     for index, frame_path in enumerate(frame_paths):
         try:
             with Image.open(frame_path) as image:
-                frame_width = max(1, round(image.width * config.upscale))
-                frame_height = max(1, round(image.height * config.upscale))
+                if inference_scale is None:
+                    inference_scale = config.inference_scale(image.width)
+                frame_width = max(1, round(image.width * inference_scale))
+                frame_height = max(1, round(image.height * inference_scale))
                 current_signature = _subtitle_change_signature(image)
         except Exception:
             frame_width, frame_height = 0, 0
@@ -809,15 +837,17 @@ def scan_subtitle_frames(
         frame_metadata.append((frame_width, frame_height))
 
     lines_by_index: dict[int, list[OCRLine]] = {}
-    batch_size = 32
     read_many = getattr(reader, "read_many", None)
+    # Readers without a batch API run frame by frame, so report after each
+    # frame: the progress callback is also where cancellation is honoured.
+    batch_size = 32 if callable(read_many) else 1
     total_ocr = len(ocr_indexes)
     for offset in range(0, total_ocr, batch_size):
         batch_indexes = ocr_indexes[offset : offset + batch_size]
         batch_paths = [frame_paths[index] for index in batch_indexes]
         inference_paths, temporary_paths = _prepare_inference_images(
             batch_paths,
-            scale=config.upscale,
+            scale=inference_scale or 1.0,
         )
         try:
             if callable(read_many):
@@ -864,6 +894,7 @@ def extract_burned_subtitle_segments(
     config: OCRConfig | None = None,
     reader: OCRReader | None = None,
     reader_backend: str = "paddle",
+    reader_model: str = "medium",
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     config = config or OCRConfig()
@@ -881,7 +912,7 @@ def extract_burned_subtitle_segments(
     )
     if not frame_paths:
         return []
-    active_reader = reader or get_default_reader(reader_backend)
+    active_reader = reader or get_default_reader(reader_backend, reader_model)
     try:
         observations = scan_subtitle_frames(
             frame_paths,

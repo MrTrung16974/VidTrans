@@ -99,6 +99,7 @@ services:
       VIDTRANS_POSTGRES_INTERNAL_PORT: "5432"
       VIDTRANS_RECOVER_INTERRUPTED_JOBS: "1"
       VIDTRANS_OCR_BACKEND: "${VIDTRANS_OCR_BACKEND:-auto}"
+      VIDTRANS_OCR_MODEL: "${VIDTRANS_OCR_MODEL:-medium}"
       VIDTRANS_WORKER_CONCURRENCY: "2"
       # Terminal job videos are deleted after 30 days by default; set 0 to opt out.
       VIDTRANS_RETENTION_ENABLED: "${VIDTRANS_RETENTION_ENABLED:-1}"
