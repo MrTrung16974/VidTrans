@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -9,6 +12,23 @@ from urllib.request import Request, urlopen
 from xml.sax.saxutils import escape
 
 TTS_PROVIDERS = ("edge", "azure", "elevenlabs")
+
+ELEVENLABS_ATTEMPTS = 5
+ELEVENLABS_RETRY_BASE_SECONDS = 1.0
+# 409 already_running: a Voice Library voice is added to the account on first
+# use, and concurrent first uses of the same voice conflict. 429: rate limit.
+ELEVENLABS_RETRYABLE_STATUSES = frozenset({409, 429})
+
+_elevenlabs_ready_voices: set[str] = set()
+_elevenlabs_voice_locks: dict[str, threading.Lock] = {}
+_elevenlabs_locks_guard = threading.Lock()
+
+
+class TTSProviderHTTPError(RuntimeError):
+    def __init__(self, provider_label: str, status: int, detail: str) -> None:
+        super().__init__(f"{provider_label} API lỗi HTTP {status}: {detail}")
+        self.status = status
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -113,7 +133,31 @@ def synthesize_elevenlabs(
         "Content-Type": "application/json",
         "Accept": "audio/mpeg",
     })
-    _write_response(request, output_path, "ElevenLabs")
+    if voice_id in _elevenlabs_ready_voices:
+        _write_elevenlabs_with_retry(request, output_path)
+        return
+    # Let only the first request for a voice through so ElevenLabs adds a
+    # library voice to the account once; parallel cues wait, then run freely.
+    with _elevenlabs_locks_guard:
+        voice_lock = _elevenlabs_voice_locks.setdefault(voice_id, threading.Lock())
+    with voice_lock:
+        if voice_id not in _elevenlabs_ready_voices:
+            _write_elevenlabs_with_retry(request, output_path)
+            _elevenlabs_ready_voices.add(voice_id)
+            return
+    _write_elevenlabs_with_retry(request, output_path)
+
+
+def _write_elevenlabs_with_retry(request: Request, output_path: Path) -> None:
+    for attempt in range(1, ELEVENLABS_ATTEMPTS + 1):
+        try:
+            _write_response(request, output_path, "ElevenLabs")
+            return
+        except TTSProviderHTTPError as exc:
+            if exc.status not in ELEVENLABS_RETRYABLE_STATUSES or attempt == ELEVENLABS_ATTEMPTS:
+                raise
+            delay = ELEVENLABS_RETRY_BASE_SECONDS * 2 ** (attempt - 1)
+            time.sleep(delay + random.uniform(0, delay / 2))
 
 
 def _write_response(request: Request, output_path: Path, provider_label: str) -> None:
@@ -122,7 +166,7 @@ def _write_response(request: Request, output_path: Path, provider_label: str) ->
             audio = response.read()
     except HTTPError as exc:
         detail = exc.read(400).decode("utf-8", errors="replace")
-        raise RuntimeError(f"{provider_label} API lỗi HTTP {exc.code}: {detail}") from exc
+        raise TTSProviderHTTPError(provider_label, exc.code, detail) from exc
     except URLError as exc:
         raise RuntimeError(f"Không thể kết nối {provider_label}: {exc.reason}") from exc
     if not audio:
