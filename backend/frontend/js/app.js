@@ -611,7 +611,7 @@ function updateFormSummary() {
   const voiceMode = document.querySelector('[name="voice_mode"]')?.value || "auto";
   const voiceTypeLabel = $("#voiceTypeLabel");
   if (voiceTypeLabel) voiceTypeLabel.textContent = voiceMode === "auto" ? "Giọng dự phòng" : "Giọng đọc";
-  ["#ttsProviderField", "#voiceModeField", "#voiceTypeField", "#voiceStyleField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
+  ["#ttsProviderField", "#voiceModeField", "#voiceTypeField", "#elevenlabsFemaleVoiceField", "#elevenlabsMaleVoiceField", "#voiceStyleField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
     const field = $(selector);
     field.classList.toggle("is-disabled", !voiceEnabled);
     $$('input, select', field).forEach(control => { control.disabled = !voiceEnabled; });
@@ -647,6 +647,75 @@ function updateFormSummary() {
     : "transparent";
 }
 
+function renderElevenLabsVoices(voices) {
+  stopVoicePreview();
+  [["female", "#elevenlabsFemaleVoiceField", "#elevenlabsFemaleVoice"], ["male", "#elevenlabsMaleVoiceField", "#elevenlabsMaleVoice"]].forEach(([gender, fieldSelector, selectSelector]) => {
+    const field = $(fieldSelector);
+    const voiceSelect = $(selectSelector);
+    if (!field || !voiceSelect) return;
+    // Prefer voices of the matching gender, but allow any voice when none is tagged for it.
+    const matching = voices.filter(voice => voice.gender === gender);
+    const options = matching.length ? matching : voices;
+    const previous = voiceSelect.value;
+    voiceSelect.innerHTML = options
+      .map(voice => `<option value="${escapeHtml(voice.key)}">${escapeHtml(voice.label)}</option>`)
+      .join("");
+    if (options.some(voice => voice.key === previous)) voiceSelect.value = previous;
+    field.classList.toggle("is-hidden", options.length === 0);
+    voiceSelect.disabled = options.length === 0;
+  });
+}
+
+let voicePreviewAudio = null;
+let voicePreviewButton = null;
+const voicePreviewUrls = new Map();
+
+function stopVoicePreview() {
+  if (voicePreviewAudio) voicePreviewAudio.pause();
+  if (voicePreviewButton) {
+    voicePreviewButton.classList.remove("is-playing");
+    voicePreviewButton.textContent = "▶ Nghe thử";
+  }
+  voicePreviewAudio = null;
+  voicePreviewButton = null;
+}
+
+async function playVoicePreview(button) {
+  const voiceSelect = $(button.dataset.voicePreview);
+  const voiceKey = voiceSelect?.value;
+  const wasPlaying = voicePreviewButton === button;
+  stopVoicePreview();
+  if (wasPlaying || !voiceKey) return;
+  button.disabled = true;
+  try {
+    // Previews are cached as object URLs so replaying a voice is instant.
+    let url = voicePreviewUrls.get(voiceKey);
+    if (!url) {
+      const response = await apiFetch(`/api/v1/tts-providers/elevenlabs/voices/${encodeURIComponent(voiceKey)}/preview`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || "Không tải được bản nghe thử");
+      }
+      url = URL.createObjectURL(await response.blob());
+      voicePreviewUrls.set(voiceKey, url);
+    }
+    const audio = new Audio(url);
+    voicePreviewAudio = audio;
+    voicePreviewButton = button;
+    button.classList.add("is-playing");
+    button.textContent = "■ Dừng";
+    audio.addEventListener("ended", () => { if (voicePreviewAudio === audio) stopVoicePreview(); });
+    await audio.play();
+  } catch (error) {
+    stopVoicePreview();
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$$("[data-voice-preview]").forEach(button => button.addEventListener("click", () => playVoicePreview(button)));
+
 async function loadTtsProviders() {
   const select = $("#ttsProvider");
   const hint = $("#ttsProviderHint");
@@ -667,6 +736,7 @@ async function loadTtsProviders() {
       const maleOption = $("#maleVoiceOption");
       if (femaleOption) femaleOption.textContent = selected?.female_voice_label || "Giọng nữ";
       if (maleOption) maleOption.textContent = selected?.male_voice_label || "Giọng nam";
+      renderElevenLabsVoices(select.value === "elevenlabs" ? selected?.voices || [] : []);
       const voiceMode = document.querySelector('[name="voice_mode"]');
       const autoOption = voiceMode?.querySelector('option[value="auto"]');
       if (autoOption) {

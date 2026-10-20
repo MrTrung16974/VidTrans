@@ -102,7 +102,9 @@ from infrastructure.social_video_downloader import (
 from infrastructure.tts_providers import (
     ensure_provider_configured,
     normalize_tts_provider,
+    elevenlabs_voice_preview,
     provider_statuses,
+    resolve_elevenlabs_voice_selection,
     synthesize_azure,
     synthesize_elevenlabs,
 )
@@ -1407,6 +1409,7 @@ def synthesize_tts_segments(
     job_id: str | None = None,
     target_language: str = "vi",
     tts_provider: str = "edge",
+    tts_voices: dict[str, str] | None = None,
 ) -> list[Path]:
     tts_dir = work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
@@ -1511,6 +1514,7 @@ def synthesize_tts_segments(
                     voice_type=selected_voice_type,
                     voice_style=voice_style,
                     speed=1.0 + (rate_percent / 100.0),
+                    voice_key=(tts_voices or {}).get(selected_voice_type),
                 )
             else:
                 tts_edge_with_retry(text, output_path, voice_name, base_rate_string, pitch_string)
@@ -2354,6 +2358,7 @@ def process_video(
     tiktok_publish_at: str | None = None,
     tts_provider: str = "edge",
     translation_provider: str = "google",
+    tts_voices: dict[str, str] | None = None,
 ) -> None:
     _job_context.job_id = job_id
     current_job = JOB_SERVICE.get(job_id) or {}
@@ -2643,6 +2648,7 @@ def process_video(
                     "voice_mode": voice_mode,
                     "voice_style": voice_style,
                     "tts_provider": tts_provider,
+                    "tts_voices": tts_voices or {},
                     "speech_rate": speech_rate,
                     "video_duration": round(video_duration, 3),
                     "routing": [
@@ -2681,6 +2687,7 @@ def process_video(
                         job_id=job_id,
                         target_language=target_language,
                         tts_provider=tts_provider,
+                        tts_voices=tts_voices,
                     )
                     ensure_job_active(job_id)
                     voice_track = build_voice_track(
@@ -3214,6 +3221,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             voice_style=str(resume_request.get("voice_style", "natural")),
             tts_provider=str(resume_request.get("tts_provider", "edge")),
             translation_provider=str(resume_request.get("translation_provider", "google")),
+            tts_voices=dict(resume_request.get("tts_voices") or {}),
             speech_rate=float(resume_request["speech_rate"]),
             background_music_path=background_music_path,
             keep_original_audio=bool(resume_request["keep_original_audio"]),
@@ -4446,6 +4454,20 @@ def tts_providers_endpoint() -> JSONResponse:
     return JSONResponse({"providers": [status.__dict__ for status in provider_statuses()]})
 
 
+@app.get("/api/v1/tts-providers/elevenlabs/voices/{voice_key}/preview")
+def elevenlabs_voice_preview_endpoint(voice_key: str) -> Response:
+    try:
+        audio, content_type = elevenlabs_voice_preview(voice_key)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.warning("ElevenLabs voice preview failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(audio, media_type=content_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.get("/api/v1/translation-providers")
 def translation_providers_endpoint() -> JSONResponse:
     return JSONResponse({"providers": [status.__dict__ for status in translation_provider_statuses()]})
@@ -4461,6 +4483,8 @@ async def process_video_endpoint(
     voice_mode: str = Form("auto"),
     voice_style: str = Form("natural"),
     tts_provider: str = Form("edge"),
+    elevenlabs_female_voice: str = Form(""),
+    elevenlabs_male_voice: str = Form(""),
     translation_provider: str = Form("google"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
@@ -4517,9 +4541,14 @@ async def process_video_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
+    tts_voices: dict[str, str] = {}
     if request.mode is not ProcessingMode.SUBTITLES:
         try:
             ensure_provider_configured(request.tts_provider)
+            if request.tts_provider == "elevenlabs":
+                tts_voices = resolve_elevenlabs_voice_selection(
+                    elevenlabs_female_voice, elevenlabs_male_voice
+                )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
@@ -4570,6 +4599,7 @@ async def process_video_endpoint(
         "voice_mode": request.voice_mode.value,
         "voice_style": request.voice_style,
         "tts_provider": request.tts_provider,
+        "tts_voices": tts_voices,
         "translation_provider": request.translation_provider,
         "speech_rate": speech_rate,
         "background_music_path": str(background_music_path) if background_music_path else None,
@@ -4647,6 +4677,8 @@ async def create_batch_endpoint(
     voice_mode: str = Form("auto"),
     voice_style: str = Form("natural"),
     tts_provider: str = Form("edge"),
+    elevenlabs_female_voice: str = Form(""),
+    elevenlabs_male_voice: str = Form(""),
     translation_provider: str = Form("google"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
@@ -4746,9 +4778,14 @@ async def create_batch_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if processing_request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
+    tts_voices: dict[str, str] = {}
     if processing_request.mode is not ProcessingMode.SUBTITLES:
         try:
             ensure_provider_configured(processing_request.tts_provider)
+            if processing_request.tts_provider == "elevenlabs":
+                tts_voices = resolve_elevenlabs_voice_selection(
+                    elevenlabs_female_voice, elevenlabs_male_voice
+                )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
@@ -4787,6 +4824,7 @@ async def create_batch_endpoint(
         "voice_type": processing_request.fallback_voice.value,
         "voice_style": processing_request.voice_style,
         "tts_provider": processing_request.tts_provider,
+        "tts_voices": tts_voices,
         "translation_provider": processing_request.translation_provider,
         "speech_rate": speech_rate,
         "whisper_model": whisper_model,

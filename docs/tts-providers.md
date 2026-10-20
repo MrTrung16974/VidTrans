@@ -6,7 +6,7 @@ VidTrans chỉ giữ ba lựa chọn để giao diện gọn và có phương á
 | --- | --- | --- |
 | Edge TTS | Mặc định, không cần tài khoản hay API key | Không cần cấu hình |
 | Azure AI Speech | API chính thức, hạn mức F0 lớn, giọng Việt Hoài My/Nam Minh | `VIDTRANS_AZURE_SPEECH_KEY`, `VIDTRANS_AZURE_SPEECH_REGION` |
-| ElevenLabs | Ưu tiên độ tự nhiên; gói Free có credit hằng tháng | API key, voice ID nữ và nam trong các biến `VIDTRANS_ELEVENLABS_*` |
+| ElevenLabs | Ưu tiên độ tự nhiên; gói Free có credit hằng tháng | `VIDTRANS_ELEVENLABS_API_KEY` và danh sách giọng `VIDTRANS_ELEVENLABS_VOICES` |
 
 ## Lấy khóa hợp lệ
 
@@ -23,8 +23,18 @@ Tài liệu: https://learn.microsoft.com/azure/ai-services/speech-service/rest-t
 ### ElevenLabs
 
 1. Tạo tài khoản Free và tạo API key trong phần tài khoản.
-2. Chọn một giọng nữ và một giọng nam trong Voice Library, sao chép voice ID tương ứng.
-3. Điền `VIDTRANS_ELEVENLABS_API_KEY`, `VIDTRANS_ELEVENLABS_FEMALE_VOICE_ID` và `VIDTRANS_ELEVENLABS_MALE_VOICE_ID`.
+2. Chọn các giọng muốn dùng trong Voice Library, bấm **Add to My Voices** cho từng giọng (tránh lỗi 409 `already_running`) và sao chép voice ID.
+3. Điền `VIDTRANS_ELEVENLABS_API_KEY` và `VIDTRANS_ELEVENLABS_VOICES`, mỗi giọng dạng `Tên|female|voice_id` hoặc `Tên|male|voice_id`, ngăn cách bằng `;`:
+
+   ```env
+   VIDTRANS_ELEVENLABS_VOICES=Nữ kể chuyện|female|xxxx;Nữ trẻ|female|yyyy;Nam trầm|male|zzzz
+   ```
+
+   Khi chọn ElevenLabs, form hiện hai danh sách "Giọng nữ" và "Giọng nam". Chế độ tự động vẫn chia câu theo nam/nữ rồi dùng giọng đã chọn cho từng nhóm. Nếu chưa khai báo giọng nào cho một giới tính, hệ thống dùng giọng đầu tiên trong danh sách. Dòng sai định dạng bị bỏ qua và ghi cảnh báo vào log; API không trả voice ID ra trình duyệt.
+
+   Nút **▶ Nghe thử** cạnh mỗi danh sách phát bản preview có sẵn của ElevenLabs (không tốn credit). Máy chủ lấy `preview_url` của giọng qua API, tải về một lần rồi giữ trong bộ nhớ; bản preview do ElevenLabs/tác giả giọng thu nên không phản ánh chất giọng đã chọn trên form.
+
+   Hai biến cũ `VIDTRANS_ELEVENLABS_FEMALE_VOICE_ID` / `VIDTRANS_ELEVENLABS_MALE_VOICE_ID` vẫn được hỗ trợ và gộp vào danh sách.
 
 Trang API: https://elevenlabs.io/api và bảng giá: https://elevenlabs.io/pricing
 

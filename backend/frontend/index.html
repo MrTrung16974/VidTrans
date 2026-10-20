@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261018-10" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261020-01" />
   </head>
   <body>
     <div class="app-shell">
@@ -362,6 +362,20 @@
                               <option value="female" id="femaleVoiceOption">Nữ — Hoài My</option>
                               <option value="male" id="maleVoiceOption">Nam — Nam Minh</option>
                             </select>
+                          </label>
+                          <label id="elevenlabsFemaleVoiceField" class="field is-hidden">
+                            <span>Giọng nữ ElevenLabs</span>
+                            <span class="voice-preview-row">
+                              <select name="elevenlabs_female_voice" id="elevenlabsFemaleVoice"></select>
+                              <button type="button" class="btn-voice-preview" data-voice-preview="#elevenlabsFemaleVoice" title="Nghe thử giọng đang chọn">▶ Nghe thử</button>
+                            </span>
+                          </label>
+                          <label id="elevenlabsMaleVoiceField" class="field is-hidden">
+                            <span>Giọng nam ElevenLabs</span>
+                            <span class="voice-preview-row">
+                              <select name="elevenlabs_male_voice" id="elevenlabsMaleVoice"></select>
+                              <button type="button" class="btn-voice-preview" data-voice-preview="#elevenlabsMaleVoice" title="Nghe thử giọng đang chọn">▶ Nghe thử</button>
+                            </span>
                           </label>
                           <label id="voiceStyleField" class="field">
                             <span>Chất giọng</span>
@@ -1727,6 +1741,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261020-03"></script>
+    <script type="module" src="/js/app.js?v=20261020-05"></script>
   </body>
 </html>
