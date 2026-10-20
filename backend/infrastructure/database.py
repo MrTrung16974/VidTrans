@@ -11,6 +11,14 @@ from urllib.parse import quote
 DatabaseTarget = str | Path
 IntegrityError = sqlite3.IntegrityError
 
+# SQLite's BEGIN IMMEDIATE takes the database-wide write lock, and every
+# repository relies on it to serialise read-modify-write transactions (job
+# claims, cancellation, quota). PostgreSQL's plain BEGIN locks nothing, which
+# let two workers claim the same queued job. One transaction-scoped advisory
+# lock restores the same one-writer-at-a-time semantics.
+WRITE_LOCK_KEY = 0x56494454  # "VIDT"
+WRITE_LOCK_TIMEOUT = "30s"  # matches sqlite3.connect(timeout=30)
+
 
 def database_target(default_path: Path) -> DatabaseTarget:
     """Return the configured PostgreSQL DSN, with SQLite kept for local tests.
@@ -167,6 +175,11 @@ class PostgresConnection:
                 sql,
                 flags=re.IGNORECASE,
             )
+        if sql.strip().upper().startswith("BEGIN IMMEDIATE"):
+            cursor = self._connection.cursor()
+            cursor.execute(f"SET LOCAL lock_timeout = '{WRITE_LOCK_TIMEOUT}'")
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", (WRITE_LOCK_KEY,))
+            return Cursor(rows=[])
         translated = self._translate(sql)
         if translated is None:
             return Cursor(rows=[])
