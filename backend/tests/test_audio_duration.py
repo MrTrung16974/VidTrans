@@ -88,7 +88,9 @@ class AudioDurationIntegrationTests(unittest.TestCase):
         self.assertEqual(wrapped.replace("\n", " "), text)
         self.assertLessEqual(len(wrapped.splitlines()), 2)
 
-    def test_srt_uses_source_timing_not_delayed_tts_timing(self) -> None:
+    def test_srt_follows_scheduled_tts_window_when_dubbed(self) -> None:
+        # Subtitles track the dubbed voice (pipeline/subtitle_timing.py), so a
+        # line scheduled later than its source cue is shown with the voice.
         with tempfile.TemporaryDirectory(prefix="vidtrans-srt-timing-") as directory:
             output = Path(directory) / "sample.srt"
             write_srt(
@@ -96,8 +98,15 @@ class AudioDurationIntegrationTests(unittest.TestCase):
                 output,
             )
             value = output.read_text(encoding="utf-8")
-            self.assertIn("00:00:01,000 --> 00:00:02,000", value)
-            self.assertNotIn("00:00:04,000", value)
+            self.assertIn("00:00:04,000 --> 00:00:06,180", value)
+            self.assertNotIn("00:00:01,000", value)
+
+    def test_srt_uses_source_timing_without_tts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vidtrans-srt-timing-") as directory:
+            output = Path(directory) / "sample.srt"
+            write_srt([{"start": 1.0, "end": 2.0, "text": "Xin chào"}], output)
+            value = output.read_text(encoding="utf-8")
+            self.assertIn("00:00:01,000 --> 00:00:02,180", value)
 
     def test_generated_only_mix_is_padded_to_source_video_duration(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vidtrans-audio-duration-") as directory:

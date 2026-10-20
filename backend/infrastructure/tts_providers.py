@@ -25,6 +25,11 @@ ELEVENLABS_RETRY_BASE_SECONDS = 1.0
 # use, and concurrent first uses of the same voice conflict. 429: rate limit.
 ELEVENLABS_RETRYABLE_STATUSES = frozenset({409, 429})
 
+ELEVENLABS_PAID_PLAN_MESSAGE = (
+    "Tài khoản ElevenLabs gói Free không được dùng giọng trong Voice Library qua API. "
+    "Nâng cấp ElevenLabs lên gói Starter trở lên, hoặc chỉ khai báo giọng mặc định (premade) "
+    "/ giọng tự tạo trong tài khoản vào VIDTRANS_ELEVENLABS_VOICES, hoặc chọn Edge TTS."
+)
 ELEVENLABS_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
 # Preview clips are served from ElevenLabs' own storage; refuse anything else.
 ELEVENLABS_PREVIEW_HOSTS = ("storage.googleapis.com", "elevenlabs.io")
@@ -250,6 +255,8 @@ def _write_elevenlabs_with_retry(request: Request, output_path: Path) -> None:
             _write_response(request, output_path, "ElevenLabs")
             return
         except TTSProviderHTTPError as exc:
+            if exc.status == 402 and "paid_plan_required" in exc.detail:
+                raise RuntimeError(ELEVENLABS_PAID_PLAN_MESSAGE) from exc
             if exc.status not in ELEVENLABS_RETRYABLE_STATUSES or attempt == ELEVENLABS_ATTEMPTS:
                 raise
             delay = ELEVENLABS_RETRY_BASE_SECONDS * 2 ** (attempt - 1)

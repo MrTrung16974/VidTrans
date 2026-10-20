@@ -130,6 +130,18 @@ class ElevenLabsConcurrencyTest(unittest.TestCase):
         self.sleep.assert_called_once()
 
     @patch("infrastructure.tts_providers.urlopen")
+    def test_library_voice_on_free_plan_explains_the_limit(self, mocked_open) -> None:
+        mocked_open.side_effect = http_error(
+            402, b'{"detail":{"type":"payment_required","code":"paid_plan_required"}}'
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "gói Free không được dùng giọng trong Voice Library"):
+            self.synthesize()
+
+        self.assertEqual(mocked_open.call_count, 1)
+        self.sleep.assert_not_called()
+
+    @patch("infrastructure.tts_providers.urlopen")
     def test_non_retryable_error_fails_immediately(self, mocked_open) -> None:
         mocked_open.side_effect = http_error(401, b"unauthorized")
 
