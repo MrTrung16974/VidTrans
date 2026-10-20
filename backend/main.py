@@ -1505,7 +1505,13 @@ def synthesize_tts_segments(
             if tts_provider == "azure":
                 synthesize_azure(text, output_path, voice_name=voice_name, rate_percent=rate_percent, pitch_hz=pitch_hz)
             elif tts_provider == "elevenlabs":
-                synthesize_elevenlabs(text, output_path, voice_type=selected_voice_type)
+                synthesize_elevenlabs(
+                    text,
+                    output_path,
+                    voice_type=selected_voice_type,
+                    voice_style=voice_style,
+                    speed=1.0 + (rate_percent / 100.0),
+                )
             else:
                 tts_edge_with_retry(text, output_path, voice_name, base_rate_string, pitch_string)
                 edge_succeeded = True

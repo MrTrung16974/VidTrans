@@ -660,12 +660,24 @@ async function loadTtsProviders() {
       if (provider && !provider.configured) option.textContent += " — chưa cấu hình key";
     });
     if (select.selectedOptions[0]?.disabled) select.value = "edge";
-    const selected = providers.get(select.value);
-    hint.textContent = selected?.free_note || "Khóa API chỉ được lưu ở máy chủ.";
-    select.addEventListener("change", () => {
-      hint.textContent = providers.get(select.value)?.free_note || "";
+    const applyProviderConfiguration = () => {
+      const selected = providers.get(select.value);
+      hint.textContent = selected?.free_note || "Khóa API chỉ được lưu ở máy chủ.";
+      const femaleOption = $("#femaleVoiceOption");
+      const maleOption = $("#maleVoiceOption");
+      if (femaleOption) femaleOption.textContent = selected?.female_voice_label || "Giọng nữ";
+      if (maleOption) maleOption.textContent = selected?.male_voice_label || "Giọng nam";
+      const voiceMode = document.querySelector('[name="voice_mode"]');
+      const autoOption = voiceMode?.querySelector('option[value="auto"]');
+      if (autoOption) {
+        autoOption.textContent = selected?.supports_pitch_matching === false
+          ? "Tự động chọn giọng nam/nữ"
+          : "Tự động theo cao độ";
+      }
       updateFormSummary();
-    });
+    };
+    applyProviderConfiguration();
+    select.addEventListener("change", applyProviderConfiguration);
   } catch (_) {
     hint.textContent = "Edge TTS sẵn sàng; không đọc được trạng thái API khác.";
   }

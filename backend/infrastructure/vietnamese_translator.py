@@ -17,6 +17,11 @@ class TranslationServiceError(RuntimeError):
     """Sanitized provider failure safe to include in translation diagnostics."""
 
 
+class TranslationConfigurationError(TranslationServiceError):
+    """Permanent provider/model configuration error; retrying each cue cannot help."""
+    permanent = True
+
+
 class TranslationRateLimitedError(TranslationServiceError):
     """Provider answered HTTP 429; callers should back off instead of hammering."""
     rate_limited = True

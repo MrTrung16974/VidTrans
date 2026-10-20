@@ -17,6 +17,9 @@ class TTSProviderStatus:
     label: str
     configured: bool
     free_note: str
+    female_voice_label: str = "Giọng nữ"
+    male_voice_label: str = "Giọng nam"
+    supports_pitch_matching: bool = True
 
 
 def normalize_tts_provider(value: str | None) -> str:
@@ -28,8 +31,8 @@ def normalize_tts_provider(value: str | None) -> str:
 
 def provider_statuses() -> list[TTSProviderStatus]:
     return [
-        TTSProviderStatus("edge", "Microsoft Edge TTS", True, "Miễn phí, không cần API key"),
-        TTSProviderStatus("azure", "Azure AI Speech", bool(os.environ.get("VIDTRANS_AZURE_SPEECH_KEY") and os.environ.get("VIDTRANS_AZURE_SPEECH_REGION")), "API chính thức; Azure có hạn mức F0 miễn phí"),
+        TTSProviderStatus("edge", "Microsoft Edge TTS", True, "Miễn phí, không cần API key", "Nữ — Hoài My", "Nam — Nam Minh"),
+        TTSProviderStatus("azure", "Azure AI Speech", bool(os.environ.get("VIDTRANS_AZURE_SPEECH_KEY") and os.environ.get("VIDTRANS_AZURE_SPEECH_REGION")), "API chính thức; Azure có hạn mức F0 miễn phí", "Nữ — Hoài My", "Nam — Nam Minh"),
         TTSProviderStatus(
             "elevenlabs",
             "ElevenLabs",
@@ -39,6 +42,9 @@ def provider_statuses() -> list[TTSProviderStatus]:
                 "VIDTRANS_ELEVENLABS_MALE_VOICE_ID",
             )),
             "Giọng tự nhiên; gói Free có credit hằng tháng",
+            os.environ.get("VIDTRANS_ELEVENLABS_FEMALE_VOICE_LABEL", "Nữ — ElevenLabs"),
+            os.environ.get("VIDTRANS_ELEVENLABS_MALE_VOICE_LABEL", "Nam — ElevenLabs"),
+            False,
         ),
     ]
 
@@ -70,16 +76,37 @@ def synthesize_azure(text: str, output_path: Path, *, voice_name: str, rate_perc
     _write_response(request, output_path, "Azure Speech")
 
 
-def synthesize_elevenlabs(text: str, output_path: Path, *, voice_type: str) -> None:
+def synthesize_elevenlabs(
+    text: str,
+    output_path: Path,
+    *,
+    voice_type: str,
+    voice_style: str = "natural",
+    speed: float = 1.0,
+) -> None:
     ensure_provider_configured("elevenlabs")
     voice_env = "VIDTRANS_ELEVENLABS_MALE_VOICE_ID" if voice_type == "male" else "VIDTRANS_ELEVENLABS_FEMALE_VOICE_ID"
     voice_id = os.environ.get(voice_env, "").strip()
     if not voice_id:
         raise ValueError(f"ElevenLabs chưa có voice ID: cần {voice_env}")
+    style_settings = {
+        "natural": (0.50, 0.00), "warm": (0.62, 0.10), "bright": (0.42, 0.18),
+        "deep": (0.68, 0.08), "energetic": (0.32, 0.30), "gentle": (0.75, 0.05),
+        "storyteller": (0.52, 0.22), "news": (0.72, 0.00), "commercial": (0.40, 0.28),
+        "youthful": (0.38, 0.22), "authoritative": (0.78, 0.04), "calm": (0.82, 0.00),
+        "cheerful": (0.32, 0.30),
+    }
+    stability, style = style_settings.get(voice_style, style_settings["natural"])
     payload = json.dumps({
         "text": text,
         "model_id": os.environ.get("VIDTRANS_ELEVENLABS_MODEL_ID", "eleven_flash_v2_5").strip(),
-        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+        "voice_settings": {
+            "stability": stability,
+            "similarity_boost": 0.75,
+            "style": style,
+            "speed": max(0.7, min(1.2, speed)),
+            "use_speaker_boost": True,
+        },
     }, ensure_ascii=False).encode("utf-8")
     request = Request(f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128", data=payload, method="POST", headers={
         "xi-api-key": os.environ["VIDTRANS_ELEVENLABS_API_KEY"],

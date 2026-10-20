@@ -378,7 +378,7 @@ def translate_segments(
                 check_active()
                 cause = exc.__cause__ or exc
                 logger.warning("Batch translation failed (%s); retrying complete cues", type(cause).__name__)
-                if getattr(cause, "rate_limited", False):
+                if getattr(cause, "rate_limited", False) or getattr(cause, "permanent", False):
                     break
 
     rate_limit_reason: str | None = None
@@ -407,7 +407,7 @@ def translate_segments(
                     from infrastructure.translator import TranslationServiceError
                     reason = str(cause) if isinstance(cause, (ValueError, TranslationServiceError)) else type(cause).__name__
                     cache[source] = (source, "source_fallback", reason[:160])
-                    if getattr(cause, "rate_limited", False):
+                    if getattr(cause, "rate_limited", False) or getattr(cause, "permanent", False):
                         rate_limit_reason = reason[:160]
                     logger.warning("Translation failed at %.2fs (%s)", float(segments[index]["start"]), reason[:160])
             translations[index] = cache[source]

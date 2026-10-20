@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from domain.languages import language_profile, validate_language_pair
 from infrastructure.vietnamese_translator import (
     GoogleVietnameseTranslator,
+    TranslationConfigurationError,
     TranslationRateLimitedError,
     TranslationServiceError,
 )
@@ -62,10 +63,51 @@ class GeminiContextTranslator:
         self.api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         if not self.api_key:
             raise TranslationServiceError("gemini_api_key_missing")
-        self.model = os.environ.get("GEMINI_TRANSLATION_MODEL", "gemini-2.5-flash").strip()
+        self.model = os.environ.get("GEMINI_TRANSLATION_MODEL", "gemini-3.5-flash-lite").strip()
+        configured_models = [
+            value.strip()
+            for value in os.environ.get("GEMINI_TRANSLATION_MODELS", "").split(",")
+            if value.strip()
+        ]
+        self.model_candidates = list(dict.fromkeys([
+            self.model,
+            *configured_models,
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-3.8-flash",
+            "gemini-3.6-flash",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
+        ]))
         self.timeout = timeout
         self._open = opener or urllib.request.urlopen
         self.name = f"gemini-{self.model}"
+
+    def _available_model_candidates(self, *, exclude: set[str]) -> list[str]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}&pageSize=1000"
+        request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        try:
+            with self._open(request, timeout=self.timeout) as response:
+                payload = json.loads(response.read(4 * 1024 * 1024).decode("utf-8"))
+        except Exception:
+            # Listing can itself be temporarily limited. Known model IDs are
+            # still safe to try once; generateContent decides actual access.
+            return [model for model in self.model_candidates if model not in exclude]
+        available = {
+            str(item.get("name", "")).removeprefix("models/")
+            for item in payload.get("models", [])
+            if "generateContent" in item.get("supportedGenerationMethods", [])
+        }
+        candidates = [
+            model for model in self.model_candidates
+            if model in available and model not in exclude
+        ]
+        if candidates:
+            return candidates
+        raise TranslationConfigurationError(
+            "API key không còn model Gemini khả dụng hỗ trợ generateContent"
+        )
 
     @staticmethod
     def _extract_json(text: str) -> list[str]:
@@ -90,11 +132,48 @@ class GeminiContextTranslator:
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
         }).encode("utf-8")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
-        request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-        try:
+        def generate(model: str):
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
+            request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
             with self._open(request, timeout=self.timeout) as response:
-                payload = json.loads(response.read(4 * 1024 * 1024).decode("utf-8"))
+                return json.loads(response.read(4 * 1024 * 1024).decode("utf-8"))
+
+        try:
+            queue = [self.model]
+            attempted: set[str] = set()
+            limited: list[str] = []
+            not_found: list[str] = []
+            expanded = False
+            payload = None
+            while queue:
+                candidate = queue.pop(0)
+                if candidate in attempted:
+                    continue
+                attempted.add(candidate)
+                try:
+                    payload = generate(candidate)
+                    self.model = candidate
+                    self.name = f"gemini-{candidate}"
+                    break
+                except urllib.error.HTTPError as exc:
+                    if exc.code == 429:
+                        limited.append(candidate)
+                    elif exc.code == 404:
+                        not_found.append(candidate)
+                    else:
+                        raise
+                    if not expanded:
+                        queue.extend(self._available_model_candidates(exclude=attempted))
+                        expanded = True
+            if payload is None:
+                attempted_label = ", ".join(attempted)
+                if limited:
+                    raise TranslationRateLimitedError(
+                        f"Các model Gemini đã hết hạn mức tạm thời: {attempted_label}"
+                    )
+                raise TranslationConfigurationError(
+                    f"Không tìm thấy model Gemini khả dụng: {attempted_label}"
+                )
             text = payload["candidates"][0]["content"]["parts"][0]["text"]
             translated = self._extract_json(text)
             if len(translated) != len(lines):
@@ -103,6 +182,8 @@ class GeminiContextTranslator:
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
                 raise TranslationRateLimitedError("Gemini đã hết hạn mức tạm thời (HTTP 429)") from exc
+            if exc.code == 404:
+                raise TranslationConfigurationError(f"Gemini không tìm thấy model {self.model}") from exc
             raise TranslationServiceError(f"Gemini API lỗi HTTP {exc.code}") from exc
         except TranslationServiceError:
             raise
