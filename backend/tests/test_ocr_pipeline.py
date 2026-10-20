@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from pipeline.ocr import (
     FrameObservation,
@@ -135,6 +135,80 @@ class OCRTextTests(unittest.TestCase):
         self.assertEqual(reader.calls, 1)
         self.assertEqual([item.text for item in observations], ["相同字幕"] * 3)
         self.assertEqual([item.timestamp for item in observations], [0.0, 1 / 3, 2 / 3])
+
+    def test_scan_ignores_smooth_background_brightness_changes(self) -> None:
+        class CountingReader:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def read(self, _image_path):
+                self.calls += 1
+                return [OCRLine("字幕", 0.96, (10, 10, 50, 24))]
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index, background in enumerate((20, 50, 80)):
+                image = Image.new("L", (96, 40), background)
+                ImageDraw.Draw(image).rectangle((20, 12, 74, 28), fill=245)
+                path = Path(directory) / f"frame-{index}.jpg"
+                image.save(path, quality=95)
+                paths.append(path)
+            reader = CountingReader()
+            scan_subtitle_frames(
+                paths,
+                reader=reader,
+                config=OCRConfig(sample_fps=3.0, upscale=1.0),
+            )
+
+        self.assertEqual(reader.calls, 1)
+
+    def test_scan_detects_changed_subtitle_geometry(self) -> None:
+        class CountingReader:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def read(self, _image_path):
+                self.calls += 1
+                return [OCRLine("字幕", 0.96, (10, 10, 50, 24))]
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index, left in enumerate((10, 34)):
+                image = Image.new("L", (96, 40), 30)
+                ImageDraw.Draw(image).rectangle((left, 12, left + 35, 28), fill=245)
+                path = Path(directory) / f"frame-{index}.jpg"
+                image.save(path, quality=95)
+                paths.append(path)
+            reader = CountingReader()
+            scan_subtitle_frames(
+                paths,
+                reader=reader,
+                config=OCRConfig(sample_fps=3.0, upscale=1.0),
+            )
+
+        self.assertEqual(reader.calls, 2)
+
+    def test_scan_upscales_only_images_sent_to_reader(self) -> None:
+        class SizeReader:
+            def __init__(self) -> None:
+                self.sizes = []
+
+            def read(self, image_path):
+                with Image.open(image_path) as image:
+                    self.sizes.append(image.size)
+                return [OCRLine("字幕", 0.96, (10, 10, 50, 24))]
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "frame.jpg"
+            Image.new("L", (80, 30), 30).save(path)
+            reader = SizeReader()
+            scan_subtitle_frames(
+                [path],
+                reader=reader,
+                config=OCRConfig(sample_fps=3.0, upscale=2.0),
+            )
+
+        self.assertEqual(reader.sizes, [(160, 60)])
 
     def test_normalizes_union_bbox_for_selected_chinese_lines(self) -> None:
         text, confidence, bbox = select_subtitle_geometry(

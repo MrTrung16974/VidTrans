@@ -690,8 +690,7 @@ def extract_ocr_frames(
     roi_height = config.roi_bottom - config.roi_top
     video_filter = (
         f"fps={config.sample_fps:.6f},"
-        f"crop=iw:floor(ih*{roi_height:.6f}/2)*2:0:floor(ih*{config.roi_top:.6f}/2)*2,"
-        f"scale=iw*{config.upscale:.3f}:ih*{config.upscale:.3f}:flags=lanczos"
+        f"crop=iw:floor(ih*{roi_height:.6f}/2)*2:0:floor(ih*{config.roi_top:.6f}/2)*2"
     )
     output_pattern = frames_dir / "frame_%08d.jpg"
     result = subprocess.run(
@@ -717,6 +716,63 @@ def extract_ocr_frames(
     return sorted(frames_dir.glob("frame_*.jpg"))
 
 
+def _subtitle_change_signature(image: Any) -> Any:
+    """Return a compact mask biased toward bright, high-contrast subtitle strokes."""
+
+    import numpy as np
+    from PIL import ImageFilter
+
+    grayscale = image.convert("L")
+    target_width = min(grayscale.width, 320)
+    target_height = max(1, round(grayscale.height * target_width / max(grayscale.width, 1)))
+    if grayscale.size != (target_width, target_height):
+        grayscale = grayscale.resize((target_width, target_height))
+    local_max = grayscale.filter(ImageFilter.MaxFilter(5))
+    local_min = grayscale.filter(ImageFilter.MinFilter(5))
+    pixels = np.asarray(grayscale, dtype=np.int16)
+    contrast = np.asarray(local_max, dtype=np.int16) - np.asarray(local_min, dtype=np.int16)
+    return (pixels >= 150) & (contrast >= 55)
+
+
+def _signatures_are_similar(previous: Any, current: Any) -> bool:
+    import numpy as np
+
+    if previous is None or current is None or previous.shape != current.shape:
+        return False
+    union = np.count_nonzero(previous | current)
+    if union == 0:
+        return True
+    changed = np.count_nonzero(previous ^ current)
+    return changed / union < 0.12
+
+
+def _prepare_inference_images(
+    frame_paths: Sequence[Path],
+    *,
+    scale: float,
+) -> tuple[list[Path], list[Path]]:
+    if scale <= 1.0:
+        return list(frame_paths), []
+
+    from PIL import Image
+
+    prepared: list[Path] = []
+    temporary: list[Path] = []
+    for frame_path in frame_paths:
+        output_path = frame_path.with_name(f"ocr_input_{frame_path.stem}.jpg")
+        with Image.open(frame_path) as image:
+            width = max(1, round(image.width * scale))
+            height = max(1, round(image.height * scale))
+            image.resize((width, height), Image.Resampling.LANCZOS).save(
+                output_path,
+                quality=92,
+                optimize=True,
+            )
+        prepared.append(output_path)
+        temporary.append(output_path)
+    return prepared, temporary
+
+
 def scan_subtitle_frames(
     frame_paths: Sequence[Path],
     *,
@@ -725,34 +781,30 @@ def scan_subtitle_frames(
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[FrameObservation]:
     observations: list[FrameObservation] = []
-    import numpy as np
     from PIL import Image
 
-    prev_gray = None
+    previous_signature = None
+    last_ocr_index = -1
     frame_metadata: list[tuple[int, int]] = []
     ocr_indexes: list[int] = []
+    forced_refresh_frames = max(1, math.ceil(config.sample_fps * 1.5))
 
     for index, frame_path in enumerate(frame_paths):
         try:
             with Image.open(frame_path) as image:
-                frame_width, frame_height = image.size
-                current_gray = np.array(image.convert("L"), dtype=np.int16)
+                frame_width = max(1, round(image.width * config.upscale))
+                frame_height = max(1, round(image.height * config.upscale))
+                current_signature = _subtitle_change_signature(image)
         except Exception:
             frame_width, frame_height = 0, 0
-            current_gray = None
+            current_signature = None
 
-        is_similar = False
-        if prev_gray is not None and current_gray is not None:
-            if prev_gray.shape == current_gray.shape:
-                diff = np.abs(prev_gray - current_gray)
-                mean_diff = np.mean(diff)
-                # If difference is minimal (bypassing minor compression artifacts), skip expensive OCR
-                if mean_diff < 5.0:
-                    is_similar = True
+        is_similar = _signatures_are_similar(previous_signature, current_signature)
+        refresh_due = index - last_ocr_index >= forced_refresh_frames
 
-        if not is_similar:
-            prev_gray = current_gray
-
+        if not is_similar or refresh_due:
+            previous_signature = current_signature
+            last_ocr_index = index
             ocr_indexes.append(index)
         frame_metadata.append((frame_width, frame_height))
 
@@ -763,10 +815,18 @@ def scan_subtitle_frames(
     for offset in range(0, total_ocr, batch_size):
         batch_indexes = ocr_indexes[offset : offset + batch_size]
         batch_paths = [frame_paths[index] for index in batch_indexes]
-        if callable(read_many):
-            batch_results = read_many(batch_paths)
-        else:
-            batch_results = [reader.read(path) for path in batch_paths]
+        inference_paths, temporary_paths = _prepare_inference_images(
+            batch_paths,
+            scale=config.upscale,
+        )
+        try:
+            if callable(read_many):
+                batch_results = read_many(inference_paths)
+            else:
+                batch_results = [reader.read(path) for path in inference_paths]
+        finally:
+            for temporary_path in temporary_paths:
+                temporary_path.unlink(missing_ok=True)
         if len(batch_results) != len(batch_indexes):
             raise RuntimeError("OCR batch result count does not match input frame count")
         lines_by_index.update(zip(batch_indexes, batch_results))

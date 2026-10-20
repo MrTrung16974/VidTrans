@@ -16,6 +16,19 @@ Tesseract hiện được gọi bằng một process mới cho từng frame. Vid
 4. Tiến độ OCR phản ánh số frame thực sự phải inference, không phải toàn bộ frame đã trích.
 5. Tăng version transcript checkpoint để không dùng lại kết quả OCR theo thuật toán cũ.
 
+## Lát tối ưu thứ hai
+
+6. Trích ROI ở kích thước gốc thay vì upscale toàn bộ hàng nghìn frame. Chỉ những frame vượt
+   change gate mới được upscale ngay trước inference, sau đó xóa ảnh inference tạm theo batch.
+7. Change gate không so sánh độ sáng toàn khung. Hệ thống tạo signature kích thước nhỏ từ cạnh
+   tương phản sáng — đặc trưng của chữ subtitle trắng có viền — rồi so XOR/union giữa hai
+   signature. Chuyển động hoặc đổi sáng nền trơn vì vậy không kích hoạt OCR lại.
+8. Dù signature không đổi, hệ thống buộc refresh sau tối đa 1,5 giây để giới hạn rủi ro bỏ sót
+   thay đổi chữ có hình học gần giống nhau.
+9. Không crop động theo bbox ở lát này: bbox chỉ có sau inference và crop sai có thể cắt mất
+   subtitle chuyển vị trí. Không dùng quét 1 fps mặc định vì caption ngắn có thể thiếu hai mẫu
+   consensus.
+
 ## An toàn và tương thích
 
 - PaddleOCR và reader test/custom tiếp tục dùng API `read()` hiện hữu.
@@ -27,4 +40,7 @@ Tesseract hiện được gọi bằng một process mới cho từng frame. Vid
 - Parse TSV nhiều page, kể cả page không có chữ.
 - Xác nhận một batch dùng một process và ánh xạ đúng frame.
 - Xác nhận frame giống nhau không gọi OCR lại nhưng vẫn tạo đủ observation/timestamp.
+- Xác nhận nền đổi sáng nhưng chữ giữ nguyên không gọi OCR lại; chữ xuất hiện hoặc đổi hình học
+  vẫn được chọn.
+- Xác nhận ảnh trích giữ kích thước gốc còn ảnh đưa vào reader đúng hệ số upscale.
 - Regression OCR, domain request và checkpoint.

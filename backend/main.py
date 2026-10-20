@@ -2316,7 +2316,7 @@ def process_video(
         checkpoint_store = StageCheckpointStore(work_dir)
         transcript_fingerprint = fingerprint_payload(
             {
-                "version": 5,
+                "version": 6,
                 "source_checksum": source_checksum,
                 "subtitle_source": subtitle_source,
                 "source_language": source_language,
