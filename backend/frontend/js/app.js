@@ -668,7 +668,6 @@ function renderElevenLabsVoices(voices) {
 
 let voicePreviewAudio = null;
 let voicePreviewButton = null;
-const voicePreviewUrls = new Map();
 
 function stopVoicePreview() {
   if (voicePreviewAudio) voicePreviewAudio.pause();
@@ -687,18 +686,10 @@ async function playVoicePreview(button) {
   stopVoicePreview();
   if (wasPlaying || !voiceKey) return;
   button.disabled = true;
-  try {
-    // Previews are cached as object URLs so replaying a voice is instant.
-    let url = voicePreviewUrls.get(voiceKey);
-    if (!url) {
-      const response = await apiFetch(`/api/v1/tts-providers/elevenlabs/voices/${encodeURIComponent(voiceKey)}/preview`);
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || "Không tải được bản nghe thử");
-      }
-      url = URL.createObjectURL(await response.blob());
-      voicePreviewUrls.set(voiceKey, url);
-    }
+  // Play the same-origin URL directly: the production CSP (default-src 'self')
+  // blocks blob: media, and the session cookie authenticates this GET.
+  const url = `/api/v1/tts-providers/elevenlabs/voices/${encodeURIComponent(voiceKey)}/preview`;
+  const start = async () => {
     const audio = new Audio(url);
     voicePreviewAudio = audio;
     voicePreviewButton = button;
@@ -706,9 +697,19 @@ async function playVoicePreview(button) {
     button.textContent = "■ Dừng";
     audio.addEventListener("ended", () => { if (voicePreviewAudio === audio) stopVoicePreview(); });
     await audio.play();
-  } catch (error) {
+  };
+  try {
+    try {
+      await start();
+    } catch (_) {
+      // An expired access token makes the media request fail; refresh once.
+      stopVoicePreview();
+      if (!await refreshSession()) throw new Error();
+      await start();
+    }
+  } catch (_) {
     stopVoicePreview();
-    toast(error.message, true);
+    toast("Không phát được bản nghe thử. Kiểm tra cấu hình ElevenLabs hoặc log máy chủ.", true);
   } finally {
     button.disabled = false;
   }
