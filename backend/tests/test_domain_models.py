@@ -27,9 +27,23 @@ class ProcessingRequestTests(unittest.TestCase):
         self.assertIs(request.voice_mode, VoiceRoutingMode.AUTO)
         self.assertIs(request.fallback_voice, VoiceType.FEMALE)
         self.assertEqual(request.voice_style, "natural")
+        self.assertEqual(request.translation_provider, "google")
         self.assertEqual(request.ocr.sample_fps, 4.0)
         self.assertTrue(request.tiktok.enabled)
         self.assertEqual(request.tiktok.max_summary_chars, 350)
+
+    def test_accepts_gemini_translation_provider(self) -> None:
+        request = ProcessingRequest.from_form(
+            mode=1,
+            subtitle_source="speech",
+            ocr_sample_fps=5.0,
+            ocr_roi_top=0.68,
+            ocr_roi_bottom=0.96,
+            voice_mode="manual",
+            voice_type="female",
+            translation_provider="gemini",
+        )
+        self.assertEqual(request.translation_provider, "gemini")
 
     def test_accepts_supported_voice_style_and_rejects_unknown_value(self) -> None:
         request = ProcessingRequest.from_form(

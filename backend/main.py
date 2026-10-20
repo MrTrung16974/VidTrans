@@ -106,6 +106,11 @@ from infrastructure.tts_providers import (
     synthesize_azure,
     synthesize_elevenlabs,
 )
+from infrastructure.translation_providers import (
+    create_translation_provider,
+    ensure_translation_provider_configured,
+    translation_provider_statuses,
+)
 from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherConfig, TikTokPublisherError
 from pipeline.ocr import (
     OCRConfig,
@@ -2342,6 +2347,7 @@ def process_video(
     tiktok_privacy_level: str = "SELF_ONLY",
     tiktok_publish_at: str | None = None,
     tts_provider: str = "edge",
+    translation_provider: str = "google",
 ) -> None:
     _job_context.job_id = job_id
     current_job = JOB_SERVICE.get(job_id) or {}
@@ -2472,6 +2478,7 @@ def process_video(
                 "transcript_checksum": transcript_checkpoint.checksum,
                 "source_language": effective_source_language,
                 "target_language": target_language,
+                "translation_provider": translation_provider,
                 "translation_pipeline_version": 3,
                 "max_batch_chars": 1200,
             }
@@ -2499,11 +2506,19 @@ def process_video(
                     translated_segments = translate_segments_by_source_language(
                         segments,
                         default_source_language=effective_source_language,
+                        translator_factory=lambda source, target: create_translation_provider(
+                            translation_provider, source_language=source, target_language=target
+                        ),
                         **translation_kwargs,
                     )
                 else:
                     translated_segments = translate_segments(
                         segments,
+                        create_translation_provider(
+                            translation_provider,
+                            source_language=effective_source_language,
+                            target_language=target_language,
+                        ),
                         source_language=effective_source_language,
                         **translation_kwargs,
                     )
@@ -3192,6 +3207,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             voice_mode=str(resume_request["voice_mode"]),
             voice_style=str(resume_request.get("voice_style", "natural")),
             tts_provider=str(resume_request.get("tts_provider", "edge")),
+            translation_provider=str(resume_request.get("translation_provider", "google")),
             speech_rate=float(resume_request["speech_rate"]),
             background_music_path=background_music_path,
             keep_original_audio=bool(resume_request["keep_original_audio"]),
@@ -4424,6 +4440,11 @@ def tts_providers_endpoint() -> JSONResponse:
     return JSONResponse({"providers": [status.__dict__ for status in provider_statuses()]})
 
 
+@app.get("/api/v1/translation-providers")
+def translation_providers_endpoint() -> JSONResponse:
+    return JSONResponse({"providers": [status.__dict__ for status in translation_provider_statuses()]})
+
+
 @app.post("/process-video")
 @app.post("/convert")
 async def process_video_endpoint(
@@ -4434,6 +4455,7 @@ async def process_video_endpoint(
     voice_mode: str = Form("auto"),
     voice_style: str = Form("natural"),
     tts_provider: str = Form("edge"),
+    translation_provider: str = Form("google"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -4470,6 +4492,7 @@ async def process_video_endpoint(
             voice_type=voice_type,
             voice_style=voice_style,
             tts_provider=tts_provider,
+            translation_provider=translation_provider,
             source_language=source_language,
             target_language=target_language,
             generate_tiktok_post=generate_tiktok_post,
@@ -4493,6 +4516,10 @@ async def process_video_endpoint(
             ensure_provider_configured(request.tts_provider)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        ensure_translation_provider_configured(request.translation_provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     job_id = uuid.uuid4().hex[:8]
     validate_tiktok_auto_publish(request, owner_user_id)
@@ -4537,6 +4564,7 @@ async def process_video_endpoint(
         "voice_mode": request.voice_mode.value,
         "voice_style": request.voice_style,
         "tts_provider": request.tts_provider,
+        "translation_provider": request.translation_provider,
         "speech_rate": speech_rate,
         "background_music_path": str(background_music_path) if background_music_path else None,
         "keep_original_audio": keep_original_audio,
@@ -4613,6 +4641,7 @@ async def create_batch_endpoint(
     voice_mode: str = Form("auto"),
     voice_style: str = Form("natural"),
     tts_provider: str = Form("edge"),
+    translation_provider: str = Form("google"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -4688,6 +4717,7 @@ async def create_batch_endpoint(
             voice_type=voice_type,
             voice_style=voice_style,
             tts_provider=tts_provider,
+            translation_provider=translation_provider,
             source_language=source_language,
             target_language=target_language,
             generate_tiktok_post=generate_tiktok_post,
@@ -4715,6 +4745,10 @@ async def create_batch_endpoint(
             ensure_provider_configured(processing_request.tts_provider)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        ensure_translation_provider_configured(processing_request.translation_provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     validate_tiktok_auto_publish(processing_request, owner_user_id)
 
     limit = account_plan_limit(account)
@@ -4747,6 +4781,7 @@ async def create_batch_endpoint(
         "voice_type": processing_request.fallback_voice.value,
         "voice_style": processing_request.voice_style,
         "tts_provider": processing_request.tts_provider,
+        "translation_provider": processing_request.translation_provider,
         "speech_rate": speech_rate,
         "whisper_model": whisper_model,
         "keep_original_audio": keep_original_audio,

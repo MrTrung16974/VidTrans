@@ -286,6 +286,14 @@
 
                       <div class="field-grid processing-grid recognition-grid">
                         <label class="field">
+                          <span class="field-label-group"><span>AI dịch phụ đề</span></span>
+                          <select id="translationProvider" name="translation_provider">
+                            <option value="google" selected>Google Translate — bộ dịch ban đầu (mặc định, miễn phí)</option>
+                            <option value="gemini">Gemini AI — mượt theo ngữ cảnh (Free tier)</option>
+                          </select>
+                          <small id="translationProviderHint" class="field-hint">Google là cách dịch ban đầu của VidTrans; Gemini là lựa chọn dịch mượt theo ngữ cảnh.</small>
+                        </label>
+                        <label class="field">
                           <span class="field-label-group"><span>Nguồn phụ đề</span></span>
                           <select id="subtitleSource" name="subtitle_source">
                             <option value="speech" selected>Chỉ nghe lời thoại (Whisper) — nhanh</option>
@@ -335,7 +343,7 @@
                           <label id="ttsProviderField" class="field wide">
                             <span>AI lồng tiếng</span>
                             <select name="tts_provider" id="ttsProvider">
-                              <option value="edge">Edge TTS — miễn phí, không cần API key</option>
+                              <option value="edge">Edge TTS — giọng ban đầu (mặc định, miễn phí)</option>
                               <option value="azure">Azure Speech — API chính thức, free tier lớn</option>
                               <option value="elevenlabs">ElevenLabs — giọng tự nhiên, 10K credit/tháng</option>
                             </select>
@@ -400,7 +408,7 @@
                           </label>
                           <label id="originalAudioField" class="field checkbox-field wide">
                             <input type="checkbox" name="keep_original_audio" value="true" checked />
-                            <span>Giữ tiếng gốc đủ nghe dưới giọng thuyết minh</span>
+                            <span>Giữ âm thanh ban đầu của video dưới giọng thuyết minh</span>
                           </label>
                           <label id="musicField" class="field wide is-hidden">
                             <span>Nhạc nền dùng chung</span>
@@ -498,7 +506,7 @@
                   <label class="field">
                     <span>Gợi ý nội dung đăng</span>
                     <select id="generateTikTokPost" name="generate_tiktok_post">
-                      <option value="true">Tạo caption và hashtag</option>
+                      <option value="true">Bộ tạo nội dung ban đầu — caption và hashtag (mặc định)</option>
                       <option value="false">Tôi sẽ tự viết</option>
                     </select>
                   </label>
@@ -1719,6 +1727,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261018-15"></script>
+    <script type="module" src="/js/app.js?v=20261020-02"></script>
   </body>
 </html>

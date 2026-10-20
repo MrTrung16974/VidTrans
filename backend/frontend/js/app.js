@@ -671,6 +671,33 @@ async function loadTtsProviders() {
   }
 }
 
+async function loadTranslationProviders() {
+  const select = $("#translationProvider");
+  const hint = $("#translationProviderHint");
+  if (!select || !hint) return;
+  try {
+    const data = await requestJson("/api/v1/translation-providers");
+    const providers = new Map((data.providers || []).map(provider => [provider.key, provider]));
+    [...select.options].forEach(option => {
+      const provider = providers.get(option.value);
+      option.disabled = provider ? !provider.configured : true;
+      if (provider && !provider.configured && !option.textContent.includes("chưa cấu hình")) {
+        option.textContent += " — chưa cấu hình key";
+      }
+    });
+    if (select.selectedOptions[0]?.disabled) select.value = "google";
+    const updateHint = () => {
+      hint.textContent = providers.get(select.value)?.description || "";
+      updateFormSummary();
+    };
+    updateHint();
+    select.addEventListener("change", updateHint);
+  } catch (_) {
+    select.value = "google";
+    hint.textContent = "Google Translate đang được dùng làm phương án miễn phí mặc định.";
+  }
+}
+
 function initWorkflowModeCards() {
   $$(".mode-card").forEach(card => {
     card.addEventListener("click", () => {
@@ -2080,7 +2107,7 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
     toast("Đã xóa phiên đăng nhập Douyin");
   } catch (error) { toast(error.message, true); }
 });
-[$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), document.querySelector('[name="voice_mode"]')].forEach(element => element.addEventListener("change", updateFormSummary));
+[$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), $("#translationProvider"), document.querySelector('[name="voice_mode"]')].forEach(element => element.addEventListener("change", updateFormSummary));
 [$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundBox")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#refreshAdminAccounts").addEventListener("click", loadAdminAccounts);
@@ -2245,6 +2272,7 @@ $("#platformAppsPanel").addEventListener("toggle", event => {
 });
 initWorkflowModeCards();
 loadTtsProviders();
+loadTranslationProviders();
 updateFormSummary();
 renderFiles();
 showView();

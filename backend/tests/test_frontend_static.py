@@ -96,7 +96,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'data-source-browser-tab="{platform}"', html)
         self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
         self.assertIn("/api/v1/source-browser/${platform}/activate", javascript)
-        self.assertIn("/js/app.js?v=20261018-15", html)
+        self.assertIn("/js/app.js?v=20261020-02", html)
         self.assertIn('<option value="speech" selected>', html)
         self.assertIn('<option value="independent">OCR + ASR độc lập', html)
         self.assertIn('data.status === "cancelling" ? "Đang dừng job an toàn…" : "Đã hủy job"', javascript)
