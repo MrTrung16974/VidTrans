@@ -1,7 +1,10 @@
 import unittest
 import threading
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 from pipeline.ocr import (
     FrameObservation,
@@ -14,6 +17,7 @@ from pipeline.ocr import (
     merge_independent_ocr_asr_segments,
     normalize_zh_text,
     observations_to_cues,
+    scan_subtitle_frames,
     select_subtitle_text,
     select_subtitle_geometry,
     text_similarity,
@@ -85,6 +89,52 @@ class OCRTextTests(unittest.TestCase):
         self.assertEqual(lines[0].text, "这个世界怎么会")
         self.assertAlmostEqual(lines[0].confidence, 0.95, places=2)
         self.assertEqual(lines[0].bbox, (10.0, 20.0, 87.0, 40.0))
+
+    def test_tesseract_adapter_maps_batch_pages_to_input_frames(self) -> None:
+        tsv = (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            "5\t1\t1\t1\t1\t1\t10\t20\t40\t20\t96\t第一句\n"
+            "5\t3\t1\t1\t1\t1\t12\t22\t42\t22\t94\t第三句\n"
+        )
+        completed = type("Completed", (), {"returncode": 0, "stdout": tsv, "stderr": ""})()
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "pipeline.ocr.shutil.which", return_value="/usr/bin/tesseract"
+        ), patch("pipeline.ocr.subprocess.run", return_value=completed) as run:
+            paths = [Path(directory) / f"frame-{index}.jpg" for index in range(3)]
+            results = TesseractOCRReader().read_many(paths)
+
+        self.assertEqual(
+            [[line.text for line in page] for page in results],
+            [["第一句"], [], ["第三句"]],
+        )
+        self.assertEqual(run.call_count, 1)
+        self.assertTrue(str(run.call_args.args[0][1]).endswith(".txt"))
+
+    def test_scan_reuses_ocr_for_visually_identical_frames(self) -> None:
+        class CountingReader:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def read(self, _image_path):
+                self.calls += 1
+                return [OCRLine("相同字幕", 0.96, (5, 5, 40, 20))]
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index in range(3):
+                path = Path(directory) / f"frame-{index}.jpg"
+                Image.new("RGB", (64, 32), "white").save(path)
+                paths.append(path)
+            reader = CountingReader()
+            observations = scan_subtitle_frames(
+                paths,
+                reader=reader,
+                config=OCRConfig(sample_fps=3.0),
+            )
+
+        self.assertEqual(reader.calls, 1)
+        self.assertEqual([item.text for item in observations], ["相同字幕"] * 3)
+        self.assertEqual([item.timestamp for item in observations], [0.0, 1 / 3, 2 / 3])
 
     def test_normalizes_union_bbox_for_selected_chinese_lines(self) -> None:
         text, confidence, bbox = select_subtitle_geometry(

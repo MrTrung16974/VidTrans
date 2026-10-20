@@ -9,8 +9,9 @@ import threading
 import unicodedata
 import csv
 import io
+import tempfile
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from pathlib import Path
 from statistics import median
@@ -560,10 +561,41 @@ class TesseractOCRReader:
         self._language = language
 
     def read(self, image_path: Path) -> list[OCRLine]:
+        return self.read_many([image_path])[0]
+
+    def read_many(self, image_paths: Sequence[Path]) -> list[list[OCRLine]]:
+        if not image_paths:
+            return []
+        if len(image_paths) == 1:
+            input_path = str(image_paths[0])
+            list_path: Path | None = None
+        else:
+            handle = tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".txt",
+                prefix="vidtrans_tesseract_",
+                delete=False,
+                dir=image_paths[0].parent,
+            )
+            list_path = Path(handle.name)
+            try:
+                handle.write("".join(f"{path.resolve()}\n" for path in image_paths))
+            finally:
+                handle.close()
+            input_path = str(list_path)
+        try:
+            result = self._run(input_path)
+        finally:
+            if list_path is not None:
+                list_path.unlink(missing_ok=True)
+        return self._parse_tsv_pages(result.stdout, len(image_paths))
+
+    def _run(self, input_path: str) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             [
                 self._executable,
-                str(image_path),
+                input_path,
                 "stdout",
                 "-l",
                 self._language,
@@ -578,9 +610,15 @@ class TesseractOCRReader:
         if result.returncode != 0:
             detail = (result.stderr or "").strip()[-600:]
             raise RuntimeError(f"Tesseract OCR failed: {detail}")
+        return result
 
-        grouped: dict[tuple[str, str, str, str], list[tuple[str, float, tuple[float, float, float, float]]]] = defaultdict(list)
-        for row in csv.DictReader(io.StringIO(result.stdout), delimiter="\t"):
+    @staticmethod
+    def _parse_tsv_pages(tsv: str, page_count: int) -> list[list[OCRLine]]:
+        grouped: dict[
+            tuple[int, str, str, str],
+            list[tuple[str, float, tuple[float, float, float, float]]],
+        ] = defaultdict(list)
+        for row in csv.DictReader(io.StringIO(tsv), delimiter="\t"):
             text = str(row.get("text") or "").strip()
             confidence = _to_float(row.get("conf"), -1.0)
             if not text or confidence < 0:
@@ -590,21 +628,23 @@ class TesseractOCRReader:
             width = _to_float(row.get("width"))
             height = _to_float(row.get("height"))
             key = (
-                str(row.get("page_num") or "0"),
+                max(int(_to_float(row.get("page_num"), 1.0)) - 1, 0),
                 str(row.get("block_num") or "0"),
                 str(row.get("par_num") or "0"),
                 str(row.get("line_num") or "0"),
             )
             grouped[key].append((text, confidence / 100.0, (left, top, left + width, top + height)))
 
-        lines: list[OCRLine] = []
-        for words in grouped.values():
+        pages: list[list[OCRLine]] = [[] for _ in range(page_count)]
+        for (page_index, _block, _paragraph, _line), words in grouped.items():
+            if page_index >= page_count:
+                continue
             texts = [word[0] for word in words]
             separator = "" if any(contains_cjk(text) for text in texts) else " "
             boxes = [word[2] for word in words]
             total_chars = sum(max(len(word[0]), 1) for word in words)
             confidence = sum(word[1] * max(len(word[0]), 1) for word in words) / total_chars
-            lines.append(
+            pages[page_index].append(
                 OCRLine(
                     separator.join(texts),
                     confidence,
@@ -616,7 +656,7 @@ class TesseractOCRReader:
                     ),
                 )
             )
-        return lines
+        return pages
 
 
 _DEFAULT_READERS: dict[str, OCRReader] = {}
@@ -685,13 +725,12 @@ def scan_subtitle_frames(
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[FrameObservation]:
     observations: list[FrameObservation] = []
-    total = len(frame_paths)
-    
     import numpy as np
     from PIL import Image
 
     prev_gray = None
-    prev_lines = []
+    frame_metadata: list[tuple[int, int]] = []
+    ocr_indexes: list[int] = []
 
     for index, frame_path in enumerate(frame_paths):
         try:
@@ -711,13 +750,35 @@ def scan_subtitle_frames(
                 if mean_diff < 5.0:
                     is_similar = True
 
-        if is_similar:
-            lines = prev_lines
-        else:
-            lines = reader.read(frame_path)
-            prev_lines = lines
+        if not is_similar:
             prev_gray = current_gray
 
+            ocr_indexes.append(index)
+        frame_metadata.append((frame_width, frame_height))
+
+    lines_by_index: dict[int, list[OCRLine]] = {}
+    batch_size = 32
+    read_many = getattr(reader, "read_many", None)
+    total_ocr = len(ocr_indexes)
+    for offset in range(0, total_ocr, batch_size):
+        batch_indexes = ocr_indexes[offset : offset + batch_size]
+        batch_paths = [frame_paths[index] for index in batch_indexes]
+        if callable(read_many):
+            batch_results = read_many(batch_paths)
+        else:
+            batch_results = [reader.read(path) for path in batch_paths]
+        if len(batch_results) != len(batch_indexes):
+            raise RuntimeError("OCR batch result count does not match input frame count")
+        lines_by_index.update(zip(batch_indexes, batch_results))
+        if progress_callback:
+            progress_callback(min(offset + len(batch_indexes), total_ocr), total_ocr)
+
+    previous_lines: list[OCRLine] = []
+    for index, _frame_path in enumerate(frame_paths):
+        frame_width, frame_height = frame_metadata[index]
+        if index in lines_by_index:
+            previous_lines = lines_by_index[index]
+        lines = previous_lines
         text, confidence, bbox = select_subtitle_geometry(
             lines,
             config.min_confidence,
@@ -732,8 +793,6 @@ def scan_subtitle_frames(
                 bbox=bbox,
             )
         )
-        if progress_callback:
-            progress_callback(index + 1, total)
     return observations
 
 
@@ -748,6 +807,12 @@ def extract_burned_subtitle_segments(
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     config = config or OCRConfig()
+    if reader is None and reader_backend == "tesseract" and config.sample_fps > 3.0:
+        logger.info(
+            "Capping Tesseract OCR sampling from %.2f fps to 3.00 fps",
+            config.sample_fps,
+        )
+        config = replace(config, sample_fps=3.0)
     frame_paths = extract_ocr_frames(
         video_path,
         work_dir / "ocr_frames",
