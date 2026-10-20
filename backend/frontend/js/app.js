@@ -606,7 +606,7 @@ function updateFormSummary() {
   const voiceMode = document.querySelector('[name="voice_mode"]')?.value || "auto";
   const voiceTypeLabel = $("#voiceTypeLabel");
   if (voiceTypeLabel) voiceTypeLabel.textContent = voiceMode === "auto" ? "Giọng dự phòng" : "Giọng đọc";
-  ["#voiceModeField", "#voiceTypeField", "#voiceStyleField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
+  ["#ttsProviderField", "#voiceModeField", "#voiceTypeField", "#voiceStyleField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
     const field = $(selector);
     field.classList.toggle("is-disabled", !voiceEnabled);
     $$('input, select', field).forEach(control => { control.disabled = !voiceEnabled; });
@@ -634,6 +634,30 @@ function updateFormSummary() {
   preview.classList.remove("mode-replace", "mode-above", "mode-bottom");
   preview.classList.add(placement === "replace_original" ? "mode-replace" : placement === "above_original" ? "mode-above" : "mode-bottom");
   $("#previewVietnamese").style.fontSize = $("#matchSourceSize").checked ? "17px" : "21px";
+}
+
+async function loadTtsProviders() {
+  const select = $("#ttsProvider");
+  const hint = $("#ttsProviderHint");
+  if (!select || !hint) return;
+  try {
+    const data = await requestJson("/api/v1/tts-providers");
+    const providers = new Map((data.providers || []).map(provider => [provider.key, provider]));
+    [...select.options].forEach(option => {
+      const provider = providers.get(option.value);
+      option.disabled = provider ? !provider.configured : true;
+      if (provider && !provider.configured) option.textContent += " — chưa cấu hình key";
+    });
+    if (select.selectedOptions[0]?.disabled) select.value = "edge";
+    const selected = providers.get(select.value);
+    hint.textContent = selected?.free_note || "Khóa API chỉ được lưu ở máy chủ.";
+    select.addEventListener("change", () => {
+      hint.textContent = providers.get(select.value)?.free_note || "";
+      updateFormSummary();
+    });
+  } catch (_) {
+    hint.textContent = "Edge TTS sẵn sàng; không đọc được trạng thái API khác.";
+  }
 }
 
 function initWorkflowModeCards() {
@@ -2066,6 +2090,7 @@ $("#platformAppsPanel").addEventListener("toggle", event => {
   if (event.currentTarget.open) platformAppsSettings.load();
 });
 initWorkflowModeCards();
+loadTtsProviders();
 updateFormSummary();
 renderFiles();
 showView();

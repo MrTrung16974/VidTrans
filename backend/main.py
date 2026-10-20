@@ -100,6 +100,13 @@ from infrastructure.social_video_downloader import (
     extract_social_video_urls,
     social_platform,
 )
+from infrastructure.tts_providers import (
+    ensure_provider_configured,
+    normalize_tts_provider,
+    provider_statuses,
+    synthesize_azure,
+    synthesize_elevenlabs,
+)
 from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherConfig, TikTokPublisherError
 from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
 from pipeline.checkpoint_payloads import (
@@ -114,6 +121,7 @@ from pipeline.checkpoint_payloads import (
 from pipeline.parallel import collect_indexed_futures
 from pipeline.stage_metrics import StageMeasurement, measure_stage
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
+from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService
 from pipeline.translation import (
@@ -972,19 +980,19 @@ def find_font_file(preferred_name: str) -> Optional[str]:
 def write_srt(segments: list[dict[str, Any]], output_path: Path) -> None:
     blocks = []
     srt_index = 0
-    for segment in segments:
+    for index, segment in enumerate(segments):
         if segment.get("skip_subtitle"):
             continue
         text = wrap_text(segment["text"])
         if not text:
             continue
+        render_start, render_end = subtitle_render_window(segments, index)
         srt_index += 1
         blocks.append(
             "\n".join(
                 [
                     str(srt_index),
-                    f"{format_time(segment.get('tts_start', segment['start']))} --> "
-                    f"{format_time(segment.get('tts_end', segment['end']))}",
+                    f"{format_time(render_start)} --> {format_time(render_end)}",
                     text,
                 ]
             )
@@ -1020,11 +1028,10 @@ def write_ass(
         "[Events]",
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
     ]
-    for segment in segments:
+    for index, segment in enumerate(segments):
         if segment.get("skip_subtitle"):
             continue
-        render_start = segment.get("tts_start", segment["start"])
-        render_end = segment.get("tts_end", segment["end"])
+        render_start, render_end = subtitle_render_window(segments, index)
         layout = segment.get("subtitle_layout") if isinstance(segment.get("subtitle_layout"), dict) else {}
         raw_text = str(layout.get("render_text") or wrap_text(segment["text"]))
         text = raw_text.replace("\n", "\\N")
@@ -1314,10 +1321,12 @@ def synthesize_tts_segments(
     voice_style: str = "natural",
     job_id: str | None = None,
     target_language: str = "vi",
+    tts_provider: str = "edge",
 ) -> list[Path]:
     tts_dir = work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
     preset = voice_preset(voice_style)
+    tts_provider = normalize_tts_provider(tts_provider)
     rate_percent = int((speech_rate - 1.0) * 100) + preset.rate_percent
     base_rate_string = f"{rate_percent:+d}%"
 
@@ -1394,10 +1403,17 @@ def synthesize_tts_segments(
         edge_succeeded = False
         effective_rate_percent = rate_percent
         try:
-            tts_edge_with_retry(text, output_path, voice_name, base_rate_string, pitch_string)
-            edge_succeeded = True
+            if tts_provider == "azure":
+                synthesize_azure(text, output_path, voice_name=voice_name, rate_percent=rate_percent, pitch_hz=pitch_hz)
+            elif tts_provider == "elevenlabs":
+                synthesize_elevenlabs(text, output_path, voice_type=selected_voice_type)
+            else:
+                tts_edge_with_retry(text, output_path, voice_name, base_rate_string, pitch_string)
+                edge_succeeded = True
         except Exception as exc:
-            logger.warning("edge-tts failed, fallback to gTTS: %s", exc)
+            if tts_provider != "edge":
+                raise
+            logger.warning("edge TTS failed, fallback to gTTS: %s", exc)
             tts_gtts_sync(text, output_path, slow=speech_rate < 0.95, language=target_language)
 
         cue_duration = available_voice_window(segments, index)
@@ -1753,9 +1769,10 @@ def build_drawtext_filter(segments: list[dict[str, Any]], subtitle_style: dict[s
     font_size = subtitle_style.get("font_size", 22)
     margin_v = subtitle_style.get("margin_v", 30)
     filters = []
-    for segment in segments:
+    for index, segment in enumerate(segments):
         if segment.get("skip_subtitle"):
             continue
+        render_start, render_end = subtitle_render_window(segments, index)
         layout = segment.get("subtitle_layout") if isinstance(segment.get("subtitle_layout"), dict) else {}
         text = str(layout.get("render_text") or wrap_text(segment["text"]))
         if not text:
@@ -1774,7 +1791,7 @@ def build_drawtext_filter(segments: list[dict[str, Any]], subtitle_style: dict[s
             "box=1",
             "boxcolor=black@0.45",
             "boxborderw=12",
-            f"enable='between(t,{segment['start']:.3f},{segment['end']:.3f})'",
+            f"enable='between(t,{render_start:.3f},{render_end:.3f})'",
         ]
         if font_file:
             parts.insert(0, f"fontfile='{ff_escape_path(Path(font_file))}'")
@@ -1825,10 +1842,16 @@ def burn_subtitles_with_pillow(
     font_path = find_font_file(subtitle_style.get("font_name", "Arial"))
     frame_paths = sorted(frames_dir.glob("frame_*.png"))
 
-    for index, frame_path in enumerate(frame_paths):
-        timestamp = index / fps
+    render_windows = [subtitle_render_window(segments, index) for index in range(len(segments))]
+    for frame_index, frame_path in enumerate(frame_paths):
+        timestamp = frame_index / fps
         active = next(
-            (seg for seg in segments if not seg.get("skip_subtitle") and seg["start"] <= timestamp <= seg["end"]),
+            (
+                segment
+                for segment_index, segment in enumerate(segments)
+                if not segment.get("skip_subtitle")
+                and render_windows[segment_index][0] <= timestamp <= render_windows[segment_index][1]
+            ),
             None,
         )
         output_frame = rendered_dir / frame_path.name
@@ -2175,6 +2198,7 @@ def process_video(
     auto_publish_tiktok: bool = False,
     tiktok_privacy_level: str = "SELF_ONLY",
     tiktok_publish_at: str | None = None,
+    tts_provider: str = "edge",
 ) -> None:
     _job_context.job_id = job_id
     current_job = JOB_SERVICE.get(job_id) or {}
@@ -2430,6 +2454,7 @@ def process_video(
                     "voice_type": voice_type,
                     "voice_mode": voice_mode,
                     "voice_style": voice_style,
+                    "tts_provider": tts_provider,
                     "speech_rate": speech_rate,
                     "video_duration": round(video_duration, 3),
                     "routing": [
@@ -2439,7 +2464,7 @@ def process_video(
                         }
                         for segment in translated_segments
                     ],
-                    "tts_pipeline_version": 3,
+                    "tts_pipeline_version": 4,
                 }
             )
             tts_checkpoint = checkpoint_store.load_json(
@@ -2467,6 +2492,7 @@ def process_video(
                         voice_style,
                         job_id=job_id,
                         target_language=target_language,
+                        tts_provider=tts_provider,
                     )
                     ensure_job_active(job_id)
                     voice_track = build_voice_track(
@@ -2951,6 +2977,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             voice_type=str(resume_request["voice_type"]),
             voice_mode=str(resume_request["voice_mode"]),
             voice_style=str(resume_request.get("voice_style", "natural")),
+            tts_provider=str(resume_request.get("tts_provider", "edge")),
             speech_rate=float(resume_request["speech_rate"]),
             background_music_path=background_music_path,
             keep_original_audio=bool(resume_request["keep_original_audio"]),
@@ -4172,6 +4199,11 @@ def disconnect_tiktok(request: Request, account_id: str = Query(default="")) -> 
     return JSONResponse(status)
 
 
+@app.get("/api/v1/tts-providers")
+def tts_providers_endpoint() -> JSONResponse:
+    return JSONResponse({"providers": [status.__dict__ for status in provider_statuses()]})
+
+
 @app.post("/process-video")
 @app.post("/convert")
 async def process_video_endpoint(
@@ -4181,6 +4213,7 @@ async def process_video_endpoint(
     voice_type: str = Form("female"),
     voice_mode: str = Form("auto"),
     voice_style: str = Form("natural"),
+    tts_provider: str = Form("edge"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -4216,6 +4249,7 @@ async def process_video_endpoint(
             voice_mode=voice_mode,
             voice_type=voice_type,
             voice_style=voice_style,
+            tts_provider=tts_provider,
             source_language=source_language,
             target_language=target_language,
             generate_tiktok_post=generate_tiktok_post,
@@ -4234,6 +4268,11 @@ async def process_video_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
+    if request.mode is not ProcessingMode.SUBTITLES:
+        try:
+            ensure_provider_configured(request.tts_provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     job_id = uuid.uuid4().hex[:8]
     validate_tiktok_auto_publish(request, owner_user_id)
@@ -4277,6 +4316,7 @@ async def process_video_endpoint(
         "voice_type": request.fallback_voice.value,
         "voice_mode": request.voice_mode.value,
         "voice_style": request.voice_style,
+        "tts_provider": request.tts_provider,
         "speech_rate": speech_rate,
         "background_music_path": str(background_music_path) if background_music_path else None,
         "keep_original_audio": keep_original_audio,
@@ -4310,6 +4350,7 @@ async def process_video_endpoint(
             "mode": request.voice_mode.value,
             "fallback_voice": request.fallback_voice.value,
             "voice_style": request.voice_style,
+            "tts_provider": request.tts_provider,
         },
         "tiktok": {
             "enabled": request.tiktok.enabled,
@@ -4351,6 +4392,7 @@ async def create_batch_endpoint(
     voice_type: str = Form("female"),
     voice_mode: str = Form("auto"),
     voice_style: str = Form("natural"),
+    tts_provider: str = Form("edge"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -4425,6 +4467,7 @@ async def create_batch_endpoint(
             voice_mode=voice_mode,
             voice_type=voice_type,
             voice_style=voice_style,
+            tts_provider=tts_provider,
             source_language=source_language,
             target_language=target_language,
             generate_tiktok_post=generate_tiktok_post,
@@ -4447,6 +4490,11 @@ async def create_batch_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if processing_request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
+    if processing_request.mode is not ProcessingMode.SUBTITLES:
+        try:
+            ensure_provider_configured(processing_request.tts_provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     validate_tiktok_auto_publish(processing_request, owner_user_id)
 
     limit = account_plan_limit(account)
@@ -4478,6 +4526,7 @@ async def create_batch_endpoint(
         "voice_mode": processing_request.voice_mode.value,
         "voice_type": processing_request.fallback_voice.value,
         "voice_style": processing_request.voice_style,
+        "tts_provider": processing_request.tts_provider,
         "speech_rate": speech_rate,
         "whisper_model": whisper_model,
         "keep_original_audio": keep_original_audio,

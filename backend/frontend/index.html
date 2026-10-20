@@ -331,6 +331,15 @@
                           <strong>Cấu hình giọng đọc AI</strong>
                         </div>
                         <div class="field-grid processing-grid">
+                          <label id="ttsProviderField" class="field wide">
+                            <span>AI lồng tiếng</span>
+                            <select name="tts_provider" id="ttsProvider">
+                              <option value="edge">Edge TTS — miễn phí, không cần API key</option>
+                              <option value="azure">Azure Speech — API chính thức, free tier lớn</option>
+                              <option value="elevenlabs">ElevenLabs — giọng tự nhiên, 10K credit/tháng</option>
+                            </select>
+                            <small id="ttsProviderHint">Đang kiểm tra cấu hình nhà cung cấp…</small>
+                          </label>
                           <label id="voiceModeField" class="field">
                             <span>Chọn giọng</span>
                             <select name="voice_mode">
@@ -1704,6 +1713,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261018-10"></script>
+    <script type="module" src="/js/app.js?v=20261020-1"></script>
   </body>
 </html>

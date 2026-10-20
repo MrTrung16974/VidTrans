@@ -58,6 +58,7 @@ class ProcessingRequest:
     voice_mode: VoiceRoutingMode
     fallback_voice: VoiceType
     voice_style: str
+    tts_provider: str
     tiktok: TikTokOptions
 
     @classmethod
@@ -72,6 +73,7 @@ class ProcessingRequest:
         voice_mode: str,
         voice_type: str,
         voice_style: str = "natural",
+        tts_provider: str = "edge",
         generate_tiktok_post: bool = True,
         tiktok_max_summary_chars: int = 350,
         tiktok_hashtag_count: int = 6,
@@ -98,6 +100,8 @@ class ProcessingRequest:
         except ValueError as exc:
             raise ValueError("voice_type must be female or male") from exc
         resolved_voice_style = voice_preset(voice_style).key
+        from infrastructure.tts_providers import normalize_tts_provider
+        resolved_tts_provider = normalize_tts_provider(tts_provider)
         resolved_source_language, resolved_target_language = validate_language_pair(
             source_language, target_language
         )
@@ -150,6 +154,7 @@ class ProcessingRequest:
             voice_mode=resolved_voice_mode,
             fallback_voice=resolved_voice_type,
             voice_style=resolved_voice_style,
+            tts_provider=resolved_tts_provider,
             tiktok=TikTokOptions(
                 enabled=generate_tiktok_post,
                 max_summary_chars=tiktok_max_summary_chars,
