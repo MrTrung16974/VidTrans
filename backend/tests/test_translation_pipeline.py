@@ -91,7 +91,11 @@ class TranslationPipelineTests(unittest.TestCase):
 
     def test_filter_signature_contains_checkpoint_inputs(self) -> None:
         signature = segment_filter_signature()
-        self.assertEqual(set(signature), {"min_logprob", "max_no_speech_prob", "min_han_chars"})
+        self.assertEqual(
+            set(signature),
+            {"policy_version", "min_logprob", "max_no_speech_prob", "min_han_chars"},
+        )
+        self.assertEqual(signature["policy_version"], 2)
 
     def test_accepts_han_output_for_chinese_target(self) -> None:
         class EnglishToChinese:

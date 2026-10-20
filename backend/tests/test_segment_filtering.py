@@ -45,8 +45,8 @@ class IsMeaningfulSegmentTests(unittest.TestCase):
     def test_pure_number_string_is_not_meaningful(self) -> None:
         self.assertFalse(is_meaningful_segment(self._seg("123")))
 
-    def test_low_logprob_is_filtered_out(self) -> None:
-        self.assertFalse(
+    def test_low_logprob_readable_dialogue_is_kept(self) -> None:
+        self.assertTrue(
             is_meaningful_segment(self._seg("今天天气很好", avg_logprob=-1.5))
         )
 
@@ -60,9 +60,8 @@ class IsMeaningfulSegmentTests(unittest.TestCase):
             is_meaningful_segment(self._seg("嗯", no_speech_prob=0.95))
         )
 
-    def test_realistic_content_with_high_no_speech_is_filtered(self) -> None:
-        """Even real text should be filtered if Whisper says it's not speech."""
-        self.assertFalse(
+    def test_realistic_content_with_high_no_speech_is_kept(self) -> None:
+        self.assertTrue(
             is_meaningful_segment(self._seg("今天天气很好", no_speech_prob=0.85))
         )
 
@@ -92,12 +91,23 @@ class FilterMeaningfulSegmentsTests(unittest.TestCase):
         self.assertTrue(result[0]["skip_tts"])
         self.assertFalse(result[1]["skip_subtitle"])
 
-    def test_hallucination_logprob_is_flagged(self) -> None:
+    def test_low_confidence_dialogue_is_kept_and_flagged_for_review(self) -> None:
         segments = [
             {"start": 0.0, "end": 1.0, "text": "今天", "avg_logprob": -1.8},
         ]
         result = filter_meaningful_segments(segments)
-        self.assertTrue(result[0]["skip_subtitle"])
+        self.assertFalse(result[0]["skip_subtitle"])
+        self.assertFalse(result[0]["skip_tts"])
+        self.assertTrue(result[0]["needs_review"])
+        self.assertEqual(result[0]["review_reason"], "low_logprob")
+
+    def test_high_no_speech_dialogue_is_kept_and_flagged_for_review(self) -> None:
+        result = filter_meaningful_segments(
+            [{"start": 0.0, "end": 1.0, "text": "今天", "no_speech_prob": 0.9}]
+        )
+        self.assertFalse(result[0]["skip_subtitle"])
+        self.assertTrue(result[0]["needs_review"])
+        self.assertEqual(result[0]["review_reason"], "high_no_speech_probability")
 
     def test_all_meaningful_returns_all_false_flags(self) -> None:
         segments = [{"start": i, "end": i + 1, "text": "你好"} for i in range(5)]

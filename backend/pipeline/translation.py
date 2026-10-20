@@ -61,6 +61,7 @@ def segment_filter_signature() -> dict[str, float | int]:
     """Return non-sensitive filter inputs that affect transcript checkpoint output."""
 
     return {
+        "policy_version": 2,
         "min_logprob": _MIN_LOGPROB,
         "max_no_speech_prob": _MAX_NO_SPEECH_PROB,
         "min_han_chars": _MIN_HAN_CHARS,
@@ -86,30 +87,17 @@ def is_meaningful_segment(segment: dict[str, Any]) -> bool:
     A segment is *not* meaningful if any of these hold:
     - Text is empty after normalisation
     - Text consists only of filler interjections / punctuation / whitespace
-    - Whisper ``avg_logprob`` is below the hallucination threshold
-    - Whisper ``no_speech_prob`` is above the silence threshold
     - After removing filler chars there are no Han characters left
+
+    Confidence scores alone never remove readable dialogue. Whisper can assign
+    a low score to real speech (music, accents, overlapping speakers), and
+    dropping such a segment makes the subtitle disappear completely. Low
+    confidence is instead surfaced as ``needs_review`` by
+    :func:`filter_meaningful_segments`.
     """
     text = _clean(str(segment.get("text") or ""))
     if not text:
         return False
-
-    # Check Whisper confidence scores when available
-    avg_logprob = segment.get("avg_logprob")
-    if avg_logprob is not None:
-        try:
-            if float(avg_logprob) < _MIN_LOGPROB:
-                return False
-        except (TypeError, ValueError):
-            pass
-
-    no_speech_prob = segment.get("no_speech_prob")
-    if no_speech_prob is not None:
-        try:
-            if float(no_speech_prob) > _MAX_NO_SPEECH_PROB:
-                return False
-        except (TypeError, ValueError):
-            pass
 
     # Filler-only check (covers pure interjection strings)
     if _FILLER_ONLY_RE.match(text):
@@ -122,6 +110,23 @@ def is_meaningful_segment(segment: dict[str, Any]) -> bool:
             return False
 
     return True
+
+
+def _low_confidence_reason(segment: dict[str, Any]) -> str | None:
+    try:
+        if segment.get("avg_logprob") is not None and float(segment["avg_logprob"]) < _MIN_LOGPROB:
+            return "low_logprob"
+    except (TypeError, ValueError):
+        pass
+    try:
+        if (
+            segment.get("no_speech_prob") is not None
+            and float(segment["no_speech_prob"]) > _MAX_NO_SPEECH_PROB
+        ):
+            return "high_no_speech_probability"
+    except (TypeError, ValueError):
+        pass
+    return None
 
 
 def filter_meaningful_segments(
@@ -138,7 +143,19 @@ def filter_meaningful_segments(
     skipped = 0
     for segment in segments:
         if is_meaningful_segment(segment):
-            result.append({**segment, "skip_subtitle": False, "skip_tts": False})
+            confidence_reason = _low_confidence_reason(segment)
+            kept = {**segment, "skip_subtitle": False, "skip_tts": False}
+            if confidence_reason:
+                kept["needs_review"] = True
+                kept["review_reason"] = confidence_reason
+                logger.info(
+                    "Keeping low-confidence dialogue [%.2f–%.2f] for review: %r (%s)",
+                    segment.get("start", 0),
+                    segment.get("end", 0),
+                    _clean(str(segment.get("text") or ""))[:40],
+                    confidence_reason,
+                )
+            result.append(kept)
         else:
             text = _clean(str(segment.get("text") or ""))
             logger.debug(
