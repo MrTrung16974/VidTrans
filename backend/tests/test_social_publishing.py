@@ -1,7 +1,5 @@
 import tempfile
 import unittest
-import json
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -161,7 +159,12 @@ class SocialPublishingTests(unittest.TestCase):
             "status": "completed", "output_video": self.video.name
         }})()
         app = FastAPI()
-        app.include_router(create_social_publish_router(self.service, jobs, self.video.parent))
+        app.include_router(create_social_publish_router(
+            self.service, jobs, self.video.parent,
+            connection_resolver=lambda _user, _connection, _platform: {
+                "provider_account_id": "creator-one"
+            },
+        ))
         client = TestClient(app)
 
         capabilities = client.get("/api/v1/social-platforms")
@@ -172,7 +175,7 @@ class SocialPublishingTests(unittest.TestCase):
             "/api/v1/jobs/job-1/social-publishes",
             json={
                 "platform": "INSTAGRAM",
-                "account_id": "creator-one",
+                "connection_id": "connection-one",
                 "mode": "SCHEDULE_LOCAL",
                 "caption": "Caption",
                 "scheduled_for": (
@@ -231,43 +234,6 @@ class SocialPublishingTests(unittest.TestCase):
             client.get(f"/api/v1/social-publishes/{attempt_id}", headers={"x-test-user": "user-a"}).status_code,
             200,
         )
-
-    def test_terminal_legacy_tiktok_history_migrates_once(self):
-        with sqlite3.connect(self.store.database_path) as connection:
-            connection.execute(
-                """
-                CREATE TABLE tiktok_publish_attempts (
-                    attempt_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE,
-                    job_id TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL,
-                    scheduled_for TEXT, payload_json TEXT NOT NULL,
-                    remote_publish_id TEXT, claimed_at TEXT,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                INSERT INTO tiktok_publish_attempts VALUES (
-                    'old-1', 'old-key-123', 'job-old', 'DIRECT_NOW', 'PUBLISH_COMPLETE',
-                    NULL, ?, 'remote-old', NULL, '2026-01-01T00:00:00+00:00',
-                    '2026-01-01T00:01:00+00:00'
-                )
-                """,
-                (json.dumps({
-                    "caption": "old", "video_path": str(self.video),
-                    "account_id": "creator-old", "status": "payload-must-not-shadow",
-                    "status_detail": {"status": "PUBLISH_COMPLETE"},
-                }),),
-            )
-
-        self.assertEqual(self.store.migrate_legacy_tiktok_history(), 1)
-        self.assertEqual(self.store.migrate_legacy_tiktok_history(), 0)
-        migrated = self.store.list_for_job("job-old")[0]
-        self.assertEqual(migrated["platform"], "TIKTOK")
-        self.assertEqual(migrated["status"], "PUBLISHED")
-        self.assertEqual(migrated["account_id"], "creator-old")
-        self.assertEqual(migrated["remote_media_id"], "remote-old")
-
 
 if __name__ == "__main__":
     unittest.main()

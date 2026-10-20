@@ -418,3 +418,62 @@ def translate_segments(
             result["translation_error"] = error
         output.append(result)
     return output
+
+
+def translate_segments_by_source_language(
+    segments: Sequence[dict[str, Any]],
+    *,
+    target_language: str,
+    default_source_language: str,
+    translator_factory: Callable[[str, str], TextTranslator] | None = None,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Translate cue groups independently, then restore their original order."""
+
+    if translator_factory is None:
+        from infrastructure.translator import MultilingualTranslator
+        translator_factory = lambda source, target: MultilingualTranslator(
+            source_language=source, target_language=target
+        )
+
+    groups: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for index, segment in enumerate(segments):
+        source = str(segment.get("source_language") or default_source_language)
+        groups.setdefault(source, []).append((index, segment))
+
+    output: list[dict[str, Any] | None] = [None] * len(segments)
+    for source_language, indexed_segments in groups.items():
+        if source_language == "auto":
+            for index, segment in indexed_segments:
+                output[index] = {
+                    **segment,
+                    "source_text": _clean(str(segment.get("text") or "")),
+                    "translation_status": "source_fallback",
+                    "translation_error": "unknown_source_language",
+                    "source_language": source_language,
+                    "target_language": target_language,
+                    "needs_review": True,
+                }
+            continue
+        if source_language == target_language:
+            for index, segment in indexed_segments:
+                output[index] = {
+                    **segment,
+                    "source_text": _clean(str(segment.get("text") or "")),
+                    "translation_status": "source_passthrough",
+                    "translation_provider": "passthrough",
+                    "source_language": source_language,
+                    "target_language": target_language,
+                }
+            continue
+        translated = translate_segments(
+            [segment for _, segment in indexed_segments],
+            translator_factory(source_language, target_language),
+            source_language=source_language,
+            target_language=target_language,
+            **kwargs,
+        )
+        for (index, _), segment in zip(indexed_segments, translated):
+            output[index] = segment
+
+    return [segment for segment in output if segment is not None]

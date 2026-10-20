@@ -38,6 +38,28 @@ class CheckpointPayloadTests(unittest.TestCase):
             )
         )
 
+    def test_accepts_hybrid_ocr_asr_transcript(self) -> None:
+        self.assertTrue(
+            valid_transcript_checkpoint(
+                {
+                    "version": 1,
+                    "source_method": "hybrid",
+                    "segments": [{"start": 0.0, "end": 1.0, "text": "字幕"}],
+                }
+            )
+        )
+
+    def test_accepts_independent_ocr_asr_transcript(self) -> None:
+        self.assertTrue(
+            valid_transcript_checkpoint(
+                {
+                    "version": 1,
+                    "source_method": "independent",
+                    "segments": [{"start": 0.0, "end": 1.0, "text": "字幕"}],
+                }
+            )
+        )
+
     def test_translation_requires_complete_active_segment(self) -> None:
         complete = {
             "version": 1,

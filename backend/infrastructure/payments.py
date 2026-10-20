@@ -5,6 +5,8 @@ import hmac
 import json
 import os
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 import time
 import urllib.error
 import urllib.parse
@@ -113,13 +115,11 @@ class PaymentConfig:
 
 class PaymentOrderStore:
     def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_target(database_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
+        connection = connect(self.database_path)
         connection.execute("PRAGMA busy_timeout=30000")
         return connection
 

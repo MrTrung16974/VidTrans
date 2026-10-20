@@ -3,6 +3,8 @@ from __future__ import annotations
 import dataclasses
 import os
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,7 +65,7 @@ class PlatformAppStore:
     """Per-user OAuth app credentials entered on the web instead of .env."""
 
     def __init__(self, database_path: Path, cipher: CredentialCipher) -> None:
-        self.database_path = Path(database_path)
+        self.database_path = prepare_target(database_path)
         self.cipher = cipher
         with self._db() as db:
             db.execute("""
@@ -80,8 +82,7 @@ class PlatformAppStore:
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
+        connection = connect(self.database_path)
         try:
             yield connection
             connection.commit()

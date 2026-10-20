@@ -136,5 +136,6 @@ Rollback ưu tiên tắt từng flag về đường pipeline hiện tại. Manif
 | Version/phạm vi | Người duyệt | Thời điểm | Nội dung xác nhận |
 |---|---|---|---|
 | 0.1 — BA → DEV → TEST → chuẩn bị DEPLOY | Người dùng | 2026-10-16 | “bắt đầu làm” |
+| 0.3 — lựa chọn OCR + ASR độc lập theo cue | Người dùng | 2026-10-18 | “oki bắt đầu phát triển” |
 
 Plan 0.1 đã được duyệt. Các quyết định chưa có dữ liệu production tiếp tục được quản lý trong `OPEN_QUESTIONS.md`; phần độc lập được phép triển khai trước.

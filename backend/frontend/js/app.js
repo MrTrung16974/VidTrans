@@ -1,4 +1,4 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20261018-6";
+import { createTikTokWorkspace } from "./tiktok.js?v=20261019-1";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
@@ -52,6 +52,7 @@ function beginApiActionLoading() {
 
 const state = {
   files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
+  jobsPage: 1, jobsPageSize: parseInt(localStorage.getItem("vidtrans_jobs_page_size") || "10", 10),
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false, sessionRefreshTimer: null,
   sourceBrowserPlatform: "douyin", sourceBrowsers: {},
@@ -562,6 +563,10 @@ function subtitleStyle() {
     max_font_size: Number($("#maxFontSize").value),
     position_gap: Number($("#positionGap").value),
     mask_original: $("#maskOriginal").checked,
+    text_color_css: $("#subtitleTextColor").value,
+    background_color_css: $("#subtitleBackgroundColor").value,
+    background_opacity: 0.82,
+    background_box: $("#subtitleBackgroundBox").checked,
   };
 }
 
@@ -634,6 +639,12 @@ function updateFormSummary() {
   preview.classList.remove("mode-replace", "mode-above", "mode-bottom");
   preview.classList.add(placement === "replace_original" ? "mode-replace" : placement === "above_original" ? "mode-above" : "mode-bottom");
   $("#previewVietnamese").style.fontSize = $("#matchSourceSize").checked ? "17px" : "21px";
+  $("#previewVietnamese").style.color = $("#subtitleTextColor").value;
+  const previewBackground = $("#subtitleBackgroundColor").value;
+  const previewOpacity = 0.82;
+  $("#previewVietnamese").style.backgroundColor = $("#subtitleBackgroundBox").checked
+    ? `${previewBackground}${Math.round(previewOpacity * 255).toString(16).padStart(2, "0")}`
+    : "transparent";
 }
 
 async function loadTtsProviders() {
@@ -1032,7 +1043,7 @@ function renderAdminAccounts() {
       ${adminSelect("plan", item.plan, plans, "Gói dịch vụ")}
       ${adminSelect("payment_status", item.payment_status, payments, "Thanh toán")}
       ${adminSelect("video_retention_days", item.video_retention_days == null ? "default" : String(item.video_retention_days), adminRetentionOptions(item.video_retention_days), "Lưu video")}
-      <div class="admin-action-cell" style="display: flex; gap: 6px; align-items: center;">
+      <div class="admin-action-cell">
         <button class="button secondary btn-admin-save" type="button" data-admin-save title="Lưu thay đổi tài khoản này">
           <span class="save-icon" aria-hidden="true">✓</span>
           <span>Lưu</span>
@@ -1406,7 +1417,7 @@ function jobActions(job) {
     const zipName = `${job.job_id}.artifacts.zip`;
     downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg><span>ZIP</span></button>`;
   }
-  const cancel = ["queued", "scheduled", "processing", "cancelling"].includes(job.status)
+  const cancel = ["queued", "scheduled", "processing"].includes(job.status)
     ? `<button type="button" class="btn-job-action btn-cancel" data-action="cancel" data-job="${job.job_id}" title="Hủy tiến trình"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
     : "";
   const retry = terminal
@@ -1430,14 +1441,104 @@ function eligibleJobs(action) {
   return selected.filter(job => ["completed", "failed", "cancelled"].includes(job.status));
 }
 
+function getCurrentPageJobs() {
+  const jobs = state.jobs || [];
+  const pageSize = state.jobsPageSize || 10;
+  const totalPages = Math.max(1, Math.ceil(jobs.length / pageSize));
+  const page = Math.min(Math.max(1, state.jobsPage || 1), totalPages);
+  const startIndex = (page - 1) * pageSize;
+  return jobs.slice(startIndex, startIndex + pageSize);
+}
+
+function getPaginationPages(current, total) {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, "...", total];
+  }
+  if (current >= total - 3) {
+    return [1, "...", total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, "...", current - 1, current, current + 1, "...", total];
+}
+
+function renderJobsPagination(totalJobs, startIndex, endIndex, page, totalPages, pageSize) {
+  const container = $("#jobsPagination");
+  if (!container) return;
+
+  if (totalJobs === 0) {
+    container.innerHTML = `
+      <div class="pagination-info">
+        <span class="pagination-text">Chưa có tiến trình nào</span>
+      </div>
+    `;
+    return;
+  }
+
+  const pages = getPaginationPages(page, totalPages);
+  const pagesHtml = pages.map(p => {
+    if (p === "...") {
+      return `<span class="pagination-ellipsis" aria-hidden="true">…</span>`;
+    }
+    const isCurrent = p === page;
+    return `
+      <button type="button" class="pagination-page-btn${isCurrent ? " active" : ""}" data-page="${p}" ${isCurrent ? 'aria-current="page"' : ""} aria-label="Trang ${p}">
+        ${p}
+      </button>
+    `;
+  }).join("");
+
+  container.innerHTML = `
+    <div class="pagination-info">
+      <span class="pagination-text">Hiển thị <strong>${startIndex + 1}</strong> – <strong>${endIndex}</strong> trong số <strong>${totalJobs}</strong> tiến trình</span>
+      <div class="pagination-size-wrap">
+        <label for="jobsPageSizeSelect">Hiển thị:</label>
+        <select id="jobsPageSizeSelect" class="pagination-size-select" aria-label="Số tiến trình mỗi trang">
+          <option value="10" ${pageSize === 10 ? "selected" : ""}>10 / trang</option>
+          <option value="20" ${pageSize === 20 ? "selected" : ""}>20 / trang</option>
+          <option value="50" ${pageSize === 50 ? "selected" : ""}>50 / trang</option>
+          <option value="100" ${pageSize === 100 ? "selected" : ""}>100 / trang</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="pagination-nav" role="navigation" aria-label="Phân trang tiến trình">
+      <button type="button" class="pagination-btn pagination-first" data-page="1" ${page <= 1 ? "disabled" : ""} title="Trang đầu" aria-label="Trang đầu">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
+      </button>
+      <button type="button" class="pagination-btn pagination-prev" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""} title="Trang trước" aria-label="Trang trước">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        <span class="btn-label-prev">Trước</span>
+      </button>
+
+      <div class="pagination-pages">
+        ${pagesHtml}
+      </div>
+
+      <button type="button" class="pagination-btn pagination-next" data-page="${page + 1}" ${page >= totalPages ? "disabled" : ""} title="Trang sau" aria-label="Trang sau">
+        <span class="btn-label-next">Sau</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+      <button type="button" class="pagination-btn pagination-last" data-page="${totalPages}" ${page >= totalPages ? "disabled" : ""} title="Trang cuối" aria-label="Trang cuối">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"></polyline><polyline points="6 17 11 12 6 7"></polyline></svg>
+      </button>
+    </div>
+  `;
+}
+
 function updateJobSelectionUI() {
-  const visibleIds = state.jobs.map(job => job.job_id);
-  const selectedVisible = visibleIds.filter(jobId => state.selectedJobIds.has(jobId));
+  const pageJobs = getCurrentPageJobs();
+  const pageIds = pageJobs.map(job => job.job_id);
+  const selectedOnPage = pageIds.filter(jobId => state.selectedJobIds.has(jobId));
   const selectAll = $("#selectAllJobs");
-  selectAll.checked = visibleIds.length > 0 && selectedVisible.length === visibleIds.length;
-  selectAll.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleIds.length;
-  selectAll.disabled = visibleIds.length === 0;
-  $("#selectedJobsCount").textContent = selectedVisible.length ? `Đã chọn ${selectedVisible.length} tiến trình` : "Chưa chọn job";
+  if (selectAll) {
+    selectAll.checked = pageIds.length > 0 && selectedOnPage.length === pageIds.length;
+    selectAll.indeterminate = selectedOnPage.length > 0 && selectedOnPage.length < pageIds.length;
+    selectAll.disabled = pageIds.length === 0;
+  }
+  const totalSelected = state.selectedJobIds.size;
+  $("#selectedJobsCount").textContent = totalSelected ? `Đã chọn ${totalSelected} tiến trình` : "Chưa chọn job";
   const counts = {
     cancel: eligibleJobs("cancel").length,
     retry: eligibleJobs("retry").length,
@@ -1451,8 +1552,10 @@ function updateJobSelectionUI() {
   };
   for (const [action, count] of Object.entries(counts)) {
     const button = $(`[data-bulk-action="${action}"]`);
-    button.disabled = count === 0;
-    button.innerHTML = `<span class="btn-icon">${icons[action]}</span><span>${count ? `${labels[action]} (${count})` : labels[action]}</span>`;
+    if (button) {
+      button.disabled = count === 0;
+      button.innerHTML = `<span class="btn-icon">${icons[action]}</span><span>${count ? `${labels[action]} (${count})` : labels[action]}</span>`;
+    }
   }
 }
 
@@ -1495,8 +1598,20 @@ function renderPendingUpload(upload) {
 }
 
 function renderJobs(jobs) {
-  const pendingHtml = state.pendingUploads.map(renderPendingUpload).join("");
-  if (!jobs.length && !pendingHtml) {
+  const totalJobs = jobs.length;
+  const pageSize = state.jobsPageSize || 10;
+  const totalPages = Math.max(1, Math.ceil(totalJobs / pageSize));
+
+  if (state.jobsPage > totalPages) state.jobsPage = totalPages;
+  if (state.jobsPage < 1) state.jobsPage = 1;
+
+  const page = state.jobsPage;
+  const startIndex = (page - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalJobs);
+  const pageJobs = jobs.slice(startIndex, endIndex);
+
+  const pendingHtml = page === 1 ? state.pendingUploads.map(renderPendingUpload).join("") : "";
+  if (!totalJobs && !state.pendingUploads.length) {
     $("#jobsList").innerHTML = `<div class="empty-state">
       <div class="empty-icon-wrap">
         <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
@@ -1508,10 +1623,11 @@ function renderJobs(jobs) {
         <span>Tạo batch video mới</span>
       </a>
     </div>`;
+    renderJobsPagination(0, 0, 0, 1, 1, pageSize);
     updateJobSelectionUI();
     return;
   }
-  const jobsHtml = jobs.map(job => {
+  const jobsHtml = pageJobs.map(job => {
     const progress = Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100)));
     const queue = job.queue_position ? ` • Hàng đợi #${job.queue_position}` : "";
     const selected = state.selectedJobIds.has(job.job_id);
@@ -1547,6 +1663,7 @@ function renderJobs(jobs) {
     </article>`;
   }).join("");
   $("#jobsList").innerHTML = pendingHtml + jobsHtml;
+  renderJobsPagination(totalJobs, startIndex, endIndex, page, totalPages, pageSize);
   updateJobSelectionUI();
 }
 
@@ -1614,7 +1731,7 @@ async function loadJobs() {
   state.jobsLoading = true;
   const refreshButton = $("#refreshJobs");
   if (refreshButton) refreshButton.classList.add("is-refreshing");
-  const params = new URLSearchParams({ limit: "100" });
+  const params = new URLSearchParams({ limit: "500" });
   const status = $("#statusFilter").value;
   const search = $("#jobSearch").value.trim();
   if (status) params.set("status", status);
@@ -1656,7 +1773,7 @@ async function jobAction(action, jobId) {
     if (response.status === 401) lockApplication();
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || `Không thể ${action} job`);
-    toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "cancel" ? "Đã gửi yêu cầu hủy" : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
+    toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "cancel" ? (data.status === "cancelling" ? "Đang dừng job an toàn…" : "Đã hủy job") : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
     await loadJobs();
   } catch (error) { toast(error.message, true); }
 }
@@ -1964,7 +2081,7 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
   } catch (error) { toast(error.message, true); }
 });
 [$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), document.querySelector('[name="voice_mode"]')].forEach(element => element.addEventListener("change", updateFormSummary));
-[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal")].forEach(element => element.addEventListener("change", updateFormSummary));
+[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundBox")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#refreshAdminAccounts").addEventListener("click", loadAdminAccounts);
 $("#adminApprovalFilter").addEventListener("change", loadAdminAccounts);
@@ -2034,8 +2151,15 @@ $("#adminJobsList")?.addEventListener("click", async event => {
 });
 $("#refreshAdminAudit")?.addEventListener("click", loadAdminAudit);
 $("#adminAuditActionFilter")?.addEventListener("change", loadAdminAudit);
-$("#statusFilter").addEventListener("change", loadJobs);
-$("#jobSearch").addEventListener("input", () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadJobs, 300); });
+$("#statusFilter").addEventListener("change", () => {
+  state.jobsPage = 1;
+  loadJobs();
+});
+$("#jobSearch").addEventListener("input", () => {
+  state.jobsPage = 1;
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(loadJobs, 300);
+});
 $("#jobsList").addEventListener("click", event => {
   const cancelUpload = event.target.closest("[data-upload-cancel]");
   if (cancelUpload) {
@@ -2072,8 +2196,38 @@ $("#jobsList").addEventListener("change", event => {
   updateJobSelectionUI();
 });
 $("#selectAllJobs").addEventListener("change", event => {
-  state.jobs.forEach(job => event.target.checked ? state.selectedJobIds.add(job.job_id) : state.selectedJobIds.delete(job.job_id));
+  const pageJobs = getCurrentPageJobs();
+  pageJobs.forEach(job => event.target.checked ? state.selectedJobIds.add(job.job_id) : state.selectedJobIds.delete(job.job_id));
   renderJobs(state.jobs);
+});
+$("#jobsPagination")?.addEventListener("click", event => {
+  const btn = event.target.closest("[data-page]");
+  if (!btn || btn.disabled) return;
+  const targetPage = parseInt(btn.dataset.page, 10);
+  if (!isNaN(targetPage) && targetPage !== state.jobsPage) {
+    state.jobsPage = targetPage;
+    renderJobs(state.jobs);
+    const panel = $(".jobs-panel");
+    if (panel) {
+      const rect = panel.getBoundingClientRect();
+      if (rect.top < 0) {
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+  }
+});
+$("#jobsPagination")?.addEventListener("change", event => {
+  const sizeSelect = event.target.closest("#jobsPageSizeSelect");
+  if (!sizeSelect) return;
+  const newSize = parseInt(sizeSelect.value, 10);
+  if (!isNaN(newSize) && newSize > 0) {
+    state.jobsPageSize = newSize;
+    state.jobsPage = 1;
+    try {
+      localStorage.setItem("vidtrans_jobs_page_size", String(newSize));
+    } catch (_) {}
+    renderJobs(state.jobs);
+  }
 });
 $$('[data-bulk-action]').forEach(button => button.addEventListener("click", () => bulkJobAction(button.dataset.bulkAction)));
 window.addEventListener("hashchange", showView);

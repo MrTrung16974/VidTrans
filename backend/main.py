@@ -10,6 +10,7 @@ import subprocess
 import textwrap
 import threading
 import time
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,8 +37,6 @@ from application.social_account_routes import create_social_account_router
 from application.social_connection_routes import create_social_connection_router
 from application.social_publishing import SocialPublishScheduler, SocialPublishingService
 from application.tiktok_browser_routes import create_tiktok_browser_router
-from application.tiktok_publish_routes import create_tiktok_publish_router
-from application.tiktok_publishing import TikTokPublishScheduler, TikTokPublishingService
 from infrastructure.tiktok_browser import TikTokBrowserManager
 from domain.models import ProcessingMode, ProcessingRequest
 from domain.languages import language_profile, languages_from_config, normalize_language, voice_preset
@@ -52,6 +51,7 @@ from infrastructure.auth import (
     hash_password,
 )
 from infrastructure.admin_accounts import AdminAccountError, AdminAccountStore
+from infrastructure.database import database_target
 from infrastructure.payments import (
     PLAN_CATALOG,
     PaymentConfig,
@@ -60,7 +60,7 @@ from infrastructure.payments import (
     PaymentOrderStore,
 )
 from infrastructure.job_events import ALL_JOBS, JobEventHub
-from infrastructure.job_store import SQLiteJobStore
+from infrastructure.job_store import JobNotFoundError, JobStateConflictError, JobStore
 from infrastructure.publishers.registry import PublisherRegistry
 from infrastructure.publishers.instagram import InstagramPublisher, InstagramPublisherConfig
 from infrastructure.publishers.tiktok import TikTokSocialPublisher
@@ -73,10 +73,9 @@ from infrastructure.platform_apps import PLATFORM_APPS, PlatformAppError, Platfo
 from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
-from infrastructure.social_publish_store import SQLiteSocialPublishStore
+from infrastructure.social_publish_store import SocialPublishStore
 from infrastructure.social_credentials import SocialCredentialStore
 from infrastructure.tenant_governance import QuotaExceededError, TenantGovernanceStore
-from infrastructure.tiktok_publish_store import SQLiteTikTokPublishStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
 from infrastructure.media_probe import MediaProbe, probe_media_file
@@ -108,7 +107,13 @@ from infrastructure.tts_providers import (
     synthesize_elevenlabs,
 )
 from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherConfig, TikTokPublisherError
-from pipeline.ocr import OCRConfig, annotate_ocr_segments_with_asr, extract_burned_subtitle_segments
+from pipeline.ocr import (
+    OCRConfig,
+    annotate_ocr_segments_with_asr,
+    extract_burned_subtitle_segments,
+    merge_independent_ocr_asr_segments,
+    merge_ocr_and_asr_segments,
+)
 from pipeline.checkpoint_payloads import (
     restore_file_checkpoint,
     restore_tts_checkpoint,
@@ -121,6 +126,7 @@ from pipeline.checkpoint_payloads import (
 from pipeline.parallel import collect_indexed_futures
 from pipeline.stage_metrics import StageMeasurement, measure_stage
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
+from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, segment_subtitle_cues
 from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService
@@ -129,6 +135,7 @@ from pipeline.translation import (
     filter_meaningful_segments,
     segment_filter_signature,
     translate_segments,
+    translate_segments_by_source_language,
 )
 from pipeline.tts_timing import (
     adaptive_synthesis_rate_percent,
@@ -157,6 +164,7 @@ FRONTEND_DIR = SETTINGS.frontend_dir
 UPLOAD_DIR = SETTINGS.upload_dir
 OUTPUT_DIR = SETTINGS.output_dir
 WORK_DIR = SETTINGS.work_dir
+DATABASE_TARGET = database_target(WORK_DIR / "jobs.sqlite3")
 FFMPEG = SETTINGS.ffmpeg
 FFPROBE = SETTINGS.ffprobe
 
@@ -209,9 +217,10 @@ DEFAULT_SUB_STYLE = {
     "font_size": 36,
     "primary_color": "&H00FFFFFF",
     "outline_color": "&H00000000",
-    "back_color": "&H66000000",
-    "outline": 3,
+    "back_color": "&H2E000000",
+    "outline": 5,
     "shadow": 0,
+    "border_style": 3,
     "alignment": 2,
     "margin_v": 60,
     "placement_mode": "replace_original",
@@ -220,6 +229,14 @@ DEFAULT_SUB_STYLE = {
     "max_font_size": 72,
     "position_gap": 14,
     "mask_original": True,
+    "preferred_cue_chars": 14,
+    "max_cue_chars": 20,
+    "cue_pause_seconds": 0.65,
+    "max_cue_duration_seconds": 3.2,
+    "text_color_css": "#FFFFFF",
+    "background_color_css": "#000000",
+    "background_opacity": 0.82,
+    "background_box": True,
 }
 FONT_CANDIDATES = [
     "Noto Sans CJK SC",
@@ -231,6 +248,40 @@ FONT_CANDIDATES = [
 ]
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 BUNDLED_FONT = FONT_DIR / "NotoSansCJKsc-Regular.otf"
+DEFAULT_VOICE_MIX_GAIN = 1.30
+DEFAULT_ORIGINAL_AUDIO_VOLUME = 0.30
+
+
+def _validated_css_color(value: Any, fallback: str) -> str:
+    candidate = str(value or "").strip().upper()
+    return candidate if re.fullmatch(r"#[0-9A-F]{6}", candidate) else fallback
+
+
+def _css_color_to_ass(value: str, opacity: float = 1.0) -> str:
+    color = _validated_css_color(value, "#FFFFFF")
+    opacity = max(0.0, min(1.0, float(opacity)))
+    red, green, blue = color[1:3], color[3:5], color[5:7]
+    alpha = round((1.0 - opacity) * 255)
+    return f"&H{alpha:02X}{blue}{green}{red}"
+
+
+def normalize_subtitle_style(style: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(style)
+    text_color = _validated_css_color(style.get("text_color_css"), "#FFFFFF")
+    background_color = _validated_css_color(style.get("background_color_css"), "#000000")
+    background_opacity = max(0.0, min(1.0, float(style.get("background_opacity", 0.82))))
+    background_box = bool(style.get("background_box", True))
+    normalized.update(
+        text_color_css=text_color,
+        background_color_css=background_color,
+        background_opacity=background_opacity,
+        background_box=background_box,
+        primary_color=_css_color_to_ass(text_color),
+        back_color=_css_color_to_ass(background_color, background_opacity),
+        border_style=3 if background_box else 1,
+        outline=5 if background_box else int(style.get("outline", 3)),
+    )
+    return normalized
 
 app = FastAPI(title="VidTrans", version="2.0.0")
 app.add_middleware(
@@ -243,9 +294,9 @@ app.add_middleware(
 # job_change_snapshot is defined with the job routes below; it is only
 # called once the broadcaster runs, after the module has loaded.
 JOB_EVENTS = JobEventHub(lambda job_ids: job_change_snapshot(job_ids))
-JOB_SERVICE = JobService(SQLiteJobStore(WORK_DIR / "jobs.sqlite3"), on_change=JOB_EVENTS.notify)
+JOB_SERVICE = JobService(JobStore(DATABASE_TARGET), on_change=JOB_EVENTS.notify)
 N8N_WORKFLOW_CONFIG = N8nWebhookConfig.from_env()
-WORKFLOW_EVENT_STORE = WorkflowEventStore(WORK_DIR / "jobs.sqlite3")
+WORKFLOW_EVENT_STORE = WorkflowEventStore(DATABASE_TARGET)
 WORKFLOW_EVENTS = WorkflowEventSink(WORKFLOW_EVENT_STORE)
 N8N_WORKFLOW_DISPATCHER = N8nWorkflowDispatcher(
     WORKFLOW_EVENT_STORE,
@@ -280,7 +331,7 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
 )
 # Each user may enter their own OAuth developer apps on the web; .env stays the fallback.
 PLATFORM_APP_STORE = PlatformAppStore(
-    WORK_DIR / "jobs.sqlite3",
+    DATABASE_TARGET,
     CredentialCipher(load_or_create_key(WORK_DIR / "secrets" / "platform-apps.key"), key_id="platform-apps"),
 )
 _PLATFORM_CONFIG_FACTORIES = {
@@ -364,12 +415,6 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
 
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth", config=platform_app_config("TIKTOK"))
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
-TIKTOK_PUBLISH_STORE = SQLiteTikTokPublishStore(WORK_DIR / "jobs.sqlite3")
-TIKTOK_PUBLISHING = TikTokPublishingService(
-    TIKTOK_PUBLISH_STORE,
-    TIKTOK_PUBLISHER,
-    publisher_resolver=lambda job_id: tenant_tiktok_publisher(job_owner_user_id(job_id)),
-)
 app.include_router(create_tiktok_browser_router(
     TIKTOK_BROWSER,
     JOB_SERVICE,
@@ -378,19 +423,7 @@ app.include_router(create_tiktok_browser_router(
     owner_resolver=lambda request: str(current_account(request)["user_id"]),
     publisher_resolver=lambda request: tenant_tiktok_publisher(str(current_account(request)["user_id"])),
 ))
-app.include_router(create_tiktok_publish_router(
-    TIKTOK_PUBLISHING,
-    JOB_SERVICE,
-    OUTPUT_DIR,
-    owner_resolver=lambda request: str(current_account(request)["user_id"]),
-    connection_resolver=lambda user_id, connection_id, platform: resolve_social_connection(
-        user_id, connection_id, platform
-    ),
-))
-SOCIAL_PUBLISH_STORE = SQLiteSocialPublishStore(WORK_DIR / "jobs.sqlite3")
-_migrated_tiktok_history = SOCIAL_PUBLISH_STORE.migrate_legacy_tiktok_history()
-if _migrated_tiktok_history:
-    logger.info("Migrated %d terminal TikTok publish attempts", _migrated_tiktok_history)
+SOCIAL_PUBLISH_STORE = SocialPublishStore(DATABASE_TARGET)
 SIGNED_MEDIA_URLS = SignedMediaUrlService(
     OUTPUT_DIR,
     public_base_url=os.environ.get("VIDTRANS_PUBLIC_BASE_URL", "").strip(),
@@ -452,7 +485,7 @@ app.include_router(create_social_account_router(
 ))
 AUTH_MANAGER = AuthManager()
 ADMIN_ACCOUNTS = AdminAccountStore(
-    WORK_DIR / "jobs.sqlite3",
+    DATABASE_TARGET,
     AUTH_MANAGER.config.username if AUTH_MANAGER.config.enabled else "admin",
     AUTH_MANAGER.config.password_hash if AUTH_MANAGER.config.enabled else "",
 )
@@ -586,7 +619,7 @@ _tenant_migration_manifest = {
 }
 _tenant_manifest_path = WORK_DIR / "migrations" / "tenant-storage-v1.json"
 write_json_atomic(_tenant_manifest_path, _tenant_migration_manifest)
-SOCIAL_CREDENTIALS = SocialCredentialStore(WORK_DIR / "jobs.sqlite3")
+SOCIAL_CREDENTIALS = SocialCredentialStore(DATABASE_TARGET)
 try:
     SOCIAL_CREDENTIAL_CIPHER: CredentialCipher | None = CredentialCipher.from_env()
 except CredentialCipherError:
@@ -662,13 +695,19 @@ def tenant_publisher_for_oauth_callback(platform: str, state: str):
         account_store.accept_consumed_state(state)
     return publisher
 PAYMENT_CONFIG = PaymentConfig.from_env()
-PAYMENT_ORDERS = PaymentOrderStore(WORK_DIR / "jobs.sqlite3")
+PAYMENT_ORDERS = PaymentOrderStore(DATABASE_TARGET)
 PAYMENT_GATEWAY = PaymentGatewayClient(PAYMENT_CONFIG)
-TENANT_GOVERNANCE = TenantGovernanceStore(WORK_DIR / "jobs.sqlite3")
+TENANT_GOVERNANCE = TenantGovernanceStore(DATABASE_TARGET)
 ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
 _job_context = threading.local()
+
+
+TIKTOK_CANCEL_UNCERTAIN_DETAIL = (
+    "Đã hủy khi video đang được gửi lên TikTok; TikTok có thể đã nhận video, "
+    "hãy kiểm tra và xóa thủ công trên TikTok nếu cần"
+)
 
 
 class JobCancelled(RuntimeError):
@@ -899,7 +938,9 @@ def ff_escape_text(value: str) -> str:
     return escaped
 
 
-def run_ffmpeg(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def run_ffmpeg(
+    args: list[str], *, check: bool = True, job_id: str | None = None
+) -> subprocess.CompletedProcess[str]:
     logger.info("Running ffmpeg command: %s", " ".join(args))
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     while True:
@@ -907,8 +948,8 @@ def run_ffmpeg(args: list[str], *, check: bool = True) -> subprocess.CompletedPr
             stdout, stderr = process.communicate(timeout=0.5)
             break
         except subprocess.TimeoutExpired:
-            job_id = getattr(_job_context, "job_id", None)
-            if job_id and JOB_SERVICE.is_cancel_requested(job_id):
+            active_job_id = job_id or getattr(_job_context, "job_id", None)
+            if active_job_id and JOB_SERVICE.is_cancel_requested(active_job_id):
                 process.terminate()
                 try:
                     process.communicate(timeout=3)
@@ -958,7 +999,20 @@ def wrap_text(text: str, width: int = 34) -> str:
             current = word
     if current:
         lines.append(current)
-    return "\n".join(lines[:2] if len(lines) > 2 else lines)
+    if len(lines) <= 2:
+        return "\n".join(lines)
+    # Never discard overflow words. Segmentation normally keeps cues short;
+    # legacy/untimed cues are balanced into two lines as a safe fallback.
+    best_index = 1
+    best_delta: int | None = None
+    for index in range(1, len(words)):
+        left = " ".join(words[:index])
+        right = " ".join(words[index:])
+        delta = abs(len(left) - len(right))
+        if best_delta is None or delta < best_delta:
+            best_index = index
+            best_delta = delta
+    return " ".join(words[:best_index]) + "\n" + " ".join(words[best_index:])
 
 
 def find_font_file(preferred_name: str) -> Optional[str]:
@@ -1008,9 +1062,10 @@ def write_ass(
     video_width: int = 1280,
     video_height: int = 720,
 ) -> None:
+    style = normalize_subtitle_style({**DEFAULT_SUB_STYLE, **style})
     style_line = (
         "Style: Default,{font_name},{font_size},{primary_color},{primary_color},"
-        "{outline_color},{back_color},0,0,0,0,100,100,0,0,1,{outline},{shadow},"
+        "{outline_color},{back_color},0,0,0,0,100,100,0,0,{border_style},{outline},{shadow},"
         "{alignment},10,10,{margin_v},1"
     ).format(**style)
     lines = [
@@ -1182,6 +1237,7 @@ def make_asr_progress_callback(
 
     def report(position: float, total: float | None) -> None:
         nonlocal last_reported
+        ensure_job_active(job_id)
         effective_total = total or expected_duration
         if not effective_total:
             update_job(job_id, step_detail=asr_progress_detail(position, None))
@@ -1201,11 +1257,22 @@ def make_asr_progress_callback(
 
 def update_job(job_id: str, **fields: Any) -> None:
     current = JOB_SERVICE.get(job_id)
+    if current and current.get("status") == "cancelled" and fields.get("status") != "cancelled":
+        return
     if current and current.get("cancel_requested"):
         if fields.get("status") == "processing":
             fields.pop("status")
         elif fields.get("status") == "completed":
             raise JobCancelled("Job đã được yêu cầu hủy trước khi hoàn tất")
+        elif fields.get("status") == "failed" and current.get("status") == "cancelling":
+            # The worker stopped because of an error after the user cancelled;
+            # report the cancellation instead of leaving the job in cancelling.
+            fields = {
+                "status": "cancelled",
+                "step": "cancelled",
+                "step_detail": "Đã hủy theo yêu cầu",
+                "finished_at": fields.get("finished_at") or utc_now(),
+            }
     updated = JOB_SERVICE.update(job_id, **fields)
     if N8N_WORKFLOW_CONFIG.enabled:
         WORKFLOW_EVENTS.emit_transition(job_id, current, updated)
@@ -1264,6 +1331,7 @@ def make_ocr_progress_callback(job_id: str) -> Callable[[int, int], None]:
 
     def report(completed: int, total: int) -> None:
         nonlocal last_reported
+        ensure_job_active(job_id)
         report_interval = max(1, total // 100)
         if completed != total and completed - last_reported < report_interval:
             return
@@ -1313,6 +1381,18 @@ def tts_gtts_sync(text: str, output_path: Path, slow: bool = False, language: st
     gTTS(text=text, lang=language_profile(language).gtts_code, slow=slow).save(str(output_path))
 
 
+def is_speakable_tts_text(value: Any) -> bool:
+    """Return true when text contains at least one letter or number.
+
+    Some translation/OCR cues contain only punctuation.  They are non-empty
+    strings, but gTTS removes every token and raises "No text to send to TTS
+    API".  Unicode categories keep this check language-independent.
+    """
+
+    text = " ".join(str(value or "").split())
+    return any(unicodedata.category(character)[0] in {"L", "N"} for character in text)
+
+
 def synthesize_tts_segments(
     segments: list[dict[str, Any]],
     work_dir: Path,
@@ -1333,8 +1413,20 @@ def synthesize_tts_segments(
     import concurrent.futures
     import threading
     completed_count = 0
-    total_valid = sum(1 for s in segments if not s.get("skip_tts") and " ".join(s["text"].split()))
+    total_valid = sum(
+        1
+        for segment in segments
+        if not segment.get("skip_tts") and is_speakable_tts_text(segment.get("text"))
+    )
     progress_lock = threading.Lock()
+
+    def run_tts_ffmpeg(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if job_id:
+            ensure_job_active(job_id)
+        result = run_ffmpeg(args, job_id=job_id)
+        if job_id:
+            ensure_job_active(job_id)
+        return result
 
     def process_segment(index: int, segment: dict[str, Any]) -> Path | None:
         nonlocal completed_count
@@ -1346,8 +1438,10 @@ def synthesize_tts_segments(
             return None
 
         # Clean text
-        raw_text = " ".join(segment["text"].split())
-        if not raw_text:
+        raw_text = " ".join(str(segment.get("text") or "").split())
+        if not is_speakable_tts_text(raw_text):
+            segment["skip_tts"] = True
+            segment["tts_skip_reason"] = "no_speakable_text"
             return None
 
         # Optimize Translation text pacing using Original Word Timestamps
@@ -1427,7 +1521,9 @@ def synthesize_tts_segments(
             "silenceremove=start_periods=1:start_duration=0.08:start_threshold=-50dB,"
             "areverse"
         )
-        run_ffmpeg(
+        if job_id:
+            ensure_job_active(job_id)
+        run_tts_ffmpeg(
             [
                 FFMPEG,
                 "-y",
@@ -1455,7 +1551,7 @@ def synthesize_tts_segments(
                 tts_edge_with_retry(
                     text, adaptive_output_path, voice_name, candidate_rate_string, pitch_string
                 )
-                run_ffmpeg(
+                run_tts_ffmpeg(
                     [
                         FFMPEG,
                         "-y",
@@ -1474,6 +1570,8 @@ def synthesize_tts_segments(
                 rendered_duration = get_media_duration(trimmed_path)
                 effective_rate_percent = candidate_rate_percent
                 applied_native_rate_boost = native_rate_boost
+            except JobCancelled:
+                raise
             except Exception as exc:
                 logger.warning("Adaptive edge-tts render failed; keeping first pass: %s", type(exc).__name__)
             finally:
@@ -1484,7 +1582,7 @@ def synthesize_tts_segments(
         fitted_path = trimmed_path
         if speed_factor > 1.0:
             fitted_path = tts_dir / f"{index:04d}_fitted.wav"
-            run_ffmpeg(
+            run_tts_ffmpeg(
                 [
                     FFMPEG,
                     "-y",
@@ -1583,13 +1681,30 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
         if duration > VOICE_FADE_OUT_SECONDS * 2:
             fades += f",afade=t=out:st={duration - VOICE_FADE_OUT_SECONDS:.3f}:d={VOICE_FADE_OUT_SECONDS}"
         filter_parts.append(
-            f"[{input_index}:a]{fades},adelay={delay_ms}|{delay_ms},volume={1.4 * gain:.3f}[a{input_index}]"
+            f"[{input_index}:a]{fades},adelay={delay_ms}|{delay_ms},volume={DEFAULT_VOICE_MIX_GAIN * gain:.3f}[a{input_index}]"
         )
         labels.append(f"[a{input_index}]")
         input_index += 1
     if not labels:
-        raise RuntimeError("No TTS segments were generated")
-    filter_parts.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,alimiter=limit=0.95[out]")
+        run_ffmpeg(
+            [
+                FFMPEG,
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=24000:cl=mono",
+                "-t",
+                f"{video_duration:.3f}",
+                str(voice_track),
+            ]
+        )
+        return voice_track
+    filter_parts.append(
+        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,"
+        f"alimiter=limit=0.95,apad=whole_dur={video_duration:.3f},"
+        f"atrim=duration={video_duration:.3f}[out]"
+    )
     run_ffmpeg(
         [
             FFMPEG,
@@ -1746,8 +1861,11 @@ def mix_audio(
     if not labels:
         return None
 
+    target_duration = source_probe.duration if source_probe is not None else get_media_duration(video_path)
     filter_parts.append(
-        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,loudnorm=I=-16:LRA=11:TP=-1.5[out]"
+        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,"
+        f"loudnorm=I=-16:LRA=11:TP=-1.5,apad=whole_dur={target_duration:.3f},"
+        f"atrim=duration={target_duration:.3f}[out]"
     )
     run_ffmpeg(
         [
@@ -1784,12 +1902,12 @@ def build_drawtext_filter(segments: list[dict[str, Any]], subtitle_style: dict[s
         parts = [
             f"text='{escaped_text}'",
             f"fontsize={active_font_size}",
-            "fontcolor=white",
+            f"fontcolor={subtitle_style.get('text_color_css', '#FFFFFF')}",
             "line_spacing=6",
             f"x={x_expression}",
             f"y={y_expression}",
-            "box=1",
-            "boxcolor=black@0.45",
+            f"box={1 if subtitle_style.get('background_box', True) else 0}",
+            f"boxcolor={subtitle_style.get('background_color_css', '#000000')}@{float(subtitle_style.get('background_opacity', 0.82)):.2f}",
             "boxborderw=12",
             f"enable='between(t,{render_start:.3f},{render_end:.3f})'",
         ]
@@ -1840,6 +1958,15 @@ def burn_subtitles_with_pillow(
     font_size = int(subtitle_style.get("font_size", 22))
     margin_v = int(subtitle_style.get("margin_v", 30))
     font_path = find_font_file(subtitle_style.get("font_name", "Arial"))
+    text_rgb = tuple(
+        int(subtitle_style.get("text_color_css", "#FFFFFF")[offset:offset + 2], 16)
+        for offset in (1, 3, 5)
+    )
+    background_rgb = tuple(
+        int(subtitle_style.get("background_color_css", "#000000")[offset:offset + 2], 16)
+        for offset in (1, 3, 5)
+    )
+    background_alpha = round(float(subtitle_style.get("background_opacity", 0.82)) * 255)
     frame_paths = sorted(frames_dir.glob("frame_*.png"))
 
     render_windows = [subtitle_render_window(segments, index) for index in range(len(segments))]
@@ -1889,13 +2016,13 @@ def burn_subtitles_with_pillow(
                 radius=max(4, active_font_size // 4),
                 fill=(0, 0, 0, 150),
             )
-        else:
+        if subtitle_style.get("background_box", True):
             draw.rounded_rectangle(
                 (x - pad_x, y - pad_y, x + text_w + pad_x, y + text_h + pad_y),
                 radius=18,
-                fill=(0, 0, 0, 140),
+                fill=(*background_rgb, background_alpha),
             )
-        draw.multiline_text((x, y), text, font=font, fill=(255, 255, 255, 255), spacing=6, align="center")
+        draw.multiline_text((x, y), text, font=font, fill=(*text_rgb, 255), spacing=6, align="center")
         combined = Image.alpha_composite(image, overlay).convert("RGB")
         combined.save(output_frame)
 
@@ -2084,18 +2211,19 @@ def recognize_video_source(
     ocr_sample_fps: float,
     ocr_roi_top: float,
     ocr_roi_bottom: float,
+    segmentation_options: SubtitleSegmentationOptions | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, float | None, str, int]:
     """Run OCR/ASR and return filtered, checkpoint-ready source segments."""
 
     video_duration = source_probe.duration
     ocr_segments: list[dict[str, Any]] = []
-    ocr_requested = subtitle_source in {"auto", "burned"} and source_language == "zh-CN"
-    if ocr_requested and not SETTINGS.paddle_ocr_enabled:
-        message = "OCR is disabled on this Linux ARM64 runtime; using Whisper speech recognition"
-        if subtitle_source == "burned":
+    ocr_requested = subtitle_source in {"auto", "independent", "burned"} and source_language == "zh-CN"
+    if ocr_requested and SETTINGS.ocr_backend == "off":
+        message = "OCR is disabled on this runtime; using Whisper speech recognition"
+        if subtitle_source in {"burned", "independent"}:
             raise RuntimeError(
-                "Burned-subtitle OCR is disabled on this runtime because PaddleOCR crashes the server. "
-                "Choose Whisper or Auto, or set VIDTRANS_ENABLE_PADDLE_OCR=1 only after validating PaddleOCR."
+                "OCR is disabled on this runtime. Set VIDTRANS_OCR_BACKEND=tesseract or paddle "
+                "after installing the selected OCR runtime."
             )
         logger.warning(message)
         update_job(job_id, status="processing", step="transcribing", step_detail=message, progress=0.22)
@@ -2114,12 +2242,14 @@ def recognize_video_source(
                             roi_top=ocr_roi_top,
                             roi_bottom=ocr_roi_bottom,
                         ),
+                        reader_backend=SETTINGS.ocr_backend,
+                        reader_model=SETTINGS.ocr_model,
                         progress_callback=make_ocr_progress_callback(job_id),
                     )
         except JobCancelled:
             raise
         except Exception:
-            if subtitle_source == "burned":
+            if subtitle_source in {"burned", "independent"}:
                 raise
             logger.warning("OCR subtitle extraction failed; using speech transcription", exc_info=True)
 
@@ -2138,8 +2268,9 @@ def recognize_video_source(
         if source_probe.has_audio:
             with _whisper_slots:
                 ensure_job_active(job_id)
+                asr_language = "auto" if subtitle_source == "independent" else source_language
                 asr_segments, detected_language, detected_language_probability = transcribe_video(
-                    whisper_model, video_path, source_language, job_id, video_duration
+                    whisper_model, video_path, asr_language, job_id, video_duration
                 )
         elif not ocr_segments:
             raise RuntimeError(
@@ -2147,7 +2278,18 @@ def recognize_video_source(
                 "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
                 "nếu không, hãy chọn video có âm thanh."
             )
-    if ocr_segments:
+    if ocr_segments and subtitle_source == "independent":
+        segments = merge_independent_ocr_asr_segments(
+            ocr_segments,
+            asr_segments,
+            ocr_language=source_language,
+            asr_language=detected_language,
+        )
+        source_method = "independent"
+    elif ocr_segments and subtitle_source == "auto":
+        segments = merge_ocr_and_asr_segments(ocr_segments, asr_segments)
+        source_method = "hybrid"
+    elif ocr_segments:
         segments = annotate_ocr_segments_with_asr(ocr_segments, asr_segments)
         source_method = "ocr"
     else:
@@ -2159,6 +2301,7 @@ def recognize_video_source(
             "Kiểm tra vùng OCR, ngôn ngữ nguồn hoặc thử Whisper model lớn hơn."
         )
 
+    segments = segment_subtitle_cues(segments, options=segmentation_options)
     segments = filter_meaningful_segments(segments)
     meaningful_count = sum(1 for segment in segments if not segment.get("skip_subtitle"))
     skipped_count = len(segments) - meaningful_count
@@ -2206,7 +2349,7 @@ def process_video(
     work_dir = tenant_job_dir(WORK_DIR, owner_user_id, job_id)
     output_dir = tenant_job_dir(OUTPUT_DIR, owner_user_id, job_id)
     work_dir.mkdir(parents=True, exist_ok=True)
-    subtitle_style = {**DEFAULT_SUB_STYLE, **(subtitle_style or {})}
+    subtitle_style = normalize_subtitle_style({**DEFAULT_SUB_STYLE, **(subtitle_style or {})})
     subtitle_style["font_name"] = language_profile(target_language).font_family
     try:
         JOB_SERVICE.update(job_id, stage_metrics={}, stage_cache={})
@@ -2227,7 +2370,7 @@ def process_video(
         checkpoint_store = StageCheckpointStore(work_dir)
         transcript_fingerprint = fingerprint_payload(
             {
-                "version": 1,
+                "version": 6,
                 "source_checksum": source_checksum,
                 "subtitle_source": subtitle_source,
                 "source_language": source_language,
@@ -2237,10 +2380,18 @@ def process_video(
                 "asr_beam_size": ASR_SERVICE.config.beam_size,
                 "asr_vad": ASR_SERVICE.config.vad,
                 "asr_vad_min_silence_ms": ASR_SERVICE.config.vad_min_silence_ms,
-                "ocr_enabled": SETTINGS.paddle_ocr_enabled,
+                "ocr_enabled": SETTINGS.ocr_backend != "off",
+                "ocr_backend": SETTINGS.ocr_backend,
                 "ocr_sample_fps": ocr_sample_fps,
                 "ocr_roi_top": ocr_roi_top,
                 "ocr_roi_bottom": ocr_roi_bottom,
+                "ocr_asr_merge": 2,
+                "segmentation": {
+                    "preferred_chars": int(subtitle_style["preferred_cue_chars"]),
+                    "max_chars": int(subtitle_style["max_cue_chars"]),
+                    "pause_seconds": float(subtitle_style["cue_pause_seconds"]),
+                    "max_duration_seconds": float(subtitle_style["max_cue_duration_seconds"]),
+                },
                 "filter": segment_filter_signature(),
             }
         )
@@ -2263,6 +2414,12 @@ def process_video(
                 ocr_sample_fps=ocr_sample_fps,
                 ocr_roi_top=ocr_roi_top,
                 ocr_roi_bottom=ocr_roi_bottom,
+                segmentation_options=SubtitleSegmentationOptions(
+                    preferred_chars=int(subtitle_style["preferred_cue_chars"]),
+                    max_chars=int(subtitle_style["max_cue_chars"]),
+                    pause_seconds=float(subtitle_style["cue_pause_seconds"]),
+                    max_duration_seconds=float(subtitle_style["max_cue_duration_seconds"]),
+                ),
             )
             return {
                 "version": 1,
@@ -2315,7 +2472,7 @@ def process_video(
                 "transcript_checksum": transcript_checkpoint.checksum,
                 "source_language": effective_source_language,
                 "target_language": target_language,
-                "translation_pipeline_version": 1,
+                "translation_pipeline_version": 3,
                 "max_batch_chars": 1200,
             }
         )
@@ -2329,17 +2486,27 @@ def process_video(
             translated_segments = list(translation_checkpoint.payload["segments"])
         else:
             with measure_job_stage(job_id, "translation", video_duration=video_duration):
-                translated_segments = translate_segments(
-                    segments,
-                    source_language=effective_source_language,
-                    target_language=target_language,
-                    check_active=lambda: ensure_job_active(job_id),
-                    progress_callback=lambda completed, total: update_job(
+                translation_kwargs = {
+                    "target_language": target_language,
+                    "check_active": lambda: ensure_job_active(job_id),
+                    "progress_callback": lambda completed, total: update_job(
                         job_id,
                         progress=0.4 + 0.06 * completed / max(1, total),
                         step_detail=f"Đã kiểm tra bản dịch {completed}/{total} câu",
                     ),
-                )
+                }
+                if subtitle_source == "independent":
+                    translated_segments = translate_segments_by_source_language(
+                        segments,
+                        default_source_language=effective_source_language,
+                        **translation_kwargs,
+                    )
+                else:
+                    translated_segments = translate_segments(
+                        segments,
+                        source_language=effective_source_language,
+                        **translation_kwargs,
+                    )
         record_job_stage_cache(job_id, "translation", translation_cache_hit)
         if translation_cache_hit:
             update_job(job_id, step_detail="Đã dùng lại bản dịch hợp lệ", progress=0.46)
@@ -2529,7 +2696,7 @@ def process_video(
                     "keep_original_audio": keep_original_audio,
                     "original_audio_volume": original_audio_volume,
                     "music_volume": music_volume,
-                    "audio_mix_version": 1,
+                    "audio_mix_version": 2,
                 }
             )
             audio_checkpoint = checkpoint_store.load_json(
@@ -2570,9 +2737,8 @@ def process_video(
                 )
             record_job_stage_cache(job_id, "audio_mix", audio_cache_hit)
 
-        # Write subtitle artifacts only after TTS planning. In dubbing modes,
-        # tts_start/tts_end make the visible Vietnamese line follow the natural
-        # voice instead of the much shorter source-language cue.
+        # Write subtitle artifacts after TTS planning so diagnostics include
+        # TTS fields, while visual timing remains anchored to source speech.
         with measure_job_stage(job_id, "subtitle_artifacts", video_duration=video_duration):
             write_srt(translated_segments, srt_path)
             write_ass(
@@ -2621,7 +2787,7 @@ def process_video(
                 "subtitle_style": subtitle_style,
                 "video_fps": source_probe.fps,
                 "mode": mode,
-                "render_pipeline_version": 1,
+                "render_pipeline_version": 2,
             }
         )
         render_artifact = (
@@ -2703,6 +2869,7 @@ def process_video(
 
         tiktok_publish_fields: dict[str, Any] = {}
         if auto_publish_tiktok:
+            ensure_job_active(job_id)
             update_job(
                 job_id,
                 step="publishing-tiktok",
@@ -2733,6 +2900,10 @@ def process_video(
                     "tiktok_publish_status": "FAILED",
                     "tiktok_publish_error": str(exc),
                 }
+
+        if tiktok_publish_fields.get("tiktok_publish_id") and JOB_SERVICE.is_cancel_requested(job_id):
+            finish_cancelled_after_publish(job_id, **artifact_fields, **tiktok_publish_fields)
+            return
 
         completion_fields: dict[str, Any] = {
             "status": "completed",
@@ -2773,6 +2944,27 @@ def process_video(
             del _job_context.job_id
 
 
+def finish_cancelled_after_publish(job_id: str, **fields: Any) -> None:
+    """Close a job cancelled while TikTok was already receiving the video.
+
+    The upload cannot be rolled back from here, so the job is marked cancelled
+    with the publish result kept and a warning to verify it on TikTok. The
+    rendering work was delivered, so the quota is consumed, not released.
+    """
+
+    current = JOB_SERVICE.get(job_id) or {}
+    update_job(
+        job_id,
+        status="cancelled",
+        step="cancelled",
+        progress=float(current.get("progress", 0.99)),
+        step_detail=TIKTOK_CANCEL_UNCERTAIN_DETAIL,
+        finished_at=utc_now(),
+        **fields,
+    )
+    TENANT_GOVERNANCE.consume(job_id)
+
+
 def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> None:
     """Publish an already-rendered video claimed from the durable schedule."""
 
@@ -2796,6 +2988,18 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             title,
             privacy_level=privacy_level,
         )
+        publish_fields = {
+            "tiktok_publish_id": publish_result["publish_id"],
+            "tiktok_publish_title": publish_result["title"],
+            "tiktok_publish_privacy_level": publish_result["privacy_level"],
+            "tiktok_publish_status": publish_result["status"],
+            "tiktok_publish_detail": publish_result.get("status_payload"),
+        }
+        if JOB_SERVICE.is_cancel_requested(job_id):
+            finish_cancelled_after_publish(
+                job_id, job_action=None, publish_request=None, **publish_fields
+            )
+            return
         update_job(
             job_id,
             status="completed",
@@ -2805,11 +3009,7 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             finished_at=utc_now(),
             job_action=None,
             publish_request=None,
-            tiktok_publish_id=publish_result["publish_id"],
-            tiktok_publish_title=publish_result["title"],
-            tiktok_publish_privacy_level=publish_result["privacy_level"],
-            tiktok_publish_status=publish_result["status"],
-            tiktok_publish_detail=publish_result.get("status_payload"),
+            **publish_fields,
         )
         TENANT_GOVERNANCE.consume(job_id)
     except JobCancelled:
@@ -2824,9 +3024,23 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             job_action=None,
             publish_request=None,
         )
-        TENANT_GOVERNANCE.consume(job_id)
+        TENANT_GOVERNANCE.release(job_id)
     except Exception as exc:
         logger.warning("Scheduled TikTok publish failed for job %s", job_id, exc_info=True)
+        if JOB_SERVICE.is_cancel_requested(job_id):
+            update_job(
+                job_id,
+                status="cancelled",
+                step="cancelled",
+                step_detail="Đã hủy lịch đăng TikTok",
+                finished_at=utc_now(),
+                job_action=None,
+                publish_request=None,
+                tiktok_publish_status="FAILED",
+                tiktok_publish_error=str(exc),
+            )
+            TENANT_GOVERNANCE.release(job_id)
+            return
         update_job(
             job_id,
             status="completed",
@@ -3012,6 +3226,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             step_detail=str(exc),
             finished_at=utc_now(),
         )
+        TENANT_GOVERNANCE.release(job_id)
     except (KeyError, TypeError, ValueError, FileNotFoundError, SocialVideoDownloadError) as exc:
         logger.warning("Unable to resume job %s: %s", job_id, exc)
         update_job(
@@ -3032,7 +3247,7 @@ def retention_days(name: str, default: int) -> int:
 
 
 def retention_enabled() -> bool:
-    return os.environ.get("VIDTRANS_RETENTION_ENABLED", "0").lower() in {"1", "true", "yes"}
+    return os.environ.get("VIDTRANS_RETENTION_ENABLED", "1").lower() in {"1", "true", "yes"}
 
 
 def default_video_retention_days() -> int | None:
@@ -3109,16 +3324,24 @@ async def start_job_scheduler() -> None:
         requeued = JOB_SERVICE.requeue_interrupted()
         if requeued:
             logger.info("Requeued %d interrupted jobs after server restart", len(requeued))
+        offset = 0
+        while True:
+            cancelled_jobs, total = JOB_SERVICE.list_jobs(
+                status="cancelled", limit=500, offset=offset
+            )
+            for cancelled_job in cancelled_jobs:
+                TENANT_GOVERNANCE.release(str(cancelled_job["job_id"]))
+            offset += len(cancelled_jobs)
+            if not cancelled_jobs or offset >= total:
+                break
     scheduler = JobScheduler(
         JOB_SERVICE,
         resume_process_video,
         concurrency=SETTINGS.worker_concurrency,
+        on_cancelled=TENANT_GOVERNANCE.release,
     )
     app.state.job_scheduler = scheduler
     await scheduler.start()
-    publish_scheduler = TikTokPublishScheduler(TIKTOK_PUBLISHING)
-    app.state.tiktok_publish_scheduler = publish_scheduler
-    await publish_scheduler.start()
     social_publish_scheduler = SocialPublishScheduler(SOCIAL_PUBLISHING)
     app.state.social_publish_scheduler = social_publish_scheduler
     await social_publish_scheduler.start()
@@ -3135,9 +3358,6 @@ async def stop_job_scheduler() -> None:
     scheduler = getattr(app.state, "job_scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
-    publish_scheduler = getattr(app.state, "tiktok_publish_scheduler", None)
-    if publish_scheduler is not None:
-        await publish_scheduler.stop()
     social_publish_scheduler = getattr(app.state, "social_publish_scheduler", None)
     if social_publish_scheduler is not None:
         await social_publish_scheduler.stop()
@@ -4218,7 +4438,7 @@ async def process_video_endpoint(
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
     keep_original_audio: bool = Form(True),
-    original_audio_volume: float = Form(0.18),
+    original_audio_volume: float = Form(DEFAULT_ORIGINAL_AUDIO_VOLUME),
     music_volume: float = Form(0.28),
     subtitle_style: str | None = Form(default=None),
     subtitle_source: str = Form("speech"),
@@ -4397,7 +4617,7 @@ async def create_batch_endpoint(
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
     keep_original_audio: bool = Form(True),
-    original_audio_volume: float = Form(0.18),
+    original_audio_volume: float = Form(DEFAULT_ORIGINAL_AUDIO_VOLUME),
     music_volume: float = Form(0.28),
     subtitle_style: str | None = Form(default=None),
     subtitle_source: str = Form("speech"),
@@ -4723,7 +4943,7 @@ def list_jobs_endpoint(
     status: str | None = Query(default=None),
     batch_id: str | None = Query(default=None),
     search: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> JSONResponse:
     account = current_account(request)
@@ -4975,7 +5195,8 @@ def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     if job_for_request(request, job_id) is None:
         raise HTTPException(status_code=404, detail="job not found")
     job = JOB_SERVICE.request_cancel(job_id)
-    TENANT_GOVERNANCE.release(job_id)
+    if job.get("status") == "cancelled":
+        TENANT_GOVERNANCE.release(job_id)
     return JSONResponse(job_response(job_id, job))
 
 
@@ -5016,16 +5237,25 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         "tiktok_publish_status": None,
         "tiktok_publish_detail": None,
     }
+    artifact_keys = ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file")
+    for key in artifact_keys:
+        update_payload[key] = None
 
-    for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
+    # The status check above is a fast path; the store re-checks it atomically
+    # so a job whose worker has not stopped can never be requeued twice.
+    try:
+        JOB_SERVICE.retry(job_id, **update_payload)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    except JobStateConflictError:
+        raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý") from None
+
+    for key in artifact_keys:
         filename = source.get(key)
         if filename:
             target = stored_artifact_path(str(filename))
             if target.is_relative_to(OUTPUT_DIR.resolve()):
                 target.unlink(missing_ok=True)
-        update_payload[key] = None
-
-    JOB_SERVICE.update(job_id, **update_payload)
     notify_scheduler()
     return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
 
@@ -5040,6 +5270,14 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         raise HTTPException(status_code=409, detail="Hãy kết thúc lượt chuẩn bị TikTok trước khi xóa video")
     if job.get("status") in {"queued", "processing", "scheduled", "cancelling"}:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa")
+    # Remove the row first, atomically requiring a terminal status, so files are
+    # only deleted once no worker can still be using them.
+    try:
+        JOB_SERVICE.delete(job_id, require_terminal=True)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    except JobStateConflictError:
+        raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa") from None
     for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
         filename = job.get(key)
         if filename:
@@ -5058,7 +5296,6 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     job_work_dir = tenant_job_dir(WORK_DIR, str(job.get("owner_user_id") or _bootstrap_owner["user_id"]), job_id)
     if job_work_dir.is_relative_to(WORK_DIR.resolve()) and job_work_dir.exists():
         shutil.rmtree(job_work_dir)
-    JOB_SERVICE.delete(job_id)
     TENANT_GOVERNANCE.release(job_id)
     return JSONResponse({"job_id": job_id, "deleted": True})
 
@@ -5140,6 +5377,14 @@ def custom_openapi() -> dict[str, Any]:
 
 
 app.openapi = custom_openapi
+
+
+@app.get("/googlefffecc69420e3aa8.html", include_in_schema=False)
+async def google_verification():
+    verification_path = FRONTEND_DIR / "googlefffecc69420e3aa8.html"
+    if verification_path.exists():
+        return FileResponse(verification_path, media_type="text/html")
+    return Response(content="google-site-verification: googlefffecc69420e3aa8.html\n", media_type="text/html")
 
 
 if FRONTEND_DIR.exists():

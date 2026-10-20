@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +22,13 @@ class JobNotFoundError(JobStoreError):
     pass
 
 
+class JobStateConflictError(JobStoreError):
+    """Raised when a mutation is not allowed in the job's current status."""
+
+
+TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -30,22 +39,20 @@ def _json_default(value: Any) -> str:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
-class SQLiteJobStore:
-    """Small, process-safe JSON job repository backed by SQLite.
+class JobStore:
+    """Small, process-safe JSON job repository backed by PostgreSQL.
 
-    A new SQLite connection is used for every operation. This avoids sharing a
+    A new database connection is used for every operation. This avoids sharing a
     connection between FastAPI request threads and background worker threads.
-    Updates use ``BEGIN IMMEDIATE`` so read/merge/write is atomic.
+    Updates use explicit transactions so read/merge/write is atomic.
     """
 
     def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_target(database_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
+        connection = connect(self.database_path)
         connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA synchronous = NORMAL")
         return connection
@@ -85,7 +92,7 @@ class SQLiteJobStore:
             }
             for name, definition in {
                 "batch_id": "TEXT",
-                "owner_user_id": "TEXT",
+                "owner_user_id": "TEXT CHECK(owner_user_id IS NULL OR TRIM(owner_user_id) <> '')",
                 "priority": "INTEGER NOT NULL DEFAULT 0",
                 "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
                 "worker_id": "TEXT",
@@ -165,7 +172,10 @@ class SQLiteJobStore:
                 for row in connection.execute("PRAGMA table_info(batches)").fetchall()
             }
             if "owner_user_id" not in batch_columns:
-                connection.execute("ALTER TABLE batches ADD COLUMN owner_user_id TEXT")
+                connection.execute(
+                    "ALTER TABLE batches ADD COLUMN owner_user_id TEXT "
+                    "CHECK(owner_user_id IS NULL OR TRIM(owner_user_id) <> '')"
+                )
             connection.execute("UPDATE batches SET owner_user_id='__legacy__' WHERE owner_user_id IS NULL OR owner_user_id=''")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_batches_owner_updated ON batches(owner_user_id, updated_at DESC)"
@@ -448,14 +458,14 @@ class SQLiteJobStore:
             "name": str(row["name"]),
             "status": str(row["status"]),
             "owner_user_id": str(row["owner_user_id"]),
-            "config": SQLiteJobStore._decode(str(row["config_json"])),
+            "config": JobStore._decode(str(row["config_json"])),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
         }
 
     @staticmethod
     def _job_row(row: sqlite3.Row) -> dict[str, Any]:
-        payload = SQLiteJobStore._decode(str(row["payload_json"]))
+        payload = JobStore._decode(str(row["payload_json"]))
         return {
             "job_id": str(row["job_id"]),
             "batch_id": row["batch_id"],
@@ -477,6 +487,12 @@ class SQLiteJobStore:
                 raise JobNotFoundError(f"Job not found: {job_id}")
 
             payload = self._decode(row["payload_json"])
+            current_status = str(payload.get("status", "queued"))
+            requested_status = fields.get("status")
+            if current_status == "cancelled" and requested_status != "cancelled":
+                return payload
+            if current_status == "cancelling" and requested_status != "cancelled":
+                return payload
             payload.update(fields)
             status = str(payload.get("status", "queued"))
             scheduled_for = (
@@ -600,25 +616,31 @@ class SQLiteJobStore:
             status = str(row["status"])
             if status in {"completed", "failed", "cancelled"}:
                 return payload
-            if status in {"queued", "ready", "scheduled"}:
-                payload.update(
-                    {
-                        "status": "cancelled",
-                        "step": "cancelled",
-                        "cancel_requested": True,
-                        "finished_at": now,
-                    }
+            if status == "cancelling":
+                return payload
+            stops_immediately = status in {"queued", "scheduled"}
+            next_status = "cancelled" if stops_immediately else "cancelling"
+            if stops_immediately:
+                step_detail = "Đã hủy theo yêu cầu"
+            elif payload.get("step") == "publishing-tiktok":
+                # An upload already handed to TikTok cannot be recalled.
+                step_detail = (
+                    "Đang dừng; video có thể đã được gửi tới TikTok và không thể thu hồi tự động"
                 )
-                next_status = "cancelled"
             else:
-                payload.update(
-                    {
-                        "status": "cancelling",
-                        "step_detail": "Đang dừng an toàn sau công đoạn hiện tại",
-                        "cancel_requested": True,
-                    }
-                )
-                next_status = "cancelling"
+                step_detail = "Đang dừng tiến trình an toàn"
+            payload.update(
+                {
+                    "status": next_status,
+                    "step": next_status,
+                    "step_detail": step_detail,
+                    "cancel_requested": True,
+                }
+            )
+            if stops_immediately:
+                payload["finished_at"] = now
+            else:
+                payload["finished_at"] = None
             connection.execute(
                 """
                 UPDATE jobs
@@ -650,18 +672,94 @@ class SQLiteJobStore:
             ).fetchall()
         return {str(row["job_id"]): index for index, row in enumerate(rows, start=1)}
 
-    def delete(self, job_id: str) -> dict[str, Any]:
+    def delete(self, job_id: str, *, require_terminal: bool = False) -> dict[str, Any]:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT payload_json FROM jobs WHERE job_id = ?",
+                "SELECT status, payload_json FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(f"Job not found: {job_id}")
+            if require_terminal and str(row["status"]) not in TERMINAL_STATUSES:
+                raise JobStateConflictError(f"Job is still active: {job_id}")
+            payload = self._decode(row["payload_json"])
+            connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+        return payload
+
+    def retry(self, job_id: str, **fields: Any) -> dict[str, Any]:
+        """Atomically return a terminal job to the queue.
+
+        ``update`` intentionally ignores writes to cancelled jobs so late
+        workers cannot revive them; retry is the only path out of a terminal
+        status and it refuses jobs whose worker has not acknowledged yet.
+        """
+
+        now = _utc_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, payload_json FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(f"Job not found: {job_id}")
+            if str(row["status"]) not in TERMINAL_STATUSES:
+                raise JobStateConflictError(f"Job is still active: {job_id}")
+            payload = self._decode(row["payload_json"])
+            payload.update(fields)
+            payload.update({"status": "queued", "cancel_requested": False, "worker_id": None})
+            connection.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued', cancel_requested = 0, worker_id = NULL,
+                    scheduled_for = NULL, payload_json = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (self._encode(payload), now, job_id),
+            )
+        return payload
+
+    def finalize_cancellation(
+        self, job_id: str, **fields: Any
+    ) -> tuple[dict[str, Any], bool]:
+        """Move a ``cancelling`` job to ``cancelled`` once its worker stopped.
+
+        Returns the payload and whether this call performed the transition, so
+        callers can release quota exactly once.
+        """
+
+        now = _utc_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, payload_json FROM jobs WHERE job_id = ?",
                 (job_id,),
             ).fetchone()
             if row is None:
                 raise JobNotFoundError(f"Job not found: {job_id}")
             payload = self._decode(row["payload_json"])
-            connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
-        return payload
+            if str(row["status"]) != "cancelling":
+                return payload, False
+            payload.update(
+                {
+                    "step": "cancelled",
+                    "step_detail": "Đã hủy theo yêu cầu",
+                    **fields,
+                    "status": "cancelled",
+                    "cancel_requested": True,
+                    "finished_at": fields.get("finished_at") or now,
+                }
+            )
+            connection.execute(
+                """
+                UPDATE jobs
+                SET status = 'cancelled', cancel_requested = 1, payload_json = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (self._encode(payload), now, job_id),
+            )
+        return payload, True
 
     def prune_terminal(
         self,
@@ -689,7 +787,7 @@ class SQLiteJobStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             publish_clause = ""
-            for table in ("tiktok_publish_attempts", "social_publish_attempts"):
+            for table in ("social_publish_attempts",):
                 exists = connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
                 ).fetchone()
@@ -746,24 +844,35 @@ class SQLiteJobStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
-                "SELECT job_id, payload_json FROM jobs WHERE status IN ('queued', 'processing')"
+                "SELECT job_id, payload_json FROM jobs "
+                "WHERE status IN ('queued', 'processing', 'cancelling')"
             ).fetchall()
             for row in rows:
                 payload = self._decode(row["payload_json"])
-                payload.update(
-                    {
-                        "status": "failed",
-                        "step": "interrupted",
-                        "error": reason,
-                    }
-                )
+                if payload.get("cancel_requested") or payload.get("status") == "cancelling":
+                    payload.update(
+                        {
+                            "status": "cancelled",
+                            "step": "cancelled",
+                            "step_detail": "Đã hủy sau khi worker dừng",
+                            "finished_at": now,
+                        }
+                    )
+                else:
+                    payload.update(
+                        {
+                            "status": "failed",
+                            "step": "interrupted",
+                            "error": reason,
+                        }
+                    )
                 connection.execute(
                     """
                     UPDATE jobs
-                    SET status = 'failed', payload_json = ?, updated_at = ?
+                    SET status = ?, payload_json = ?, updated_at = ?
                     WHERE job_id = ?
                     """,
-                    (self._encode(payload), now, row["job_id"]),
+                    (str(payload["status"]), self._encode(payload), now, row["job_id"]),
                 )
                 recovered += 1
         return recovered
@@ -781,10 +890,26 @@ class SQLiteJobStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
-                "SELECT job_id, payload_json FROM jobs WHERE status IN ('queued', 'processing')"
+                "SELECT job_id, payload_json FROM jobs "
+                "WHERE status IN ('queued', 'processing', 'cancelling')"
             ).fetchall()
             for row in rows:
                 payload = self._decode(row["payload_json"])
+                if payload.get("cancel_requested") or payload.get("status") == "cancelling":
+                    payload.update(
+                        {
+                            "status": "cancelled",
+                            "step": "cancelled",
+                            "step_detail": "Đã hủy sau khi worker dừng",
+                            "finished_at": now,
+                        }
+                    )
+                    connection.execute(
+                        "UPDATE jobs SET status='cancelled', payload_json=?, updated_at=? "
+                        "WHERE job_id=?",
+                        (self._encode(payload), now, row["job_id"]),
+                    )
+                    continue
                 payload.update(
                     {
                         "status": "queued",
@@ -804,3 +929,7 @@ class SQLiteJobStore:
                 )
                 requeued.append((str(row["job_id"]), payload))
         return requeued
+
+
+# Backward-compatible import for isolated SQLite repository tests.
+SQLiteJobStore = JobStore

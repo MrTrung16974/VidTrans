@@ -18,7 +18,8 @@ class AppSettings:
     work_dir: Path
     ffmpeg: str
     ffprobe: str
-    paddle_ocr_enabled: bool
+    ocr_backend: str
+    ocr_model: str
     worker_concurrency: int
     whisper_concurrency: int
     ocr_concurrency: int
@@ -31,6 +32,7 @@ class AppSettings:
         if homebrew_bin.exists():
             os.environ["PATH"] = f"{homebrew_bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
+        ocr_backend = cls._ocr_backend()
         settings = cls(
             base_dir=base_dir,
             frontend_dir=base_dir / "frontend",
@@ -39,7 +41,8 @@ class AppSettings:
             work_dir=base_dir / "work",
             ffmpeg=cls._resolve_binary(base_dir, "ffmpeg"),
             ffprobe=cls._resolve_binary(base_dir, "ffprobe"),
-            paddle_ocr_enabled=cls._paddle_ocr_enabled(),
+            ocr_backend=ocr_backend,
+            ocr_model=cls._ocr_model(),
             worker_concurrency=cls._positive_int("VIDTRANS_WORKER_CONCURRENCY", 2),
             whisper_concurrency=cls._positive_int("VIDTRANS_WHISPER_CONCURRENCY", 1),
             ocr_concurrency=cls._positive_int("VIDTRANS_OCR_CONCURRENCY", 1),
@@ -60,16 +63,25 @@ class AppSettings:
         return name
 
     @staticmethod
-    def _paddle_ocr_enabled() -> bool:
-        """Avoid a known native Paddle crash in Docker Desktop ARM64 by default.
-
-        Set VIDTRANS_ENABLE_PADDLE_OCR=1 after validating a compatible Paddle
-        runtime.  An explicit 0 always disables the optional OCR stage.
-        """
-        configured = os.environ.get("VIDTRANS_ENABLE_PADDLE_OCR")
+    def _ocr_backend() -> str:
+        configured = os.environ.get("VIDTRANS_OCR_BACKEND")
         if configured is not None:
-            return configured.lower() in {"1", "true", "yes"}
-        return not (platform.system() == "Linux" and platform.machine().lower() in {"arm64", "aarch64"})
+            backend = configured.strip().lower()
+            if backend not in {"auto", "paddle", "tesseract", "off"}:
+                raise ValueError("VIDTRANS_OCR_BACKEND must be auto, paddle, tesseract, or off")
+            if backend != "auto":
+                return backend
+
+        if platform.system() == "Linux" and platform.machine().lower() in {"arm64", "aarch64"}:
+            return "tesseract"
+        return "paddle"
+
+    @staticmethod
+    def _ocr_model() -> str:
+        model = os.environ.get("VIDTRANS_OCR_MODEL", "medium").strip().lower()
+        if model not in {"medium", "mobile"}:
+            raise ValueError("VIDTRANS_OCR_MODEL must be medium or mobile")
+        return model
 
     @staticmethod
     def _positive_int(name: str, default: int) -> int:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Mapping
 
-from infrastructure.job_store import SQLiteJobStore
+from infrastructure.job_store import JobStore
 
 
 class JobService:
@@ -14,7 +14,7 @@ class JobService:
     preserve this interface when processing moves out of the API process.
     """
 
-    def __init__(self, store: SQLiteJobStore, *, on_change: Callable[[str], None] | None = None) -> None:
+    def __init__(self, store: JobStore, *, on_change: Callable[[str], None] | None = None) -> None:
         self._store = store
         self._on_change = on_change
 
@@ -91,10 +91,21 @@ class JobService:
     def queue_positions(self) -> dict[str, int]:
         return self._store.queue_positions()
 
-    def delete(self, job_id: str) -> dict[str, Any]:
-        deleted = self._store.delete(job_id)
+    def delete(self, job_id: str, *, require_terminal: bool = False) -> dict[str, Any]:
+        deleted = self._store.delete(job_id, require_terminal=require_terminal)
         self._changed(job_id)
         return deleted
+
+    def retry(self, job_id: str, **fields: Any) -> dict[str, Any]:
+        retried = self._store.retry(job_id, **fields)
+        self._changed(job_id)
+        return retried
+
+    def finalize_cancellation(self, job_id: str, **fields: Any) -> tuple[dict[str, Any], bool]:
+        finalized, changed = self._store.finalize_cancellation(job_id, **fields)
+        if changed:
+            self._changed(job_id)
+        return finalized, changed
 
     def prune_terminal(self, cutoff: str, **scope: Any) -> dict[str, Any]:
         removed = self._store.prune_terminal(cutoff, **scope)

@@ -90,3 +90,66 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=backend python3 -m unittest \
 - Chưa phủ kill tại mọi stage, Docker build, ASR/OCR/provider model thật hoặc benchmark corpus.
 - ThreadPool TTS vẫn giữ 5 để tránh thay đổi tuning khi chưa có baseline.
 - Chưa chạy Docker/full end-to-end; unit test không thay thế SIT/UAT.
+
+## Bổ sung 2026-10-18 — đồng bộ phụ đề và duration
+
+- Thêm `pipeline/subtitle_segmentation.py`: tách cue ASR theo dấu kết câu, khoảng lặng và word timestamp; gán `cue_id` ổn định; luôn flush cụm cuối. Cue không có word timestamp được giữ nguyên, không chia đều thời gian giả tạo.
+- Cho phép cấu hình qua `subtitle_style`: `preferred_cue_chars` (24), `max_cue_chars` (36), `cue_pause_seconds` (0,65).
+- Bump transcript/translation fingerprint để checkpoint cũ không bỏ qua logic phân đoạn mới.
+- Pad rồi trim `voice_track` và `mixed_audio` đúng duration nguồn; bump audio/render fingerprint để không reuse output từng bị cắt bởi `-shortest`.
+- Thêm `test_subtitle_segmentation.py` và `test_audio_duration.py`; cập nhật harness tenant path/fingerprint.
+- Regression liên quan: 159/159 PASS. Audio integration: nguồn 2,000 giây, voice 0,500 giây, output mix 2,000 giây.
+- Crash/restart harness hiện hoàn tất output 12 giây nhưng checkpoint TTS vẫn báo `miss` sau SIGKILL dù fingerprint trước/sau giống nhau; ghi nhận là regression test FAIL cần điều tra tiếp, không báo PASS.
+
+## Bổ sung 2026-10-18 — phân tích `output_3c10ceec.mp4`
+
+- Video thực tế 26,603 giây, 576×1024, 30 fps cho thấy một cue Việt dài bốn dòng tồn tại khoảng 0–8 giây trong khi chữ Trung đã đổi nhiều lần.
+- Nguyên nhân code: SRT/ASS dùng `tts_start/tts_end`, làm timeline hiển thị trôi theo lịch TTS; ngưỡng cue nguồn 24/36 ký tự chưa phù hợp video dọc; `wrap_text` cắt bỏ các dòng sau dòng thứ hai.
+- Sửa SRT/ASS luôn dùng `start/end` nguồn; TTS timing chỉ phục vụ audio.
+- Giảm mặc định xuống preferred/max 14/20 ký tự nguồn, thêm `max_cue_duration_seconds=3.2` dựa trên word timestamp.
+- `wrap_text` cân bằng về tối đa hai dòng nhưng giữ đủ mọi từ.
+- Thêm test continuous speech, source-vs-TTS timing và không mất từ. Regression mới nhất 162/162 PASS.
+
+## Bổ sung 2026-10-18 — cân bằng audio và màu vietsub
+
+- Đo `output_3c10ceec (1).mp4`: integrated loudness -15,9 LUFS, true peak -1,2 dBFS; file chỉ còn một track mix nên không thể tách chính xác loudness voice/source sau render.
+- Đổi voice mix gain từ 1,40 xuống 1,10 và default tiếng gốc từ 0,18 lên 0,50; checkbox giữ tiếng gốc vẫn bật mặc định.
+- Thêm màu chữ, màu nền, opacity và bật/tắt nền hộp trong UI; preview cập nhật trực tiếp.
+- Mặc định theo ảnh tham chiếu: chữ trắng, hộp đen opacity 0,82, ASS BorderStyle 3.
+- Chuẩn hóa/validate màu CSS trước khi chuyển sang ASS; drawtext và Pillow fallback cũng dùng cùng màu.
+- Cache-bust frontend lên `app.js?v=20261018-11`.
+- Regression tổng hợp 165 cases: lần đầu 164 PASS/1 FAIL do assertion cache version cũ; sửa assertion và retest nhóm ảnh hưởng 15/15 PASS.
+- UX follow-up: bỏ ô nhập độ đậm nền; frontend luôn gửi default 0,82, backend vẫn fallback 0,82. Cache frontend tăng lên `20261018-12`; static tests 9/9 PASS.
+
+## Bổ sung 2026-10-18 — lỗi `No text to send to TTS API`
+
+- Thêm `is_speakable_tts_text`: chỉ gửi provider khi cue có ít nhất một ký tự Unicode thuộc nhóm letter/number.
+- Cue chỉ chứa dấu câu/ký hiệu được giữ cho luồng phụ đề nhưng bỏ TTS có kiểm soát với `tts_skip_reason=no_speakable_text`.
+- Khi mọi cue đều bị bỏ TTS, tạo silent voice track bằng FFmpeg đúng duration video để pipeline vẫn hoàn tất.
+- Tăng `tts_pipeline_version` từ 3 lên 4.
+- Nhóm regression TTS/OCR/checkpoint/frontend: 37/37 PASS trong image VidTrans.
+
+## Bổ sung 2026-10-18 — OCR + ASR độc lập
+
+- Thêm lựa chọn `subtitle_source=independent` trong domain/API/UI; không đổi hành vi `auto`, `burned`, `speech`.
+- OCR caption Trung và ASR audio auto-detect chạy như hai modality độc lập. OCR thắng khi overlap; không ghi `asr_text` hoặc so similarity xuyên ngôn ngữ. Cue ASR không overlap được giữ làm fallback.
+- Gắn `source_language` theo cue (`zh-CN` cho OCR, language detect cho audio) và dịch theo từng nhóm ngôn ngữ, sau đó phục hồi đúng thứ tự timeline.
+- Chế độ mới fail-fast nếu OCR bị tắt; transcript fingerprint 4, merge contract 2 và translation pipeline version 3 để không reuse cache cũ.
+- Frontend cache-bust `app.js?v=20261018-14`.
+- Nhóm ảnh hưởng 63/63 PASS. Full backend 420/422 PASS; 1 FAIL + 1 ERROR tồn tại ngoài phạm vi ở social publishing/Douyin QR.
+
+## Bổ sung 2026-10-18 — hủy job tức thời
+
+- `SQLiteJobStore.request_cancel` chuyển cả job đang `processing` thẳng sang `cancelled`, ghi `finished_at` và thông báo “Đã hủy theo yêu cầu” trong cùng transaction.
+- Job đã hủy bỏ qua mọi update đến muộn không xác nhận `cancelled`, ngăn worker ghi đè thành `completed`, `failed` hoặc cập nhật progress sau hủy.
+- Frontend hiển thị toast “Đã hủy job”; cache-bust `app.js?v=20261018-15`.
+- Worker vẫn dùng cooperative cancellation tại callback/checkpoint; native ASR/FFmpeg đang ở giữa một call không bị kill cưỡng bức, nhưng kết quả không thể thay đổi trạng thái terminal.
+- Nhóm ảnh hưởng 43/43 PASS. Full backend 421/423 PASS; hai lỗi nền ngoài phạm vi không đổi.
+
+## Bổ sung 2026-10-19 — OCR ổn định trên Linux ARM
+
+- Thêm `VIDTRANS_OCR_BACKEND=auto|paddle|tesseract|off`; `auto` chọn Tesseract trên Linux `arm64/aarch64`, các nền tảng còn lại giữ PaddleOCR.
+- Thêm `TesseractOCRReader`, đọc TSV từ CLI `tesseract`, gom token theo dòng và trả về contract `OCRLine` hiện có.
+- Image cài `tesseract-ocr` và model tiếng Trung giản thể `tesseract-ocr-chi-sim`; không còn yêu cầu bật PaddleOCR trên runtime ARM dễ crash.
+- Transcript fingerprint chứa OCR backend để checkpoint của Paddle/Tesseract không dùng lẫn nhau.
+- Unit/regression liên quan: 38/38 PASS trong image mới. Runtime xác nhận có `chi_sim`, backend là `tesseract`, API `/docs` trả HTTP 200.

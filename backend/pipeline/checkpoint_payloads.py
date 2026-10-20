@@ -39,7 +39,7 @@ def valid_transcript_checkpoint(value: Any) -> bool:
     return (
         isinstance(value, dict)
         and value.get("version") == 1
-        and value.get("source_method") in {"ocr", "speech"}
+        and value.get("source_method") in {"ocr", "speech", "hybrid", "independent"}
         and valid_checkpoint_segments(value.get("segments"))
     )
 

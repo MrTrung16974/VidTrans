@@ -1,4 +1,24 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: vidtrans-postgres
+    environment:
+      POSTGRES_DB: "${VIDTRANS_POSTGRES_DB:-vidtrans}"
+      POSTGRES_USER: "${VIDTRANS_POSTGRES_USER:-vidtrans}"
+      POSTGRES_PASSWORD: "${VIDTRANS_POSTGRES_PASSWORD:-vidtrans}"
+    ports:
+      # Keep loopback-only by default. Set VIDTRANS_POSTGRES_BIND_ADDRESS=0.0.0.0
+      # only when a VPS/network firewall restricts port 5432 to trusted clients.
+      - "${VIDTRANS_POSTGRES_BIND_ADDRESS:-127.0.0.1}:${VIDTRANS_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${VIDTRANS_POSTGRES_USER:-vidtrans} -d ${VIDTRANS_POSTGRES_DB:-vidtrans}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   social-browser:
     image: vidtrans-social-browser
     build:
@@ -60,6 +80,8 @@ services:
       dockerfile: Dockerfile
     container_name: vidtrans
     depends_on:
+      postgres:
+        condition: service_healthy
       social-browser:
         condition: service_healthy
       tiktok-browser:
@@ -68,11 +90,19 @@ services:
       # Keep the FastAPI port private to the VPS. Production traffic must enter via Nginx.
       - "127.0.0.1:5200:8000"
     environment:
+      # Build the internal DSN from the same credentials used to initialize
+      # PostgreSQL, preventing a stale VIDTRANS_DATABASE_URL password.
+      VIDTRANS_POSTGRES_HOST: postgres
+      VIDTRANS_POSTGRES_DB: "${VIDTRANS_POSTGRES_DB:-vidtrans}"
+      VIDTRANS_POSTGRES_USER: "${VIDTRANS_POSTGRES_USER:-vidtrans}"
+      VIDTRANS_POSTGRES_PASSWORD: "${VIDTRANS_POSTGRES_PASSWORD:-vidtrans}"
+      VIDTRANS_POSTGRES_INTERNAL_PORT: "5432"
       VIDTRANS_RECOVER_INTERRUPTED_JOBS: "1"
-      VIDTRANS_ENABLE_PADDLE_OCR: "0"
+      VIDTRANS_OCR_BACKEND: "${VIDTRANS_OCR_BACKEND:-auto}"
+      VIDTRANS_OCR_MODEL: "${VIDTRANS_OCR_MODEL:-medium}"
       VIDTRANS_WORKER_CONCURRENCY: "2"
-      # Retention is opt-in to avoid deleting existing deployments unexpectedly.
-      VIDTRANS_RETENTION_ENABLED: "${VIDTRANS_RETENTION_ENABLED:-0}"
+      # Terminal job videos are deleted after 30 days by default; set 0 to opt out.
+      VIDTRANS_RETENTION_ENABLED: "${VIDTRANS_RETENTION_ENABLED:-1}"
       VIDTRANS_JOB_RETENTION_DAYS: "${VIDTRANS_JOB_RETENTION_DAYS:-30}"
       VIDTRANS_RETENTION_INTERVAL_MINUTES: "${VIDTRANS_RETENTION_INTERVAL_MINUTES:-60}"
       VIDTRANS_AUDIT_RETENTION_DAYS: "${VIDTRANS_AUDIT_RETENTION_DAYS:-365}"
@@ -156,6 +186,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   tiktok-browser-profile:
   douyin-browser-profile:
   whisper-models:

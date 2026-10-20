@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+
+from infrastructure.database import connect, prepare_target
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -21,17 +23,15 @@ class SocialPublishNotFoundError(SocialPublishStoreError):
     pass
 
 
-class SQLiteSocialPublishStore:
+class SocialPublishStore:
     """Durable store for normalized multi-platform publishing attempts."""
 
     def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_target(database_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
+        connection = connect(self.database_path)
         connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA synchronous = NORMAL")
         return connection
@@ -126,71 +126,6 @@ class SQLiteSocialPublishStore:
         # Persisted columns are authoritative; payload must never shadow status,
         # remote IDs or other state-machine fields.
         return {**payload, **result}
-
-    def migrate_legacy_tiktok_history(self) -> int:
-        """Copy terminal legacy TikTok attempts once without claiming active work."""
-        status_map = {
-            "PUBLISH_COMPLETE": "PUBLISHED",
-            "SEND_TO_USER_INBOX": "DRAFT_DELIVERED",
-            "FAILED": "FAILED",
-            "CANCELLED": "CANCELLED",
-        }
-        mode_map = {
-            "DIRECT_NOW": "DIRECT_NOW",
-            "SCHEDULE": "SCHEDULE_LOCAL",
-            "INBOX_DRAFT": "DRAFT",
-        }
-        migrated = 0
-        with self._connection() as connection:
-            exists = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tiktok_publish_attempts'"
-            ).fetchone()
-            if exists is None:
-                return 0
-            rows = connection.execute(
-                """
-                SELECT * FROM tiktok_publish_attempts
-                WHERE status IN ('PUBLISH_COMPLETE', 'SEND_TO_USER_INBOX', 'FAILED', 'CANCELLED')
-                ORDER BY created_at ASC
-                """
-            ).fetchall()
-            for row in rows:
-                payload = self._decode(str(row["payload_json"]))
-                status_detail = payload.pop("status_detail", {})
-                error_message = payload.pop("error", None)
-                account_id = str(payload.get("account_id") or "")
-                for reserved in (
-                    "attempt_id", "job_id", "platform", "account_id", "mode", "status",
-                    "scheduled_for", "idempotency_key", "remote_media_id", "remote_post_id",
-                    "error_code", "error_message", "claimed_at", "created_at", "updated_at",
-                ):
-                    payload.pop(reserved, None)
-                cursor = connection.execute(
-                    """
-                    INSERT OR IGNORE INTO social_publish_attempts(
-                        attempt_id, job_id, platform, account_id, mode, status,
-                        scheduled_for, idempotency_key, remote_media_id, payload_json,
-                        status_detail_json, error_message, claimed_at, created_at, updated_at
-                    ) VALUES (?, ?, 'TIKTOK', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        f"legacy-tiktok-{row['attempt_id']}",
-                        row["job_id"],
-                        account_id,
-                        mode_map.get(str(row["mode"]), "DIRECT_NOW"),
-                        status_map[str(row["status"])],
-                        row["idempotency_key"],
-                        row["remote_publish_id"],
-                        self._encode(payload),
-                        self._encode(status_detail if isinstance(status_detail, dict) else {}),
-                        str(error_message)[:500] if error_message else None,
-                        row["claimed_at"],
-                        row["created_at"],
-                        row["updated_at"],
-                    ),
-                )
-                migrated += int(cursor.rowcount == 1)
-        return migrated
 
     def create(
         self,
@@ -369,3 +304,7 @@ class SQLiteSocialPublishStore:
         assert cancelled is not None
         return cancelled
 
+
+
+# Backward-compatible import for existing integrations.
+SQLiteSocialPublishStore = SocialPublishStore

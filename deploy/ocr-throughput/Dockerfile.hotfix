@@ -1,0 +1,4 @@
+FROM vidtrans-vidtrans
+
+COPY backend/pipeline/ocr.py /app/backend/pipeline/ocr.py
+COPY backend/main.py /app/backend/main.py
