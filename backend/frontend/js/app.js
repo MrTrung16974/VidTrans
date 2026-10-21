@@ -772,7 +772,7 @@ async function loadTranslationProviders() {
       const provider = providers.get(option.value);
       option.disabled = provider ? !provider.configured : true;
       if (provider && !provider.configured && !option.textContent.includes("chưa cấu hình")) {
-        option.textContent += " — chưa cấu hình key";
+        option.textContent += ["translategemma", "qwen3"].includes(option.value) ? " — chưa chạy Ollama" : " — chưa cấu hình key";
       }
     });
     if (select.selectedOptions[0]?.disabled) select.value = "google";

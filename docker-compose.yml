@@ -79,6 +79,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: vidtrans
+    extra_hosts:
+      # Lets the container reach Ollama on the host (needed on Linux; built in on Docker Desktop).
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,6 +117,10 @@ services:
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       GEMINI_TRANSLATION_MODEL: "${GEMINI_TRANSLATION_MODEL:-gemini-3.5-flash-lite}"
       GEMINI_TRANSLATION_MODELS: "${GEMINI_TRANSLATION_MODELS:-gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash,gemini-3.6-flash,gemini-2.5-flash-lite,gemini-2.5-flash}"
+      # Local translators via Ollama on the host: `ollama pull qwen3:4b` / `ollama pull translategemma`.
+      VIDTRANS_OLLAMA_URL: "${VIDTRANS_OLLAMA_URL:-http://host.docker.internal:11434}"
+      VIDTRANS_TRANSLATEGEMMA_MODEL: "${VIDTRANS_TRANSLATEGEMMA_MODEL:-translategemma}"
+      VIDTRANS_QWEN3_MODEL: "${VIDTRANS_QWEN3_MODEL:-qwen3:4b}"
       VIDTRANS_ELEVENLABS_API_KEY: "${VIDTRANS_ELEVENLABS_API_KEY:-}"
       VIDTRANS_ELEVENLABS_VOICES: "${VIDTRANS_ELEVENLABS_VOICES:-}"
       VIDTRANS_ELEVENLABS_FEMALE_VOICE_ID: "${VIDTRANS_ELEVENLABS_FEMALE_VOICE_ID:-}"
