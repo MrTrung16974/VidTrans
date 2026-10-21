@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import parse_qs, quote_plus, urlsplit
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -79,7 +79,9 @@ from infrastructure.social_credentials import SocialCredentialStore
 from infrastructure.tenant_governance import QuotaExceededError, TenantGovernanceStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
+from infrastructure.mailer import MailConfig, MailDeliveryError, SmtpMailer
 from infrastructure.media_probe import MediaProbe, probe_media_file
+from infrastructure.password_reset import CODE_TTL_SECONDS, PasswordResetStore
 from infrastructure.stage_checkpoint import (
     StageCheckpointStore,
     fingerprint_payload,
@@ -510,6 +512,8 @@ _bootstrap_owner = ADMIN_ACCOUNTS.get_by_email(_bootstrap_email)
 if _bootstrap_owner is None:
     raise RuntimeError("Bootstrap owner account is missing")
 JOB_SERVICE.backfill_legacy_owner(str(_bootstrap_owner["user_id"]))
+MAILER = SmtpMailer(MailConfig.from_env())
+PASSWORD_RESETS = PasswordResetStore(DATABASE_TARGET, AUTH_MANAGER.config.jwt_secret)
 
 
 def copy_legacy_file(source: Path, destination: Path) -> bool:
@@ -740,6 +744,8 @@ PUBLIC_AUTH_PATHS = {
     "/api/v1/auth/token",
     "/api/v1/auth/refresh",
     "/api/v1/auth/register",
+    "/api/v1/auth/password-reset/request",
+    "/api/v1/auth/password-reset/confirm",
     "/api/v1/tiktok-auth/callback",
     "/api/v1/instagram-auth/callback",
     "/api/v1/threads-auth/callback",
@@ -4475,6 +4481,117 @@ def register_account(
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
     set_auth_cookies(response, account, token, expires_in, remember=False)
+    return response
+
+
+PASSWORD_RESET_GENERIC_MESSAGE = (
+    "Nếu email đã đăng ký, mã xác nhận gồm 6 chữ số đã được gửi tới hộp thư. "
+    f"Mã có hiệu lực {CODE_TTL_SECONDS // 60} phút."
+)
+PASSWORD_RESET_INVALID_CODE = "Mã xác nhận không đúng hoặc đã hết hạn"
+PASSWORD_RESET_IP_LIMIT = 10
+PASSWORD_RESET_IP_WINDOW_SECONDS = 15 * 60
+_password_reset_requests: dict[str, list[float]] = {}
+_password_reset_requests_lock = threading.Lock()
+
+
+def check_password_reset_rate_limit(client_id: str) -> None:
+    """Bound reset traffic per client; per-account limits live in the reset store."""
+    now = time.monotonic()
+    with _password_reset_requests_lock:
+        recent = [
+            stamp for stamp in _password_reset_requests.get(client_id, [])
+            if stamp > now - PASSWORD_RESET_IP_WINDOW_SECONDS
+        ]
+        if len(recent) >= PASSWORD_RESET_IP_LIMIT:
+            _password_reset_requests[client_id] = recent
+            retry_after = max(1, int(PASSWORD_RESET_IP_WINDOW_SECONDS - (now - recent[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="Bạn đã thử quá nhiều lần. Hãy thử lại sau ít phút.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        recent.append(now)
+        _password_reset_requests[client_id] = recent
+
+
+def require_password_reset_available() -> None:
+    if not AUTH_MANAGER.config.configured:
+        raise HTTPException(status_code=503, detail="Hệ thống đăng nhập chưa sẵn sàng")
+    if not MAILER.configured:
+        raise HTTPException(status_code=503, detail="Chức năng quên mật khẩu chưa được cấu hình gửi email")
+
+
+def send_password_reset_email(email: str, code: str) -> None:
+    minutes = CODE_TTL_SECONDS // 60
+    try:
+        MAILER.send(
+            to=email,
+            subject="Mã đặt lại mật khẩu VidTrans",
+            text=(
+                f"Mã xác nhận đặt lại mật khẩu VidTrans của bạn là: {code}\n\n"
+                f"Mã có hiệu lực trong {minutes} phút và chỉ dùng được một lần.\n"
+                "Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này; "
+                "mật khẩu hiện tại vẫn giữ nguyên.\n"
+            ),
+        )
+    except MailDeliveryError:
+        logger.exception("Password reset e-mail delivery failed")
+
+
+@app.post("/api/v1/auth/password-reset/request", status_code=202)
+def request_password_reset(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    email: str = Form(..., max_length=254),
+) -> JSONResponse:
+    """Send a one-time code; the response never reveals whether the e-mail exists."""
+    require_password_reset_available()
+    check_password_reset_rate_limit(auth_client_id(request))
+    account = ADMIN_ACCOUNTS.get_by_email(email)
+    if account is not None and account["approval_status"] == "approved":
+        code = PASSWORD_RESETS.issue(str(account["user_id"]))
+        if code is not None:
+            # Delivery runs after the response so its latency cannot reveal the account.
+            background_tasks.add_task(send_password_reset_email, str(account["email"]), code)
+    return JSONResponse({"message": PASSWORD_RESET_GENERIC_MESSAGE}, status_code=202,
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/v1/auth/password-reset/confirm")
+def confirm_password_reset(
+    request: Request,
+    email: str = Form(..., max_length=254),
+    code: str = Form(..., max_length=16),
+    new_password: str = Form(..., min_length=12, max_length=256),
+) -> JSONResponse:
+    """Set a new password with the e-mailed code and end every existing session."""
+    require_password_reset_available()
+    check_password_reset_rate_limit(auth_client_id(request))
+    account = ADMIN_ACCOUNTS.get_by_email(email)
+    if (
+        account is None
+        or account["approval_status"] != "approved"
+        or not PASSWORD_RESETS.consume(str(account["user_id"]), code)
+    ):
+        raise HTTPException(status_code=400, detail=PASSWORD_RESET_INVALID_CODE)
+    try:
+        ADMIN_ACCOUNTS.set_password_hash(str(account["user_id"]), hash_password(new_password))
+    except (AdminAccountError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=str(account["user_id"]),
+        action="account.password_reset_self",
+        resource_type="account",
+        resource_id=str(account["user_id"]),
+        target_user_id=str(account["user_id"]),
+        metadata={"method": "email_code"},
+    )
+    response = JSONResponse(
+        {"message": "Đã đặt lại mật khẩu. Hãy đăng nhập bằng mật khẩu mới."},
+        headers={"Cache-Control": "no-store"},
+    )
+    clear_auth_cookies(response)
     return response
 
 

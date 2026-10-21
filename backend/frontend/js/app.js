@@ -1921,28 +1921,124 @@ async function bulkJobAction(action) {
 }
 
 let authMode = "login";
+let passwordResetEmail = "";
 
-function setAuthMode(mode) {
-  authMode = mode === "register" ? "register" : "login";
-  const registering = authMode === "register";
-  $("#authLoginForm").classList.toggle("is-hidden", registering);
-  $("#authRegisterForm").classList.toggle("is-hidden", !registering);
-  $("#authTitle").textContent = registering ? "Đăng ký VidTrans" : "Đăng nhập VidTrans";
-  $("#authDescription").textContent = registering
-    ? "Tạo tài khoản miễn phí để bắt đầu xử lý video."
-    : "Đăng nhập để truy cập pipeline, tiến trình và file video.";
-  $("#authModeToggle").textContent = registering
-    ? "Đã có tài khoản? Đăng nhập"
-    : "Chưa có tài khoản? Đăng ký miễn phí";
+const AUTH_MODES = {
+  login: {
+    form: "#authLoginForm", focus: "#authUsername", title: "Đăng nhập VidTrans",
+    description: "Đăng nhập để truy cập pipeline, tiến trình và file video.",
+    toggle: "Chưa có tài khoản? Đăng ký miễn phí",
+    message: "OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly",
+  },
+  register: {
+    form: "#authRegisterForm", focus: "#registerDisplayName", title: "Đăng ký VidTrans",
+    description: "Tạo tài khoản miễn phí để bắt đầu xử lý video.",
+    toggle: "Đã có tài khoản? Đăng nhập",
+    message: "Tài khoản mới sẽ được kích hoạt với gói Free.",
+  },
+  "reset-request": {
+    form: "#authResetRequestForm", focus: "#resetEmail", title: "Quên mật khẩu",
+    description: "Nhập email đã đăng ký, VidTrans sẽ gửi mã xác nhận để đặt lại mật khẩu.",
+    toggle: "Quay lại đăng nhập",
+    message: "",
+  },
+  "reset-confirm": {
+    form: "#authResetConfirmForm", focus: "#resetCode", title: "Đặt lại mật khẩu",
+    description: "Nhập mã xác nhận trong email và mật khẩu mới.",
+    toggle: "Quay lại đăng nhập",
+    message: "",
+  },
+};
+
+function setAuthMode(mode, message) {
+  authMode = AUTH_MODES[mode] ? mode : "login";
+  const config = AUTH_MODES[authMode];
+  Object.values(AUTH_MODES).forEach(item => $(item.form).classList.toggle("is-hidden", item !== config));
+  $("#authTitle").textContent = config.title;
+  $("#authDescription").textContent = config.description;
+  $("#authModeToggle").textContent = config.toggle;
+  const authMessage = $("#authMessage");
+  authMessage.textContent = message ?? config.message;
+  authMessage.classList.remove("error");
+  setTimeout(() => $(config.focus).focus(), 0);
+}
+
+function showAuthError(error) {
   const message = $("#authMessage");
-  message.textContent = registering
-    ? "Tài khoản mới sẽ được kích hoạt với gói Free."
-    : "OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly";
-  message.classList.remove("error");
-  setTimeout(() => (registering ? $("#registerDisplayName") : $("#authUsername")).focus(), 0);
+  message.textContent = error.message;
+  message.classList.add("error");
 }
 
 $("#authModeToggle").addEventListener("click", () => setAuthMode(authMode === "login" ? "register" : "login"));
+
+$("#authForgotPassword").addEventListener("click", () => {
+  $("#resetEmail").value = $("#authUsername").value.includes("@") ? $("#authUsername").value.trim() : "";
+  setAuthMode("reset-request");
+});
+
+async function requestPasswordResetCode(email) {
+  const body = new FormData();
+  body.set("email", email);
+  const payload = await requestJson("/api/v1/auth/password-reset/request", { method: "POST", body });
+  passwordResetEmail = email;
+  return payload.message;
+}
+
+$("#authResetRequestForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = $("#authResetRequestSubmit");
+  button.disabled = true;
+  try {
+    const message = await requestPasswordResetCode($("#resetEmail").value.trim());
+    $("#authResetConfirmForm").reset();
+    setAuthMode("reset-confirm", message);
+  } catch (error) {
+    showAuthError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("#authResetResend").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    setAuthMode("reset-confirm", await requestPasswordResetCode(passwordResetEmail));
+  } catch (error) {
+    showAuthError(error);
+  } finally {
+    // Matches the server-side resend cooldown.
+    setTimeout(() => { button.disabled = false; }, 60_000);
+  }
+});
+
+$("#authResetConfirmForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $("#authResetConfirmSubmit");
+  const password = $("#resetNewPassword").value;
+  if (password !== $("#resetNewPasswordConfirm").value) {
+    showAuthError(new Error("Mật khẩu nhập lại chưa khớp"));
+    return;
+  }
+  button.disabled = true;
+  try {
+    const body = new FormData();
+    body.set("email", passwordResetEmail);
+    body.set("code", $("#resetCode").value.trim());
+    body.set("new_password", password);
+    const payload = await requestJson("/api/v1/auth/password-reset/confirm", { method: "POST", body });
+    form.reset();
+    setPasswordVisible($("[data-password-toggle=resetNewPassword]"), false);
+    $("#authUsername").value = passwordResetEmail;
+    setAuthMode("login", payload.message);
+    setTimeout(() => $("#authPassword").focus(), 0);
+  } catch (error) {
+    showAuthError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 $("#authLoginForm").addEventListener("submit", async event => {
   event.preventDefault();
