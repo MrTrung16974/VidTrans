@@ -168,3 +168,64 @@ class TranslationPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EchoLinesTranslator:
+    """LLM-style translator that, correctly, returns Latin names and numbers unchanged."""
+
+    supports_markers = False
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.calls: list[str] = []
+
+    def translate_lines(self, lines: list[str]) -> list[str]:
+        self.lines.extend(lines)
+        return [{"你好": "Xin chào"}.get(line, line) for line in lines]
+
+    def translate(self, text: str) -> str:
+        self.calls.append(text)
+        return {"你好": "Xin chào"}.get(text, text)
+
+
+class PreservedCueTests(unittest.TestCase):
+    def cues(self, *texts: str) -> list[dict]:
+        return [{"start": float(i), "end": i + 1.0, "text": text} for i, text in enumerate(texts)]
+
+    def test_cue_without_source_script_is_kept_and_never_sent(self) -> None:
+        from pipeline.translation import ensure_translation_complete
+
+        translator = EchoLinesTranslator()
+        translated = translate_segments(
+            self.cues("你好", "iPhone 15 Pro", "100%", "你好"), translator,
+            retries=1, sleeper=lambda _: None, source_language="zh-CN",
+        )
+
+        self.assertEqual([item["text"] for item in translated], ["Xin chào", "iPhone 15 Pro", "100%", "Xin chào"])
+        self.assertEqual(translated[1]["translation_status"], "preserved")
+        self.assertFalse(translated[1]["needs_review"])
+        self.assertEqual(translator.lines + translator.calls, ["你好"])
+        ensure_translation_complete(translated)
+
+    def test_untranslated_source_script_still_fails_with_reason(self) -> None:
+        from pipeline.translation import TranslationIncompleteError, ensure_translation_complete
+
+        translated = translate_segments(
+            self.cues("你好", "谢谢"), EchoLinesTranslator(),
+            retries=1, sleeper=lambda _: None, source_language="zh-CN",
+        )
+
+        self.assertEqual(translated[1]["translation_status"], "source_fallback")
+        with self.assertRaises(TranslationIncompleteError) as raised:
+            ensure_translation_complete(translated)
+        self.assertIn("Lỗi: unchanged_translation", str(raised.exception))
+        self.assertIn("trả về nguyên văn", str(raised.exception))
+
+    def test_latin_sources_are_still_translated(self) -> None:
+        from pipeline.translation import needs_translation
+
+        self.assertTrue(needs_translation("Hello world", "en"))
+        self.assertTrue(needs_translation("こんにちは", "ja"))
+        self.assertFalse(needs_translation("OK", "ja"))
+        self.assertFalse(needs_translation("...!!", "en"))
+        self.assertFalse(needs_translation("2024", "ko"))

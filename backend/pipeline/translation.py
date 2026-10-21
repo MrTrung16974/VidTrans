@@ -12,6 +12,15 @@ logger = logging.getLogger(__name__)
 # Use HTML-style tags. Translators usually preserve these better than brackets.
 _MARKER_RE = re.compile(r'<\s*vts\s+id\s*=\s*["\'`]?(\d{6})["\'`]?\s*/?>', re.IGNORECASE)
 _HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+# Letters of each non-Latin source script. A cue without any of them ("OK", "iPhone",
+# "100%") already reads the same in the target language, so a translator correctly
+# returns it unchanged; treating that as a failure aborted whole jobs.
+_SOURCE_SCRIPT_RE = {
+    "zh-CN": _HAN_RE,
+    "ja": re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]"),
+    "ko": re.compile(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]"),
+    "th": re.compile(r"[\u0e00-\u0e7f]"),
+}
 
 # Filler / interjection characters that carry no translatable meaning.
 # These are single-syllable Mandarin fillers, hesitation sounds, and
@@ -55,6 +64,14 @@ class TextTranslator(Protocol):
 
 def contains_han(text: str) -> bool:
     return bool(_HAN_RE.search(text or ""))
+
+
+def needs_translation(text: str, source_language: str) -> bool:
+    """False when the cue has nothing in the source script to translate."""
+    if not any(character.isalpha() for character in text):
+        return False
+    script = _SOURCE_SCRIPT_RE.get(source_language)
+    return script is None or bool(script.search(text))
 
 
 def segment_filter_signature() -> dict[str, float | int]:
@@ -197,11 +214,17 @@ def ensure_translation_complete(
     ]
     if failed:
         positions = ", ".join(f"{float(s['start']):.1f}s" for s in failed[:5])
+        reason = next((str(s["translation_error"]) for s in failed if s.get("translation_error")), "")
         if any("http_429" in str(s.get("translation_error") or "") for s in failed):
             hint = ("Google dịch đang giới hạn tần suất (HTTP 429) với IP máy chủ: đợi 10–30 phút rồi thử lại, "
                     "hoặc cấu hình VIDTRANS_TRANSLATION_PROXY (proxy HTTP/HTTPS) để đổi IP.")
+        elif reason == "unchanged_translation":
+            hint = ("Dịch vụ dịch trả về nguyên văn câu nguồn. Hãy thử lại hoặc đổi nhà cung cấp dịch; "
+                    "chi tiết có trong file bản dịch.")
         else:
             hint = "Kiểm tra kết nối dịch vụ dịch và thử lại; chi tiết có trong file bản dịch."
+        if reason:
+            hint += f" Lỗi: {reason}."
         raise TranslationIncompleteError(
             f"Chưa dịch được {len(failed)}/{len(active)} câu sang {target_label} (tại {positions}). "
             "Đã dừng trước khi lồng tiếng/xuất video để tránh chèn lại nội dung nguồn. " + hint
@@ -341,9 +364,13 @@ def translate_segments(
     translations: dict[int, tuple[str, str, str | None]] = {}
     cache: dict[str, tuple[str, str, str | None]] = {}
     check_active()
+    for index in active:
+        if not needs_translation(sources[index], source_language):
+            translations[index] = (sources[index], "preserved", None)
+    active_to_translate = [index for index in active if index not in translations]
 
     if getattr(translator, "supports_markers", True):
-        texts = [sources[i] for i in active]
+        texts = [sources[i] for i in active_to_translate]
         for batch in _batch_indexes(texts, max_batch_chars):
             if len(batch) < 2 or any(len(texts[i]) > max_batch_chars for i in batch):
                 continue
@@ -353,17 +380,17 @@ def translate_segments(
                                             sleeper=sleeper, check_active=check_active)
                 parsed = _parse_marked_batch(raw, batch)
                 for index, value in parsed.items():
-                    translations[active[index]] = (value, "translated", None)
+                    translations[active_to_translate[index]] = (value, "translated", None)
                     cache[texts[index]] = (value, "translated", None)
             except Exception as exc:
                 check_active()
                 logger.warning("Batch translation failed (%s); retrying complete cues", type(exc).__name__)
     elif hasattr(translator, "translate_lines"):
         # One request per batch instead of per cue keeps long videos under provider rate limits.
-        unique = list(dict.fromkeys(sources[i] for i in active))
+        unique = list(dict.fromkeys(sources[i] for i in active_to_translate))
         # LLM translators fit each line to the time the speaker takes to say it.
         seconds: dict[str, float] = {}
-        for i in active:
+        for i in active_to_translate:
             seconds.setdefault(sources[i], max(0.0, float(segments[i]["end"]) - float(segments[i]["start"])))
         accepts_durations = getattr(translator, "accepts_durations", False)
         for batch in _batch_indexes(unique, max_batch_chars):
