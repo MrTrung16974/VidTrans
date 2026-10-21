@@ -1,9 +1,9 @@
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from pipeline.asr import ASRConfig, ASRService
+from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
 
 
 def _segment(start, end, text):
@@ -15,9 +15,11 @@ class FakeFasterModel:
     def __init__(self, results):
         self.results = list(results)
         self.calls = []
+        self.inputs = []
 
-    def transcribe(self, path, **options):
+    def transcribe(self, audio, **options):
         self.calls.append(options)
+        self.inputs.append(audio)
         return iter(self.results.pop(0)), SimpleNamespace(
             duration=10.0, language="ja", language_probability=0.93
         )
@@ -27,6 +29,8 @@ def service(model, **config):
     with patch("pipeline.asr.faster_whisper_available", return_value=True):
         asr = ASRService(ASRConfig(engine="faster", **config))
     asr.engine = lambda name: model
+    asr.decoded = []
+    asr._load_audio = lambda model, path: asr.decoded.append(path) or ("pcm", str(path))
     return asr
 
 
@@ -48,6 +52,33 @@ class ASRServiceTests(unittest.TestCase):
         self.assertEqual(len(segments), 1)
         self.assertFalse(model.calls[1]["vad_filter"])
         self.assertEqual(model.calls[1]["beam_size"], 1)
+
+    def test_audio_is_decoded_once_and_reused_by_every_retry(self):
+        model = FakeFasterModel([[], [], [_segment(1.0, 2.0, "你好")]])
+        asr = service(model)
+        asr.transcribe_chinese("small", Path("v.mp4"))
+        self.assertEqual(asr.decoded, [Path("v.mp4")])
+        self.assertEqual(model.inputs, [("pcm", "v.mp4")] * 3)
+
+    def test_faster_decode_matches_the_engine_internal_decode(self):
+        model = SimpleNamespace(feature_extractor=SimpleNamespace(sampling_rate=16000))
+        with patch("pipeline.asr.faster_whisper_available", return_value=True):
+            asr = ASRService(ASRConfig(engine="faster"))
+        decode = Mock(return_value="pcm")
+        audio_module = SimpleNamespace(decode_audio=decode)
+        with patch.dict("sys.modules", {"faster_whisper": SimpleNamespace(audio=audio_module),
+                                        "faster_whisper.audio": audio_module}):
+            self.assertEqual(asr._load_audio(model, Path("v.mp4")), "pcm")
+        decode.assert_called_once_with("v.mp4", sampling_rate=16000)
+
+    def test_cpu_threads_split_cores_between_concurrent_asr_jobs(self):
+        with patch("pipeline.asr.available_cpu_count", return_value=12):
+            self.assertEqual(resolve_cpu_threads(0, 1), 12)
+            self.assertEqual(resolve_cpu_threads(0, 2), 6)
+            self.assertEqual(resolve_cpu_threads(0, 24), 1)
+            self.assertEqual(resolve_cpu_threads(3, 2), 3)
+        with self.assertRaises(ValueError):
+            resolve_cpu_threads(-1, 1)
 
     def test_beam_and_vad_are_configurable(self):
         model = FakeFasterModel([[_segment(0.0, 1.0, "好")]])

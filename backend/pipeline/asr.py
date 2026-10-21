@@ -68,10 +68,30 @@ def faster_whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+def available_cpu_count() -> int:
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:  # macOS has no CPU affinity API
+        return max(1, os.cpu_count() or 1)
+
+
+def resolve_cpu_threads(configured: int, concurrency: int) -> int:
+    """Split the cores between concurrent ASR jobs when no thread count is configured.
+
+    CTranslate2 treats 0 as its own default of 4 threads, which leaves cores idle
+    on larger hosts and oversubscribes small ones once two jobs transcribe at once.
+    """
+    if configured < 0:
+        raise ValueError("VIDTRANS_ASR_CPU_THREADS must be 0 (auto) or a positive integer")
+    if configured:
+        return configured
+    return max(1, available_cpu_count() // max(1, concurrency))
+
+
 @dataclass
 class ASRService:
     config: ASRConfig = field(default_factory=ASRConfig)
-    cpu_threads: int = 0  # 0 lets the runtime use every core
+    cpu_threads: int = 0  # 0 keeps the CTranslate2 default; see resolve_cpu_threads
     _models: dict[tuple[str, str], Any] = field(default_factory=dict, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
@@ -110,6 +130,9 @@ class ASRService:
         source = normalize_language(source_language, allow_auto=True)
         forced = None if source == "auto" else language_profile(source).whisper_code
         model = self.engine(model_name)
+        # Decode once: every retry below re-reads the same audio, and passing the
+        # array is exactly what both engines would otherwise do internally.
+        audio = self._load_audio(model, media_path)
         attempts: list[dict[str, Any]] = [
             # Accurate pass: beam search, VAD, hallucination guard.
             {"language": forced, "beam": True, "vad": self.config.vad, "strict": True},
@@ -123,9 +146,9 @@ class ASRService:
             elif index == 2:
                 logger.warning("No transcript segments with requested language, retrying with auto language detection")
             if self.config.engine == "faster":
-                result = self._faster_result(model, media_path, attempt, progress)
+                result = self._faster_result(model, audio, attempt, progress)
             else:
-                result = self._openai_result(model, media_path, attempt)
+                result = self._openai_result(model, audio, attempt)
             if any((segment.get("text") or "").strip() for segment in result.segments):
                 return result
         return ASRResult([])
@@ -138,11 +161,20 @@ class ASRService:
             model_name, media_path, progress=progress, source_language="zh-CN"
         ).segments
 
+    def _load_audio(self, model: Any, media_path: Path) -> Any:
+        if self.config.engine == "faster":
+            from faster_whisper.audio import decode_audio
+
+            return decode_audio(str(media_path), sampling_rate=model.feature_extractor.sampling_rate)
+        import whisper
+
+        return whisper.load_audio(str(media_path))
+
     def _faster(self, model: Any, media_path: Path, attempt: dict[str, Any],
                 progress: ProgressCallback | None) -> list[dict[str, Any]]:
-        return self._faster_result(model, media_path, attempt, progress).segments
+        return self._faster_result(model, self._load_audio(model, media_path), attempt, progress).segments
 
-    def _faster_result(self, model: Any, media_path: Path, attempt: dict[str, Any],
+    def _faster_result(self, model: Any, audio: Any, attempt: dict[str, Any],
                        progress: ProgressCallback | None) -> ASRResult:
         options: dict[str, Any] = {
             "language": attempt["language"],
@@ -155,7 +187,7 @@ class ASRService:
             options["vad_parameters"] = {"min_silence_duration_ms": self.config.vad_min_silence_ms}
         if attempt["strict"]:
             options.update(temperature=0, condition_on_previous_text=True, hallucination_silence_threshold=1.0)
-        generator, info = model.transcribe(str(media_path), **options)
+        generator, info = model.transcribe(audio, **options)
         total = float(getattr(info, "duration", 0) or 0) or None
         segments = []
         # Decoding happens lazily while iterating, which lets us report real progress.
@@ -180,16 +212,16 @@ class ASRService:
         )
 
     def _openai(self, model: Any, media_path: Path, attempt: dict[str, Any]) -> list[dict[str, Any]]:
-        return self._openai_result(model, media_path, attempt).segments
+        return self._openai_result(model, self._load_audio(model, media_path), attempt).segments
 
-    def _openai_result(self, model: Any, media_path: Path, attempt: dict[str, Any]) -> ASRResult:
+    def _openai_result(self, model: Any, audio: Any, attempt: dict[str, Any]) -> ASRResult:
         options: dict[str, Any] = {"task": "transcribe", "fp16": False, "word_timestamps": True, "verbose": False}
         if attempt["language"]:
             options["language"] = attempt["language"]
         if attempt["strict"]:
             options.update(temperature=0, best_of=5, beam_size=self.config.beam_size,
                            condition_on_previous_text=True, hallucination_silence_threshold=1.0)
-        payload = model.transcribe(str(media_path), **options)
+        payload = model.transcribe(audio, **options)
         return ASRResult(
             list(payload.get("segments", [])),
             detected_language=payload.get("language") or attempt["language"],

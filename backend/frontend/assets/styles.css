@@ -4013,11 +4013,41 @@ a { color: inherit; text-decoration: none; }
   }
 
   /* 3. TikTok View (#tiktokView) */
+  #tiktokView {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+  #tiktokView > *,
+  .tiktok-header-copy,
+  .tiktok-header-actions,
+  .tiktok-workspace,
+  .tiktok-workspace > *,
+  .workspace-card-heading > div:last-child,
+  .platform-apps-panel,
+  .platform-tab-nav {
+    min-width: 0;
+    max-width: 100%;
+  }
   .tiktok-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
     margin-bottom: 16px;
+  }
+  .tiktok-header::before {
+    left: 0;
+    width: 100%;
+  }
+  .tiktok-eyebrow {
+    max-width: 100%;
+    white-space: normal;
+    line-height: 1.35;
+  }
+  .tiktok-header h1,
+  .workspace-card-heading h2,
+  .platform-apps-panel > summary strong {
+    overflow-wrap: anywhere;
   }
   .tiktok-header-actions { width: 100%; }
   .back-to-jobs-btn { width: 100%; justify-content: center; min-height: 40px; }
@@ -4069,6 +4099,7 @@ a { color: inherit; text-decoration: none; }
   }
   .tiktok-workspace { grid-template-columns: 1fr; gap: 16px; }
   .tiktok-review-card, .platform-publish-panel, .tiktok-studio-card { padding: 16px; border-radius: 16px; }
+  .workspace-card-heading { align-items: flex-start; }
   .panel-account-strip {
     flex-direction: column;
     align-items: stretch;

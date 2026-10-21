@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import hashlib
 import ipaddress
 import json
@@ -137,7 +138,7 @@ from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, segment_
 from pipeline.caption_alignment import CaptionAlignmentConfig, align_speech_to_burned_captions
 from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
-from pipeline.asr import ASRConfig, ASRService
+from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
 from pipeline.translation import (
     ensure_translation_complete,
     filter_meaningful_segments,
@@ -712,10 +713,16 @@ PAYMENT_CONFIG = PaymentConfig.from_env()
 PAYMENT_ORDERS = PaymentOrderStore(DATABASE_TARGET)
 PAYMENT_GATEWAY = PaymentGatewayClient(PAYMENT_CONFIG)
 TENANT_GOVERNANCE = TenantGovernanceStore(DATABASE_TARGET)
-ASR_SERVICE = ASRService(ASRConfig.from_env(), cpu_threads=int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")))
+ASR_SERVICE = ASRService(
+    ASRConfig.from_env(),
+    cpu_threads=resolve_cpu_threads(
+        int(os.environ.get("VIDTRANS_ASR_CPU_THREADS", "0")), SETTINGS.whisper_concurrency
+    ),
+)
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
 _job_context = threading.local()
+_stage_record_lock = threading.Lock()
 
 
 TIKTOK_CANCEL_UNCERTAIN_DETAIL = (
@@ -1216,8 +1223,11 @@ def transcribe_video(
     source_language: str,
     job_id: str | None = None,
     media_duration: float | None = None,
+    *,
+    progress: Callable[[float, float | None], None] | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, float | None]:
-    progress = make_asr_progress_callback(job_id, media_duration) if job_id else None
+    if progress is None and job_id:
+        progress = make_asr_progress_callback(job_id, media_duration)
     result = ASR_SERVICE.transcribe(
         model_name, video_path, progress=progress, source_language=source_language
     )
@@ -1296,13 +1306,15 @@ def update_job(job_id: str, **fields: Any) -> None:
 def record_job_stage_measurement(job_id: str, measurement: StageMeasurement) -> None:
     """Persist additive, content-free stage metrics in the existing job payload."""
 
-    current = JOB_SERVICE.get(job_id)
-    if current is None:
-        return
-    stored = current.get("stage_metrics")
-    stage_metrics = dict(stored) if isinstance(stored, dict) else {}
-    stage_metrics[measurement.stage] = measurement.as_dict()
-    JOB_SERVICE.update(job_id, stage_metrics=stage_metrics)
+    # OCR and ASR may finish together; serialise the read-merge-write so neither metric is lost.
+    with _stage_record_lock:
+        current = JOB_SERVICE.get(job_id)
+        if current is None:
+            return
+        stored = current.get("stage_metrics")
+        stage_metrics = dict(stored) if isinstance(stored, dict) else {}
+        stage_metrics[measurement.stage] = measurement.as_dict()
+        JOB_SERVICE.update(job_id, stage_metrics=stage_metrics)
 
 
 def measure_job_stage(job_id: str, stage: str, *, video_duration: float | None = None):
@@ -1314,13 +1326,14 @@ def measure_job_stage(job_id: str, stage: str, *, video_duration: float | None =
 
 
 def record_job_stage_cache(job_id: str, stage: str, hit: bool) -> None:
-    current = JOB_SERVICE.get(job_id)
-    if current is None:
-        return
-    stored = current.get("stage_cache")
-    stage_cache = dict(stored) if isinstance(stored, dict) else {}
-    stage_cache[stage] = "hit" if hit else "miss"
-    JOB_SERVICE.update(job_id, stage_cache=stage_cache)
+    with _stage_record_lock:
+        current = JOB_SERVICE.get(job_id)
+        if current is None:
+            return
+        stored = current.get("stage_cache")
+        stage_cache = dict(stored) if isinstance(stored, dict) else {}
+        stage_cache[stage] = "hit" if hit else "miss"
+        JOB_SERVICE.update(job_id, stage_cache=stage_cache)
 
 
 def emit_workflow_event(event_type: str, job_id: str, job: dict[str, Any] | None = None) -> None:
@@ -1357,6 +1370,102 @@ def make_ocr_progress_callback(job_id: str) -> Callable[[int, int], None]:
         )
 
     return report
+
+
+class SiblingStageFailed(RuntimeError):
+    """Stops a parallel stage early because the stage running beside it failed."""
+
+
+class SourceRecognitionProgress:
+    """One monotonic progress bar for OCR and ASR while both run at once.
+
+    Separate callbacks would overwrite each other's progress/detail and make the
+    bar jump backwards. Throttling matches the sequential callbacks.
+    """
+
+    START = 0.12
+    SPAN = 0.26
+
+    def __init__(self, job_id: str, expected_duration: float | None = None) -> None:
+        self.job_id = job_id
+        self.expected_duration = expected_duration
+        self.aborted = threading.Event()
+        self._lock = threading.Lock()
+        self._ocr = (0.0, "OCR")
+        self._asr = (0.0, asr_progress_detail(0, expected_duration))
+        self._last_ocr = 0
+        self._last_asr_percent = -1
+        self._reported = self.START
+
+    def _check(self) -> None:
+        if self.aborted.is_set():
+            raise SiblingStageFailed("parallel recognition stage failed")
+        ensure_job_active(self.job_id)
+
+    def report_ocr(self, completed: int, total: int) -> None:
+        self._check()
+        if completed != total and completed - self._last_ocr < max(1, total // 100):
+            return
+        self._last_ocr = completed
+        self._publish(ocr=(min(1.0, completed / max(total, 1)), f"OCR {completed}/{total} frames"))
+
+    def report_asr(self, position: float, total: float | None) -> None:
+        self._check()
+        effective_total = total or self.expected_duration
+        if not effective_total:
+            self._publish(asr=(0.0, asr_progress_detail(position, None)))
+            return
+        percent = min(100, int(100 * position / effective_total))
+        if percent - self._last_asr_percent < 2 and percent != 100:
+            return
+        self._last_asr_percent = percent
+        self._publish(asr=(percent / 100, asr_progress_detail(position, effective_total)))
+
+    def _publish(self, *, ocr: tuple[float, str] | None = None, asr: tuple[float, str] | None = None) -> None:
+        with self._lock:
+            if ocr is not None:
+                self._ocr = ocr
+            if asr is not None:
+                self._asr = asr
+            # ASR retries restart from 0; never move the bar backwards.
+            self._reported = max(self._reported, self.START + self.SPAN * (self._ocr[0] + self._asr[0]) / 2)
+            update_job(
+                self.job_id,
+                progress=self._reported,
+                step_detail=f"{self._ocr[1]} · {self._asr[1]}",
+            )
+
+
+def run_job_stages_in_parallel(
+    job_id: str, tracker: SourceRecognitionProgress, *stages: Callable[[], Any]
+) -> list[Any]:
+    """Run independent stages on threads; the first real error stops the others."""
+
+    def run(stage: Callable[[], Any]) -> Any:
+        # Worker threads must see the job so FFmpeg helpers still honour cancellation.
+        _job_context.job_id = job_id
+        try:
+            return stage()
+        except BaseException:
+            tracker.aborted.set()
+            raise
+        finally:
+            del _job_context.job_id
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(stages), thread_name_prefix=f"job-{job_id[:8]}"
+    ) as executor:
+        futures = {executor.submit(run, stage): index for index, stage in enumerate(stages)}
+        try:
+            results = collect_indexed_futures(futures)
+        except SiblingStageFailed:
+            # Only raised after another stage failed; surface that original error instead.
+            for future in futures:
+                exc = future.exception()
+                if exc is not None and not isinstance(exc, SiblingStageFailed):
+                    raise exc from None
+            raise
+    return [results[index] for index in range(len(stages))]
 
 
 async def tts_edge_sync(
@@ -2253,6 +2362,7 @@ def recognize_video_source(
     video_duration = source_probe.duration
     ocr_segments: list[dict[str, Any]] = []
     ocr_requested = subtitle_source in {"auto", "independent", "burned"} and source_language == "zh-CN"
+    run_ocr = False
     if ocr_requested and SETTINGS.ocr_backend == "off":
         message = "OCR is disabled on this runtime; using Whisper speech recognition"
         if subtitle_source in {"burned", "independent"}:
@@ -2263,12 +2373,14 @@ def recognize_video_source(
         logger.warning(message)
         update_job(job_id, status="processing", step="transcribing", step_detail=message, progress=0.22)
     elif ocr_requested:
-        update_job(job_id, status="processing", step="extracting-subtitles", progress=0.12)
+        run_ocr = True
+
+    def recognize_burned_subtitles(progress: Callable[[int, int], None]) -> list[dict[str, Any]]:
         try:
             with measure_job_stage(job_id, "ocr", video_duration=video_duration):
                 with _ocr_slots:
                     ensure_job_active(job_id)
-                    ocr_segments = extract_burned_subtitle_segments(
+                    return extract_burned_subtitle_segments(
                         video_path,
                         work_dir,
                         ffmpeg=FFMPEG,
@@ -2279,40 +2391,68 @@ def recognize_video_source(
                         ),
                         reader_backend=SETTINGS.ocr_backend,
                         reader_model=SETTINGS.ocr_model,
-                        progress_callback=make_ocr_progress_callback(job_id),
+                        progress_callback=progress,
                     )
-        except JobCancelled:
+        except (JobCancelled, SiblingStageFailed):
             raise
         except Exception:
             if subtitle_source in {"burned", "independent"}:
                 raise
             logger.warning("OCR subtitle extraction failed; using speech transcription", exc_info=True)
+            return []
 
-    ensure_job_active(job_id)
-    update_job(
-        job_id,
-        status="processing",
-        step="transcribing",
-        step_detail=asr_progress_detail(0, video_duration),
-        progress=0.22,
-    )
+    def recognize_speech(
+        progress: Callable[[float, float | None], None] | None,
+    ) -> tuple[list[dict[str, Any]], str | None, float | None]:
+        with _whisper_slots:
+            ensure_job_active(job_id)
+            asr_language = "auto" if subtitle_source == "independent" else source_language
+            return transcribe_video(
+                whisper_model, video_path, asr_language, job_id, video_duration, progress=progress
+            )
+
+    def measured_speech(
+        progress: Callable[[float, float | None], None],
+    ) -> tuple[list[dict[str, Any]], str | None, float | None]:
+        with measure_job_stage(job_id, "asr", video_duration=video_duration):
+            return recognize_speech(progress)
+
     asr_segments: list[dict[str, Any]] = []
     detected_language: str | None = None
     detected_language_probability: float | None = None
-    with measure_job_stage(job_id, "asr", video_duration=video_duration):
-        if source_probe.has_audio:
-            with _whisper_slots:
-                ensure_job_active(job_id)
-                asr_language = "auto" if subtitle_source == "independent" else source_language
-                asr_segments, detected_language, detected_language_probability = transcribe_video(
-                    whisper_model, video_path, asr_language, job_id, video_duration
+    if run_ocr and source_probe.has_audio:
+        # Frames and audio are independent inputs and both engines release the GIL,
+        # so the stage takes max(OCR, ASR) instead of their sum. Merge rules below
+        # still see exactly the same two segment lists.
+        update_job(job_id, status="processing", step="extracting-subtitles", progress=0.12)
+        tracker = SourceRecognitionProgress(job_id, video_duration)
+        ocr_segments, (asr_segments, detected_language, detected_language_probability) = run_job_stages_in_parallel(
+            job_id,
+            tracker,
+            lambda: recognize_burned_subtitles(tracker.report_ocr),
+            lambda: measured_speech(tracker.report_asr),
+        )
+    else:
+        if run_ocr:
+            update_job(job_id, status="processing", step="extracting-subtitles", progress=0.12)
+            ocr_segments = recognize_burned_subtitles(make_ocr_progress_callback(job_id))
+        ensure_job_active(job_id)
+        update_job(
+            job_id,
+            status="processing",
+            step="transcribing",
+            step_detail=asr_progress_detail(0, video_duration),
+            progress=0.22,
+        )
+        with measure_job_stage(job_id, "asr", video_duration=video_duration):
+            if source_probe.has_audio:
+                asr_segments, detected_language, detected_language_probability = recognize_speech(None)
+            elif not ocr_segments:
+                raise RuntimeError(
+                    "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
+                    "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
+                    "nếu không, hãy chọn video có âm thanh."
                 )
-        elif not ocr_segments:
-            raise RuntimeError(
-                "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
-                "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
-                "nếu không, hãy chọn video có âm thanh."
-            )
     if ocr_segments and subtitle_source == "independent":
         segments = merge_independent_ocr_asr_segments(
             ocr_segments,
