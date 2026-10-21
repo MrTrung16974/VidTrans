@@ -22,6 +22,15 @@ class TranslationConfigurationError(TranslationServiceError):
     permanent = True
 
 
+class TranslationUnavailableError(TranslationServiceError):
+    """Provider unreachable, timing out or failing server-side (5xx).
+
+    Retrying cue by cue would repeat the same wait for every cue, so callers stop
+    early and report this reason instead of appearing stuck for hours.
+    """
+    unavailable = True
+
+
 class TranslationRateLimitedError(TranslationServiceError):
     """Provider answered HTTP 429; callers should back off instead of hammering."""
     rate_limited = True

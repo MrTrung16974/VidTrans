@@ -229,3 +229,36 @@ class PreservedCueTests(unittest.TestCase):
         self.assertFalse(needs_translation("OK", "ja"))
         self.assertFalse(needs_translation("...!!", "en"))
         self.assertFalse(needs_translation("2024", "ko"))
+
+
+class UnavailableLinesTranslator:
+    supports_markers = False
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def translate_lines(self, lines):
+        self.calls += 1
+        from infrastructure.vietnamese_translator import TranslationUnavailableError
+        raise TranslationUnavailableError("Gemini API không phản hồi sau 60 giây")
+
+    def translate(self, text):
+        return self.translate_lines([text])[0]
+
+
+class UnavailableProviderTests(unittest.TestCase):
+    def test_unreachable_provider_stops_instead_of_retrying_every_cue(self) -> None:
+        from pipeline.translation import TranslationIncompleteError, ensure_translation_complete
+
+        cues = [{"start": float(i), "end": i + 1.0, "text": f"第{i}句话"} for i in range(112)]
+        translator = UnavailableLinesTranslator()
+        translated = translate_segments(
+            cues, translator, max_batch_chars=200, retries=3, sleeper=lambda _: None, source_language="zh-CN",
+        )
+
+        # One batch attempt plus one cue's retries, not 112 cues x 3 retries.
+        self.assertLessEqual(translator.calls, 1 + 3)
+        self.assertTrue(all(item["translation_status"] == "source_fallback" for item in translated))
+        with self.assertRaises(TranslationIncompleteError) as raised:
+            ensure_translation_complete(translated)
+        self.assertIn("không phản hồi sau 60 giây", str(raised.exception))

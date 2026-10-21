@@ -55,6 +55,25 @@ class TranslationProviderTests(unittest.TestCase):
                 ["Xin chào", "Hẹn gặp lại"],
             )
 
+    def test_gemini_timeout_and_server_errors_are_unavailable(self) -> None:
+        import urllib.error
+
+        from infrastructure.vietnamese_translator import TranslationUnavailableError
+
+        failures = [
+            TimeoutError("timed out"),
+            urllib.error.URLError(OSError("network unreachable")),
+            urllib.error.HTTPError("https://x", 503, "unavailable", {}, None),
+        ]
+        for failure in failures:
+            def opener(*_args, **_kwargs):
+                raise failure
+
+            with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+                translator = GeminiContextTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+            with self.assertRaises(TranslationUnavailableError):
+                translator.translate_lines(["你好"])
+
     def test_status_hides_unconfigured_gemini(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             statuses = {status.key: status for status in translation_provider_statuses()}
@@ -210,6 +229,47 @@ class Qwen3Tests(unittest.TestCase):
         with self.assertRaisesRegex(TranslationServiceError, "count_mismatch"):
             translator.translate_lines(["一", "二"])
 
+    def test_source_script_left_by_the_model_is_rescued_by_google(self) -> None:
+        reply = '{"translations": [{"id": 1, "text": "Đây là 小米"}]}'
+        opener = lambda *_a, **_k: _Response({"message": {"content": reply}})
+
+        class Rescue:
+            name = "google"
+            calls: list[str] = []
+
+            def translate(self, text):
+                self.calls.append(text)
+                return "Đây là Xiaomi"
+
+        rescue = Rescue()
+        translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener, rescue=rescue)
+        self.assertEqual(translator.translate("这是小米"), "Đây là Xiaomi")
+        self.assertEqual(rescue.calls, ["这是小米"])
+
+    def test_failed_rescue_still_reports_untranslated_source(self) -> None:
+        reply = '{"translations": [{"id": 1, "text": "Đây là 小米"}]}'
+        opener = lambda *_a, **_k: _Response({"message": {"content": reply}})
+
+        class Rescue:
+            def translate(self, text):
+                raise OSError("offline")
+
+        translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener, rescue=Rescue())
+        with self.assertRaisesRegex(TranslationServiceError, "qwen3_untranslated_source_text"):
+            translator.translate("这是小米")
+
+    def test_batch_timeout_is_not_treated_as_provider_down(self) -> None:
+        def opener(request, **_kwargs):
+            raise TimeoutError()
+
+        translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)
+        with self.assertRaises(TranslationServiceError) as batch:
+            translator.translate_lines(["一", "二"])
+        self.assertFalse(getattr(batch.exception, "unavailable", False))
+        with self.assertRaises(TranslationServiceError) as single:
+            translator.translate("一")
+        self.assertTrue(getattr(single.exception, "unavailable", False))
+
     def test_model_tag_must_match_exactly(self) -> None:
         tags = {"models": [{"name": "qwen3:8b"}]}
         from infrastructure.translation_providers import local_model_available
@@ -230,7 +290,9 @@ class SubtitlePromptTests(unittest.TestCase):
             sent.append(json.loads(request.data.decode("utf-8")))
             return _Response({"message": {"content": replies.pop(0)}})
 
-        return Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)
+        # The rescue echoes the source, so a leak survives it and no real web request is made.
+        echo = type("Echo", (), {"translate": staticmethod(lambda text: text)})()
+        return Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener, rescue=echo)
 
     def test_simplified_chinese_keeps_zh_cn_code(self) -> None:
         sent = {}

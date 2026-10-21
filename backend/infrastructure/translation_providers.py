@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -22,7 +23,10 @@ from infrastructure.vietnamese_translator import (
     TranslationConfigurationError,
     TranslationRateLimitedError,
     TranslationServiceError,
+    TranslationUnavailableError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 SUPPORTED_TRANSLATION_PROVIDERS = frozenset({"google", "gemini", "translategemma", "qwen3"})
@@ -262,9 +266,19 @@ class GeminiContextTranslator:
                 raise TranslationRateLimitedError("Gemini đã hết hạn mức tạm thời (HTTP 429)") from exc
             if exc.code == 404:
                 raise TranslationConfigurationError(f"Gemini không tìm thấy model {self.model}") from exc
+            if exc.code >= 500:
+                raise TranslationUnavailableError(f"Gemini API lỗi HTTP {exc.code}") from exc
             raise TranslationServiceError(f"Gemini API lỗi HTTP {exc.code}") from exc
         except TranslationServiceError:
             raise
+        except TimeoutError as exc:
+            raise TranslationUnavailableError(
+                f"Gemini API không phản hồi sau {self.timeout:.0f} giây"
+            ) from exc
+        except (urllib.error.URLError, ConnectionError) as exc:
+            raise TranslationUnavailableError(
+                f"Không kết nối được Gemini API ({type(getattr(exc, 'reason', exc)).__name__})"
+            ) from exc
         except Exception as exc:
             raise TranslationServiceError(f"Gemini API lỗi: {type(exc).__name__}") from exc
 
@@ -320,9 +334,15 @@ class TranslateGemmaTranslator:
                 raise TranslationConfigurationError(
                     f"Ollama chưa có model {self.model}; hãy chạy: ollama pull {self.model}"
                 ) from exc
+            if exc.code >= 500:
+                raise TranslationUnavailableError(f"TranslateGemma lỗi HTTP {exc.code}") from exc
             raise TranslationServiceError(f"TranslateGemma lỗi HTTP {exc.code}") from exc
         except (urllib.error.URLError, ConnectionError) as exc:
             raise TranslationConfigurationError("Không kết nối được Ollama cho TranslateGemma") from exc
+        except TimeoutError as exc:
+            raise TranslationUnavailableError(
+                f"TranslateGemma không phản hồi sau {self.timeout:.0f} giây"
+            ) from exc
         except Exception as exc:
             raise TranslationServiceError(f"TranslateGemma lỗi: {type(exc).__name__}") from exc
         translated = str((payload.get("message") or {}).get("content") or "").strip()
@@ -337,10 +357,13 @@ class Qwen3Translator:
     supports_markers = False
     accepts_durations = True
 
-    def __init__(self, *, source_language: str, target_language: str, timeout: float = 180.0, opener=None):
+    def __init__(self, *, source_language: str, target_language: str, timeout: float = 180.0, opener=None,
+                 rescue=None):
         self.source_language, self.target_language = validate_language_pair(source_language, target_language)
         if self.source_language == "auto":
             raise TranslationServiceError("translator requires a detected source language")
+        # Translates the rare cue the model keeps copying in the source script.
+        self._rescue = rescue
         self.model = local_model("qwen3")
         self.url = ollama_url()
         self.timeout = timeout
@@ -399,9 +422,17 @@ class Qwen3Translator:
                 raise TranslationConfigurationError(
                     f"Ollama chưa có model {self.model}; hãy chạy: ollama pull {self.model}"
                 ) from exc
+            if exc.code >= 500:
+                raise TranslationUnavailableError(f"Qwen3 lỗi HTTP {exc.code}") from exc
             raise TranslationServiceError(f"Qwen3 lỗi HTTP {exc.code}") from exc
         except (urllib.error.URLError, ConnectionError) as exc:
             raise TranslationConfigurationError("Không kết nối được Ollama cho Qwen3") from exc
+        except TimeoutError as exc:
+            message = f"Qwen3 không phản hồi sau {self.timeout:.0f} giây"
+            if len(lines) > 1:
+                # A slow CPU may miss the deadline on a long batch yet still translate single cues.
+                raise TranslationServiceError(f"{message} cho {len(lines)} câu") from exc
+            raise TranslationUnavailableError(message) from exc
         except Exception as exc:
             raise TranslationServiceError(f"Qwen3 lỗi: {type(exc).__name__}") from exc
         content = str((payload.get("message") or {}).get("content") or "")
@@ -415,10 +446,24 @@ class Qwen3Translator:
                 single = [durations[index]] if durations else None
                 retried = self._chat([lines[index]], single)[0]
                 if leaks_source_script(retried, self.target_language):
-                    raise TranslationServiceError("qwen3_untranslated_source_text")
+                    retried = self._rescue_line(lines[index])
                 translated[index] = retried
         self.history.extend(lines, translated)
         return translated
+
+    def _rescue_line(self, line: str) -> str:
+        if self._rescue is None:
+            self._rescue = GoogleVietnameseTranslator(
+                source_language=self.source_language, target_language=self.target_language
+            )
+        try:
+            value = self._rescue.translate(line)
+        except Exception as exc:
+            raise TranslationServiceError("qwen3_untranslated_source_text") from exc
+        if not value or leaks_source_script(value, self.target_language):
+            raise TranslationServiceError("qwen3_untranslated_source_text")
+        logger.info("Qwen3 kept the source script; used %s for one cue", getattr(self._rescue, "name", "rescue"))
+        return value
 
     def translate(self, text: str) -> str:
         return self.translate_lines([text])[0]

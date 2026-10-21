@@ -278,6 +278,17 @@ def _call_with_retry(
     raise RuntimeError(f"Dịch thất bại sau {attempt + 1} lần: {type(last_error).__name__}") from last_error
 
 
+def _provider_blocked(error: BaseException) -> bool:
+    """Rate limits, bad configuration and unreachable providers affect every cue alike."""
+    return any(getattr(error, flag, False) for flag in ("rate_limited", "permanent", "unavailable"))
+
+
+def _safe_reason(error: BaseException) -> str:
+    from infrastructure.translator import TranslationServiceError
+    # Provider errors are sanitised; other exceptions may echo source text.
+    return str(error)[:160] if isinstance(error, TranslationServiceError) else ""
+
+
 def _retry_delay(error: Exception | None, attempt: int) -> float:
     if getattr(error, "rate_limited", False):
         retry_after = getattr(error, "retry_after", None) or 0.0
@@ -413,8 +424,9 @@ def translate_segments(
             except Exception as exc:
                 check_active()
                 cause = exc.__cause__ or exc
-                logger.warning("Batch translation failed (%s); retrying complete cues", type(cause).__name__)
-                if getattr(cause, "rate_limited", False) or getattr(cause, "permanent", False):
+                logger.warning("Batch translation failed (%s: %s); retrying complete cues",
+                               type(cause).__name__, _safe_reason(cause))
+                if _provider_blocked(cause):
                     break
 
     rate_limit_reason: str | None = None
@@ -443,7 +455,7 @@ def translate_segments(
                     from infrastructure.translator import TranslationServiceError
                     reason = str(cause) if isinstance(cause, (ValueError, TranslationServiceError)) else type(cause).__name__
                     cache[source] = (source, "source_fallback", reason[:160])
-                    if getattr(cause, "rate_limited", False) or getattr(cause, "permanent", False):
+                    if _provider_blocked(cause):
                         rate_limit_reason = reason[:160]
                     logger.warning("Translation failed at %.2fs (%s)", float(segments[index]["start"]), reason[:160])
             translations[index] = cache[source]
