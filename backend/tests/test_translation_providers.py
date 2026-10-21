@@ -91,9 +91,6 @@ class TranslationProviderTests(unittest.TestCase):
         self.assertEqual(len(calls), 3)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class _FakeTranslator:
     name = "google"
@@ -134,7 +131,7 @@ class TranslateGemmaTests(unittest.TestCase):
         self.assertEqual(translator.translate("我愛你"), "Em yêu anh")
         self.assertTrue(sent["url"].endswith("/api/chat"))
         prompt = sent["body"]["messages"][0]["content"]
-        self.assertIn("Chinese (zh-CN) to Vietnamese (vi) translator", prompt)
+        self.assertIn("Chinese (zh-TW) to Vietnamese (vi) translator", prompt)
         self.assertTrue(prompt.endswith("\n\n\n我愛你"))
         self.assertEqual(sent["body"]["options"]["temperature"], 0)
 
@@ -188,7 +185,10 @@ class Qwen3Tests(unittest.TestCase):
         )
         self.assertEqual(sent["body"]["model"], "qwen3:4b")
         self.assertIs(sent["body"]["think"], False)
-        self.assertIn("本來是挺愛你的", sent["body"]["messages"][0]["content"])
+        system, user = sent["body"]["messages"]
+        self.assertEqual(system["role"], "system")
+        self.assertIn("Traditional Chinese to Vietnamese", system["content"])
+        self.assertIn("本來是挺愛你的", user["content"])
 
     def test_instruct_model_without_thinking_support_is_retried_without_flag(self) -> None:
         bodies = []
@@ -223,6 +223,80 @@ class Qwen3Tests(unittest.TestCase):
         self.assertIsInstance(wrapped.secondary, Qwen3Translator)
 
 
+class SubtitlePromptTests(unittest.TestCase):
+    @staticmethod
+    def qwen(replies: list[str], sent: list[dict]) -> Qwen3Translator:
+        def opener(request, **_kwargs):
+            sent.append(json.loads(request.data.decode("utf-8")))
+            return _Response({"message": {"content": replies.pop(0)}})
+
+        return Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)
+
+    def test_simplified_chinese_keeps_zh_cn_code(self) -> None:
+        sent = {}
+
+        def opener(request, **_kwargs):
+            sent["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response({"message": {"content": "Em yêu anh"}})
+
+        TranslateGemmaTranslator(source_language="zh-CN", target_language="vi", opener=opener).translate("我爱你")
+        self.assertIn("Chinese (zh-CN)", sent["body"]["messages"][0]["content"])
+
+    def test_durations_and_previous_lines_are_sent(self) -> None:
+        sent: list[dict] = []
+        translator = self.qwen(
+            ['{"translations": [{"id": 1, "text": "Một"}]}', '{"translations": [{"id": 1, "text": "Hai"}]}'],
+            sent,
+        )
+        translator.translate_lines(["一"], durations=[1.84])
+        translator.translate_lines(["二"], durations=[2.0])
+
+        first_user = sent[0]["messages"][1]["content"]
+        second_user = sent[1]["messages"][1]["content"]
+        self.assertIn('"seconds": 1.8', first_user)
+        self.assertNotIn("Previous lines", first_user)
+        self.assertIn('"source": "一", "translation": "Một"', second_user)
+
+    def test_ids_are_reordered_and_checked(self) -> None:
+        sent: list[dict] = []
+        translator = self.qwen(['{"translations": [{"id": 2, "text": "Hai"}, {"id": 1, "text": "Một"}]}'], sent)
+        self.assertEqual(translator.translate_lines(["一", "二"]), ["Một", "Hai"])
+
+    def test_leftover_chinese_is_retried_alone(self) -> None:
+        sent: list[dict] = []
+        translator = self.qwen(
+            [
+                '{"translations": [{"id": 1, "text": "Xin chào"}, {"id": 2, "text": "Quán này 绝绝子"}]}',
+                '{"translations": [{"id": 1, "text": "Quán này tuyệt vời"}]}',
+            ],
+            sent,
+        )
+        self.assertEqual(translator.translate_lines(["你好", "这家店绝绝子"]), ["Xin chào", "Quán này tuyệt vời"])
+        self.assertEqual(len(sent), 2)
+
+    def test_chinese_left_after_retry_fails_the_batch(self) -> None:
+        sent: list[dict] = []
+        translator = self.qwen(
+            ['{"translations": [{"id": 1, "text": "绝绝子"}]}', '{"translations": [{"id": 1, "text": "绝绝子"}]}'],
+            sent,
+        )
+        with self.assertRaisesRegex(TranslationServiceError, "untranslated"):
+            translator.translate_lines(["绝绝子"])
+
+    def test_gemini_uses_system_instruction_and_object_output(self) -> None:
+        sent = {}
+
+        def opener(request, **_kwargs):
+            sent["body"] = json.loads(request.data.decode("utf-8"))
+            text = '{"translations": [{"id": 1, "text": "Xin chào"}]}'
+            return _Response({"candidates": [{"content": {"parts": [{"text": text}]}}]})
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+            translator = GeminiContextTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+            self.assertEqual(translator.translate_lines(["你好"], durations=[1.0]), ["Xin chào"])
+        self.assertIn("dubbing translator", sent["body"]["systemInstruction"]["parts"][0]["text"])
+
+
 class FallbackTranslatorTests(unittest.TestCase):
     def test_uses_primary_while_it_works(self) -> None:
         translator = FallbackTranslator(_FakeTranslator(), _FakeSecondary())
@@ -245,3 +319,7 @@ class FallbackTranslatorTests(unittest.TestCase):
         translator = FallbackTranslator(_FakeTranslator(TranslationServiceError("boom")), _FakeSecondary())
         with self.assertRaises(TranslationServiceError):
             translator.translate('<vts id="000001"/>\n你好')
+
+
+if __name__ == "__main__":
+    unittest.main()

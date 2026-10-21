@@ -361,13 +361,22 @@ def translate_segments(
     elif hasattr(translator, "translate_lines"):
         # One request per batch instead of per cue keeps long videos under provider rate limits.
         unique = list(dict.fromkeys(sources[i] for i in active))
+        # LLM translators fit each line to the time the speaker takes to say it.
+        seconds: dict[str, float] = {}
+        for i in active:
+            seconds.setdefault(sources[i], max(0.0, float(segments[i]["end"]) - float(segments[i]["start"])))
+        accepts_durations = getattr(translator, "accepts_durations", False)
         for batch in _batch_indexes(unique, max_batch_chars):
             if len(batch) < 2 or any(len(unique[i]) > max_batch_chars for i in batch):
                 continue
             lines = [unique[i] for i in batch]
+            durations = [seconds.get(line) for line in lines]
             try:
-                values = _call_with_retry(lambda: translator.translate_lines(lines), retries=1,
-                                          sleeper=sleeper, check_active=check_active)
+                values = _call_with_retry(
+                    (lambda: translator.translate_lines(lines, durations=durations))
+                    if accepts_durations else (lambda: translator.translate_lines(lines)),
+                    retries=1, sleeper=sleeper, check_active=check_active,
+                )
                 if len(values) != len(lines):
                     raise ValueError("missing_batch_lines")
                 for line, value in zip(lines, values):

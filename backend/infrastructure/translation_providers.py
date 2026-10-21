@@ -9,6 +9,14 @@ import urllib.request
 from dataclasses import dataclass
 
 from domain.languages import language_profile, validate_language_pair
+from infrastructure.translation_prompt import (
+    TranslationHistory,
+    is_traditional_chinese,
+    leaks_source_script,
+    parse_translations,
+    system_prompt,
+    user_prompt,
+)
 from infrastructure.vietnamese_translator import (
     GoogleVietnameseTranslator,
     TranslationConfigurationError,
@@ -31,7 +39,7 @@ LOCAL_TRANSLATION_MODELS = {
 LOCAL_BACKUP_ORDER = ("qwen3", "translategemma")
 # The official TranslateGemma prompt expects English language names.
 TRANSLATEGEMMA_LANGUAGE_NAMES = {
-    "vi": "Vietnamese", "en": "English", "zh-CN": "Chinese", "ja": "Japanese",
+    "vi": "Vietnamese", "en": "English", "zh-CN": "Chinese", "zh-TW": "Chinese", "ja": "Japanese",
     "ko": "Korean", "th": "Thai", "id": "Indonesian", "es": "Spanish",
 }
 
@@ -139,6 +147,7 @@ def translation_provider_statuses() -> list[TranslationProviderStatus]:
 
 class GeminiContextTranslator:
     supports_markers = False
+    accepts_durations = True
 
     def __init__(self, *, source_language: str, target_language: str, timeout: float = 60.0, opener=None):
         self.source_language, self.target_language = validate_language_pair(source_language, target_language)
@@ -167,6 +176,7 @@ class GeminiContextTranslator:
         self.timeout = timeout
         self._open = opener or urllib.request.urlopen
         self.name = f"gemini-{self.model}"
+        self.history = TranslationHistory()
 
     def _available_model_candidates(self, *, exclude: set[str]) -> list[str]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}&pageSize=1000"
@@ -193,27 +203,12 @@ class GeminiContextTranslator:
             "API key không còn model Gemini khả dụng hỗ trợ generateContent"
         )
 
-    @staticmethod
-    def _extract_json(text: str) -> list[str]:
-        value = text.strip()
-        value = re.sub(r"^```(?:json)?\s*|\s*```$", "", value, flags=re.IGNORECASE)
-        payload = json.loads(value)
-        if not isinstance(payload, list) or not all(isinstance(item, str) and item.strip() for item in payload):
-            raise TranslationServiceError("gemini_invalid_translation_array")
-        return [item.strip() for item in payload]
-
-    def translate_lines(self, lines: list[str]) -> list[str]:
-        source_label = language_profile(self.source_language).label_vi
-        target_label = language_profile(self.target_language).label_vi
-        prompt = (
-            f"Bạn là biên dịch viên phụ đề video. Dịch mảng câu từ {source_label} sang {target_label}. "
-            "Dựa vào các câu liền nhau để hiểu ngữ cảnh, đại từ và cách xưng hô. Dịch sát nội dung nhưng "
-            "diễn đạt tự nhiên, ngắn gọn để đọc thành tiếng; không giải thích, không thêm ý. "
-            "Giữ đúng số phần tử và chỉ trả về một JSON array chuỗi theo đúng thứ tự.\n"
-            + json.dumps(lines, ensure_ascii=False)
-        )
+    def translate_lines(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
         body = json.dumps({
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "systemInstruction": {
+                "parts": [{"text": system_prompt(self.source_language, self.target_language, "".join(lines))}]
+            },
+            "contents": [{"role": "user", "parts": [{"text": user_prompt(lines, durations, self.history.items())}]}],
             "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
         }).encode("utf-8")
         def generate(model: str):
@@ -259,9 +254,8 @@ class GeminiContextTranslator:
                     f"Không tìm thấy model Gemini khả dụng: {attempted_label}"
                 )
             text = payload["candidates"][0]["content"]["parts"][0]["text"]
-            translated = self._extract_json(text)
-            if len(translated) != len(lines):
-                raise TranslationServiceError("gemini_translation_count_mismatch")
+            translated = parse_translations(text, len(lines), provider="gemini")
+            self.history.extend(lines, translated)
             return translated
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
@@ -295,6 +289,8 @@ class TranslateGemmaTranslator:
 
     def _prompt(self, text: str) -> str:
         source_code = language_profile(self.source_language).code
+        if source_code == "zh-CN" and is_traditional_chinese(text):
+            source_code = "zh-TW"
         target_code = language_profile(self.target_language).code
         source = TRANSLATEGEMMA_LANGUAGE_NAMES.get(source_code, source_code)
         target = TRANSLATEGEMMA_LANGUAGE_NAMES.get(target_code, target_code)
@@ -339,6 +335,7 @@ class Qwen3Translator:
     """Local Qwen3 served by Ollama; translates a batch of cues with context."""
 
     supports_markers = False
+    accepts_durations = True
 
     def __init__(self, *, source_language: str, target_language: str, timeout: float = 180.0, opener=None):
         self.source_language, self.target_language = validate_language_pair(source_language, target_language)
@@ -349,26 +346,30 @@ class Qwen3Translator:
         self.timeout = timeout
         self._open = opener or _direct_open
         self.name = f"qwen3-{self.model}"
+        self.history = TranslationHistory()
 
-    def translate_lines(self, lines: list[str]) -> list[str]:
-        source_label = language_profile(self.source_language).label_vi
-        target_label = language_profile(self.target_language).label_vi
-        prompt = (
-            f"Bạn là biên dịch viên phụ đề video. Dịch mảng câu từ {source_label} sang {target_label}. "
-            "Dựa vào các câu liền nhau để hiểu ngữ cảnh, đại từ và cách xưng hô, giữ xưng hô nhất quán. "
-            "Dịch sát nội dung nhưng diễn đạt tự nhiên, ngắn gọn để đọc thành tiếng; không giải thích, không thêm ý. "
-            f'Trả về JSON dạng {{"translations": [...]}} có đúng {len(lines)} chuỗi theo đúng thứ tự.\n'
-            + json.dumps(lines, ensure_ascii=False)
-        )
+    def _chat(self, lines: list[str], durations: list[float | None] | None) -> list[str]:
         body = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {"role": "system", "content": system_prompt(self.source_language, self.target_language, "".join(lines))},
+                {"role": "user", "content": user_prompt(lines, durations, self.history.items())},
+            ],
             "stream": False,
             # Qwen3 "thinking" adds minutes of hidden reasoning for no gain here.
             "think": False,
             "format": {
                 "type": "object",
-                "properties": {"translations": {"type": "array", "items": {"type": "string"}}},
+                "properties": {
+                    "translations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"id": {"type": "integer"}, "text": {"type": "string"}},
+                            "required": ["id", "text"],
+                        },
+                    }
+                },
                 "required": ["translations"],
             },
             "options": {"temperature": 0.1, "num_ctx": 8192},
@@ -404,17 +405,20 @@ class Qwen3Translator:
         except Exception as exc:
             raise TranslationServiceError(f"Qwen3 lỗi: {type(exc).__name__}") from exc
         content = str((payload.get("message") or {}).get("content") or "")
-        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-        try:
-            values = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE))
-            translated = values["translations"] if isinstance(values, dict) else values
-        except (ValueError, KeyError, TypeError) as exc:
-            raise TranslationServiceError("qwen3_invalid_translation_json") from exc
-        if not isinstance(translated, list) or not all(isinstance(item, str) and item.strip() for item in translated):
-            raise TranslationServiceError("qwen3_invalid_translation_array")
-        if len(translated) != len(lines):
-            raise TranslationServiceError("qwen3_translation_count_mismatch")
-        return [item.strip() for item in translated]
+        return parse_translations(content, len(lines), provider="qwen3")
+
+    def translate_lines(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
+        translated = self._chat(lines, durations)
+        # A small model occasionally copies a phrase untranslated; retry those cues alone.
+        for index, value in enumerate(translated):
+            if leaks_source_script(value, self.target_language):
+                single = [durations[index]] if durations else None
+                retried = self._chat([lines[index]], single)[0]
+                if leaks_source_script(retried, self.target_language):
+                    raise TranslationServiceError("qwen3_untranslated_source_text")
+                translated[index] = retried
+        self.history.extend(lines, translated)
+        return translated
 
     def translate(self, text: str) -> str:
         return self.translate_lines([text])[0]
@@ -427,6 +431,8 @@ class FallbackTranslator:
     for the rest of the job, so a blocked cloud API does not cost one failed
     request per cue.
     """
+
+    accepts_durations = True
 
     def __init__(self, primary, secondary):
         self.primary = primary
@@ -462,14 +468,20 @@ class FallbackTranslator:
         self.secondary_used = True
         return value
 
-    def _translate_lines(self, lines: list[str]) -> list[str]:
+    @staticmethod
+    def _call_lines(translator, lines: list[str], durations: list[float | None] | None) -> list[str]:
+        if getattr(translator, "accepts_durations", False):
+            return translator.translate_lines(lines, durations=durations)
+        return translator.translate_lines(lines)
+
+    def _translate_lines(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
         if not self.primary_down:
             try:
-                return self.primary.translate_lines(lines)
+                return self._call_lines(self.primary, lines, durations)
             except Exception as exc:
                 self._primary_failed(exc)
         if hasattr(self.secondary, "translate_lines"):
-            values = self.secondary.translate_lines(lines)
+            values = self._call_lines(self.secondary, lines, durations)
         else:
             values = [self.secondary.translate(line) for line in lines]
         self.secondary_used = True

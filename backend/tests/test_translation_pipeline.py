@@ -29,6 +29,21 @@ class AlwaysFailTranslator:
         raise RuntimeError("rate limited")
 
 
+class TimedLinesTranslator:
+    supports_markers = False
+    accepts_durations = True
+
+    def __init__(self) -> None:
+        self.durations: list | None = None
+
+    def translate_lines(self, lines: list[str], durations=None) -> list[str]:
+        self.durations = durations
+        return [{"你好": "Xin chào", "世界": "thế giới"}[line] for line in lines]
+
+    def translate(self, text: str) -> str:
+        return self.translate_lines([text])[0]
+
+
 class TranslationPipelineTests(unittest.TestCase):
     segments = [
         {"start": 0, "end": 1, "text": "你好"},
@@ -43,6 +58,15 @@ class TranslationPipelineTests(unittest.TestCase):
         self.assertEqual([item["text"] for item in translated], ["Xin chào", "thế giới"])
         self.assertEqual(len(translator.calls), 1)
         self.assertTrue(all(item["translation_status"] == "translated" for item in translated))
+
+    def test_llm_translator_receives_each_cue_duration(self) -> None:
+        translator = TimedLinesTranslator()
+        segments = [{"start": 0, "end": 1.5, "text": "你好"}, {"start": 1.5, "end": 4.0, "text": "世界"}]
+
+        translated = translate_segments(segments, translator, sleeper=lambda _: None)
+
+        self.assertEqual([item["text"] for item in translated], ["Xin chào", "thế giới"])
+        self.assertEqual(translator.durations, [1.5, 2.5])
 
     def test_falls_back_to_individual_translation_when_markers_are_changed(self) -> None:
         translated = translate_segments(
