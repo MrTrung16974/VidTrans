@@ -257,7 +257,11 @@ FONT_CANDIDATES = [
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 BUNDLED_FONT = FONT_DIR / "NotoSansCJKsc-Regular.otf"
 DEFAULT_VOICE_MIX_GAIN = 1.30
-DEFAULT_ORIGINAL_AUDIO_VOLUME = 0.30
+DEFAULT_ORIGINAL_AUDIO_VOLUME = 0.60
+# Original audio is ducked under the dub so it stays audible (emotion, tone)
+# in pauses without masking the translated voice.
+ORIGINAL_DUCK_FILTER = "sidechaincompress=threshold=0.05:ratio=6:attack=15:release=400:knee=4"
+ORIGINAL_DUCK_EQ = "equalizer=f=2500:t=q:w=1.2:g=-5"
 
 
 def _validated_css_color(value: Any, fallback: str) -> str:
@@ -1834,10 +1838,11 @@ def mix_audio(
     filter_parts: list[str] = []
     labels: list[str] = []
     input_index = 0
+    ducked = False
 
     if voice_track:
         input_args.extend(["-i", str(voice_track)])
-        filter_parts.append(f"[{input_index}:a]volume=1.0,alimiter=limit=0.95[v]")
+        filter_parts.append(f"[{input_index}:a]volume=1.0,alimiter=limit=0.95,asplit=2[v][vkey]")
         labels.append("[v]")
         input_index += 1
 
@@ -1845,7 +1850,14 @@ def mix_audio(
     if keep_original_audio and source_has_audio:
         original_audio = extract_original_audio(video_path, work_dir / "original_audio.wav")
         input_args.extend(["-i", str(original_audio)])
-        filter_parts.append(f"[{input_index}:a]volume={original_audio_volume:.2f}[o]")
+        if voice_track:
+            filter_parts.append(
+                f"[{input_index}:a]volume={original_audio_volume:.2f},{ORIGINAL_DUCK_EQ}[o_raw];"
+                f"[o_raw][vkey]{ORIGINAL_DUCK_FILTER}[o]"
+            )
+            ducked = True
+        else:
+            filter_parts.append(f"[{input_index}:a]volume={original_audio_volume:.2f}[o]")
         labels.append("[o]")
         input_index += 1
     elif keep_original_audio:
@@ -1876,6 +1888,8 @@ def mix_audio(
 
     if not labels:
         return None
+    if voice_track and not ducked:
+        filter_parts.append("[vkey]anullsink")
 
     target_duration = source_probe.duration if source_probe is not None else get_media_duration(video_path)
     filter_parts.append(
@@ -2740,7 +2754,7 @@ def process_video(
                     "keep_original_audio": keep_original_audio,
                     "original_audio_volume": original_audio_volume,
                     "music_volume": music_volume,
-                    "audio_mix_version": 2,
+                    "audio_mix_version": 3,
                 }
             )
             audio_checkpoint = checkpoint_store.load_json(
