@@ -22,6 +22,8 @@ pip install -r requirements.txt -r requirements-downloader.txt
 > - Mac: `brew install ffmpeg`
 > - Linux: `sudo apt install ffmpeg`
 
+> Tuỳ chọn: AI dịch local miễn phí (Qwen3-4B, TranslateGemma) qua Ollama — xem [docs/local-translation-ai.md](docs/local-translation-ai.md).
+
 ## Chạy server
 
 ```bash

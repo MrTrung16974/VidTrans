@@ -190,6 +190,20 @@ class Qwen3Tests(unittest.TestCase):
         self.assertIs(sent["body"]["think"], False)
         self.assertIn("本來是挺愛你的", sent["body"]["messages"][0]["content"])
 
+    def test_instruct_model_without_thinking_support_is_retried_without_flag(self) -> None:
+        bodies = []
+
+        def opener(request, **_kwargs):
+            body = json.loads(request.data.decode("utf-8"))
+            bodies.append(body)
+            if "think" in body:
+                raise urllib.error.HTTPError(request.full_url, 400, "does not support thinking", {}, io.BytesIO(b""))
+            return _Response({"message": {"content": '{"translations": ["Xin chào"]}'}})
+
+        translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)
+        self.assertEqual(translator.translate("你好"), "Xin chào")
+        self.assertEqual(len(bodies), 2)
+
     def test_wrong_line_count_is_rejected(self) -> None:
         opener = lambda *_a, **_k: _Response({"message": {"content": '{"translations": ["một"]}'}})
         translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)

@@ -360,7 +360,7 @@ class Qwen3Translator:
             f'Trả về JSON dạng {{"translations": [...]}} có đúng {len(lines)} chuỗi theo đúng thứ tự.\n'
             + json.dumps(lines, ensure_ascii=False)
         )
-        body = json.dumps({
+        body = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
@@ -372,13 +372,27 @@ class Qwen3Translator:
                 "required": ["translations"],
             },
             "options": {"temperature": 0.1, "num_ctx": 8192},
-        }).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.url}/api/chat", data=body, headers={"Content-Type": "application/json"}, method="POST"
-        )
-        try:
+        }
+
+        def chat(payload: dict) -> dict:
+            request = urllib.request.Request(
+                f"{self.url}/api/chat",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
             with self._open(request, timeout=self.timeout) as response:
-                payload = json.loads(response.read(4 * 1024 * 1024).decode("utf-8"))
+                return json.loads(response.read(4 * 1024 * 1024).decode("utf-8"))
+
+        try:
+            try:
+                payload = chat(body)
+            except urllib.error.HTTPError as exc:
+                # Instruct-only tags (e.g. qwen3:4b-instruct) reject the think flag.
+                if exc.code != 400:
+                    raise
+                body.pop("think")
+                payload = chat(body)
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 raise TranslationConfigurationError(
