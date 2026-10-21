@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import io
 import os
+import re
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -263,12 +264,30 @@ class Qwen3Tests(unittest.TestCase):
             raise TimeoutError()
 
         translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)
-        with self.assertRaises(TranslationServiceError) as batch:
-            translator.translate_lines(["一", "二"])
-        self.assertFalse(getattr(batch.exception, "unavailable", False))
         with self.assertRaises(TranslationServiceError) as single:
             translator.translate("一")
         self.assertTrue(getattr(single.exception, "unavailable", False))
+
+    def test_long_batches_are_sent_in_small_chunks_that_shrink_after_a_timeout(self) -> None:
+        sizes: list[int] = []
+
+        def opener(request, **_kwargs):
+            body = json.loads(request.data.decode("utf-8"))
+            count = int(re.search(r"Translate these (\d+) items", body["messages"][1]["content"]).group(1))
+            sizes.append(count)
+            if count > 3:
+                raise TimeoutError()
+            return _Response({"message": {"content": json.dumps(
+                {"translations": [{"id": i + 1, "text": f"câu {i}"} for i in range(count)]}
+            )}})
+
+        with patch.dict(os.environ, {"VIDTRANS_QWEN3_BATCH_LINES": "6"}):
+            translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)
+        lines = [f"句子{i}" for i in range(14)]
+        self.assertEqual(len(translator.translate_lines(lines)), 14)
+        self.assertEqual(sizes[0], 6)
+        self.assertEqual(translator.chunk_lines, 3)
+        self.assertTrue(all(size <= 3 for size in sizes[1:]))
 
     def test_model_tag_must_match_exactly(self) -> None:
         tags = {"models": [{"name": "qwen3:8b"}]}

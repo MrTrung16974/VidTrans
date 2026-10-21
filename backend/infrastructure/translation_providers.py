@@ -370,6 +370,12 @@ class Qwen3Translator:
         self._open = opener or _direct_open
         self.name = f"qwen3-{self.model}"
         self.history = TranslationHistory()
+        # A CPU-bound local model cannot finish a long batch within the timeout; send small chunks
+        # and shrink them further whenever one still times out.
+        try:
+            self.chunk_lines = max(1, int(os.environ.get("VIDTRANS_QWEN3_BATCH_LINES", "").strip() or 12))
+        except ValueError:
+            self.chunk_lines = 12
 
     def _chat(self, lines: list[str], durations: list[float | None] | None) -> list[str]:
         body = {
@@ -431,7 +437,9 @@ class Qwen3Translator:
             message = f"Qwen3 không phản hồi sau {self.timeout:.0f} giây"
             if len(lines) > 1:
                 # A slow CPU may miss the deadline on a long batch yet still translate single cues.
-                raise TranslationServiceError(f"{message} cho {len(lines)} câu") from exc
+                error = TranslationServiceError(f"{message} cho {len(lines)} câu")
+                error.timed_out = True
+                raise error from exc
             raise TranslationUnavailableError(message) from exc
         except Exception as exc:
             raise TranslationServiceError(f"Qwen3 lỗi: {type(exc).__name__}") from exc
@@ -439,6 +447,23 @@ class Qwen3Translator:
         return parse_translations(content, len(lines), provider="qwen3")
 
     def translate_lines(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
+        translated: list[str] = []
+        start = 0
+        while start < len(lines):
+            end = start + self.chunk_lines
+            chunk_durations = durations[start:end] if durations else None
+            try:
+                translated.extend(self._translate_chunk(lines[start:end], chunk_durations))
+            except TranslationServiceError as exc:
+                if not getattr(exc, "timed_out", False):
+                    raise
+                self.chunk_lines = max(1, min(self.chunk_lines, len(lines) - start) // 2)
+                logger.warning("Qwen3 timed out; translating %d cues per request", self.chunk_lines)
+                continue
+            start = end
+        return translated
+
+    def _translate_chunk(self, lines: list[str], durations: list[float | None] | None) -> list[str]:
         translated = self._chat(lines, durations)
         # A small model occasionally copies a phrase untranslated; retry those cues alone.
         for index, value in enumerate(translated):

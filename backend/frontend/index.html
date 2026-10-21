@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261021-password-reset" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261021-google-default" />
   </head>
   <body>
     <div class="app-shell">
@@ -288,12 +288,12 @@
                         <label class="field">
                           <span class="field-label-group"><span>AI dịch phụ đề</span></span>
                           <select id="translationProvider" name="translation_provider">
-                            <option value="google">Google Translate — bộ dịch ban đầu (miễn phí, dự phòng khi chưa chạy Ollama)</option>
+                            <option value="google" selected>Google Translate — nhanh, miễn phí (mặc định)</option>
                             <option value="gemini">Gemini AI — mượt theo ngữ cảnh (Free tier)</option>
-                            <option value="qwen3" selected>Qwen3-4B — AI local cân bằng nhất, hiểu ngữ cảnh (mặc định, ~2.5–3 GB)</option>
+                            <option value="qwen3">Qwen3-4B — AI local hiểu ngữ cảnh, chậm trên CPU (~2.5–3 GB)</option>
                             <option value="translategemma">TranslateGemma — AI dịch local qua Ollama (miễn phí, không giới hạn)</option>
                           </select>
-                          <small id="translationProviderHint" class="field-hint">Mặc định dùng Qwen3-4B qua Ollama; nếu chưa chạy Ollama sẽ tự chuyển sang Google Translate.</small>
+                          <small id="translationProviderHint" class="field-hint">Mặc định dùng Google Translate. Gemini hoặc AI local (Qwen3, TranslateGemma) hiểu ngữ cảnh tốt hơn nhưng chậm hơn.</small>
                         </label>
                         <label class="field">
                           <span class="field-label-group"><span>Nguồn phụ đề</span></span>
@@ -1767,6 +1767,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261021-password-reset"></script>
+    <script type="module" src="/js/app.js?v=20261021-google-default"></script>
   </body>
 </html>
