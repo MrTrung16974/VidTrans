@@ -357,25 +357,17 @@
                             </select>
                           </label>
                           <label id="voiceTypeField" class="field">
-                            <span id="voiceTypeLabel">Giọng dự phòng</span>
-                            <select name="voice_type">
-                              <option value="female" id="femaleVoiceOption">Nữ — Hoài My</option>
-                              <option value="male" id="maleVoiceOption">Nam — Nam Minh</option>
-                            </select>
-                          </label>
-                          <label id="elevenlabsFemaleVoiceField" class="field is-hidden">
-                            <span>Giọng nữ ElevenLabs</span>
+                            <span id="voiceTypeLabel">Giọng đọc</span>
                             <span class="voice-preview-row">
-                              <select name="elevenlabs_female_voice" id="elevenlabsFemaleVoice"></select>
-                              <button type="button" class="btn-voice-preview" data-voice-preview="#elevenlabsFemaleVoice" title="Nghe thử giọng đang chọn">▶ Nghe thử</button>
+                              <select id="voiceTypeSelect">
+                                <option value="female">Nữ — Hoài My</option>
+                                <option value="male">Nam — Nam Minh</option>
+                              </select>
+                              <button type="button" id="voicePreviewButton" class="btn-voice-preview is-hidden" data-voice-preview="#voiceTypeSelect" title="Nghe thử giọng đang chọn">▶ Nghe thử</button>
                             </span>
-                          </label>
-                          <label id="elevenlabsMaleVoiceField" class="field is-hidden">
-                            <span>Giọng nam ElevenLabs</span>
-                            <span class="voice-preview-row">
-                              <select name="elevenlabs_male_voice" id="elevenlabsMaleVoice"></select>
-                              <button type="button" class="btn-voice-preview" data-voice-preview="#elevenlabsMaleVoice" title="Nghe thử giọng đang chọn">▶ Nghe thử</button>
-                            </span>
+                            <input type="hidden" name="voice_type" id="voiceType" value="female" />
+                            <input type="hidden" name="elevenlabs_female_voice" id="elevenlabsFemaleVoice" value="" />
+                            <input type="hidden" name="elevenlabs_male_voice" id="elevenlabsMaleVoice" value="" />
                           </label>
                           <label id="voiceStyleField" class="field">
                             <span>Chất giọng</span>
@@ -1741,6 +1733,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261020-06"></script>
+    <script type="module" src="/js/app.js?v=20261021-01"></script>
   </body>
 </html>

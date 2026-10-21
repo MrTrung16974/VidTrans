@@ -608,10 +608,9 @@ function updateFormSummary() {
   $("#musicField").classList.toggle("is-hidden", mode !== "3");
   const voiceEnabled = mode === "2" || mode === "3";
   const musicEnabled = mode === "3";
-  const voiceMode = document.querySelector('[name="voice_mode"]')?.value || "auto";
   const voiceTypeLabel = $("#voiceTypeLabel");
-  if (voiceTypeLabel) voiceTypeLabel.textContent = voiceMode === "auto" ? "Giọng dự phòng" : "Giọng đọc";
-  ["#ttsProviderField", "#voiceModeField", "#voiceTypeField", "#elevenlabsFemaleVoiceField", "#elevenlabsMaleVoiceField", "#voiceStyleField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
+  if (voiceTypeLabel) voiceTypeLabel.textContent = "Giọng đọc";
+  ["#ttsProviderField", "#voiceModeField", "#voiceTypeField", "#voiceStyleField", "#speechRateField", "#originalVolumeField", "#originalAudioField"].forEach(selector => {
     const field = $(selector);
     field.classList.toggle("is-disabled", !voiceEnabled);
     $$('input, select', field).forEach(control => { control.disabled = !voiceEnabled; });
@@ -647,23 +646,34 @@ function updateFormSummary() {
     : "transparent";
 }
 
-function renderElevenLabsVoices(voices) {
+function renderProviderVoices(provider) {
   stopVoicePreview();
-  [["female", "#elevenlabsFemaleVoiceField", "#elevenlabsFemaleVoice"], ["male", "#elevenlabsMaleVoiceField", "#elevenlabsMaleVoice"]].forEach(([gender, fieldSelector, selectSelector]) => {
-    const field = $(fieldSelector);
-    const voiceSelect = $(selectSelector);
-    if (!field || !voiceSelect) return;
-    // Prefer voices of the matching gender, but allow any voice when none is tagged for it.
-    const matching = voices.filter(voice => voice.gender === gender);
-    const options = matching.length ? matching : voices;
-    const previous = voiceSelect.value;
-    voiceSelect.innerHTML = options
-      .map(voice => `<option value="${escapeHtml(voice.key)}">${escapeHtml(voice.label)}</option>`)
-      .join("");
-    if (options.some(voice => voice.key === previous)) voiceSelect.value = previous;
-    field.classList.toggle("is-hidden", options.length === 0);
-    voiceSelect.disabled = options.length === 0;
-  });
+  const select = $("#voiceTypeSelect");
+  const previewButton = $("#voicePreviewButton");
+  if (!select || !previewButton) return;
+  const isElevenLabs = provider?.key === "elevenlabs";
+  const voices = isElevenLabs ? provider.voices || [] : [
+    { key: "female", gender: "female", label: provider?.female_voice_label || "Giọng nữ" },
+    { key: "male", gender: "male", label: provider?.male_voice_label || "Giọng nam" },
+  ];
+  const previous = select.value;
+  select.innerHTML = voices.map(voice => {
+    const genderLabel = voice.gender === "male" ? "Nam" : "Nữ";
+    return `<option value="${escapeHtml(voice.key)}" data-gender="${escapeHtml(voice.gender)}">${genderLabel} — ${escapeHtml(voice.label)}</option>`;
+  }).join("");
+  if (voices.some(voice => voice.key === previous)) select.value = previous;
+  select.disabled = voices.length === 0;
+  previewButton.classList.toggle("is-hidden", !isElevenLabs || voices.length === 0);
+  syncSelectedVoice(isElevenLabs);
+}
+
+function syncSelectedVoice(isElevenLabs = $("#ttsProvider")?.value === "elevenlabs") {
+  const select = $("#voiceTypeSelect");
+  const selected = select?.selectedOptions[0];
+  const gender = selected?.dataset.gender || select?.value || "female";
+  $("#voiceType").value = gender;
+  $("#elevenlabsFemaleVoice").value = isElevenLabs ? select.value : "";
+  $("#elevenlabsMaleVoice").value = isElevenLabs ? select.value : "";
 }
 
 let voicePreviewAudio = null;
@@ -733,11 +743,7 @@ async function loadTtsProviders() {
     const applyProviderConfiguration = () => {
       const selected = providers.get(select.value);
       hint.textContent = selected?.free_note || "Khóa API chỉ được lưu ở máy chủ.";
-      const femaleOption = $("#femaleVoiceOption");
-      const maleOption = $("#maleVoiceOption");
-      if (femaleOption) femaleOption.textContent = selected?.female_voice_label || "Giọng nữ";
-      if (maleOption) maleOption.textContent = selected?.male_voice_label || "Giọng nam";
-      renderElevenLabsVoices(select.value === "elevenlabs" ? selected?.voices || [] : []);
+      renderProviderVoices(selected);
       const voiceMode = document.querySelector('[name="voice_mode"]');
       const autoOption = voiceMode?.querySelector('option[value="auto"]');
       if (autoOption) {
@@ -749,6 +755,7 @@ async function loadTtsProviders() {
     };
     applyProviderConfiguration();
     select.addEventListener("change", applyProviderConfiguration);
+    $("#voiceTypeSelect")?.addEventListener("change", () => syncSelectedVoice());
   } catch (_) {
     hint.textContent = "Edge TTS sẵn sàng; không đọc được trạng thái API khác.";
   }

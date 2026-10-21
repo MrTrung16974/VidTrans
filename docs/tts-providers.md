@@ -30,9 +30,9 @@ Tài liệu: https://learn.microsoft.com/azure/ai-services/speech-service/rest-t
    VIDTRANS_ELEVENLABS_VOICES=Nữ kể chuyện|female|xxxx;Nữ trẻ|female|yyyy;Nam trầm|male|zzzz
    ```
 
-   Khi chọn ElevenLabs, form hiện hai danh sách "Giọng nữ" và "Giọng nam". Chế độ tự động vẫn chia câu theo nam/nữ rồi dùng giọng đã chọn cho từng nhóm. Nếu chưa khai báo giọng nào cho một giới tính, hệ thống dùng giọng đầu tiên trong danh sách. Dòng sai định dạng bị bỏ qua và ghi cảnh báo vào log; API không trả voice ID ra trình duyệt.
+   Khi chọn ElevenLabs, ô **Giọng đọc** hiện toàn bộ giọng đã khai báo trong danh sách, kèm nhãn **Nam/Nữ**. Giọng được chọn sẽ dùng cho toàn bộ câu; dòng sai định dạng bị bỏ qua và ghi cảnh báo vào log. API không trả voice ID ra trình duyệt.
 
-   Nút **▶ Nghe thử** cạnh mỗi danh sách phát bản preview có sẵn của ElevenLabs (không tốn credit). Máy chủ lấy `preview_url` của giọng qua API, tải về một lần rồi giữ trong bộ nhớ; bản preview do ElevenLabs/tác giả giọng thu nên không phản ánh chất giọng đã chọn trên form.
+   Nút **▶ Nghe thử** cạnh ô **Giọng đọc** phát bản preview có sẵn của ElevenLabs (không tốn credit). Máy chủ lấy `preview_url` của giọng qua API, tải về một lần rồi giữ trong bộ nhớ; bản preview do ElevenLabs/tác giả giọng thu nên không phản ánh chất giọng đã chọn trên form.
 
    Hai biến cũ `VIDTRANS_ELEVENLABS_FEMALE_VOICE_ID` / `VIDTRANS_ELEVENLABS_MALE_VOICE_ID` vẫn được hỗ trợ và gộp vào danh sách.
 
