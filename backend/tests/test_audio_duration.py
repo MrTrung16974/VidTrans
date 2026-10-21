@@ -50,7 +50,7 @@ class AudioDurationIntegrationTests(unittest.TestCase):
 
     def test_balanced_default_voice_and_original_audio_levels(self) -> None:
         self.assertEqual(DEFAULT_VOICE_MIX_GAIN, 1.30)
-        self.assertEqual(DEFAULT_ORIGINAL_AUDIO_VOLUME, 0.30)
+        self.assertEqual(DEFAULT_ORIGINAL_AUDIO_VOLUME, 0.60)
 
     def test_colored_box_style_is_normalized_for_ass(self) -> None:
         style = normalize_subtitle_style(

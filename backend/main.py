@@ -5365,6 +5365,13 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
             target = stored_artifact_path(str(filename))
             if target.is_relative_to(OUTPUT_DIR.resolve()):
                 target.unlink(missing_ok=True)
+    # A finished job is retried to get a fresh result: drop its stage checkpoints
+    # so every step after the download runs again. Failed/cancelled jobs keep
+    # them and resume from the step that stopped.
+    if source.get("status") == "completed":
+        work_dir = tenant_job_dir(WORK_DIR, owner_user_id, job_id)
+        if not video_path.resolve().is_relative_to(work_dir):
+            shutil.rmtree(work_dir, ignore_errors=True)
     notify_scheduler()
     return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
 

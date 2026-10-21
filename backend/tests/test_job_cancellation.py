@@ -178,6 +178,29 @@ class CancellationLifecycleTests(unittest.TestCase):
         self.assertEqual(payload["status"], "queued")
         self.assertFalse(self.service.is_cancel_requested("job-1"))
 
+    def test_retry_completed_job_reruns_all_steps_but_keeps_source(self) -> None:
+        self.create_running_job()
+        main.update_job("job-1", status="completed", progress=1.0, finished_at=main.utc_now())
+        checkpoint = main.tenant_job_dir(self.work_dir, "user-a", "job-1") / "stage_manifest.json"
+        checkpoint.write_text("{}", encoding="utf-8")
+
+        with patch.object(main, "reserve_job_quota"):
+            main.retry_job_endpoint(request_for("user-a"), "job-1")
+
+        self.assertFalse(checkpoint.exists())
+        self.assertTrue(self.source_video.is_file())
+
+    def test_retry_failed_job_resumes_from_checkpoints(self) -> None:
+        self.create_running_job()
+        main.update_job("job-1", status="failed", step="failed", error="boom", finished_at=main.utc_now())
+        checkpoint = main.tenant_job_dir(self.work_dir, "user-a", "job-1") / "stage_manifest.json"
+        checkpoint.write_text("{}", encoding="utf-8")
+
+        with patch.object(main, "reserve_job_quota"):
+            main.retry_job_endpoint(request_for("user-a"), "job-1")
+
+        self.assertTrue(checkpoint.exists())
+
     def test_late_failure_while_cancelling_finishes_as_cancelled(self) -> None:
         self.create_running_job()
         self.service.request_cancel("job-1")
