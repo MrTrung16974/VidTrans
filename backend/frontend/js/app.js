@@ -749,7 +749,7 @@ async function loadTtsProviders() {
       if (autoOption) {
         autoOption.textContent = selected?.supports_pitch_matching === false
           ? "Tự động chọn giọng nam/nữ"
-          : "Tự động theo cao độ";
+          : "Tự động theo cao độ và lời thoại";
       }
       updateFormSummary();
     };

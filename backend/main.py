@@ -149,10 +149,12 @@ from pipeline.tts_timing import (
     adaptive_synthesis_rate_percent,
     available_voice_window,
     bounded_tempo,
+    relaxed_synthesis_rate_percent,
     schedule_voice_segments,
     speech_level_gain,
 )
 from pipeline.voice_routing import read_pcm_wav, route_segments_by_pitch, route_segments_manually
+from pipeline.voice_style import AUTO_VOICE_STYLE, infer_speaker_voice, infer_voice_style
 
 try:
     import edge_tts
@@ -1415,6 +1417,7 @@ def synthesize_tts_segments(
     target_language: str = "vi",
     tts_provider: str = "edge",
     tts_voices: dict[str, str] | None = None,
+    relax_pace: bool = False,
 ) -> list[Path]:
     tts_dir = work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
@@ -1561,6 +1564,8 @@ def synthesize_tts_segments(
         rendered_duration = get_media_duration(trimmed_path)
 
         native_rate_boost = adaptive_synthesis_rate_percent(rendered_duration, cue_duration)
+        if not native_rate_boost and relax_pace:
+            native_rate_boost = relaxed_synthesis_rate_percent(rendered_duration, cue_duration)
         applied_native_rate_boost = 0
         if edge_succeeded and native_rate_boost:
             adaptive_output_path = tts_dir / f"{index:04d}_adaptive.mp3"
@@ -2646,10 +2651,19 @@ def process_video(
                             video_path,
                             work_dir / "voice_analysis.wav",
                         )
+                        content_voice, content_cues = infer_speaker_voice(translated_segments, target_language)
+                        if content_voice:
+                            logger.info(
+                                "Dialogue implies a %s narrator (%d cues) for job %s",
+                                content_voice,
+                                content_cues,
+                                job_id,
+                            )
                         voice_summary = route_segments_by_pitch(
                             translated_segments,
                             analysis_audio,
                             fallback_voice=voice_type,
+                            content_voice=content_voice,
                         )
                     except JobCancelled:
                         raise
@@ -2661,6 +2675,13 @@ def process_video(
                         voice_summary = route_segments_manually(translated_segments, voice_type)
                 else:
                     voice_summary = route_segments_manually(translated_segments, voice_type)
+
+        style_decision = None
+        requested_voice_style = voice_style
+        if mode in (2, 3) and voice_style == AUTO_VOICE_STYLE:
+            style_decision = infer_voice_style(translated_segments)
+            voice_style = style_decision.style
+            update_job(job_id, step_detail=f"Chất giọng tự động: {voice_preset(voice_style).label_vi}")
 
         audio_path = None
         tts_checkpoint = None
@@ -2677,6 +2698,7 @@ def process_video(
                     "voice_type": voice_type,
                     "voice_mode": voice_mode,
                     "voice_style": voice_style,
+                    "requested_voice_style": requested_voice_style,
                     "tts_provider": tts_provider,
                     "tts_voices": tts_voices or {},
                     "speech_rate": speech_rate,
@@ -2718,6 +2740,7 @@ def process_video(
                         target_language=target_language,
                         tts_provider=tts_provider,
                         tts_voices=tts_voices,
+                        relax_pace=requested_voice_style == AUTO_VOICE_STYLE,
                     )
                     ensure_job_active(job_id)
                     voice_track = build_voice_track(
@@ -2825,6 +2848,8 @@ def process_video(
                         "mode": voice_mode,
                         "fallback_voice": voice_type,
                         "voice_style": voice_style,
+                        "requested_voice_style": requested_voice_style,
+                        "style_decision": style_decision.as_dict() if style_decision else None,
                         "summary": voice_summary,
                     },
                     "segments": serializable_segments,

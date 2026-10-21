@@ -29,6 +29,8 @@ class VoicePreset:
 
 
 VOICE_PRESETS: dict[str, VoicePreset] = {
+    # Resolved per video from its content before synthesis; behaves as natural otherwise.
+    "auto": VoicePreset("auto", "Tự động theo nội dung", 0, 0),
     "natural": VoicePreset("natural", "Tự nhiên", 0, 0),
     # Edge voices already carry a trained speaking identity. Large pitch shifts
     # make Vietnamese vowels sound metallic, so styles deliberately stay subtle.

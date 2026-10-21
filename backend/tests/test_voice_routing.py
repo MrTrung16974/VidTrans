@@ -189,3 +189,25 @@ class VoiceRoutingTests(unittest.TestCase):
 
         self.assertEqual([segment["voice_type"] for segment in segments], ["male", "male"])
         self.assertEqual(summary["fallback"], 2)
+
+    def test_dialogue_voice_settles_pitch_between_ranges(self) -> None:
+        # 172 Hz sits between the male and female ranges, like a low female voice.
+        samples = np.concatenate([voiced_wave(172.0, 1.0) for _ in range(3)])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_path = Path(temp_dir) / "between.wav"
+            self.write_audio(audio_path, samples)
+            segments = [{"start": float(i), "end": float(i + 1), "text": "Em nhớ anh"} for i in range(3)]
+            route_segments_by_pitch(segments, audio_path, fallback_voice="male", content_voice="female")
+
+        self.assertEqual([segment["voice_type"] for segment in segments], ["female"] * 3)
+        self.assertEqual(segments[0]["voice_routing"]["selection_source"], "content")
+
+    def test_dialogue_voice_does_not_override_confident_pitch(self) -> None:
+        samples = np.concatenate([voiced_wave(120.0, 1.0) for _ in range(3)])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_path = Path(temp_dir) / "male.wav"
+            self.write_audio(audio_path, samples)
+            segments = [{"start": float(i), "end": float(i + 1), "text": "Em nhớ anh"} for i in range(3)]
+            route_segments_by_pitch(segments, audio_path, fallback_voice="female", content_voice="female")
+
+        self.assertEqual([segment["voice_type"] for segment in segments], ["male"] * 3)

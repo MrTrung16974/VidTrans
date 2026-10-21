@@ -8,6 +8,11 @@ import numpy as np
 MAX_NATURAL_TEMPO = 1.08
 TEMPO_DEADBAND = 1.03
 MAX_SYNTHESIS_RATE_BOOST_PERCENT = 12
+# A line far shorter than its source window sounds rushed against a slow,
+# emotional original; re-render it a little slower to fill part of the gap.
+MAX_SYNTHESIS_RATE_SLOWDOWN_PERCENT = 12
+SLOWDOWN_TRIGGER_RATIO = 0.7
+SLOWDOWN_FILL_RATIO = 0.85
 MAX_BORROWED_PAUSE_SECONDS = 0.45
 MIN_TRANSITION_GAP_SECONDS = 0.08
 VOICE_GAP_SECONDS = 0.025
@@ -35,6 +40,17 @@ def adaptive_synthesis_rate_percent(rendered_duration: float, cue_duration: floa
     if required <= TEMPO_DEADBAND:
         return 0
     return min(MAX_SYNTHESIS_RATE_BOOST_PERCENT, max(1, round((required - 1.0) * 100)))
+
+
+def relaxed_synthesis_rate_percent(rendered_duration: float, cue_duration: float) -> int:
+    """Negative rate change that lets a short line breathe like the source."""
+
+    if rendered_duration <= 0 or cue_duration <= 0:
+        return 0
+    ratio = rendered_duration / cue_duration
+    if ratio >= SLOWDOWN_TRIGGER_RATIO:
+        return 0
+    return max(-MAX_SYNTHESIS_RATE_SLOWDOWN_PERCENT, round((ratio / SLOWDOWN_FILL_RATIO - 1.0) * 100))
 
 
 def available_voice_window(segments: Sequence[dict[str, Any]], index: int) -> float:

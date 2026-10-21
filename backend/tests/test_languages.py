@@ -57,7 +57,7 @@ class LanguageCatalogTests(unittest.TestCase):
         self.assertEqual(
             set(VOICE_PRESETS),
             {
-                "natural", "warm", "bright", "deep", "energetic", "gentle",
+                "auto", "natural", "warm", "bright", "deep", "energetic", "gentle",
                 "storyteller", "news", "commercial", "youthful", "authoritative",
                 "calm", "cheerful",
             },

@@ -45,6 +45,10 @@ SPEAKER_SPLIT_SEMITONES = 4.0
 # Below MIN_CONFIDENCE a cue may still decide its own style when its pitch
 # sits clearly inside one range; this beats copying the video's majority.
 WEAK_CONFIDENCE = 0.2
+# Dialogue cues (e.g. "em ... anh") count as this share of the video's speech
+# time. Enough to settle a voice sitting between the pitch ranges, never
+# enough to outvote a speaker whose pitch is clearly confident.
+CONTENT_EVIDENCE_SHARE = 0.25
 
 
 @dataclass(frozen=True)
@@ -200,11 +204,13 @@ def route_segments_by_pitch(
     audio_path: Path,
     *,
     fallback_voice: str,
+    content_voice: str | None = None,
 ) -> dict[str, int]:
     """Assign each subtitle cue a free local TTS voice choice.
 
     The classifier selects a TTS *voice style*, not a person's gender. Ambiguous
-    or noisy cues inherit the latest confident style, then the selected fallback.
+    or noisy cues inherit the latest confident style, then the narrator's
+    voice implied by the dialogue (``content_voice``), then the fallback.
     """
     samples, sample_rate = read_pcm_wav(audio_path)
     analyses: list[PitchAnalysis] = []
@@ -221,6 +227,8 @@ def route_segments_by_pitch(
     for analysis, duration in zip(analyses, durations):
         if analysis.voice_type:
             evidence[analysis.voice_type] += analysis.confidence * max(duration, 0.25)
+    if content_voice in evidence:
+        evidence[content_voice] += CONTENT_EVIDENCE_SHARE * sum(durations)
     global_voice: str | None = None
     if evidence["male"] > evidence["female"]:
         global_voice = "male"
@@ -248,7 +256,7 @@ def route_segments_by_pitch(
             sources.append("weak_pitch")
         elif global_voice:
             resolved_voices.append(global_voice)
-            sources.append("global")
+            sources.append("content" if global_voice == content_voice else "global")
         elif previous_confident or next_confident:
             resolved_voices.append(previous_confident or next_confident or fallback_voice)
             sources.append("neighbor")
@@ -285,6 +293,7 @@ def route_segments_by_pitch(
             "raw_voice_type": analysis.voice_type,
             "resolved_voice_type": selected_voice,
             "global_voice_type": global_voice,
+            "content_voice_type": content_voice,
             "matched_pitch_hz": round(matched_pitch, 1) if matched_pitch else None,
             "pitch_offset_hz": pitch_offset,
             **asdict(analysis),
