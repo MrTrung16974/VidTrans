@@ -49,6 +49,28 @@ extracted incrementally. Configuration and job persistence now enter through
 `app.config` and `application.job_service`; new infrastructure or provider
 logic must not be added directly to API route functions.
 
+## Story → comic video
+
+A second pipeline turns prose into a narrated comic video. It is an ordinary job
+(`job_action = "comic_video"`), so queueing, cancellation, progress events, retry,
+quota and ownership are shared with video translation.
+
+```text
+TXT/DOCX/text -> story_text (normalise, chunk) -> comic_storyboard (LLM JSON + Pydantic
+validation + bounded repair, or sentence splitter) -> storyboard.json (versioned, editable)
+-> comic_video: character references -> scene images -> voice -> subtitle cues
+-> per-scene clip (zoompan, fades, burned cues) -> concat + music -> MP4 + SRT
+```
+
+- `domain/comic.py` holds the storyboard contract; `application/comic_routes.py` the
+  `/api/v1/comic` API; `application/comic_service.py` runs the job.
+- Providers sit behind interfaces: `infrastructure/llm_providers.py` (Gemini, Qwen3 via
+  Ollama) and `infrastructure/image_providers.py` (Gemini image with reference images,
+  offline placeholder).
+- Every derived asset is content-addressed by the inputs it depends on, so editing one
+  scene regenerates only that scene's image/voice/clip; images and voice survive edits
+  so reverting is free. The storyboard can only be edited while the job is idle.
+
 ## Job state
 
 Job state is stored in PostgreSQL configured by `VIDTRANS_DATABASE_URL`. Docker

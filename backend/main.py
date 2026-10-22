@@ -31,6 +31,8 @@ from infrastructure.artifact_archive import build_artifact_archive
 from app.config import AppSettings
 from application.job_scheduler import JobScheduler
 from application.job_service import JobService
+from application.comic_routes import ComicRouteDependencies, create_comic_router, requeue_comic_job
+from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
 from application.instagram_routes import create_instagram_router
 from application.threads_routes import create_threads_router
 from application.social_publish_routes import create_social_publish_router
@@ -124,6 +126,7 @@ from pipeline.ocr import (
     merge_independent_ocr_asr_segments,
     merge_ocr_and_asr_segments,
 )
+from pipeline.comic_video import ComicRuntime
 from pipeline.checkpoint_payloads import (
     restore_file_checkpoint,
     restore_tts_checkpoint,
@@ -3398,6 +3401,9 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
         if job_action == "publish_tiktok":
             publish_scheduled_tiktok(job_id, resume_request)
             return
+        if job_action == COMIC_JOB_ACTION:
+            run_comic_job(job_id, resume_request)
+            return
         if job_action != "process_video":
             raise ValueError("Stored background action is invalid")
         video_path = prepare_job_source_video(job_id, resume_request)
@@ -3467,6 +3473,72 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             error=public_error_message(exc),
             finished_at=utc_now(),
         )
+
+
+def comic_project_root(owner_user_id: str, job_id: str) -> Path:
+    return tenant_job_dir(WORK_DIR, owner_user_id, job_id) / "comic"
+
+
+def synthesize_comic_speech(
+    text: str, output_path: Path, gender: str, rate_percent: int, pitch_hz: int, language: str
+) -> None:
+    voice_name = language_profile(language).edge_voice(gender)
+    try:
+        tts_edge_with_retry(text, output_path, voice_name, f"{rate_percent:+d}%", f"{pitch_hz:+d}Hz")
+    except Exception as exc:
+        logger.warning("edge TTS failed for comic narration, fallback to gTTS: %s", type(exc).__name__)
+        tts_gtts_sync(text, output_path, language=language)
+
+
+def comic_runtime(job_id: str, report: Callable[[str, float, str], None]) -> ComicRuntime:
+    return ComicRuntime(
+        ffmpeg=FFMPEG,
+        run_ffmpeg=lambda args: run_ffmpeg(args, job_id=job_id),
+        media_duration=get_media_duration,
+        synthesize=synthesize_comic_speech,
+        font_path=BUNDLED_FONT if BUNDLED_FONT.is_file() else None,
+        check_active=lambda: ensure_job_active(job_id),
+        report=report,
+    )
+
+
+COMIC_RUNNER = ComicJobRunner(
+    get_job=lambda job_id: JOB_SERVICE.get(job_id),
+    update_job=update_job,
+    ensure_active=ensure_job_active,
+    project_root=comic_project_root,
+    output_dir=lambda owner_user_id, job_id: tenant_job_dir(OUTPUT_DIR, owner_user_id, job_id),
+    artifact_name=stored_artifact_name,
+    make_runtime=comic_runtime,
+    font_path=BUNDLED_FONT if BUNDLED_FONT.is_file() else None,
+    utc_now=utc_now,
+)
+
+
+def run_comic_job(job_id: str, request: dict[str, Any]) -> None:
+    _job_context.job_id = job_id
+    try:
+        COMIC_RUNNER.run(job_id, request)
+        TENANT_GOVERNANCE.consume(job_id)
+    except JobCancelled:
+        logger.info("Comic video cancelled for job %s", job_id)
+        current = JOB_SERVICE.get(job_id) or {}
+        update_job(
+            job_id,
+            status="cancelled",
+            step="cancelled",
+            progress=float(current.get("progress", 0.0)),
+            step_detail="Đã hủy theo yêu cầu",
+            finished_at=utc_now(),
+        )
+        TENANT_GOVERNANCE.release(job_id)
+    except Exception as exc:
+        logger.exception("Comic video failed for job %s", job_id)
+        update_job(job_id, status="failed", step="failed", error=public_error_message(exc), finished_at=utc_now())
+        TENANT_GOVERNANCE.release(job_id)
+    finally:
+        if hasattr(_job_context, "job_id"):
+            del _job_context.job_id
 
 
 def retention_days(name: str, default: int) -> int:
@@ -5600,6 +5672,13 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     owner_user_id = str(source.get("owner_user_id") or account["user_id"])
     if source.get("status") in {"queued", "scheduled", "processing", "cancelling"}:
         raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý")
+    if is_comic_job(source):
+        render = bool((source.get("resume_request") or {}).get("render", True))
+        try:
+            requeue_comic_job(COMIC_ROUTE_DEPS, request, job_id, source, render=render)
+        except JobStateConflictError:
+            raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý") from None
+        return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
 
     resume_request = source.get("resume_request")
     if not isinstance(resume_request, dict):
@@ -5684,7 +5763,7 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
                 target.unlink(missing_ok=True)
     resume_request = job.get("resume_request")
     if isinstance(resume_request, dict):
-        for source_key in ("video_path", "source_cookie_path"):
+        for source_key in ("video_path", "source_cookie_path", "music_path"):
             source_value = resume_request.get(source_key)
             if not source_value:
                 continue
@@ -5748,6 +5827,28 @@ def download_job_artifact(request: Request, job_id: str, kind: str) -> FileRespo
     if not filename or not target.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     return FileResponse(target, filename=target.name, headers={"Cache-Control": "private, no-store"})
+
+
+def comic_quota_account(request: Request, job: dict[str, Any]) -> dict[str, Any]:
+    account = current_account(request)
+    owner_user_id = str(job.get("owner_user_id") or account["user_id"])
+    return ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
+
+
+COMIC_ROUTE_DEPS = ComicRouteDependencies(
+    current_account=lambda request: current_account(request),
+    job_for_request=lambda request, job_id: job_for_request(request, job_id),
+    job_response=lambda job_id, job: job_response(job_id, job),
+    create_job=lambda job_id, payload, owner_user_id: JOB_SERVICE.create(job_id, payload, owner_user_id=owner_user_id),
+    retry_job=lambda job_id, **fields: JOB_SERVICE.retry(job_id, **fields),
+    reserve_quota=lambda job_id, account: reserve_job_quota(job_id, account),
+    release_quota=lambda job_id: TENANT_GOVERNANCE.release(job_id),
+    quota_account=comic_quota_account,
+    notify_scheduler=notify_scheduler,
+    project_root=comic_project_root,
+    upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
+)
+app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
 
 
 def custom_openapi() -> dict[str, Any]:

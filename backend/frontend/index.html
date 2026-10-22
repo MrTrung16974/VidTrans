@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261021-google-default" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261022-comic" />
   </head>
   <body>
     <div class="app-shell">
@@ -23,6 +23,7 @@
         </a>
         <nav id="mainNavigation" class="nav-tabs" aria-label="Điều hướng chính">
           <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span>Tạo quy trình</span></a>
+          <a href="#comic" data-view-link="comic" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v6h-7zM13 13h7v6h-7z"/></svg></i><span>Truyện → Video</span></a>
           <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
           <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span>Đăng bài mạng xã hội</span></a>
           <a href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span>Đăng nhập nguồn</span></a>
@@ -582,6 +583,90 @@
               </section>
             </aside>
           </form>
+        </section>
+
+        <section id="comicView" class="view comic-view is-hidden">
+          <div class="page-heading comic-heading">
+            <div>
+              <div class="create-badge-row">
+                <span class="eyebrow-chip">🎨 Truyện → Video</span>
+                <span class="eyebrow-note">AI chia cảnh · Vẽ minh họa · Lồng tiếng</span>
+              </div>
+              <h1>Biến truyện chữ thành video truyện tranh</h1>
+              <p>Hệ thống tự chia cảnh, giữ ngoại hình nhân vật nhất quán, lồng tiếng, tạo phụ đề và dựng MP4. Sửa từng cảnh rồi render lại — chỉ phần đã đổi được tạo lại.</p>
+            </div>
+          </div>
+
+          <div class="comic-layout">
+            <form id="comicForm" class="card comic-form" novalidate>
+              <div class="step-heading">
+                <span class="step-badge">1</span>
+                <div><h2>Dự án truyện mới</h2><p>Dán một chương truyện hoặc tải file TXT/DOCX.</p></div>
+              </div>
+              <label class="field"><span>Tên truyện / tập</span><input name="title" value="Truyện mới" maxlength="200" required /></label>
+              <label class="field">
+                <span class="field-label-group"><span>Nội dung truyện</span><small id="comicStoryCount" class="field-hint">0 ký tự</small></span>
+                <textarea name="text" rows="9" placeholder="Đêm hôm đó, Minh bước vào khu rừng…"></textarea>
+                <small id="comicStoryLimit" class="field-hint"></small>
+              </label>
+              <label class="field"><span>Hoặc tải file truyện (.txt, .docx)</span><input name="file" type="file" accept=".txt,.md,.docx" /></label>
+
+              <div class="field-grid">
+                <label class="field"><span>Phong cách hình ảnh</span><select name="style"></select></label>
+                <label class="field"><span>Khung hình</span>
+                  <select name="aspect_ratio"><option value="9:16" selected>Dọc 9:16 (TikTok, Shorts)</option><option value="16:9">Ngang 16:9 (YouTube)</option></select></label>
+                <label class="field"><span>AI chia cảnh</span><select name="llm_provider"></select></label>
+                <label class="field"><span>AI vẽ ảnh</span><select name="image_provider"></select></label>
+                <label class="field"><span>Ngôn ngữ lời đọc</span><select name="language"></select></label>
+                <label class="field"><span>Giọng người dẫn chuyện</span>
+                  <select name="narrator_voice"><option value="female" selected>Nữ</option><option value="male">Nam</option></select></label>
+                <label class="field"><span>Tốc độ đọc</span><input name="speech_rate" type="number" min="0.7" max="1.5" step="0.05" value="1" /></label>
+                <label class="field"><span>Thời lượng mỗi cảnh (giây)</span><input name="target_scene_duration" type="number" min="3" max="15" step="0.5" value="7" /></label>
+                <label class="field"><span>Số cảnh tối đa</span><input name="max_scenes" type="number" min="1" max="120" value="40" /></label>
+                <label class="field"><span>Seed ảnh (0 = ngẫu nhiên)</span><input name="seed" type="number" min="0" value="0" /></label>
+                <label class="field"><span>Nhạc nền (tùy chọn)</span><input name="background_music" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg" /></label>
+                <label class="field"><span>Âm lượng nhạc nền</span><input name="music_volume" type="number" min="0" max="1" step="0.05" value="0.15" /></label>
+              </div>
+              <label class="comic-check"><input name="burn_subtitles" type="checkbox" checked /> Ghép phụ đề vào video</label>
+              <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước khi lồng tiếng</small></label>
+              <button class="button primary full" type="submit">Tạo video truyện</button>
+            </form>
+
+            <aside class="card comic-projects">
+              <h2>Dự án truyện</h2>
+              <div id="comicProjectList" class="comic-project-list"><p class="comic-empty">Đang tải…</p></div>
+            </aside>
+          </div>
+
+          <section id="comicEditor" class="comic-editor is-hidden" aria-live="polite">
+            <div class="card comic-editor-head">
+              <div class="comic-editor-title">
+                <h2 id="comicEditorTitle"></h2>
+                <span id="comicEditorStatus" class="status-pill"></span>
+              </div>
+              <p id="comicMeta" class="comic-meta"></p>
+              <p id="comicEditorDetail" class="comic-detail"></p>
+              <div id="comicProgressRow" class="progress-track"><span id="comicProgress"></span></div>
+              <p id="comicStale" class="comic-stale is-hidden">Storyboard có thay đổi chưa render. Bấm "Render video" để cập nhật — các cảnh không đổi được dùng lại.</p>
+              <div class="comic-actions">
+                <button class="button primary" type="button" data-comic-action="render">Render video</button>
+                <button class="button secondary" type="button" data-comic-action="images">Chỉ sinh ảnh</button>
+                <button class="button secondary" type="button" data-comic-action="reanalyze">Phân tích lại truyện</button>
+                <button class="button secondary comic-danger" type="button" data-comic-action="cancel">Dừng</button>
+                <span id="comicDownloads" class="comic-downloads"></span>
+              </div>
+              <video id="comicPlayer" class="comic-player is-hidden" controls preload="metadata"></video>
+              <div id="comicWarnings" class="comic-warnings is-hidden"></div>
+            </div>
+            <div id="comicCharactersBlock" class="comic-block">
+              <h3>Nhân vật</h3>
+              <div id="comicCharacters" class="comic-characters"></div>
+            </div>
+            <div class="comic-block">
+              <h3>Storyboard</h3>
+              <div id="comicScenes" class="comic-scenes"></div>
+            </div>
+          </section>
         </section>
 
         <section id="jobsView" class="view is-hidden">
@@ -1767,6 +1852,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261021-google-default"></script>
+    <script type="module" src="/js/app.js?v=20261022-comic"></script>
   </body>
 </html>

@@ -2,6 +2,7 @@ import { createTikTokWorkspace } from "./tiktok.js?v=20261019-1";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
+import { createComicWorkspace } from "./comic.js?v=20261022-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -69,6 +70,9 @@ const stepLabels = {
   tts: "Đang tạo giọng đọc", "mixing-audio": "Đang trộn âm thanh", rendering: "Đang dựng video", "publishing-tiktok": "Đang đăng lên TikTok",
   "waiting-tiktok-publish": "Đang chờ lịch đăng TikTok",
   completed: "Đã hoàn tất", failed: "Xử lý thất bại", cancelled: "Đã hủy", cancelling: "Đang dừng an toàn",
+  comic_storyboard: "Đang chia cảnh truyện", comic_references: "Đang vẽ nhân vật tham chiếu", comic_images: "Đang vẽ minh họa",
+  comic_voice: "Đang lồng tiếng truyện", comic_clips: "Đang dựng clip cảnh", comic_export: "Đang xuất video truyện",
+  storyboard_ready: "Storyboard chờ duyệt",
 };
 const statusLabels = { queued: "Đang chờ", scheduled: "Đã đặt lịch", processing: "Đang chạy", completed: "Hoàn tất", failed: "Thất bại", cancelled: "Đã hủy", cancelling: "Đang hủy" };
 
@@ -269,6 +273,8 @@ async function startProtectedApplication() {
   jobEvents.start();
   if (location.hash === "#douyin") startDouyinBrowserPolling();
   if (location.hash === "#tiktok") tiktokWorkspace.enter();
+  // The first showView ran before the role was known and fell back to #jobs.
+  if (location.hash.startsWith("#comic")) showView();
   if (location.hash === "#admin") loadAdminAccounts();
   if (location.hash === "#billing") loadBilling();
 }
@@ -820,11 +826,14 @@ function bindWorkflowStepNav() {
 let activeView = null;
 
 function showView() {
-  let view = location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : "create";
+  let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : "create";
   if (["admin", "douyin"].includes(view) && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
-  if (view === "tiktok" && state.auth.role === "viewer") view = "jobs";
+  if (["tiktok", "comic"].includes(view) && state.auth.role === "viewer") view = "jobs";
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
+  $("#comicView").classList.toggle("is-hidden", view !== "comic");
+  if (view === "comic" && state.appStarted) comicWorkspace.enter();
+  else comicWorkspace.leave();
   $("#tiktokView").classList.toggle("is-hidden", view !== "tiktok");
   if (view === "tiktok" && state.appStarted) tiktokWorkspace.enter();
   else tiktokWorkspace.leave();
@@ -2450,6 +2459,7 @@ window.addEventListener("beforeunload", event => {
   event.returnValue = "";
 });
 const tiktokWorkspace = createTikTokWorkspace({ requestJson, toast });
+const comicWorkspace = createComicWorkspace({ requestJson, toast, escapeHtml });
 const platformAppsSettings = createPlatformAppsSettings({
   requestJson, toast, escapeHtml, onChange: () => tiktokWorkspace.enter(),
 });

@@ -1,0 +1,159 @@
+import io
+import json
+import unittest
+import unittest.mock
+import zipfile
+
+from pydantic import ValidationError
+
+from domain.comic import ComicScene, ComicSettings, Storyboard, slugify_id
+from infrastructure.story_text import StoryTextError, chunk_story, decode_text, read_story_upload, split_sentences
+from pipeline.comic_storyboard import MAX_REPAIR_ROUNDS, build_storyboard, extract_json, heuristic_scenes
+
+STORY = (
+    "Đêm hôm đó, Minh bước vào khu rừng. Ánh trăng lạnh lẽo xuyên qua tán lá.\n\n"
+    "\"Có ai ở đây không?\" Minh gọi lớn. Không ai trả lời.\n\n"
+    "Bỗng một bóng trắng lướt qua. Cô gái tóc dài đứng giữa lối mòn, mỉm cười buồn bã."
+)
+
+
+def scene(narration="Minh bước vào khu rừng.", **extra):
+    return {"narration": narration, "dialogue": [], "characters": ["minh"], "location": "dark forest",
+            "emotion": "fear", "visual_prompt": "A young man walks into a dark forest at night",
+            "camera_motion": "slow_zoom_in", "estimated_duration": 6, "source_excerpt": "Đêm hôm đó, Minh bước vào",
+            **extra}
+
+
+MINH = {"id": "minh", "name": "Minh", "gender": "male", "appearance": "young man, short black hair"}
+
+
+class FakeLLM:
+    name = "fake-llm"
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.prompts = []
+
+    def generate_json(self, system, user, schema):
+        self.prompts.append(user)
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer if isinstance(answer, str) else json.dumps(answer, ensure_ascii=False)
+
+
+class StoryTextTests(unittest.TestCase):
+    def test_docx_paragraphs_are_extracted(self) -> None:
+        document = (
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+            "<w:p><w:r><w:t>Chương 1</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>Minh bước </w:t></w:r><w:r><w:t>vào rừng.</w:t></w:r></w:p>"
+            "</w:body></w:document>"
+        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("word/document.xml", document)
+        self.assertEqual(read_story_upload("story.docx", buffer.getvalue()), "Chương 1 Minh bước vào rừng.")
+
+    def test_vietnamese_encodings_and_unsupported_files(self) -> None:
+        self.assertEqual(decode_text("Đêm khuya".encode("utf-16")), "Đêm khuya")
+        self.assertEqual(decode_text("﻿Đêm".encode("utf-8")), "Đêm")
+        with self.assertRaises(StoryTextError):
+            read_story_upload("story.pdf", b"%PDF")
+        with self.assertRaises(StoryTextError):
+            read_story_upload("story.docx", b"not a zip")
+
+    def test_chunks_never_cut_a_sentence(self) -> None:
+        text = "\n\n".join(f"Câu số {i} kể về một chuyện dài dòng." for i in range(200))
+        chunks = chunk_story(text, 500)
+        self.assertTrue(all(len(chunk) <= 500 for chunk in chunks))
+        self.assertEqual(sum(len(split_sentences(c)) for c in chunks), 200)
+
+
+class DomainTests(unittest.TestCase):
+    def test_ids_are_ascii_slugs_and_motion_aliases_normalise(self) -> None:
+        self.assertEqual(slugify_id("Đức Anh"), "duc_anh")
+        self.assertEqual(ComicScene(scene_index=1, narration="x", visual_prompt="abc",
+                                    camera_motion="Zoom In").camera_motion, "slow_zoom_in")
+
+    def test_scene_needs_speech_and_known_characters(self) -> None:
+        with self.assertRaises(ValidationError):
+            ComicScene(scene_index=1, visual_prompt="abc")
+        with self.assertRaisesRegex(ValidationError, "unknown characters"):
+            Storyboard(characters=[], scenes=[ComicScene(scene_index=1, narration="x", visual_prompt="abc",
+                                                         characters=["lan"])])
+
+    def test_storyboard_renumbers_scenes(self) -> None:
+        board = Storyboard(scenes=[ComicScene(scene_index=7, narration="a", visual_prompt="abc"),
+                                   ComicScene(scene_index=3, narration="b", visual_prompt="abc")])
+        self.assertEqual([s.scene_index for s in board.scenes], [1, 2])
+
+
+class StoryboardTests(unittest.TestCase):
+    def settings(self, **overrides):
+        return ComicSettings(title="T", llm_provider=overrides.pop("llm_provider", "gemini"), **overrides)
+
+    def test_heuristic_keeps_every_sentence_in_order(self) -> None:
+        board = build_storyboard(STORY, self.settings(llm_provider="heuristic", target_scene_duration=4), None)
+        joined = " ".join(s.narration for s in board.scenes)
+        self.assertEqual(joined.split(), " ".join(split_sentences(STORY)).split())
+        self.assertGreater(len(board.scenes), 1)
+        self.assertEqual(board.analysis_method, "heuristic")
+
+    def test_llm_answer_is_validated_and_repaired(self) -> None:
+        invalid = {"characters": [MINH], "scenes": [{"narration": "", "visual_prompt": "x"}]}
+        valid = {"characters": [MINH], "scenes": [scene(dialogue=[{"character": "Lan", "text": "Anh là ai?"}])]}
+        llm = FakeLLM(["```json\n" + json.dumps(invalid) + "\n```", valid])
+
+        board = build_storyboard(STORY, self.settings(), llm)
+
+        self.assertEqual(len(llm.prompts), 2)
+        self.assertIn("rejected by the validator", llm.prompts[1])
+        self.assertEqual({c.id for c in board.characters}, {"minh", "lan"})  # Unknown speaker is registered.
+        self.assertEqual(board.scenes[0].dialogue[0].character, "lan")
+        self.assertTrue(board.scenes[0].negative_prompt)
+        self.assertEqual(board.warnings, [])
+
+    def test_repairs_are_bounded(self) -> None:
+        llm = FakeLLM(["not json"] * (MAX_REPAIR_ROUNDS + 1))
+        with self.assertRaises(json.JSONDecodeError):
+            build_storyboard(STORY, self.settings(), llm)
+        self.assertEqual(len(llm.prompts), MAX_REPAIR_ROUNDS + 1)
+
+    def test_auto_mode_falls_back_to_sentences_with_a_warning(self) -> None:
+        board = build_storyboard(STORY, self.settings(llm_provider="auto"), FakeLLM([RuntimeError("quota")]))
+        self.assertEqual(board.analysis_method, "heuristic")
+        self.assertIn("quota", board.warnings[0])
+
+    def test_known_characters_keep_their_first_description(self) -> None:
+        text = "\n\n".join([STORY] * 3)
+        redrawn = {**MINH, "appearance": "old man with a beard"}
+        llm = FakeLLM([{"characters": [MINH], "scenes": [scene()]},
+                       {"characters": [redrawn], "scenes": [scene()]}] * 3)
+        with unittest.mock.patch("pipeline.comic_storyboard.CHUNK_CHARS", len(STORY) + 5):
+            board = build_storyboard(text, self.settings(), llm)
+        self.assertEqual(board.character("minh").appearance, MINH["appearance"])
+        self.assertIn("KNOWN CHARACTERS", llm.prompts[1])
+        self.assertIn("short black hair", llm.prompts[1])
+
+    def test_excerpt_not_in_source_is_flagged(self) -> None:
+        llm = FakeLLM([{"characters": [MINH], "scenes": [scene(source_excerpt="Minh cưỡi rồng bay lên trời")]}])
+        board = build_storyboard(STORY, self.settings(), llm)
+        self.assertIn("không khớp", board.warnings[0])
+
+    def test_scene_cap(self) -> None:
+        board = build_storyboard(STORY, self.settings(llm_provider="heuristic", max_scenes=1,
+                                                      target_scene_duration=3), None)
+        self.assertEqual(len(board.scenes), 1)
+        self.assertTrue(board.warnings)
+
+    def test_extract_json_ignores_thinking_and_fences(self) -> None:
+        self.assertEqual(extract_json('<think>hmm {"a": 0}</think> ```json\n{"a": 1}\n```'), {"a": 1})
+
+    def test_heuristic_scene_durations_follow_text_length(self) -> None:
+        scenes = heuristic_scenes("Một. " * 40, ComicSettings(target_scene_duration=5))
+        self.assertTrue(all(1.0 <= s.estimated_duration <= 40 for s in scenes))
+
+
+if __name__ == "__main__":
+    unittest.main()
