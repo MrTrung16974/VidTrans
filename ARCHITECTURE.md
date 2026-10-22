@@ -80,7 +80,9 @@ self-hosted GPU worker per `docs/animation-worker-api.md`, or the local 2.5D cam
 automatic QC (`pipeline/animation_qc.py`: unreadable, too short, frozen, black) -> bounded
 retries with new seeds -> 2.5D fallback when attempts or the render's AI-seconds budget run
 out -> normalised clip (size, fps, <= 25 % slow-down, last-frame hold). A process-wide
-semaphore (`VIDTRANS_ANIMATION_CONCURRENCY`) caps concurrent AI generations. Editing a
+semaphore (`VIDTRANS_ANIMATION_CONCURRENCY`) caps concurrent AI generations. Within a job,
+up to `VIDTRANS_COMIC_CONCURRENCY` scenes (or shots' keyframes, voices and clips) are built at
+once; AI motion still runs shot by shot so the AI budget goes to the earliest shots. Editing a
 motion prompt, or "regenerate" (a new take/seed), re-animates only that shot; approved
 character references are pinned so profile edits create variants instead of overwriting.
 Lip-sync is not implemented yet.

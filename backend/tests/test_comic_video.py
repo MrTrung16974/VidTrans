@@ -136,7 +136,8 @@ class ProducerTests(unittest.TestCase):
 
         self.assertAlmostEqual(duration(video), manifest["duration"], delta=0.1)
         self.assertEqual(len(images.requests), 5)  # Two character references + three scenes.
-        scene_requests = images.requests[2:]
+        # Scenes are drawn concurrently, so compare by caption rather than call order.
+        scene_requests = sorted(images.requests[2:], key=lambda r: r.caption)
         self.assertEqual([len(r.references) for r in scene_requests], [1, 1, 2])
         srt_text = srt.read_text(encoding="utf-8")
         self.assertIn("Anh là ai?", srt_text)
@@ -168,7 +169,29 @@ class ProducerTests(unittest.TestCase):
         self.producer(images).preview_images(board)
 
         captions = [r.caption for r in images.requests]
-        self.assertEqual(captions, ["Lan", "Cảnh 2", "Cảnh 3"])
+        self.assertEqual(captions[0], "Lan")  # References are drawn before the scenes that use them.
+        self.assertCountEqual(captions[1:], ["Cảnh 2", "Cảnh 3"])
+
+    def test_parallel_render_matches_sequential_and_shares_repeated_lines(self) -> None:
+        board = storyboard()
+        for scene in board.scenes:
+            scene.dialogue = [DialogueLine(character="lan", text="Anh là ai?")]
+        images = PlaceholderImageProvider(FONT)
+        sequential = self.producer(images)
+        sequential.workers = 1
+        first = sequential.produce(board, self.root / "a.mp4", self.root / "a.srt")
+        shutil.rmtree(self.project.root / "audio")
+        shutil.rmtree(self.project.root / "clips")
+        self.voices.clear()
+        self.reports.clear()
+
+        second = self.producer(images).produce(board, self.root / "b.mp4", self.root / "b.srt")
+
+        self.assertEqual(self.voices.count(("Anh là ai?", "female", 6)), 1)  # Built once, reused by all three.
+        self.assertEqual(second["scenes"], first["scenes"])
+        self.assertEqual((self.root / "b.srt").read_text("utf-8"), (self.root / "a.srt").read_text("utf-8"))
+        progress = [value for step, value in self.reports if step == "comic_clips"]
+        self.assertEqual(progress, sorted(progress))
 
     def test_uploaded_override_replaces_the_generated_image(self) -> None:
         from PIL import Image

@@ -18,9 +18,12 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import shutil
 import textwrap
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -34,6 +37,7 @@ from infrastructure.image_providers import (
     PlaceholderImageProvider,
     save_png_atomic,
 )
+from pipeline.parallel import collect_indexed_futures
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,15 @@ SCENE_TAIL_SECONDS = 0.45
 MIN_SCENE_SECONDS = 2.5
 REFERENCE_SIZE = 1024
 PIPELINE_VERSION = "comic-v1"
+DEFAULT_SCENE_WORKERS = 3
+
+
+def scene_workers() -> int:
+    """Scenes (or shots) built at once per job: image API, TTS and FFmpeg calls overlap across them."""
+    try:
+        return max(1, int(os.environ.get("VIDTRANS_COMIC_CONCURRENCY", DEFAULT_SCENE_WORKERS)))
+    except ValueError:
+        return DEFAULT_SCENE_WORKERS
 
 
 def content_hash(*values: Any) -> str:
@@ -192,10 +205,57 @@ class ComicVideoProducer:
         self.fps = FPS
         self.cache_hits = 0
         self.cache_misses = 0
+        self.workers = scene_workers()
+        self._lock = threading.Lock()
+        self._report_lock = threading.Lock()
+        self._file_locks: dict[str, threading.Lock] = {}
+        # The image provider is called one request at a time until it has answered once, so a provider
+        # that is down (quota, bad key) costs one failed request instead of one per worker.
+        self._probe = threading.Lock()
+        self._provider_ok = False
         # Out-of-quota image APIs must not fail the whole video: draw stand-ins and say so.
         self.image_fallback = None if image_provider.key == "placeholder" else PlaceholderImageProvider(runtime.font_path)
         self.images_down: str | None = None
         self.image_fallbacks = 0
+
+    # ----------------------------------------------------------- concurrency
+    def _cache(self, hit: bool) -> None:
+        with self._lock:
+            if hit:
+                self.cache_hits += 1
+            else:
+                self.cache_misses += 1
+
+    def _file_lock(self, path: Path) -> threading.Lock:
+        """Two scenes can share a derived file (same line of dialogue, same subtitle): build it once."""
+        with self._lock:
+            return self._file_locks.setdefault(str(path), threading.Lock())
+
+    def _map(self, items: list[Any], task: Callable[[Any], Any], step: str,
+             describe: Callable[[int, int], str]) -> list[Any]:
+        """task(item) for every item on up to ``self.workers`` threads; results keep the input order.
+
+        The first failure (or a cancellation seen by ``check_active``) cancels the items not started yet
+        and is re-raised; items already running finish their current call.
+        """
+        total = len(items)
+        done = 0
+        self.rt.report(step, 0.0, describe(0, total))
+
+        def run(item: Any) -> Any:
+            nonlocal done
+            self.rt.check_active()
+            result = task(item)
+            with self._report_lock:
+                done += 1
+                self.rt.report(step, done / total, describe(done, total))
+            return result
+
+        if self.workers <= 1 or total <= 1:
+            return [run(item) for item in items]
+        with ThreadPoolExecutor(max_workers=min(self.workers, total), thread_name_prefix="comic") as pool:
+            results = collect_indexed_futures({pool.submit(run, item): index for index, item in enumerate(items)})
+        return [results[index] for index in range(total)]
 
     # ---------------------------------------------------------------- images
     def build_references(self, storyboard: Storyboard) -> dict[str, tuple[Path, str]]:
@@ -229,30 +289,43 @@ class ComicVideoProducer:
                       allow_fallback: bool = True) -> tuple[Path | None, bool]:
         """(image, is_stand_in). Stand-ins get their own file so a later render still asks the real provider."""
         if path.is_file():
-            self.cache_hits += 1
+            self._cache(True)
             return path, False
-        if self.images_down is None:
-            self.cache_misses += 1
+        reason = self.images_down
+        if reason is None:
+            self._cache(False)
             try:
-                self.images.generate(request, path)
+                self._generate_image(request, path)
                 return path, False
             except ImageGenerationError as exc:
                 if self.image_fallback is None:
                     raise
                 logger.warning("Image provider failed (%s); drawing a stand-in", type(exc).__name__)
-                if getattr(exc, "unavailable", False):
-                    self.images_down = str(exc)[:200]
                 reason = str(exc)[:200]
-        else:
-            reason = self.images_down
+                if getattr(exc, "unavailable", False):
+                    self.images_down = reason
         if not allow_fallback or self.image_fallback is None:
             return None, True
         stand_in = path.with_name(f"{path.stem}-fallback.png")
         if not stand_in.is_file():
             self.image_fallback.generate(request, stand_in)
-        self.image_fallbacks += 1
-        self.image_fallback_reason = reason
+        with self._lock:
+            self.image_fallbacks += 1
+            self.image_fallback_reason = reason
         return stand_in, True
+
+    def _generate_image(self, request: ImageRequest, path: Path) -> None:
+        if self._provider_ok:
+            self.images.generate(request, path)
+            return
+        with self._probe:
+            if self.images_down is None:
+                self.images.generate(request, path)
+                self._provider_ok = True
+                return
+        error = ImageGenerationError(self.images_down)
+        error.unavailable = True
+        raise error
 
     def image_report(self) -> dict[str, Any] | None:
         if not self.image_fallbacks:
@@ -315,10 +388,10 @@ class ComicVideoProducer:
         wav = audio_dir / f"{label}-{key[:16]}.wav"
         meta_path = wav.with_suffix(".json")
         if wav.is_file() and meta_path.is_file():
-            self.cache_hits += 1
+            self._cache(True)
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             return wav, key, float(meta["duration"]), meta["parts"]
-        self.cache_misses += 1
+        self._cache(False)
         timeline: list[dict[str, Any]] = []
         part_wavs: list[Path] = []
         cursor = 0.0
@@ -327,14 +400,17 @@ class ComicVideoProducer:
             part_key = content_hash(PIPELINE_VERSION, "voice", self.settings.language, rate, text, gender, pitch)
             mp3 = audio_dir / f"part-{part_key[:20]}.mp3"
             part_wav = mp3.with_suffix(".wav")
-            if not part_wav.is_file():
-                self.rt.synthesize(text, mp3, gender, rate, pitch, self.settings.language)
-                self.rt.run_ffmpeg([
-                    self.rt.ffmpeg, "-y", "-i", str(mp3), "-af",
-                    "silenceremove=start_periods=1:start_duration=0.05:start_threshold=-50dB,areverse,"
-                    "silenceremove=start_periods=1:start_duration=0.05:start_threshold=-50dB,areverse",
-                    "-ac", "1", "-ar", "48000", str(part_wav),
-                ])
+            with self._file_lock(part_wav):
+                if not part_wav.is_file():
+                    self.rt.synthesize(text, mp3, gender, rate, pitch, self.settings.language)
+                    temporary = part_wav.with_suffix(".tmp.wav")
+                    self.rt.run_ffmpeg([
+                        self.rt.ffmpeg, "-y", "-i", str(mp3), "-af",
+                        "silenceremove=start_periods=1:start_duration=0.05:start_threshold=-50dB,areverse,"
+                        "silenceremove=start_periods=1:start_duration=0.05:start_threshold=-50dB,areverse",
+                        "-ac", "1", "-ar", "48000", str(temporary),
+                    ])
+                    temporary.replace(part_wav)
             duration = self.rt.media_duration(part_wav)
             if position:
                 cursor += PART_GAP_SECONDS
@@ -378,8 +454,12 @@ class ComicVideoProducer:
     def subtitle_overlay(self, text: str) -> Path:
         key = content_hash(PIPELINE_VERSION, "sub", text, self.width, self.height)
         path = self.project.dir("subs") / f"{key[:24]}.png"
-        if path.is_file():
-            return path
+        with self._file_lock(path):
+            if not path.is_file():
+                self._draw_subtitle(text, path)
+        return path
+
+    def _draw_subtitle(self, text: str, path: Path) -> None:
         from PIL import Image, ImageDraw
 
         font_size = round(min(self.width, self.height) * (0.052 if self.height > self.width else 0.045))
@@ -401,7 +481,6 @@ class ComicVideoProducer:
                       stroke_width=max(1, font_size // 16), stroke_fill=(0, 0, 0, 255))
             y += line_height
         save_png_atomic(image, path)
-        return path
 
     # ------------------------------------------------------------------ clip
     def scene_clip(self, scene: ComicScene, image: Path, image_key: str, audio: Path, audio_key: str,
@@ -412,9 +491,9 @@ class ComicVideoProducer:
                            self.height, FPS, [(p.name, s, e) for p, s, e in overlays])
         clip = self.project.dir("clips") / f"s{scene.scene_index:03d}-{key[:16]}.mp4"
         if clip.is_file():
-            self.cache_hits += 1
+            self._cache(True)
             return clip
-        self.cache_misses += 1
+        self._cache(False)
         frames = max(1, round(duration * FPS))
         zoom, x, y = motion_expressions(scene.camera_motion, frames)
         inputs = ["-i", str(image), "-i", str(audio)]
@@ -460,29 +539,13 @@ class ComicVideoProducer:
     def produce(self, storyboard: Storyboard, output_video: Path, output_srt: Path,
                 music: Path | None = None) -> dict[str, Any]:
         scenes = storyboard.scenes
-        total = len(scenes)
         self.rt.report("comic_references", 0.0, "Chuẩn bị nhân vật")
         refs = self.build_references(storyboard)
-        results: list[SceneResult] = []
-        for position, scene in enumerate(scenes, 1):
-            self.rt.check_active()
-            self.rt.report("comic_images", (position - 1) / total, f"Sinh ảnh cảnh {position}/{total}")
-            image, image_key = self.scene_image(scene, storyboard, refs)
-            results.append(SceneResult(scene.scene_index, image.name, image_key, "", 0.0))
-        for position, (scene, result) in enumerate(zip(scenes, results), 1):
-            self.rt.check_active()
-            self.rt.report("comic_voice", (position - 1) / total, f"Lồng tiếng cảnh {position}/{total}")
-            _wav, result.audio_hash, result.duration, parts = self.scene_audio(scene, storyboard)
-            result.cues = timed_cues([(p["text"], p["start"], p["end"]) for p in parts], self.cue_chars)
-        clips: list[Path] = []
-        for position, (scene, result) in enumerate(zip(scenes, results), 1):
-            self.rt.check_active()
-            self.rt.report("comic_clips", (position - 1) / total, f"Dựng clip cảnh {position}/{total}")
-            audio = self.project.root / "audio" / f"s{scene.scene_index:03d}-{result.audio_hash[:16]}.wav"
-            clip = self.scene_clip(scene, self.project.root / "images" / result.image, result.image_hash,
-                                   audio, result.audio_hash, result.duration, result.cues)
-            result.clip = clip.name
-            clips.append(clip)
+        # Each scene runs image -> voice -> clip; several scenes run at once so API waits and encodes overlap.
+        results: list[SceneResult] = self._map(
+            scenes, lambda scene: self._render_scene(scene, storyboard, refs), "comic_clips",
+            lambda done, total: f"Đã dựng {done}/{total} cảnh (ảnh, giọng đọc, clip)")
+        clips = [self.project.root / "clips" / result.clip for result in results]
         self.rt.check_active()
         self.rt.report("comic_export", 0.0, "Ghép video và nhạc nền")
         output_video.parent.mkdir(parents=True, exist_ok=True)
@@ -507,13 +570,9 @@ class ComicVideoProducer:
     def preview_images(self, storyboard: Storyboard) -> dict[str, Any]:
         """Generate only references and scene images (storyboard review before spending on voice/render)."""
         refs = self.build_references(storyboard)
-        scenes = {}
-        for position, scene in enumerate(storyboard.scenes, 1):
-            self.rt.check_active()
-            self.rt.report("comic_images", (position - 1) / len(storyboard.scenes),
-                           f"Sinh ảnh cảnh {position}/{len(storyboard.scenes)}")
-            image, _key = self.scene_image(scene, storyboard, refs)
-            scenes[str(scene.scene_index)] = {"image": image.name}
+        images = self._map(storyboard.scenes, lambda scene: self.scene_image(scene, storyboard, refs)[0],
+                           "comic_images", lambda done, total: f"Đã sinh ảnh {done}/{total} cảnh")
+        scenes = {str(scene.scene_index): {"image": image.name} for scene, image in zip(storyboard.scenes, images)}
         manifest = {"revision": storyboard.revision, "size": [self.width, self.height],
                     "image_provider": self.images.key,
                     "references": {cid: path.name for cid, (path, _key) in refs.items()}, "scenes": scenes,
@@ -521,6 +580,15 @@ class ComicVideoProducer:
                     "image_fallback": self.image_report()}
         self.project.save_manifest(manifest)
         return manifest
+
+    def _render_scene(self, scene: ComicScene, storyboard: Storyboard,
+                      refs: dict[str, tuple[Path, str]]) -> SceneResult:
+        image, image_key = self.scene_image(scene, storyboard, refs)
+        _wav, audio_key, duration, parts = self.scene_audio(scene, storyboard)
+        cues = timed_cues([(p["text"], p["start"], p["end"]) for p in parts], self.cue_chars)
+        audio = self.project.root / "audio" / f"s{scene.scene_index:03d}-{audio_key[:16]}.wav"
+        clip = self.scene_clip(scene, image, image_key, audio, audio_key, duration, cues)
+        return SceneResult(scene.scene_index, image.name, image_key, audio_key, duration, cues, clip.name)
 
     def _write_srt(self, results: list[SceneResult], output: Path) -> None:
         blocks, offset, number = [], 0.0, 1

@@ -118,6 +118,7 @@ services:
       # Truyện → Video: model chia cảnh (mặc định theo GEMINI_TRANSLATION_MODEL) và model vẽ ảnh.
       VIDTRANS_COMIC_LLM_MODEL: "${VIDTRANS_COMIC_LLM_MODEL:-}"
       VIDTRANS_COMIC_IMAGE_MODEL: "${VIDTRANS_COMIC_IMAGE_MODEL:-gemini-2.5-flash-image}"
+      VIDTRANS_COMIC_CONCURRENCY: "${VIDTRANS_COMIC_CONCURRENCY:-3}"
       # Hoạt hình AI: Veo (dùng GEMINI_API_KEY) hoặc GPU worker riêng (docs/animation-worker-api.md).
       VIDTRANS_ANIMATION_CONCURRENCY: "${VIDTRANS_ANIMATION_CONCURRENCY:-1}"
       VIDTRANS_VEO_MODEL: "${VIDTRANS_VEO_MODEL:-veo-3.0-fast-generate-001}"

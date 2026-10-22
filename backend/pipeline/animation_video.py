@@ -91,6 +91,17 @@ def motion_prompt(scene: ComicScene, shot: Shot, storyboard: Storyboard) -> str:
 
 
 @dataclass
+class PreparedShot:
+    """Keyframe and voice of a shot: everything its animation needs, built before any motion is paid for."""
+    keyframe: Path
+    keyframe_key: str
+    audio: Path
+    audio_key: str
+    duration: float
+    cues: list[dict[str, Any]]
+
+
+@dataclass
 class AnimationOutcome:
     path: Path
     key: str
@@ -179,9 +190,9 @@ class AnimatedVideoProducer(ComicVideoProducer):
         path = self.project.dir("animations") / f"a{scene.scene_index:03d}-{shot.shot_index:02d}-{key[:16]}.mp4"
         meta_path = path.with_suffix(".json")
         if path.is_file() and meta_path.is_file():
-            self.cache_hits += 1
+            self._cache(True)
             return AnimationOutcome(path, key, json.loads(meta_path.read_text(encoding="utf-8")))
-        self.cache_misses += 1
+        self._cache(False)
         attempts: list[dict[str, Any]] = []
         meta: dict[str, Any] | None = None
         if provider.is_ai:
@@ -251,9 +262,9 @@ class AnimatedVideoProducer(ComicVideoProducer):
                            fade_in, fade_out, [(p.name, s, e) for p, s, e in overlays])
         clip = self.project.dir("clips") / f"c{scene.scene_index:03d}-{shot.shot_index:02d}-{key[:16]}.mp4"
         if clip.is_file():
-            self.cache_hits += 1
+            self._cache(True)
             return clip
-        self.cache_misses += 1
+        self._cache(False)
         inputs = ["-i", str(animation.path), "-i", str(audio)]
         graph = ["[0:v]setsar=1,format=yuv420p[v0]"]
         current = "v0"
@@ -280,28 +291,51 @@ class AnimatedVideoProducer(ComicVideoProducer):
     # --------------------------------------------------------------- pipeline
     _progress = 0.0
 
-    def _render_shot(self, scene: ComicScene, shot: Shot, storyboard: Storyboard,
-                     refs: dict[str, tuple[Path, str]], position: int, total: int) -> dict[str, Any]:
-        label = shot_label(scene, shot)
-        self._progress = (position - 1) / total
-        self.rt.report("comic_keyframes", self._progress, f"Keyframe shot {label} ({position}/{total})")
+    def _prepare_shot(self, scene: ComicScene, shot: Shot, storyboard: Storyboard,
+                      refs: dict[str, tuple[Path, str]]) -> PreparedShot:
         keyframe, keyframe_key = self.shot_keyframe(scene, shot, storyboard, refs)
-        self.rt.report("comic_voice", self._progress, f"Lồng tiếng shot {label}")
         audio, audio_key, duration, parts = self.speech_audio(
             f"t{scene.scene_index:03d}-{shot.shot_index:02d}", shot.spoken_parts(), storyboard,
             min_duration=shot.duration_seconds)
-        self.rt.report("comic_animation", self._progress, f"Tạo chuyển động shot {label} ({position}/{total})")
-        animation = self.shot_animation(scene, shot, storyboard, keyframe, keyframe_key, duration)
         cues = timed_cues([(p["text"], p["start"], p["end"]) for p in parts], self.cue_chars)
-        self.rt.report("comic_clips", self._progress, f"Ghép hình, tiếng, phụ đề shot {label}")
-        clip = self.shot_clip(scene, shot, animation, audio, audio_key, duration, cues)
-        return {"keyframe": keyframe.name, "animation": animation.path.name, "clip": clip.name,
-                "duration": round(duration, 3), "cues": cues, "provider": animation.meta.get("provider"),
-                "model": animation.meta.get("model"), "fallback": animation.meta.get("fallback", False),
+        return PreparedShot(keyframe, keyframe_key, audio, audio_key, duration, cues)
+
+    def _shot_entry(self, scene: ComicScene, shot: Shot, prepared: PreparedShot, animation: AnimationOutcome,
+                    clip: Path) -> dict[str, Any]:
+        return {"keyframe": prepared.keyframe.name, "animation": animation.path.name, "clip": clip.name,
+                "duration": round(prepared.duration, 3), "cues": prepared.cues,
+                "provider": animation.meta.get("provider"), "model": animation.meta.get("model"),
+                "fallback": animation.meta.get("fallback", False),
                 "fallback_reason": animation.meta.get("fallback_reason"), "seed": animation.meta.get("seed"),
                 "qc": animation.meta.get("qc"), "attempts": len(animation.meta.get("attempts") or []),
                 "billed_seconds": animation.meta.get("billed_seconds", 0.0),
-                "too_long": duration > MAX_SHOT_SECONDS}
+                "too_long": prepared.duration > MAX_SHOT_SECONDS}
+
+    def _render_shots(self, pairs: list[tuple[ComicScene, Shot]], storyboard: Storyboard,
+                      refs: dict[str, tuple[Path, str]]) -> dict[str, Any]:
+        """Keyframes + voices in parallel, AI motion one shot at a time in story order, clips in parallel.
+
+        Motion stays sequential: the GPU slot serialises it anyway, and the AI budget then goes to the
+        earliest shots exactly as before, whatever the thread timing.
+        """
+        prepared: list[PreparedShot] = self._map(
+            pairs, lambda pair: self._prepare_shot(*pair, storyboard, refs), "comic_keyframes",
+            lambda done, total: f"Đã có keyframe và giọng đọc {done}/{total} shot")
+        animations: list[AnimationOutcome] = []
+        for position, ((scene, shot), ready) in enumerate(zip(pairs, prepared), 1):
+            self.rt.check_active()
+            self._progress = (position - 1) / len(pairs)
+            self.rt.report("comic_animation", self._progress,
+                           f"Tạo chuyển động shot {shot_label(scene, shot)} ({position}/{len(pairs)})")
+            animations.append(self.shot_animation(scene, shot, storyboard, ready.keyframe, ready.keyframe_key,
+                                                  ready.duration))
+        jobs = list(zip(pairs, prepared, animations))
+        clips: list[Path] = self._map(
+            jobs, lambda job: self.shot_clip(*job[0], job[2], job[1].audio, job[1].audio_key, job[1].duration,
+                                             job[1].cues),
+            "comic_clips", lambda done, total: f"Đã ghép hình, tiếng, phụ đề {done}/{total} shot")
+        return {shot_label(scene, shot): self._shot_entry(scene, shot, ready, animation, clip)
+                for (scene, shot), ready, animation, clip in zip(pairs, prepared, animations, clips)}
 
     def _manifest(self, storyboard: Storyboard, refs: dict[str, tuple[Path, str]], shots: dict[str, Any],
                   **extra: Any) -> dict[str, Any]:
@@ -320,10 +354,7 @@ class AnimatedVideoProducer(ComicVideoProducer):
         pairs = list(storyboard.iter_shots())
         self.rt.report("comic_references", 0.0, "Chuẩn bị nhân vật")
         refs = self.build_references(storyboard)
-        shots: dict[str, Any] = {}
-        for position, (scene, shot) in enumerate(pairs, 1):
-            self.rt.check_active()
-            shots[shot_label(scene, shot)] = self._render_shot(scene, shot, storyboard, refs, position, len(pairs))
+        shots = self._render_shots(pairs, storyboard, refs)
         self.rt.check_active()
         self.rt.report("comic_export", 0.0, "Ghép các shot và nhạc nền")
         clips = [self.project.root / "clips" / entry["clip"] for entry in shots.values()]
@@ -342,12 +373,10 @@ class AnimatedVideoProducer(ComicVideoProducer):
         """Keyframes only: review composition and characters before paying for motion."""
         pairs = list(storyboard.iter_shots())
         refs = self.build_references(storyboard)
-        shots = {}
-        for position, (scene, shot) in enumerate(pairs, 1):
-            self.rt.check_active()
-            self.rt.report("comic_keyframes", (position - 1) / len(pairs), f"Keyframe shot {shot_label(scene, shot)}")
-            keyframe, _key = self.shot_keyframe(scene, shot, storyboard, refs)
-            shots[shot_label(scene, shot)] = {"keyframe": keyframe.name}
+        keyframes = self._map(pairs, lambda pair: self.shot_keyframe(*pair, storyboard, refs)[0], "comic_keyframes",
+                              lambda done, total: f"Đã sinh keyframe {done}/{total} shot")
+        shots = {shot_label(scene, shot): {"keyframe": keyframe.name}
+                 for (scene, shot), keyframe in zip(pairs, keyframes)}
         manifest = self._manifest(storyboard, refs, shots)
         self.project.save_manifest(manifest)
         return manifest
@@ -358,7 +387,7 @@ class AnimatedVideoProducer(ComicVideoProducer):
         if pair is None:
             raise KeyError(f"Không có shot {label}")
         refs = self.build_references(storyboard)
-        entry = self._render_shot(*pair, storyboard, refs, 1, 1)
+        entry = self._render_shots([pair], storyboard, refs)[label]
         manifest = self.project.load_manifest()
         if manifest.get("mode") != "animated":
             manifest = self._manifest(storyboard, refs, {})

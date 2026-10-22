@@ -28,20 +28,20 @@ COMIC_JOB_ACTION = "comic_video"
 ACTIVE_STATUSES = {"queued", "scheduled", "processing", "cancelling"}
 
 # Share of the job progress bar per stage, for the full render and the image-only preview.
+# A full comic render builds each scene's image, voice and clip together, so those share one range.
+_SCENE_RANGE = (0.22, 0.95)
 RENDER_STAGES = {
-    "comic_storyboard": (0.02, 0.15), "comic_references": (0.15, 0.22), "comic_images": (0.22, 0.6),
-    "comic_voice": (0.6, 0.75), "comic_clips": (0.75, 0.95), "comic_export": (0.95, 0.99),
+    "comic_storyboard": (0.02, 0.15), "comic_references": (0.15, 0.22), "comic_images": _SCENE_RANGE,
+    "comic_voice": _SCENE_RANGE, "comic_clips": _SCENE_RANGE, "comic_export": (0.95, 0.99),
 }
 PREVIEW_STAGES = {
     "comic_storyboard": (0.02, 0.2), "comic_references": (0.2, 0.3), "comic_images": (0.3, 0.99),
     "comic_keyframes": (0.3, 0.99),
 }
-# Animated shots run keyframe -> voice -> motion -> clip one after another, so those steps share
-# one range and the per-shot fraction keeps the bar monotonic.
-_SHOT_RANGE = (0.2, 0.95)
+# Animated shots: keyframes and voices for all shots, then AI motion shot by shot, then the clips.
 ANIMATED_STAGES = {
-    "comic_storyboard": (0.02, 0.15), "comic_references": (0.15, 0.2), "comic_keyframes": _SHOT_RANGE,
-    "comic_voice": _SHOT_RANGE, "comic_animation": _SHOT_RANGE, "comic_clips": _SHOT_RANGE,
+    "comic_storyboard": (0.02, 0.15), "comic_references": (0.15, 0.2), "comic_keyframes": (0.2, 0.35),
+    "comic_voice": (0.2, 0.35), "comic_animation": (0.35, 0.88), "comic_clips": (0.88, 0.95),
     "comic_export": (0.95, 0.99),
 }
 
