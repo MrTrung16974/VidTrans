@@ -3,6 +3,7 @@ import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-f
 import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261022-2";
+import { createTextToSpeechWorkspace } from "./text-to-speech.js?v=20261022-1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -274,7 +275,7 @@ async function startProtectedApplication() {
   if (location.hash === "#douyin") startDouyinBrowserPolling();
   if (location.hash === "#tiktok") tiktokWorkspace.enter();
   // The first showView ran before the role was known and fell back to #jobs.
-  if (location.hash.startsWith("#comic")) showView();
+  if (location.hash.startsWith("#comic") || location.hash === "#tts") showView();
   if (location.hash === "#admin") loadAdminAccounts();
   if (location.hash === "#billing") loadBilling();
 }
@@ -658,7 +659,8 @@ function renderProviderVoices(provider) {
   const previewButton = $("#voicePreviewButton");
   if (!select || !previewButton) return;
   const isElevenLabs = provider?.key === "elevenlabs";
-  const voices = isElevenLabs ? provider.voices || [] : [
+  const hasVoiceList = ["elevenlabs", "cit"].includes(provider?.key);
+  const voices = hasVoiceList ? provider.voices || [] : [
     { key: "female", gender: "female", label: provider?.female_voice_label || "Giọng nữ" },
     { key: "male", gender: "male", label: provider?.male_voice_label || "Giọng nam" },
   ];
@@ -670,16 +672,21 @@ function renderProviderVoices(provider) {
   if (voices.some(voice => voice.key === previous)) select.value = previous;
   select.disabled = voices.length === 0;
   previewButton.classList.toggle("is-hidden", !isElevenLabs || voices.length === 0);
-  syncSelectedVoice(isElevenLabs);
+  syncSelectedVoice();
 }
 
-function syncSelectedVoice(isElevenLabs = $("#ttsProvider")?.value === "elevenlabs") {
+function syncSelectedVoice() {
+  const provider = $("#ttsProvider")?.value;
+  const isElevenLabs = provider === "elevenlabs";
+  const hasVoiceList = isElevenLabs || provider === "cit";
   const select = $("#voiceTypeSelect");
   const selected = select?.selectedOptions[0];
   const gender = selected?.dataset.gender || select?.value || "female";
   $("#voiceType").value = gender;
   $("#elevenlabsFemaleVoice").value = isElevenLabs ? select.value : "";
   $("#elevenlabsMaleVoice").value = isElevenLabs ? select.value : "";
+  $("#ttsFemaleVoice").value = hasVoiceList ? select.value : "";
+  $("#ttsMaleVoice").value = hasVoiceList ? select.value : "";
 }
 
 let voicePreviewAudio = null;
@@ -743,7 +750,7 @@ async function loadTtsProviders() {
     [...select.options].forEach(option => {
       const provider = providers.get(option.value);
       option.disabled = provider ? !provider.configured : true;
-      if (provider && !provider.configured) option.textContent += " — chưa cấu hình key";
+      if (provider && !provider.configured) option.textContent += option.value === "cit" ? " — chưa mở ứng dụng" : " — chưa cấu hình key";
     });
     if (select.selectedOptions[0]?.disabled) select.value = "edge";
     const applyProviderConfiguration = () => {
@@ -826,14 +833,16 @@ function bindWorkflowStepNav() {
 let activeView = null;
 
 function showView() {
-  let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : "create";
+  let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#tts" ? "tts" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : "create";
   if (["admin", "douyin"].includes(view) && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
-  if (["tiktok", "comic"].includes(view) && state.auth.role === "viewer") view = "jobs";
+  if (["tiktok", "comic", "tts"].includes(view) && state.auth.role === "viewer") view = "jobs";
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
   $("#comicView").classList.toggle("is-hidden", view !== "comic");
   if (view === "comic" && state.appStarted) comicWorkspace.enter();
   else comicWorkspace.leave();
+  $("#ttsView").classList.toggle("is-hidden", view !== "tts");
+  if (view === "tts" && state.appStarted) textToSpeechWorkspace.enter();
   $("#tiktokView").classList.toggle("is-hidden", view !== "tiktok");
   if (view === "tiktok" && state.appStarted) tiktokWorkspace.enter();
   else tiktokWorkspace.leave();
@@ -2460,6 +2469,7 @@ window.addEventListener("beforeunload", event => {
 });
 const tiktokWorkspace = createTikTokWorkspace({ requestJson, toast });
 const comicWorkspace = createComicWorkspace({ requestJson, toast, escapeHtml });
+const textToSpeechWorkspace = createTextToSpeechWorkspace({ requestJson, toast, escapeHtml });
 const platformAppsSettings = createPlatformAppsSettings({
   requestJson, toast, escapeHtml, onChange: () => tiktokWorkspace.enter(),
 });

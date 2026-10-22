@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape
 
 logger = logging.getLogger(__name__)
 
-TTS_PROVIDERS = ("edge", "azure", "elevenlabs")
+TTS_PROVIDERS = ("edge", "azure", "elevenlabs", "cit")
 VOICE_GENDERS = ("female", "male")
 
 ELEVENLABS_ATTEMPTS = 5
@@ -40,12 +40,26 @@ _elevenlabs_ready_voices: set[str] = set()
 _elevenlabs_voice_locks: dict[str, threading.Lock] = {}
 _elevenlabs_locks_guard = threading.Lock()
 
+# CIT Voice Studio is a desktop app (VieNeu-TTS) exposing a local HTTP API; it has no
+# accounts or credits, but it is CPU-bound and only reachable while the app is open.
+CIT_SPEED_RANGE = (0.75, 1.5)
+CIT_STATUS_TTL_SECONDS = 15.0
+CIT_GENERATE_TIMEOUT_SECONDS = 600
+_cit_cache: dict[str, tuple[float, object]] = {}
+_cit_cache_lock = threading.Lock()
+_cit_semaphore: threading.BoundedSemaphore | None = None
+_cit_semaphore_guard = threading.Lock()
+
 
 class TTSProviderHTTPError(RuntimeError):
     def __init__(self, provider_label: str, status: int, detail: str) -> None:
         super().__init__(f"{provider_label} API lỗi HTTP {status}: {detail}")
         self.status = status
         self.detail = detail
+
+
+class TTSProviderUnavailable(RuntimeError):
+    """The provider cannot be reached at all (e.g. a local app is closed)."""
 
 
 @dataclass(frozen=True)
@@ -145,6 +159,7 @@ def provider_statuses() -> list[TTSProviderStatus]:
         TTSProviderStatus("edge", "Microsoft Edge TTS", True, "Miễn phí, không cần API key", "Nữ — Hoài My", "Nam — Nam Minh"),
         TTSProviderStatus("azure", "Azure AI Speech", bool(os.environ.get("VIDTRANS_AZURE_SPEECH_KEY") and os.environ.get("VIDTRANS_AZURE_SPEECH_REGION")), "API chính thức; Azure có hạn mức F0 miễn phí", "Nữ — Hoài My", "Nam — Nam Minh"),
         _elevenlabs_status(),
+        _cit_status(),
     ]
 
 
@@ -171,6 +186,13 @@ def ensure_provider_configured(provider: str) -> None:
         return
     if normalized == "azure":
         raise ValueError("Azure Speech chưa được cấu hình: cần VIDTRANS_AZURE_SPEECH_KEY và VIDTRANS_AZURE_SPEECH_REGION")
+    if normalized == "cit":
+        if not cit_base_url():
+            raise ValueError("CIT Voice Studio chưa được cấu hình: cần VIDTRANS_CIT_VOICE_URL")
+        raise ValueError(
+            f"Không kết nối được CIT Voice Studio tại {cit_base_url()}: hãy mở ứng dụng trên máy chủ "
+            "(hoặc bật \"Cho máy khác truy cập API\" và đặt VIDTRANS_CIT_VOICE_API_KEY)"
+        )
     raise ValueError(
         "ElevenLabs chưa được cấu hình: cần VIDTRANS_ELEVENLABS_API_KEY và ít nhất một giọng "
         "trong VIDTRANS_ELEVENLABS_VOICES (hoặc VIDTRANS_ELEVENLABS_FEMALE/MALE_VOICE_ID)"
@@ -281,6 +303,8 @@ def tts_account_blocked(error: BaseException | None) -> str | None:
             return f"từ chối API key (HTTP {error.status})"
         if isinstance(error, RuntimeError) and str(error) == ELEVENLABS_PAID_PLAN_MESSAGE:
             return "gói Free không dùng được giọng đã chọn"
+        if isinstance(error, TTSProviderUnavailable):
+            return "không kết nối được"
         error = error.__cause__
         seen += 1
     return None
@@ -367,3 +391,213 @@ def _elevenlabs_preview_url(voice: ElevenLabsVoice) -> str:
         if item.get("voice_id") == voice.voice_id and item.get("preview_url"):
             return str(item["preview_url"])
     raise LookupError("ElevenLabs không có bản nghe thử cho giọng này")
+
+
+@dataclass(frozen=True)
+class CITVoice:
+    key: str
+    label: str
+    gender: str
+
+    def public(self) -> dict[str, str]:
+        return {"key": self.key, "label": self.label, "gender": self.gender}
+
+
+def cit_base_url() -> str:
+    return os.environ.get("VIDTRANS_CIT_VOICE_URL", "").strip().rstrip("/")
+
+
+def _cit_request(path: str, payload: dict | None = None) -> Request:
+    headers = {"Accept": "*/*", "User-Agent": "VidTrans"}
+    api_key = os.environ.get("VIDTRANS_CIT_VOICE_API_KEY", "").strip()
+    if api_key:
+        # Only required when the app's "allow other machines" LAN mode is on.
+        headers["X-API-Key"] = api_key
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    return Request(cit_base_url() + path, data=data, method="POST" if data else "GET", headers=headers)
+
+
+def _cit_cached(name: str, loader):
+    now = time.monotonic()
+    with _cit_cache_lock:
+        cached = _cit_cache.get(name)
+        if cached is not None and now - cached[0] < CIT_STATUS_TTL_SECONDS:
+            return cached[1]
+    value = loader()
+    with _cit_cache_lock:
+        _cit_cache[name] = (now, value)
+    return value
+
+
+def cit_available() -> bool:
+    if not cit_base_url():
+        return False
+
+    def probe() -> bool:
+        try:
+            with urlopen(_cit_request("/health"), timeout=2) as response:
+                return 200 <= response.status < 300
+        except (HTTPError, URLError, OSError, ValueError):
+            return False
+
+    return bool(_cit_cached("health", probe))
+
+
+def _cit_voice_gender(item: dict) -> str:
+    text = " ".join(str(item.get(field) or "") for field in ("gender", "sex", "description", "name", "label")).lower()
+    # "Nam" alone also names the southern accent ("giọng Nam"), so prefer explicit fields.
+    gender = str(item.get("gender") or item.get("sex") or "").strip().lower()
+    if gender in ("male", "m", "nam"):
+        return "male"
+    if gender in ("female", "f", "nữ", "nu"):
+        return "female"
+    if "female" in text or "nữ" in text:
+        return "female"
+    if "male" in text or "nam giới" in text or "giọng nam" in text:
+        return "male"
+    return "female"
+
+
+def _parse_cit_voices(payload: object) -> list[CITVoice]:
+    if isinstance(payload, dict):
+        payload = payload.get("voices") or payload.get("data") or []
+    voices: list[CITVoice] = []
+    seen: set[str] = set()
+    for item in payload if isinstance(payload, list) else []:
+        if isinstance(item, str):
+            item = {"id": item}
+        if not isinstance(item, dict):
+            continue
+        voice_id = str(item.get("voice_id") or item.get("id") or item.get("name") or "").strip()
+        if not voice_id or voice_id in seen:
+            continue
+        seen.add(voice_id)
+        label = str(item.get("label") or item.get("name") or voice_id).strip()
+        description = str(item.get("description") or "").strip()
+        if description and description.lower() not in label.lower():
+            label = f"{label} ({description})"
+        voices.append(CITVoice(voice_id, label[:120], _cit_voice_gender(item)))
+    return voices
+
+
+def cit_voices() -> list[CITVoice]:
+    """Voices offered by the running CIT Voice Studio app (built-in and cloned)."""
+
+    if not cit_available():
+        return []
+
+    def load() -> list[CITVoice]:
+        try:
+            with urlopen(_cit_request("/voices"), timeout=5) as response:
+                return _parse_cit_voices(json.loads(response.read(2 * 1024 * 1024)))
+        except (HTTPError, URLError, OSError, ValueError) as exc:
+            logger.warning("CIT Voice Studio voice list failed: %s", type(exc).__name__)
+            return []
+
+    return list(_cit_cached("voices", load))
+
+
+def _cit_status() -> TTSProviderStatus:
+    voices = cit_voices()
+    female = _default_cit_voice(voices, "female")
+    male = _default_cit_voice(voices, "male")
+    return TTSProviderStatus(
+        "cit",
+        "CIT Voice Studio",
+        bool(voices),
+        "Chạy local trên máy chủ (VieNeu-TTS), miễn phí, không giới hạn ký tự",
+        female.label if female else "Nữ — CIT Voice Studio",
+        male.label if male else "Nam — CIT Voice Studio",
+        False,
+        [voice.public() for voice in voices],
+    )
+
+
+def _default_cit_voice(voices: list[CITVoice], gender: str) -> CITVoice | None:
+    preferred = os.environ.get(f"VIDTRANS_CIT_VOICE_{gender.upper()}", "").strip()
+    by_key = {voice.key: voice for voice in voices}
+    if preferred in by_key:
+        return by_key[preferred]
+    return next((voice for voice in voices if voice.gender == gender), voices[0] if voices else None)
+
+
+def resolve_tts_voice_selection(
+    provider: str, female_key: str | None = None, male_key: str | None = None
+) -> dict[str, str]:
+    """Validate a form's voice choice for providers with selectable voices."""
+
+    provider = normalize_tts_provider(provider)
+    if provider == "elevenlabs":
+        return resolve_elevenlabs_voice_selection(female_key, male_key)
+    if provider != "cit":
+        return {}
+    voices = cit_voices()
+    by_key = {voice.key: voice for voice in voices}
+    selection: dict[str, str] = {}
+    for gender, key in (("female", female_key), ("male", male_key)):
+        key = (key or "").strip()
+        if key and key not in by_key:
+            raise ValueError(f"Giọng CIT Voice Studio đã chọn không còn trong ứng dụng: {key}")
+        voice = by_key.get(key) or _default_cit_voice(voices, gender)
+        if voice is not None:
+            selection[gender] = voice.key
+    return selection
+
+
+def _cit_slot() -> threading.BoundedSemaphore:
+    global _cit_semaphore
+    with _cit_semaphore_guard:
+        if _cit_semaphore is None:
+            try:
+                limit = max(1, int(os.environ.get("VIDTRANS_CIT_VOICE_CONCURRENCY", "1")))
+            except ValueError:
+                limit = 1
+            _cit_semaphore = threading.BoundedSemaphore(limit)
+        return _cit_semaphore
+
+
+def synthesize_cit(
+    text: str,
+    output_path: Path,
+    *,
+    voice_type: str = "female",
+    voice_key: str | None = None,
+    speed: float = 1.0,
+    language: str = "vi",
+) -> None:
+    if not cit_base_url():
+        ensure_provider_configured("cit")
+    voice_id = (voice_key or "").strip()
+    if not voice_id:
+        voice = _default_cit_voice(cit_voices(), "male" if voice_type == "male" else "female")
+        if voice is None:
+            raise TTSProviderUnavailable(f"Không kết nối được CIT Voice Studio tại {cit_base_url()}")
+        voice_id = voice.key
+    payload = {
+        "text": text,
+        "voice_id": voice_id,
+        "speed": round(max(CIT_SPEED_RANGE[0], min(CIT_SPEED_RANGE[1], speed)), 3),
+        # VieNeu ignores it; the optional Supertonic model needs a bare ISO code.
+        "language": (language or "vi").split("-")[0].lower(),
+    }
+    request = _cit_request("/api/tts/generate", payload)
+    # The model runs on the server's CPU: parallel cues would only thrash it.
+    with _cit_slot():
+        try:
+            with urlopen(request, timeout=CIT_GENERATE_TIMEOUT_SECONDS) as response:
+                audio = response.read()
+                content_type = response.headers.get_content_type() or ""
+        except HTTPError as exc:
+            detail = exc.read(400).decode("utf-8", errors="replace")
+            raise TTSProviderHTTPError("CIT Voice Studio", exc.code, detail) from exc
+        except (URLError, OSError) as exc:
+            with _cit_cache_lock:
+                _cit_cache.clear()
+            reason = getattr(exc, "reason", exc)
+            raise TTSProviderUnavailable(f"Không kết nối được CIT Voice Studio: {reason}") from exc
+    if not audio or content_type.startswith(("application/json", "text/")):
+        raise RuntimeError("CIT Voice Studio không trả về dữ liệu âm thanh")
+    output_path.write_bytes(audio)

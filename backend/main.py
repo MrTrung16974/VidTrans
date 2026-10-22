@@ -40,6 +40,11 @@ from application.social_publish_routes import create_social_publish_router
 from application.social_account_routes import create_social_account_router
 from application.social_connection_routes import create_social_connection_router
 from application.social_publishing import SocialPublishScheduler, SocialPublishingService
+from application.text_to_speech_routes import (
+    TextToSpeechDependencies,
+    create_text_to_speech_router,
+    prune_text_to_speech_audio,
+)
 from application.tiktok_browser_routes import create_tiktok_browser_router
 from infrastructure.tiktok_browser import TikTokBrowserManager
 from domain.models import ProcessingMode, ProcessingRequest
@@ -110,8 +115,9 @@ from infrastructure.tts_providers import (
     normalize_tts_provider,
     elevenlabs_voice_preview,
     provider_statuses,
-    resolve_elevenlabs_voice_selection,
+    resolve_tts_voice_selection,
     synthesize_azure,
+    synthesize_cit,
     synthesize_elevenlabs,
     tts_account_blocked,
 )
@@ -1644,6 +1650,16 @@ def synthesize_tts_segments(
                     speed=1.0 + (rate_percent / 100.0),
                     voice_key=(tts_voices or {}).get(selected_voice_type),
                 )
+            elif tts_provider == "cit":
+                voice_name = (tts_voices or {}).get(selected_voice_type) or voice_name
+                synthesize_cit(
+                    text,
+                    output_path,
+                    voice_type=selected_voice_type,
+                    voice_key=(tts_voices or {}).get(selected_voice_type),
+                    speed=1.0 + (rate_percent / 100.0),
+                    language=target_language,
+                )
             else:
                 tts_edge_with_retry(text, output_path, voice_name, base_rate_string, pitch_string)
                 edge_succeeded = True
@@ -2902,7 +2918,7 @@ def process_video(
                         # The whole job switches, so the dub keeps one consistent voice. Edge audio is
                         # checkpointed under its own fingerprint: a retry after topping up uses the
                         # paid provider again.
-                        provider_label = {"elevenlabs": "ElevenLabs", "azure": "Azure Speech"}.get(tts_provider, tts_provider)
+                        provider_label = {"elevenlabs": "ElevenLabs", "azure": "Azure Speech", "cit": "CIT Voice Studio"}.get(tts_provider, tts_provider)
                         logger.warning("%s unusable for job %s (%s); dubbing with Edge TTS", provider_label, job_id, blocked)
                         update_job(job_id, step_detail=f"{provider_label} {blocked}; chuyển sang Edge TTS miễn phí",
                                    tts_fallback={"from": provider_label, "to": "Edge TTS", "reason": blocked})
@@ -3527,6 +3543,30 @@ def synthesize_comic_speech(
         tts_gtts_sync(text, output_path, language=language)
 
 
+def synthesize_text_to_file(
+    provider: str,
+    text: str,
+    output_path: Path,
+    voice_type: str,
+    voice_key: str | None,
+    speed: float,
+    language: str,
+) -> None:
+    """One provider call for the standalone text → audio tool (no cue fitting)."""
+    provider = normalize_tts_provider(provider)
+    rate_percent = int(round((speed - 1.0) * 100))
+    if provider == "cit":
+        synthesize_cit(text, output_path, voice_type=voice_type, voice_key=voice_key, speed=speed, language=language)
+        return
+    voice_name = language_profile(language).edge_voice(voice_type)
+    if provider == "azure":
+        synthesize_azure(text, output_path, voice_name=voice_name, rate_percent=rate_percent, pitch_hz=0)
+    elif provider == "elevenlabs":
+        synthesize_elevenlabs(text, output_path, voice_type=voice_type, speed=speed, voice_key=voice_key)
+    else:
+        tts_edge_with_retry(text, output_path, voice_name, f"{rate_percent:+d}%")
+
+
 def comic_runtime(job_id: str, report: Callable[[str, float, str], None]) -> ComicRuntime:
     return ComicRuntime(
         ffmpeg=FFMPEG,
@@ -3631,6 +3671,7 @@ def apply_retention_policy() -> None:
     ).isoformat()
     removed = JOB_SERVICE.prune_terminal(job_cutoff, exclude_owner_user_ids=overrides.keys())
     remove_pruned_storage(removed)
+    prune_text_to_speech_audio(OUTPUT_DIR, retention_days("VIDTRANS_TTS_RETENTION_DAYS", 7))
     governance_removed = TENANT_GOVERNANCE.prune(
         audit_cutoff=audit_cutoff,
         released_quota_cutoff=released_quota_cutoff,
@@ -4906,6 +4947,8 @@ async def process_video_endpoint(
     tts_provider: str = Form("edge"),
     elevenlabs_female_voice: str = Form(""),
     elevenlabs_male_voice: str = Form(""),
+    tts_female_voice: str = Form(""),
+    tts_male_voice: str = Form(""),
     translation_provider: str = Form("google"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
@@ -4966,10 +5009,11 @@ async def process_video_endpoint(
     if request.mode is not ProcessingMode.SUBTITLES:
         try:
             ensure_provider_configured(request.tts_provider)
-            if request.tts_provider == "elevenlabs":
-                tts_voices = resolve_elevenlabs_voice_selection(
-                    elevenlabs_female_voice, elevenlabs_male_voice
-                )
+            tts_voices = resolve_tts_voice_selection(
+                request.tts_provider,
+                tts_female_voice or elevenlabs_female_voice,
+                tts_male_voice or elevenlabs_male_voice,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
@@ -5100,6 +5144,8 @@ async def create_batch_endpoint(
     tts_provider: str = Form("edge"),
     elevenlabs_female_voice: str = Form(""),
     elevenlabs_male_voice: str = Form(""),
+    tts_female_voice: str = Form(""),
+    tts_male_voice: str = Form(""),
     translation_provider: str = Form("google"),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
@@ -5203,10 +5249,11 @@ async def create_batch_endpoint(
     if processing_request.mode is not ProcessingMode.SUBTITLES:
         try:
             ensure_provider_configured(processing_request.tts_provider)
-            if processing_request.tts_provider == "elevenlabs":
-                tts_voices = resolve_elevenlabs_voice_selection(
-                    elevenlabs_female_voice, elevenlabs_male_voice
-                )
+            tts_voices = resolve_tts_voice_selection(
+                processing_request.tts_provider,
+                tts_female_voice or elevenlabs_female_voice,
+                tts_male_voice or elevenlabs_male_voice,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
@@ -5888,6 +5935,12 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
+app.include_router(create_text_to_speech_router(TextToSpeechDependencies(
+    current_account=lambda request: current_account(request),
+    synthesize=synthesize_text_to_file,
+    storage_dir=lambda owner_user_id: tenant_job_dir(OUTPUT_DIR, owner_user_id, "tts"),
+    media_duration=get_media_duration,
+)))
 
 
 def custom_openapi() -> dict[str, Any]:

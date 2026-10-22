@@ -51,7 +51,7 @@ class TTSProvidersTest(unittest.TestCase):
     @patch.dict(os.environ, {}, clear=True)
     def test_cloud_providers_require_server_credentials(self) -> None:
         statuses = {item.key: item.configured for item in provider_statuses()}
-        self.assertEqual(statuses, {"edge": True, "azure": False, "elevenlabs": False})
+        self.assertEqual(statuses, {"edge": True, "azure": False, "elevenlabs": False, "cit": False})
         with self.assertRaisesRegex(ValueError, "Azure Speech"):
             ensure_provider_configured("azure")
         with self.assertRaisesRegex(ValueError, "ElevenLabs"):

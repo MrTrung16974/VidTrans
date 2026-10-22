@@ -1,12 +1,13 @@
 # Nhà cung cấp AI lồng tiếng
 
-VidTrans chỉ giữ ba lựa chọn để giao diện gọn và có phương án miễn phí thực tế:
+VidTrans giữ bốn lựa chọn để giao diện gọn và có phương án miễn phí thực tế:
 
 | Nhà cung cấp | Khi nên dùng | Cấu hình |
 | --- | --- | --- |
 | Edge TTS | Mặc định, không cần tài khoản hay API key | Không cần cấu hình |
 | Azure AI Speech | API chính thức, hạn mức F0 lớn, giọng Việt Hoài My/Nam Minh | `VIDTRANS_AZURE_SPEECH_KEY`, `VIDTRANS_AZURE_SPEECH_REGION` |
 | ElevenLabs | Ưu tiên độ tự nhiên; gói Free có credit hằng tháng | `VIDTRANS_ELEVENLABS_API_KEY` và danh sách giọng `VIDTRANS_ELEVENLABS_VOICES` |
+| CIT Voice Studio | Giọng Việt VieNeu-TTS chạy local, miễn phí, không giới hạn ký tự; cần mở app trên máy chủ | `VIDTRANS_CIT_VOICE_URL` (và `VIDTRANS_CIT_VOICE_API_KEY` khi bật truy cập LAN) |
 
 ## Lấy khóa hợp lệ
 
@@ -37,5 +38,29 @@ Tài liệu: https://learn.microsoft.com/azure/ai-services/speech-service/rest-t
    Hai biến cũ `VIDTRANS_ELEVENLABS_FEMALE_VOICE_ID` / `VIDTRANS_ELEVENLABS_MALE_VOICE_ID` vẫn được hỗ trợ và gộp vào danh sách.
 
 Trang API: https://elevenlabs.io/api và bảng giá: https://elevenlabs.io/pricing
+
+### CIT Voice Studio
+
+[CIT Voice Studio](https://github.com/Cuongyd196/cit-voice-studio) là ứng dụng desktop (Windows, Linux, macOS) đóng gói
+VieNeu-TTS; repo chỉ phát hành bộ cài, không có mã nguồn. Khi app đang mở, nó chạy API tại `http://127.0.0.1:8001`
+và VidTrans gọi `GET /health`, `GET /voices`, `POST /api/tts/generate` của API đó.
+
+1. Tải bộ cài ở trang Releases của repo, cài và mở app **trên chính máy chạy VidTrans**, đồng ý điều khoản.
+2. Đặt URL:
+   - chạy backend trực tiếp: `VIDTRANS_CIT_VOICE_URL=http://127.0.0.1:8001`
+   - chạy trong Docker: `VIDTRANS_CIT_VOICE_URL=http://host.docker.internal:8001`
+3. Nếu container báo không kết nối được (app chỉ nhận kết nối từ cùng máy): trong app bật **Cài đặt → Cho máy khác truy cập
+   API**, bấm **Khởi động lại ngay**, rồi chép khoá API vào `VIDTRANS_CIT_VOICE_API_KEY`.
+4. Tùy chọn: `VIDTRANS_CIT_VOICE_FEMALE` / `VIDTRANS_CIT_VOICE_MALE` là tên giọng mặc định (ví dụ `Minh Đức`).
+
+Danh sách giọng (gồm cả giọng đã nhân bản trong app) được đọc trực tiếp từ app và kiểm tra lại mỗi 15 giây, nên mở app sau
+khi VidTrans đã chạy cũng được. Mô hình chạy bằng CPU, vì vậy VidTrans chỉ gửi `VIDTRANS_CIT_VOICE_CONCURRENCY` (mặc định 1)
+request cùng lúc. App không hỗ trợ chỉnh cao độ, nên chế độ tự động chỉ chọn giọng nam/nữ. Khi lồng tiếng mà app bị tắt
+giữa chừng hoặc từ chối khoá, job tự chuyển sang Edge TTS như với các nhà cung cấp trả phí.
+
+Tab **Văn bản → Giọng nói** dùng cùng các nhà cung cấp trên để tạo một file audio từ văn bản (tối đa
+`VIDTRANS_TTS_MAX_CHARS`, mặc định 5000 ký tự mỗi lần). File được giữ `VIDTRANS_TTS_RETENTION_DAYS` ngày (mặc định 7).
+Thẻ `[cười]`, `[thở dài]`, `[nghỉ 2s]` và từ điển phát âm của app có hiệu lực khi chọn CIT Voice Studio. Khi đăng nội dung
+công khai, ghi rõ "Giọng đọc được tạo bằng AI" theo điều khoản của app.
 
 Sau khi sửa `.env`, khởi động lại backend. Giao diện gọi `/api/v1/tts-providers` để chỉ bật những nhà cung cấp đã cấu hình đủ; endpoint này không trả khóa bí mật.
