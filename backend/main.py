@@ -34,6 +34,7 @@ from application.job_service import JobService
 from application.comic_routes import ComicRouteDependencies, create_comic_router, requeue_comic_job
 from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
 from application.instagram_routes import create_instagram_router
+from application.seo_routes import create_seo_router
 from application.threads_routes import create_threads_router
 from application.social_publish_routes import create_social_publish_router
 from application.social_account_routes import create_social_account_router
@@ -5888,4 +5889,6 @@ async def google_verification():
 
 
 if FRONTEND_DIR.exists():
+    # Registered before the static mount so "/" gets absolute SEO URLs and robots/sitemap exist.
+    app.include_router(create_seo_router(FRONTEND_DIR))
     app.mount("/", FrontendStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
