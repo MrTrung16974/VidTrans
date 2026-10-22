@@ -40,11 +40,6 @@ from application.social_publish_routes import create_social_publish_router
 from application.social_account_routes import create_social_account_router
 from application.social_connection_routes import create_social_connection_router
 from application.social_publishing import SocialPublishScheduler, SocialPublishingService
-from application.text_to_speech_routes import (
-    TextToSpeechDependencies,
-    create_text_to_speech_router,
-    prune_text_to_speech_audio,
-)
 from application.tiktok_browser_routes import create_tiktok_browser_router
 from infrastructure.tiktok_browser import TikTokBrowserManager
 from domain.models import ProcessingMode, ProcessingRequest
@@ -3533,38 +3528,29 @@ def comic_project_root(owner_user_id: str, job_id: str) -> Path:
 
 
 def synthesize_comic_speech(
-    text: str, output_path: Path, gender: str, rate_percent: int, pitch_hz: int, language: str
+    text: str,
+    output_path: Path,
+    gender: str,
+    rate_percent: int,
+    pitch_hz: int,
+    language: str,
+    provider: str = "edge",
+    voice_key: str | None = None,
 ) -> None:
+    if provider == "cit":
+        # No Edge fallback: the part would be cached under the CIT voice's key. The job fails
+        # with the reason instead and a retry reuses every image already generated.
+        synthesize_cit(
+            text, output_path, voice_type=gender, voice_key=voice_key,
+            speed=1.0 + rate_percent / 100.0, language=language,
+        )
+        return
     voice_name = language_profile(language).edge_voice(gender)
     try:
         tts_edge_with_retry(text, output_path, voice_name, f"{rate_percent:+d}%", f"{pitch_hz:+d}Hz")
     except Exception as exc:
         logger.warning("edge TTS failed for comic narration, fallback to gTTS: %s", type(exc).__name__)
         tts_gtts_sync(text, output_path, language=language)
-
-
-def synthesize_text_to_file(
-    provider: str,
-    text: str,
-    output_path: Path,
-    voice_type: str,
-    voice_key: str | None,
-    speed: float,
-    language: str,
-) -> None:
-    """One provider call for the standalone text → audio tool (no cue fitting)."""
-    provider = normalize_tts_provider(provider)
-    rate_percent = int(round((speed - 1.0) * 100))
-    if provider == "cit":
-        synthesize_cit(text, output_path, voice_type=voice_type, voice_key=voice_key, speed=speed, language=language)
-        return
-    voice_name = language_profile(language).edge_voice(voice_type)
-    if provider == "azure":
-        synthesize_azure(text, output_path, voice_name=voice_name, rate_percent=rate_percent, pitch_hz=0)
-    elif provider == "elevenlabs":
-        synthesize_elevenlabs(text, output_path, voice_type=voice_type, speed=speed, voice_key=voice_key)
-    else:
-        tts_edge_with_retry(text, output_path, voice_name, f"{rate_percent:+d}%")
 
 
 def comic_runtime(job_id: str, report: Callable[[str, float, str], None]) -> ComicRuntime:
@@ -3671,7 +3657,6 @@ def apply_retention_policy() -> None:
     ).isoformat()
     removed = JOB_SERVICE.prune_terminal(job_cutoff, exclude_owner_user_ids=overrides.keys())
     remove_pruned_storage(removed)
-    prune_text_to_speech_audio(OUTPUT_DIR, retention_days("VIDTRANS_TTS_RETENTION_DAYS", 7))
     governance_removed = TENANT_GOVERNANCE.prune(
         audit_cutoff=audit_cutoff,
         released_quota_cutoff=released_quota_cutoff,
@@ -5935,12 +5920,6 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
-app.include_router(create_text_to_speech_router(TextToSpeechDependencies(
-    current_account=lambda request: current_account(request),
-    synthesize=synthesize_text_to_file,
-    storage_dir=lambda owner_user_id: tenant_job_dir(OUTPUT_DIR, owner_user_id, "tts"),
-    media_duration=get_media_duration,
-)))
 
 
 def custom_openapi() -> dict[str, Any]:

@@ -158,6 +158,30 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(manifest["cache"]["misses"], 2)  # Scene 2 audio + clip.
         self.assertEqual(manifest["revision"], 2)
 
+    def test_cit_voices_narrator_and_characters_separately(self) -> None:
+        calls = []
+
+        def synthesize(text, path, gender, rate, pitch, language, **provider):
+            calls.append((text, gender, provider))
+            self.synthesize(text, path, gender, rate, pitch, language)
+
+        voices = {"narrator": "Ngọc Huyền", "female": "Thu Trang", "male": "Minh Đức"}
+        runtime = ComicRuntime(FFMPEG, run, duration, synthesize, FONT)
+        settings = ComicSettings(aspect_ratio="16:9", tts_provider="cit", tts_voices=voices)
+        producer = ComicVideoProducer(self.project, settings, PlaceholderImageProvider(FONT), runtime)
+        board = self.project.save_storyboard(storyboard(), bump=False)
+        producer.produce(board, self.root / "c.mp4", self.root / "c.srt")
+
+        self.assertIn(("Đêm hôm đó, Minh bước vào khu rừng.", "female",
+                       {"provider": "cit", "voice_key": "Ngọc Huyền"}), calls)
+        # Same gender as the narrator, but a different CIT voice instead of a pitch lift.
+        self.assertIn(("Anh là ai?", "female", {"provider": "cit", "voice_key": "Thu Trang"}), calls)
+
+        # Switching back to Edge must not reuse CIT audio.
+        self.voices.clear()
+        self.producer(PlaceholderImageProvider(FONT)).produce(board, self.root / "e.mp4", self.root / "e.srt")
+        self.assertIn(("Anh là ai?", "female", 6), self.voices)
+
     def test_character_change_redraws_only_scenes_with_that_character(self) -> None:
         images = RecordingImages()
         board = self.project.save_storyboard(storyboard(), bump=False)

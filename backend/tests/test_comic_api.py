@@ -103,6 +103,32 @@ class ComicApiTests(unittest.TestCase):
         self.assertEqual(job["comic"]["rendered_revision"], 2)
         self.assertGreater(job["comic"]["cache"]["hits"], 0)
 
+    def test_cit_voices_are_resolved_and_stored_with_the_project(self) -> None:
+        from infrastructure.tts_providers import CITVoice
+
+        voices = [CITVoice("Ngọc Huyền", "Ngọc Huyền", "female"), CITVoice("Thu Trang", "Thu Trang", "female"),
+                  CITVoice("Minh Đức", "Minh Đức", "male")]
+        with patch.dict("os.environ", {"VIDTRANS_CIT_VOICE_URL": "http://cit.local:8001"}), \
+                patch("infrastructure.tts_providers.cit_voices", return_value=voices):
+            options = self.client.get("/api/v1/comic/options").json()
+            created = self.create(tts_provider="cit", narrator_voice="female",
+                                  cit_narrator_voice="Thu Trang", cit_female_voice="", cit_male_voice="Minh Đức")
+            rejected = self.create(tts_provider="cit", cit_male_voice="Đã xoá")
+
+        cit = next(item for item in options["tts_providers"] if item["key"] == "cit")
+        self.assertTrue(cit["configured"])
+        self.assertEqual(created.status_code, 202, created.text)
+        settings = self.service.get(created.json()["job_id"])["resume_request"]["settings"]
+        self.assertEqual(settings["tts_provider"], "cit")
+        self.assertEqual(settings["tts_voices"], {"narrator": "Thu Trang", "female": "Ngọc Huyền", "male": "Minh Đức"})
+        self.assertEqual(rejected.status_code, 400)
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_cit_requires_the_app(self) -> None:
+        created = self.create(tts_provider="cit")
+        self.assertEqual(created.status_code, 400)
+        self.assertIn("CIT Voice Studio", created.json()["detail"])
+
     def test_validation_errors_are_rejected(self) -> None:
         self.assertEqual(self.create(text="   ").status_code, 400)
         self.assertEqual(self.create(style="pixel_art").status_code, 400)

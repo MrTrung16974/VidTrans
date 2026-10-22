@@ -58,9 +58,9 @@ khi VidTrans đã chạy cũng được. Mô hình chạy bằng CPU, vì vậy 
 request cùng lúc. App không hỗ trợ chỉnh cao độ, nên chế độ tự động chỉ chọn giọng nam/nữ. Khi lồng tiếng mà app bị tắt
 giữa chừng hoặc từ chối khoá, job tự chuyển sang Edge TTS như với các nhà cung cấp trả phí.
 
-Tab **Văn bản → Giọng nói** dùng cùng các nhà cung cấp trên để tạo một file audio từ văn bản (tối đa
-`VIDTRANS_TTS_MAX_CHARS`, mặc định 5000 ký tự mỗi lần). File được giữ `VIDTRANS_TTS_RETENTION_DAYS` ngày (mặc định 7).
-Thẻ `[cười]`, `[thở dài]`, `[nghỉ 2s]` và từ điển phát âm của app có hiệu lực khi chọn CIT Voice Studio. Khi đăng nội dung
-công khai, ghi rõ "Giọng đọc được tạo bằng AI" theo điều khoản của app.
+Ở **Truyện → Video**, chọn **AI lồng tiếng = CIT Voice Studio** rồi chọn giọng nữ và giọng nam: người dẫn chuyện dùng
+giọng theo ô **Giọng người dẫn chuyện**, nhân vật dùng giọng theo giới tính của nhân vật. Thẻ `[cười]`, `[thở dài]`,
+`[nghỉ 2s]` và từ điển phát âm của app có hiệu lực trong lời thoại. Khi đăng nội dung công khai, ghi rõ "Giọng đọc được
+tạo bằng AI" theo điều khoản của app.
 
 Sau khi sửa `.env`, khởi động lại backend. Giao diện gọi `/api/v1/tts-providers` để chỉ bật những nhà cung cấp đã cấu hình đủ; endpoint này không trả khóa bí mật.

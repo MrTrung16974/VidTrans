@@ -76,8 +76,9 @@ class ComicRuntime:
     ffmpeg: str
     run_ffmpeg: Callable[[list[str]], Any]
     media_duration: Callable[[Path], float]
-    # (text, output mp3, edge voice gender, rate percent, pitch Hz, language)
-    synthesize: Callable[[str, Path, str, int, int, str], None]
+    # (text, output mp3, edge voice gender, rate percent, pitch Hz, language); non-Edge providers
+    # also receive provider= and voice_key= keywords.
+    synthesize: Callable[..., None]
     font_path: Path | None = None
     check_active: Callable[[], None] = lambda: None
     report: Callable[[str, float, str], None] = lambda step, progress, detail: None
@@ -372,6 +373,15 @@ class ComicVideoProducer:
         # Dialogue in the narrator's voice gets a small pitch lift so it reads as a different speaker.
         return gender, (6 if gender == narrator else 0)
 
+    def _provider_voice(self, character_id: str | None, gender: str) -> list[str] | None:
+        """Provider and voice id for non-Edge narration; None keeps Edge cache keys unchanged."""
+        if self.settings.tts_provider == "edge":
+            return None
+        voices = self.settings.tts_voices
+        # The narrator has its own voice, so dialogue stays distinguishable without Edge's pitch lift.
+        voice = voices.get("narrator") if character_id is None else voices.get(gender)
+        return [self.settings.tts_provider, voice or voices.get(gender) or ""]
+
     def scene_audio(self, scene: ComicScene, storyboard: Storyboard) -> tuple[Path, str, float, list[dict]]:
         return self.speech_audio(f"s{scene.scene_index:03d}", scene.spoken_parts(), storyboard)
 
@@ -381,7 +391,8 @@ class ComicVideoProducer:
         part_specs = []
         for character_id, text in spoken:
             gender, pitch = self._voice_for(character_id, storyboard)
-            part_specs.append((text, gender, pitch))
+            voice = self._provider_voice(character_id, gender)
+            part_specs.append((text, gender, pitch) if voice is None else (text, gender, pitch, voice))
         extra = [] if (min_duration == MIN_SCENE_SECONDS and self.fps == FPS) else [min_duration, self.fps]
         key = content_hash(PIPELINE_VERSION, "audio", self.settings.language, rate, part_specs, *extra)
         audio_dir = self.project.dir("audio")
@@ -395,14 +406,15 @@ class ComicVideoProducer:
         timeline: list[dict[str, Any]] = []
         part_wavs: list[Path] = []
         cursor = 0.0
-        for position, (text, gender, pitch) in enumerate(part_specs):
+        for position, (text, gender, pitch, *voice) in enumerate(part_specs):
             self.rt.check_active()
-            part_key = content_hash(PIPELINE_VERSION, "voice", self.settings.language, rate, text, gender, pitch)
+            part_key = content_hash(PIPELINE_VERSION, "voice", self.settings.language, rate, text, gender, pitch, *voice)
+            provider_kwargs = {"provider": voice[0][0], "voice_key": voice[0][1]} if voice else {}
             mp3 = audio_dir / f"part-{part_key[:20]}.mp3"
             part_wav = mp3.with_suffix(".wav")
             with self._file_lock(part_wav):
                 if not part_wav.is_file():
-                    self.rt.synthesize(text, mp3, gender, rate, pitch, self.settings.language)
+                    self.rt.synthesize(text, mp3, gender, rate, pitch, self.settings.language, **provider_kwargs)
                     temporary = part_wav.with_suffix(".tmp.wav")
                     self.rt.run_ffmpeg([
                         self.rt.ffmpeg, "-y", "-i", str(mp3), "-af",

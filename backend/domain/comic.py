@@ -282,6 +282,9 @@ class ComicSettings(_Model):
     llm_provider: Literal["auto", "gemini", "qwen3", "heuristic"] = "auto"
     image_provider: Literal["placeholder", "gemini"] = "placeholder"
     narrator_voice: Literal["female", "male"] = "female"
+    tts_provider: Literal["edge", "cit"] = "edge"
+    # CIT Voice Studio voice ids keyed "narrator", "female", "male" (resolved when the project is created).
+    tts_voices: dict[str, str] = Field(default_factory=dict)
     speech_rate: float = Field(default=1.0, ge=0.7, le=1.5)
     target_scene_duration: float = Field(default=7.0, ge=3.0, le=15.0)
     max_scenes: int = Field(default=40, ge=1, le=120)

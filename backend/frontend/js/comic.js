@@ -51,7 +51,28 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const gemini = options.image_providers.find(item => item.key === "gemini");
     fillSelect(form.elements.image_provider, options.image_providers, gemini?.configured ? "gemini" : "placeholder");
     fillSelect(form.elements.animation_provider, options.animation_providers, "camera_2_5d");
+    fillSelect(form.elements.tts_provider, options.tts_providers, "edge");
+    syncTtsVoices();
     $("#comicStoryLimit").textContent = `Tối đa ${options.max_story_chars.toLocaleString("vi-VN")} ký tự mỗi dự án.`;
+  }
+
+  // CIT Voice Studio voices come from the desktop app; the narrator list follows the narrator's gender.
+  function syncTtsVoices() {
+    const cit = options?.tts_providers?.find(item => item.key === "cit");
+    const useCit = form.elements.tts_provider?.value === "cit";
+    $$(".comic-cit-only").forEach(field => field.classList.toggle("is-hidden", !useCit));
+    if (!useCit) return;
+    const voices = cit?.voices || [];
+    const fill = (select, gender) => {
+      const previous = select.value;
+      const list = voices.filter(voice => voice.gender === gender);
+      select.innerHTML = (list.length ? list : voices).map(voice =>
+        `<option value="${escapeHtml(voice.key)}">${escapeHtml(voice.label)}</option>`).join("");
+      if ([...select.options].some(option => option.value === previous)) select.value = previous;
+    };
+    fill(form.elements.cit_narrator_voice, form.elements.narrator_voice.value);
+    fill(form.elements.cit_female_voice, "female");
+    fill(form.elements.cit_male_voice, "male");
   }
 
   async function loadProjects() {
@@ -284,6 +305,8 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     form.querySelectorAll(".comic-animated-only").forEach(element => element.classList.toggle("is-hidden", !animated));
   };
   form.querySelectorAll('[name="video_mode"]').forEach(radio => radio.addEventListener("change", syncMode));
+  form.elements.tts_provider?.addEventListener("change", syncTtsVoices);
+  form.elements.narrator_voice?.addEventListener("change", syncTtsVoices);
 
   form.elements.text.addEventListener("input", () => {
     $("#comicStoryCount").textContent = `${form.elements.text.value.length.toLocaleString("vi-VN")} ký tự`;

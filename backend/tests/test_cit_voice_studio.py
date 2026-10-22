@@ -3,21 +3,12 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import time
 import unittest
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-from application.text_to_speech_routes import (
-    TextToSpeechDependencies,
-    create_text_to_speech_router,
-    prune_text_to_speech_audio,
-)
 from infrastructure import tts_providers
 from infrastructure.tts_providers import (
     TTSProviderHTTPError,
@@ -155,76 +146,6 @@ class CITVoiceStudioProviderTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "không còn trong ứng dụng"):
                 resolve_tts_voice_selection("cit", "Đã xoá", "")
         self.assertEqual(resolve_tts_voice_selection("edge", "x", "y"), {})
-
-
-class TextToSpeechRouteTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.user = "user-a"
-        self.synthesize = MagicMock(side_effect=lambda *args: args[2].write_bytes(b"ID3audio"))
-
-        def storage(owner: str) -> Path:
-            path = self.root / "users" / owner / "tts"
-            path.mkdir(parents=True, exist_ok=True)
-            return path
-
-        app = FastAPI()
-        app.include_router(create_text_to_speech_router(TextToSpeechDependencies(
-            current_account=lambda _request: {"user_id": self.user},
-            synthesize=self.synthesize,
-            storage_dir=storage,
-            media_duration=lambda _path: 1.234,
-        )))
-        self.client = TestClient(app)
-
-    def test_generates_and_serves_audio_for_owner_only(self) -> None:
-        created = self.client.post("/api/v1/text-to-speech", json={"text": " Xin chào ", "provider": "edge"})
-        self.assertEqual(created.status_code, 200, created.text)
-        body = created.json()
-        self.assertTrue(body["id"].endswith(".mp3"))
-        self.assertEqual(body["duration"], 1.23)
-        self.assertEqual(self.synthesize.call_args.args[:2], ("edge", "Xin chào"))
-
-        served = self.client.get(body["url"])
-        self.assertEqual(served.content, b"ID3audio")
-        self.assertEqual(served.headers["content-type"], "audio/mpeg")
-        self.assertIn("attachment", self.client.get(body["download_url"]).headers["content-disposition"])
-
-        self.user = "user-b"
-        self.assertEqual(self.client.get(body["url"]).status_code, 404)
-
-    def test_rejects_long_text_and_bad_ids(self) -> None:
-        with patch.dict(os.environ, {"VIDTRANS_TTS_MAX_CHARS": "100"}):
-            response_ = self.client.post("/api/v1/text-to-speech", json={"text": "a" * 101, "provider": "edge"})
-        self.assertEqual(response_.status_code, 400)
-        self.synthesize.assert_not_called()
-        self.assertEqual(self.client.get("/api/v1/text-to-speech/..%2Fsecret.mp3").status_code, 404)
-
-    @patch.dict(os.environ, {}, clear=True)
-    def test_unconfigured_provider_is_a_client_error(self) -> None:
-        response_ = self.client.post("/api/v1/text-to-speech", json={"text": "Chào", "provider": "cit"})
-        self.assertEqual(response_.status_code, 400)
-        self.assertIn("VIDTRANS_CIT_VOICE_URL", response_.json()["detail"])
-
-    def test_provider_failure_leaves_no_partial_file(self) -> None:
-        self.synthesize.side_effect = TTSProviderUnavailable("down")
-        response_ = self.client.post("/api/v1/text-to-speech", json={"text": "Chào", "provider": "edge"})
-        self.assertEqual(response_.status_code, 502)
-        self.assertEqual(list((self.root / "users" / self.user / "tts").iterdir()), [])
-
-    def test_prune_removes_only_old_clips(self) -> None:
-        directory = self.root / "users" / "u" / "tts"
-        directory.mkdir(parents=True)
-        old, fresh = directory / "old.mp3", directory / "fresh.mp3"
-        old.write_bytes(b"x")
-        fresh.write_bytes(b"x")
-        stale = time.time() - 10 * 86400
-        os.utime(old, (stale, stale))
-        self.assertEqual(prune_text_to_speech_audio(self.root, 7), 1)
-        self.assertFalse(old.exists())
-        self.assertTrue(fresh.exists())
 
 
 if __name__ == "__main__":

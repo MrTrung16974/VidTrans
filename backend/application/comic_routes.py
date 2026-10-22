@@ -33,6 +33,7 @@ from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import image_provider_statuses
 from infrastructure.llm_providers import llm_provider_statuses
 from infrastructure.story_text import StoryTextError, normalize_story_text, read_story_upload
+from infrastructure.tts_providers import ensure_provider_configured, provider_statuses, resolve_tts_voice_selection
 from infrastructure.video_providers import animation_provider_statuses
 
 MAX_IMAGE_UPLOAD_BYTES = 15 * 1024 * 1024
@@ -243,6 +244,10 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             "llm_providers": llm_provider_statuses(),
             "image_providers": image_provider_statuses(),
             "animation_providers": animation_provider_statuses(),
+            "tts_providers": [
+                {"key": s.key, "label": s.label, "configured": s.configured, "voices": s.voices}
+                for s in provider_statuses() if s.key in ("edge", "cit")
+            ],
             "shot_types": list(SHOT_TYPES), "shot_movements": list(SHOT_MOVEMENTS), "shot_angles": list(SHOT_ANGLES),
             "max_story_chars": MAX_STORY_CHARS,
         })
@@ -260,6 +265,10 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         llm_provider: str = Form("auto"),
         image_provider: str = Form("placeholder"),
         narrator_voice: str = Form("female"),
+        tts_provider: str = Form("edge"),
+        cit_narrator_voice: str = Form(""),
+        cit_female_voice: str = Form(""),
+        cit_male_voice: str = Form(""),
         speech_rate: float = Form(1.0),
         target_scene_duration: float = Form(7.0),
         max_scenes: int = Form(40),
@@ -277,11 +286,24 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
     ) -> JSONResponse:
         account = deps.current_account(request)
         owner = str(account["user_id"])
+        tts_voices: dict[str, str] = {}
+        if tts_provider == "cit":
+            try:
+                ensure_provider_configured("cit")
+                tts_voices = resolve_tts_voice_selection("cit", cit_female_voice, cit_male_voice)
+                narrator_gender = "male" if narrator_voice == "male" else "female"
+                narrator = resolve_tts_voice_selection(
+                    "cit", *((cit_narrator_voice, "") if narrator_gender == "female" else ("", cit_narrator_voice))
+                )
+                tts_voices["narrator"] = narrator.get(narrator_gender, "")
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
         try:
             settings = ComicSettings(
                 title=title.strip() or "Truyện chưa đặt tên", language=language, style=style,
                 aspect_ratio=aspect_ratio, llm_provider=llm_provider, image_provider=image_provider,
-                narrator_voice=narrator_voice, speech_rate=speech_rate,
+                narrator_voice=narrator_voice, tts_provider=tts_provider, tts_voices=tts_voices,
+                speech_rate=speech_rate,
                 target_scene_duration=target_scene_duration, max_scenes=max_scenes,
                 burn_subtitles=form_flag(burn_subtitles), music_volume=music_volume, seed=seed,
                 auto_render=form_flag(auto_render), video_mode=video_mode, animation_provider=animation_provider,

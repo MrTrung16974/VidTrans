@@ -75,7 +75,6 @@
         <nav id="mainNavigation" class="nav-tabs" aria-label="Điều hướng chính">
           <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span>Dịch video</span></a>
           <a href="#comic" data-view-link="comic" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v6h-7zM13 13h7v6h-7z"/></svg></i><span>Truyện → Video</span></a>
-          <a href="#tts" data-view-link="tts" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg></i><span>Văn bản → Giọng nói</span></a>
           <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
           <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span>Đăng bài mạng xã hội</span></a>
           <a href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span>Đăng nhập nguồn</span></a>
@@ -688,8 +687,12 @@
                 <label class="field"><span>AI chia cảnh</span><select name="llm_provider"></select></label>
                 <label class="field"><span>AI vẽ ảnh</span><select name="image_provider"></select></label>
                 <label class="field"><span>Ngôn ngữ lời đọc</span><select name="language"></select></label>
+                <label class="field"><span>AI lồng tiếng</span><select name="tts_provider"></select></label>
                 <label class="field"><span>Giọng người dẫn chuyện</span>
                   <select name="narrator_voice"><option value="female" selected>Nữ</option><option value="male">Nam</option></select></label>
+                <label class="field comic-cit-only is-hidden"><span>Giọng CIT người dẫn chuyện</span><select name="cit_narrator_voice"></select></label>
+                <label class="field comic-cit-only is-hidden"><span>Giọng CIT nhân vật nữ</span><select name="cit_female_voice"></select></label>
+                <label class="field comic-cit-only is-hidden"><span>Giọng CIT nhân vật nam</span><select name="cit_male_voice"></select></label>
                 <label class="field"><span>Tốc độ đọc</span><input name="speech_rate" type="number" min="0.7" max="1.5" step="0.05" value="1" /></label>
                 <label class="field"><span>Thời lượng mỗi cảnh (giây)</span><input name="target_scene_duration" type="number" min="3" max="15" step="0.5" value="7" /></label>
                 <label class="field"><span>Số cảnh tối đa</span><input name="max_scenes" type="number" min="1" max="120" value="40" /></label>
@@ -737,60 +740,6 @@
               <div id="comicScenes" class="comic-scenes"></div>
             </div>
           </section>
-        </section>
-
-        <section id="ttsView" class="view tts-view is-hidden">
-          <div class="page-heading">
-            <div>
-              <div class="create-badge-row">
-                <span class="eyebrow-chip">🔊 Văn bản → Giọng nói</span>
-                <span class="eyebrow-note">CIT Voice Studio · VieNeu-TTS</span>
-              </div>
-              <h1>Chuyển văn bản thành audio</h1>
-              <p>Dán văn bản, chọn giọng và tốc độ, nghe thử rồi tải file về. CIT Voice Studio hỗ trợ thẻ <code>[cười]</code>, <code>[thở dài]</code>, <code>[nghỉ 2s]</code> ngay trong câu.</p>
-            </div>
-          </div>
-
-          <div class="comic-layout">
-            <form id="ttsForm" class="card comic-form" novalidate>
-              <label class="field">
-                <span class="field-label-group"><span>Văn bản</span><small id="ttsCharCount" class="field-hint">0 ký tự</small></span>
-                <textarea name="text" id="ttsText" rows="10" placeholder="Xin chào, đây là giọng đọc được tạo bằng AI."></textarea>
-              </label>
-              <div class="field-grid">
-                <label class="field"><span>AI đọc</span>
-                  <select name="provider" id="ttsStandaloneProvider">
-                    <option value="cit">CIT Voice Studio (local)</option>
-                    <option value="edge">Edge TTS</option>
-                    <option value="azure">Azure Speech</option>
-                    <option value="elevenlabs">ElevenLabs</option>
-                  </select>
-                  <small id="ttsStandaloneHint" class="field-hint">Đang kiểm tra nhà cung cấp…</small>
-                </label>
-                <label class="field"><span>Giọng</span><select name="voice" id="ttsStandaloneVoice"></select></label>
-                <label class="field"><span>Ngôn ngữ văn bản</span>
-                  <select name="language" id="ttsStandaloneLanguage">
-                    <option value="vi" selected>Tiếng Việt</option>
-                    <option value="en">Tiếng Anh</option>
-                    <option value="zh-CN">Tiếng Trung</option>
-                    <option value="ja">Tiếng Nhật</option>
-                    <option value="ko">Tiếng Hàn</option>
-                    <option value="th">Tiếng Thái</option>
-                    <option value="id">Tiếng Indonesia</option>
-                    <option value="es">Tiếng Tây Ban Nha</option>
-                  </select>
-                </label>
-                <label class="field"><span>Tốc độ đọc</span><input name="speech_rate" type="number" min="0.75" max="1.5" step="0.05" value="1" /></label>
-              </div>
-              <button class="button primary full" type="submit" id="ttsSubmit">Tạo giọng nói</button>
-            </form>
-
-            <aside class="card comic-form tts-result">
-              <h2>Kết quả</h2>
-              <p id="ttsResultEmpty" class="field-hint">Chưa có audio. Kết quả được giữ trên máy chủ 7 ngày.</p>
-              <ul id="ttsResults" class="tts-results"></ul>
-            </aside>
-          </div>
         </section>
 
         <section id="jobsView" class="view is-hidden">
@@ -1984,6 +1933,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261022-tts"></script>
+    <script type="module" src="/js/app.js?v=20261022-cit"></script>
   </body>
 </html>

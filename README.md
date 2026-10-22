@@ -24,7 +24,7 @@ pip install -r requirements.txt -r requirements-downloader.txt
 
 > Tuỳ chọn: AI dịch local miễn phí (Qwen3-4B, TranslateGemma) qua Ollama — xem [docs/local-translation-ai.md](docs/local-translation-ai.md).
 
-> Tuỳ chọn: giọng đọc tiếng Việt local miễn phí bằng CIT Voice Studio (VieNeu-TTS), dùng cho lồng tiếng và tab **Văn bản → Giọng nói** — xem [docs/tts-providers.md](docs/tts-providers.md#cit-voice-studio).
+> Tuỳ chọn: giọng đọc tiếng Việt local miễn phí bằng CIT Voice Studio (VieNeu-TTS), dùng cho lồng tiếng **Dịch video** và **Truyện → Video** — xem [docs/tts-providers.md](docs/tts-providers.md#cit-voice-studio).
 
 ## Chạy server
 
