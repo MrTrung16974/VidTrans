@@ -26,6 +26,8 @@ DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 
 class ImageGenerationError(RuntimeError):
     rate_limited = False
+    # The provider is out of quota or down: later images in the same render would fail too.
+    unavailable = False
 
 
 @dataclass(frozen=True)
@@ -192,7 +194,9 @@ class GeminiImageProvider:
                 if exc.code == 404:
                     raise ImageGenerationError(f"Gemini không có model ảnh {self.model}") from exc
                 if exc.code not in {429, 500, 502, 503, 504}:
-                    raise ImageGenerationError(f"Gemini Image lỗi HTTP {exc.code}") from exc
+                    error = ImageGenerationError(f"Gemini Image lỗi HTTP {exc.code}")
+                    error.unavailable = exc.code in {401, 403}  # A bad key fails every image.
+                    raise error from exc
                 last_error = exc
             except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:
                 last_error = exc
@@ -204,6 +208,7 @@ class GeminiImageProvider:
                 f" ({type(last_error).__name__ if last_error else 'unknown'})"
             )
             error.rate_limited = isinstance(last_error, urllib.error.HTTPError) and last_error.code == 429
+            error.unavailable = True
             raise error from last_error
         for candidate in payload.get("candidates") or []:
             for part in (candidate.get("content") or {}).get("parts") or []:

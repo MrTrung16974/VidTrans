@@ -324,3 +324,17 @@ class ElevenLabsPreviewTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TTSAccountBlockedTests(unittest.TestCase):
+    def test_quota_auth_and_rate_limit_errors_switch_provider(self) -> None:
+        from infrastructure.tts_providers import TTSProviderHTTPError, tts_account_blocked
+
+        quota = TTSProviderHTTPError("ElevenLabs", 401, '{"detail":{"status":"quota_exceeded","message":"14 credits remaining"}}')
+        self.assertEqual(tts_account_blocked(quota), "hết credit/hạn mức")
+        wrapped = RuntimeError("worker failed")
+        wrapped.__cause__ = TTSProviderHTTPError("ElevenLabs", 429, "too many")
+        self.assertEqual(tts_account_blocked(wrapped), "bị giới hạn tần suất")
+        self.assertIn("401", tts_account_blocked(TTSProviderHTTPError("Azure Speech", 401, "invalid key")))
+        self.assertIsNone(tts_account_blocked(TTSProviderHTTPError("ElevenLabs", 500, "oops")))
+        self.assertIsNone(tts_account_blocked(ValueError("bad text")))

@@ -61,7 +61,8 @@ def comic_summary(settings: ComicSettings, storyboard=None, manifest: dict[str, 
                        warnings=len(storyboard.warnings))
     if manifest:
         summary.update(duration=manifest.get("duration"), rendered_revision=manifest.get("revision"),
-                       cache=manifest.get("cache"), metrics=manifest.get("metrics"))
+                       cache=manifest.get("cache"), metrics=manifest.get("metrics"),
+                       image_fallback=manifest.get("image_fallback"))
     summary["video_mode"] = settings.video_mode
     if settings.video_mode == "animated":
         summary["animation_provider"] = settings.animation_provider
@@ -154,6 +155,15 @@ class ComicJobRunner:
 
 
 def _completion_detail(storyboard, manifest: dict[str, Any]) -> str:
+    detail = _render_detail(storyboard, manifest)
+    fallback = manifest.get("image_fallback")
+    if fallback:
+        detail += (f" · {fallback['count']} ảnh dùng minh họa tạm vì AI vẽ ảnh lỗi ({fallback['reason']});"
+                   " bấm Render lại khi còn hạn mức để thay bằng ảnh AI")
+    return detail
+
+
+def _render_detail(storyboard, manifest: dict[str, Any]) -> str:
     reused = manifest["cache"]["hits"]
     if manifest.get("mode") != "animated":
         return f"Đã xuất {len(storyboard.scenes)} cảnh · dùng lại {reused} tài nguyên"

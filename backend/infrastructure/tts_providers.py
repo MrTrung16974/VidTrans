@@ -263,6 +263,29 @@ def _write_elevenlabs_with_retry(request: Request, output_path: Path) -> None:
             time.sleep(delay + random.uniform(0, delay / 2))
 
 
+# Account-level failures: every remaining line would fail the same way, so the job
+# should switch provider instead of failing (out of credits, bad key, rate limit after retries).
+TTS_ACCOUNT_BLOCK_STATUSES = frozenset({401, 402, 403, 429})
+
+
+def tts_account_blocked(error: BaseException | None) -> str | None:
+    """A short reason when ``error`` (or its cause) means the paid TTS account cannot be used."""
+    seen = 0
+    while error is not None and seen < 5:
+        if isinstance(error, TTSProviderHTTPError) and error.status in TTS_ACCOUNT_BLOCK_STATUSES:
+            detail = error.detail.lower()
+            if "quota" in detail or "credits" in detail:
+                return "hết credit/hạn mức"
+            if error.status == 429:
+                return "bị giới hạn tần suất"
+            return f"từ chối API key (HTTP {error.status})"
+        if isinstance(error, RuntimeError) and str(error) == ELEVENLABS_PAID_PLAN_MESSAGE:
+            return "gói Free không dùng được giọng đã chọn"
+        error = error.__cause__
+        seen += 1
+    return None
+
+
 def _write_response(request: Request, output_path: Path, provider_label: str) -> None:
     try:
         with urlopen(request, timeout=45) as response:

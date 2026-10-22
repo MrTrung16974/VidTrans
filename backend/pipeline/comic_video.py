@@ -27,7 +27,13 @@ from typing import Any, Callable
 
 from domain.comic import COMIC_STYLES, ComicCharacter, ComicScene, ComicSettings, Storyboard
 from infrastructure.comic_project import ComicProject
-from infrastructure.image_providers import ImageProvider, ImageRequest, save_png_atomic
+from infrastructure.image_providers import (
+    ImageGenerationError,
+    ImageProvider,
+    ImageRequest,
+    PlaceholderImageProvider,
+    save_png_atomic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +192,10 @@ class ComicVideoProducer:
         self.fps = FPS
         self.cache_hits = 0
         self.cache_misses = 0
+        # Out-of-quota image APIs must not fail the whole video: draw stand-ins and say so.
+        self.image_fallback = None if image_provider.key == "placeholder" else PlaceholderImageProvider(runtime.font_path)
+        self.images_down: str | None = None
+        self.image_fallbacks = 0
 
     # ---------------------------------------------------------------- images
     def build_references(self, storyboard: Storyboard) -> dict[str, tuple[Path, str]]:
@@ -206,20 +216,48 @@ class ComicVideoProducer:
             path = self.project.dir("refs") / f"{character.id}-{key[:16]}.png"
             self.rt.report("comic_references", position / max(1, len(cast)),
                            f"Ảnh tham chiếu nhân vật {position}/{len(cast)}: {character.name}")
-            self._ensure_image(path, ImageRequest(
+            generated, fallback = self._ensure_image(path, ImageRequest(
                 prompt=reference_prompt(character, storyboard.style), width=REFERENCE_SIZE, height=REFERENCE_SIZE,
                 negative_prompt="multiple people, text, watermark, cropped body", seed=self.settings.seed,
                 aspect_ratio="1:1", caption=character.name, display_text=character_prompt(character),
-            ))
-            refs[character.id] = (path, key)
+            ), allow_fallback=False)
+            if generated is not None and not fallback:
+                refs[character.id] = (generated, key)
         return refs
 
-    def _ensure_image(self, path: Path, request: ImageRequest) -> None:
+    def _ensure_image(self, path: Path, request: ImageRequest, *,
+                      allow_fallback: bool = True) -> tuple[Path | None, bool]:
+        """(image, is_stand_in). Stand-ins get their own file so a later render still asks the real provider."""
         if path.is_file():
             self.cache_hits += 1
-            return
-        self.cache_misses += 1
-        self.images.generate(request, path)
+            return path, False
+        if self.images_down is None:
+            self.cache_misses += 1
+            try:
+                self.images.generate(request, path)
+                return path, False
+            except ImageGenerationError as exc:
+                if self.image_fallback is None:
+                    raise
+                logger.warning("Image provider failed (%s); drawing a stand-in", type(exc).__name__)
+                if getattr(exc, "unavailable", False):
+                    self.images_down = str(exc)[:200]
+                reason = str(exc)[:200]
+        else:
+            reason = self.images_down
+        if not allow_fallback or self.image_fallback is None:
+            return None, True
+        stand_in = path.with_name(f"{path.stem}-fallback.png")
+        if not stand_in.is_file():
+            self.image_fallback.generate(request, stand_in)
+        self.image_fallbacks += 1
+        self.image_fallback_reason = reason
+        return stand_in, True
+
+    def image_report(self) -> dict[str, Any] | None:
+        if not self.image_fallbacks:
+            return None
+        return {"count": self.image_fallbacks, "reason": getattr(self, "image_fallback_reason", "")}
 
     def scene_image(self, scene: ComicScene, storyboard: Storyboard,
                     refs: dict[str, tuple[Path, str]]) -> tuple[Path, str]:
@@ -242,13 +280,14 @@ class ComicVideoProducer:
         key = content_hash(PIPELINE_VERSION, "scene", self.images.cache_key, prompt, scene.negative_prompt,
                            [ref_key for _path, ref_key in scene_refs], seed, self.width, self.height)
         path = self.project.dir("images") / f"s{scene.scene_index:03d}-{key[:16]}.png"
-        self._ensure_image(path, ImageRequest(
+        image, fallback = self._ensure_image(path, ImageRequest(
             prompt=prompt, width=self.width, height=self.height, negative_prompt=scene.negative_prompt,
             seed=seed, references=tuple(ref_path for ref_path, _key in scene_refs[:3]),
             caption=f"Cảnh {scene.scene_index}", aspect_ratio=self.settings.aspect_ratio,
             display_text=scene.narration or scene.visual_prompt,
         ))
-        return path, key
+        # A distinct key keeps clips built on a stand-in from being reused once the real image exists.
+        return image, f"{key}-fallback" if fallback else key
 
     # ----------------------------------------------------------------- audio
     def _voice_for(self, character_id: str | None, storyboard: Storyboard) -> tuple[str, int]:
@@ -460,6 +499,7 @@ class ComicVideoProducer:
             "scenes": {str(r.scene_index): {"image": r.image, "duration": round(r.duration, 3),
                                             "clip": r.clip, "cues": r.cues} for r in results},
             "cache": {"hits": self.cache_hits, "misses": self.cache_misses},
+            "image_fallback": self.image_report(),
         }
         self.project.save_manifest(manifest)
         return manifest
@@ -477,7 +517,8 @@ class ComicVideoProducer:
         manifest = {"revision": storyboard.revision, "size": [self.width, self.height],
                     "image_provider": self.images.key,
                     "references": {cid: path.name for cid, (path, _key) in refs.items()}, "scenes": scenes,
-                    "cache": {"hits": self.cache_hits, "misses": self.cache_misses}}
+                    "cache": {"hits": self.cache_hits, "misses": self.cache_misses},
+                    "image_fallback": self.image_report()}
         self.project.save_manifest(manifest)
         return manifest
 

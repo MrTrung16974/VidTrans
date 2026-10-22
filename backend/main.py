@@ -113,6 +113,7 @@ from infrastructure.tts_providers import (
     resolve_elevenlabs_voice_selection,
     synthesize_azure,
     synthesize_elevenlabs,
+    tts_account_blocked,
 )
 from infrastructure.translation_providers import (
     create_translation_provider,
@@ -2839,7 +2840,7 @@ def process_video(
         if mode in (2, 3):
             ensure_job_active(job_id)
             update_job(job_id, step="tts", progress=0.55)
-            tts_fingerprint = fingerprint_payload(
+            tts_fingerprint_fields = lambda provider: fingerprint_payload(  # noqa: E731
                 {
                     "version": 1,
                     "translation_bundle_checksum": translation_checkpoint.bundle_checksum,
@@ -2849,8 +2850,8 @@ def process_video(
                     "voice_mode": voice_mode,
                     "voice_style": voice_style,
                     "requested_voice_style": requested_voice_style,
-                    "tts_provider": tts_provider,
-                    "tts_voices": tts_voices or {},
+                    "tts_provider": provider,
+                    "tts_voices": (tts_voices or {}) if provider == tts_provider else {},
                     "speech_rate": speech_rate,
                     "video_duration": round(video_duration, 3),
                     "routing": [
@@ -2863,6 +2864,7 @@ def process_video(
                     "tts_pipeline_version": 4,
                 }
             )
+            tts_fingerprint = tts_fingerprint_fields(tts_provider)
             tts_checkpoint = checkpoint_store.load_json(
                 "tts",
                 fingerprint=tts_fingerprint,
@@ -2880,18 +2882,46 @@ def process_video(
             else:
                 tts_work_dir = work_dir / "checkpoints" / "tts" / tts_fingerprint
                 with measure_job_stage(job_id, "tts", video_duration=video_duration):
-                    synthesize_tts_segments(
-                        translated_segments,
-                        tts_work_dir,
-                        voice_type,
-                        speech_rate,
-                        voice_style,
-                        job_id=job_id,
-                        target_language=target_language,
-                        tts_provider=tts_provider,
-                        tts_voices=tts_voices,
-                        relax_pace=requested_voice_style == AUTO_VOICE_STYLE,
-                    )
+                    try:
+                        synthesize_tts_segments(
+                            translated_segments,
+                            tts_work_dir,
+                            voice_type,
+                            speech_rate,
+                            voice_style,
+                            job_id=job_id,
+                            target_language=target_language,
+                            tts_provider=tts_provider,
+                            tts_voices=tts_voices,
+                            relax_pace=requested_voice_style == AUTO_VOICE_STYLE,
+                        )
+                    except Exception as exc:
+                        blocked = tts_account_blocked(exc) if tts_provider != "edge" else None
+                        if blocked is None:
+                            raise
+                        # The whole job switches, so the dub keeps one consistent voice. Edge audio is
+                        # checkpointed under its own fingerprint: a retry after topping up uses the
+                        # paid provider again.
+                        provider_label = {"elevenlabs": "ElevenLabs", "azure": "Azure Speech"}.get(tts_provider, tts_provider)
+                        logger.warning("%s unusable for job %s (%s); dubbing with Edge TTS", provider_label, job_id, blocked)
+                        update_job(job_id, step_detail=f"{provider_label} {blocked}; chuyển sang Edge TTS miễn phí",
+                                   tts_fallback={"from": provider_label, "to": "Edge TTS", "reason": blocked})
+                        # Fingerprint first: the lambda compares against the originally requested provider.
+                        tts_fingerprint = tts_fingerprint_fields("edge")
+                        tts_provider = "edge"
+                        tts_work_dir = work_dir / "checkpoints" / "tts" / tts_fingerprint
+                        synthesize_tts_segments(
+                            translated_segments,
+                            tts_work_dir,
+                            voice_type,
+                            speech_rate,
+                            voice_style,
+                            job_id=job_id,
+                            target_language=target_language,
+                            tts_provider="edge",
+                            tts_voices={},
+                            relax_pace=requested_voice_style == AUTO_VOICE_STYLE,
+                        )
                     ensure_job_active(job_id)
                     voice_track = build_voice_track(
                         translated_segments, tts_work_dir, video_duration
@@ -3148,6 +3178,12 @@ def process_video(
             **artifact_fields,
             **tiktok_publish_fields,
         }
+        tts_fallback = (JOB_SERVICE.get(job_id) or {}).get("tts_fallback")
+        if tts_fallback:
+            completion_fields["step_detail"] = (
+                f"Đã lồng tiếng bằng Edge TTS vì {tts_fallback['from']} {tts_fallback['reason']}; "
+                "nạp thêm credit rồi bấm Chạy lại nếu muốn dùng giọng đã chọn"
+            )
         update_job(job_id, **completion_fields)
         TENANT_GOVERNANCE.consume(job_id)
     except JobCancelled:
@@ -5708,6 +5744,7 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         "tiktok_publish_id": None,
         "tiktok_publish_status": None,
         "tiktok_publish_detail": None,
+        "tts_fallback": None,
     }
     artifact_keys = ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file")
     for key in artifact_keys:

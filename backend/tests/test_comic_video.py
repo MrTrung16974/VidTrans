@@ -201,3 +201,73 @@ class ProducerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(FFMPEG and FFPROBE, "ffmpeg is required")
+class ImageQuotaFallbackTests(unittest.TestCase):
+    """Regression: job d5395480 failed outright when Gemini Image answered 429."""
+
+    def test_out_of_quota_images_become_stand_ins_and_are_retried_next_render(self) -> None:
+        from infrastructure.image_providers import ImageGenerationError
+
+        class FlakyGemini(PlaceholderImageProvider):
+            key = "gemini"
+            cache_key = "gemini-test"
+            supports_references = True
+
+            def __init__(self):
+                super().__init__(FONT)
+                self.calls = 0
+                self.down = True
+
+            def generate(self, request, output_path):
+                self.calls += 1
+                if self.down:
+                    error = ImageGenerationError("Gemini Image hết hạn mức (HTTP 429)")
+                    error.rate_limited = error.unavailable = True
+                    raise error
+                super().generate(request, output_path)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = ComicProject(root / "comic")
+            synth = lambda text, path, *a: run([FFMPEG, "-y", "-f", "lavfi", "-i", "sine=duration=0.6", str(path)])
+            runtime = ComicRuntime(FFMPEG, run, duration, synth, FONT)
+            images = FlakyGemini()
+            board = storyboard()
+
+            manifest = ComicVideoProducer(project, ComicSettings(aspect_ratio="16:9", quality="draft"), images,
+                                          runtime).produce(board, root / "a.mp4", root / "a.srt")
+
+            self.assertEqual(images.calls, 1)  # Marked down after the first 429, not retried per scene.
+            self.assertEqual(manifest["image_fallback"]["count"], 3)
+            self.assertIn("429", manifest["image_fallback"]["reason"])
+            self.assertTrue(all(entry["image"].endswith("-fallback.png") for entry in manifest["scenes"].values()))
+            self.assertEqual(manifest["references"], {})  # A stand-in is never used as a character reference.
+
+            images.down = False
+            manifest = ComicVideoProducer(project, ComicSettings(aspect_ratio="16:9", quality="draft"), images,
+                                          runtime).produce(board, root / "b.mp4", root / "b.srt")
+            self.assertIsNone(manifest["image_fallback"])
+            self.assertFalse(any(entry["image"].endswith("-fallback.png") for entry in manifest["scenes"].values()))
+
+    def test_prompt_rejection_only_affects_that_scene(self) -> None:
+        from infrastructure.image_providers import ImageGenerationError
+
+        class PickyGemini(PlaceholderImageProvider):
+            key = "gemini"
+            cache_key = "gemini-test"
+
+            def generate(self, request, output_path):
+                if request.caption == "Cảnh 2":
+                    raise ImageGenerationError("Gemini không trả về ảnh (SAFETY)")
+                super().generate(request, output_path)
+
+        with tempfile.TemporaryDirectory() as temp:
+            project = ComicProject(Path(temp) / "comic")
+            runtime = ComicRuntime(FFMPEG, run, duration, lambda *a: None, FONT)
+            manifest = ComicVideoProducer(project, ComicSettings(quality="draft"), PickyGemini(FONT),
+                                          runtime).preview_images(storyboard())
+            images = {index: entry["image"] for index, entry in manifest["scenes"].items()}
+            self.assertTrue(images["2"].endswith("-fallback.png"))
+            self.assertFalse(images["3"].endswith("-fallback.png"))

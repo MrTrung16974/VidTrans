@@ -130,12 +130,12 @@ class AnimatedVideoProducer(ComicVideoProducer):
         key = content_hash(ANIMATION_VERSION, "keyframe", self.images.cache_key, prompt, shot.negative_prompt,
                            [ref_key for _p, ref_key in shot_refs], seed, self.width, self.height)
         path = self.project.dir("keyframes") / f"{stem}-{key[:16]}.png"
-        self._ensure_image(path, ImageRequest(
+        image, fallback = self._ensure_image(path, ImageRequest(
             prompt=prompt, width=self.width, height=self.height, negative_prompt=shot.negative_prompt, seed=seed,
             references=tuple(ref_path for ref_path, _k in shot_refs[:3]), aspect_ratio=self.settings.aspect_ratio,
             caption=f"Shot {shot_label(scene, shot)}", display_text=shot.narration or shot.action or shot.keyframe_prompt,
         ))
-        return path, key
+        return image, f"{key}-fallback" if fallback else key
 
     def _seed(self, shot: Shot, label: str) -> int:
         base = shot.animation.seed or self.settings.seed or int(content_hash("seed", label)[:8], 16)
@@ -311,7 +311,8 @@ class AnimatedVideoProducer(ComicVideoProducer):
             "references": {cid: path.name for cid, (path, _key) in refs.items()}, "shots": shots,
             "metrics": {"ai_seconds": round(self.ai_seconds, 2), "attempts": self.attempts,
                         "fallback_shots": sum(1 for s in shots.values() if s.get("fallback"))},
-            "cache": {"hits": self.cache_hits, "misses": self.cache_misses}, **extra,
+            "cache": {"hits": self.cache_hits, "misses": self.cache_misses},
+            "image_fallback": self.image_report(), **extra,
         }
 
     def produce(self, storyboard: Storyboard, output_video: Path, output_srt: Path,
