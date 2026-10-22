@@ -184,7 +184,10 @@ class TranslateGemmaTests(unittest.TestCase):
             plain = create_translation_provider("google", source_language="zh-CN", target_language="vi")
 
         self.assertIsInstance(wrapped, FallbackTranslator)
-        self.assertIsInstance(local, TranslateGemmaTranslator)
+        # A chosen local model is backed by Google, then the other local model.
+        self.assertIsInstance(local.primary, TranslateGemmaTranslator)
+        self.assertEqual(local.secondary.primary.name, "google-zh-CN-vi")
+        self.assertIsInstance(local.secondary.secondary, Qwen3Translator)
         self.assertNotIsInstance(plain, FallbackTranslator)
 
 
@@ -299,7 +302,33 @@ class Qwen3Tests(unittest.TestCase):
     def test_qwen3_is_preferred_backup(self) -> None:
         with patch("infrastructure.translation_providers.local_model_available", return_value=True):
             wrapped = create_translation_provider("google", source_language="zh-CN", target_language="vi")
-        self.assertIsInstance(wrapped.secondary, Qwen3Translator)
+        self.assertIsInstance(wrapped.secondary.primary, Qwen3Translator)
+        self.assertIsInstance(wrapped.secondary.secondary, TranslateGemmaTranslator)
+
+    def test_untagged_model_name_requests_the_installed_tag(self) -> None:
+        # Ollama resolves "translategemma" to ":latest" and answers 404 when only ":4b" exists.
+        from infrastructure.translation_providers import installed_local_model
+
+        tags = lambda names: (lambda *_a, **_k: _Response({"models": [{"name": n} for n in names]}))
+        with patch("infrastructure.translation_providers._ollama_models", None):
+            self.assertEqual(installed_local_model("translategemma", opener=tags(["translategemma:4b"])),
+                             "translategemma:4b")
+        with patch("infrastructure.translation_providers._ollama_models", None):
+            self.assertEqual(installed_local_model("translategemma",
+                                                   opener=tags(["translategemma:12b", "translategemma:latest"])),
+                             "translategemma")
+        sent = {}
+
+        def opener(request, **_kwargs):
+            if request.full_url.endswith("/api/tags"):
+                return _Response({"models": [{"name": "translategemma:4b"}]})
+            sent["model"] = json.loads(request.data.decode("utf-8"))["model"]
+            return _Response({"message": {"content": "Xin chào"}})
+
+        with patch("infrastructure.translation_providers._ollama_models", None):
+            translator = TranslateGemmaTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+            self.assertEqual(translator.translate("你好"), "Xin chào")
+        self.assertEqual(sent["model"], "translategemma:4b")
 
 
 class SubtitlePromptTests(unittest.TestCase):
@@ -395,6 +424,32 @@ class FallbackTranslatorTests(unittest.TestCase):
         self.assertEqual(translator.translate_lines(["一", "二"]), ["local:一", "local:二"])
         self.assertEqual(translator.translate("三"), "local:三")
         self.assertEqual(primary.calls, 1)
+
+    def test_broken_backup_does_not_block_a_primary_that_failed_one_cue(self) -> None:
+        from infrastructure.vietnamese_translator import TranslationConfigurationError
+
+        class BrokenSecondary(_FakeSecondary):
+            def translate(self, text):
+                raise TranslationConfigurationError("Ollama chưa có model translategemma")
+
+        translator = FallbackTranslator(_FakeTranslator(TranslationServiceError("timeout")), BrokenSecondary())
+        with self.assertRaises(TranslationServiceError) as raised:
+            translator.translate("你好")
+        self.assertIn("timeout", str(raised.exception))
+        self.assertIn("translategemma", str(raised.exception))
+        self.assertFalse(getattr(raised.exception, "permanent", False))
+
+    def test_job_stops_only_when_every_translator_is_blocked(self) -> None:
+        from infrastructure.vietnamese_translator import TranslationConfigurationError
+
+        class BrokenSecondary(_FakeSecondary):
+            def translate(self, text):
+                raise TranslationConfigurationError("no model")
+
+        translator = FallbackTranslator(_FakeTranslator(TranslationRateLimitedError("429")), BrokenSecondary())
+        with self.assertRaises(TranslationServiceError) as raised:
+            translator.translate("你好")
+        self.assertTrue(raised.exception.permanent)
 
     def test_marker_batches_are_not_sent_to_secondary(self) -> None:
         translator = FallbackTranslator(_FakeTranslator(TranslationServiceError("boom")), _FakeSecondary())

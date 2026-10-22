@@ -262,3 +262,43 @@ class UnavailableProviderTests(unittest.TestCase):
         with self.assertRaises(TranslationIncompleteError) as raised:
             ensure_translation_complete(translated)
         self.assertIn("không phản hồi sau 60 giây", str(raised.exception))
+
+
+class MissingOllamaModelTranslator:
+    """What a local model whose Ollama tag is missing does: 404 on every request."""
+
+    name = "translategemma-translategemma"
+    supports_markers = False
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def translate(self, text):
+        from infrastructure.vietnamese_translator import TranslationConfigurationError
+
+        self.calls += 1
+        raise TranslationConfigurationError("Ollama chưa có model translategemma; hãy chạy: ollama pull translategemma")
+
+
+class WorkingTranslator:
+    name = "google-zh-CN-vi"
+    supports_markers = False
+
+    def translate(self, text):
+        return f"Câu dịch {text[1:-2]}"
+
+
+class BrokenProviderFallbackTests(unittest.TestCase):
+    def test_broken_local_model_falls_back_for_every_cue(self) -> None:
+        # Regression: job 4fb6af20 failed 149/149 cues because one provider's model was missing.
+        from infrastructure.translation_providers import FallbackTranslator
+        from pipeline.translation import ensure_translation_complete
+
+        cues = [{"start": float(i), "end": i + 1.0, "text": f"第{i}句话"} for i in range(149)]
+        broken = MissingOllamaModelTranslator()
+        translated = translate_segments(cues, FallbackTranslator(broken, WorkingTranslator()), retries=3,
+                                        sleeper=lambda _: None, source_language="zh-CN")
+
+        ensure_translation_complete(translated)
+        self.assertEqual(broken.calls, 1)  # Marked down after the first 404, not retried per cue.
+        self.assertTrue(all(item["translation_status"] == "translated" for item in translated))

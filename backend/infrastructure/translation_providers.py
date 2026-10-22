@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -111,6 +112,23 @@ def local_model_available(provider: str, *, opener=None, refresh: bool = False) 
     if ":" in wanted:
         return wanted in names
     return any(name.split(":")[0] == wanted for name in names)
+
+
+def installed_local_model(provider: str, *, opener=None) -> str:
+    """The exact Ollama tag to request for this provider.
+
+    A configured name without a tag ("translategemma") matches any installed tag in
+    ``local_model_available``, but Ollama resolves an untagged request to ``:latest``
+    and answers 404 when only e.g. ``translategemma:4b`` is installed. Requests must
+    therefore use the installed tag.
+    """
+    wanted = local_model(provider)
+    if ":" in wanted:
+        return wanted
+    tags = sorted(name for name in _installed_ollama_models(opener=opener) if name.split(":")[0] == wanted)
+    if f"{wanted}:latest" in tags or not tags:
+        return wanted
+    return tags[0]
 
 
 def translategemma_available(*, opener=None, refresh: bool = False) -> bool:
@@ -295,7 +313,7 @@ class TranslateGemmaTranslator:
         self.source_language, self.target_language = validate_language_pair(source_language, target_language)
         if self.source_language == "auto":
             raise TranslationServiceError("translator requires a detected source language")
-        self.model = translategemma_model()
+        self.model = installed_local_model("translategemma", opener=opener)
         self.url = ollama_url()
         self.timeout = timeout
         self._open = opener or _direct_open
@@ -364,7 +382,7 @@ class Qwen3Translator:
             raise TranslationServiceError("translator requires a detected source language")
         # Translates the rare cue the model keeps copying in the source script.
         self._rescue = rescue
-        self.model = local_model("qwen3")
+        self.model = installed_local_model("qwen3", opener=opener)
         self.url = ollama_url()
         self.timeout = timeout
         self._open = opener or _direct_open
@@ -494,12 +512,37 @@ class Qwen3Translator:
         return self.translate_lines([text])[0]
 
 
-class FallbackTranslator:
-    """Primary translator with TranslateGemma as the secondary for failed calls.
+_BLOCKING_FLAGS = ("rate_limited", "permanent", "unavailable")
 
-    Once the primary reports a rate limit or a permanent error it is skipped
-    for the rest of the job, so a blocked cloud API does not cost one failed
-    request per cue.
+
+def _blocked(error: BaseException) -> bool:
+    return any(getattr(error, flag, False) for flag in _BLOCKING_FLAGS)
+
+
+def _combined_failure(primary_error: BaseException | None, secondary_error: BaseException) -> BaseException:
+    """One error for a cue both translators failed.
+
+    The message names both causes. It blocks the rest of the job (rate limit,
+    configuration, outage) only when *both* translators are blocked: a broken backup
+    must not stop a primary that merely failed on one cue.
+    """
+    if primary_error is None:  # The primary was already marked down for this job.
+        return secondary_error
+    combined = copy.copy(secondary_error)
+    combined.args = (f"{primary_error}; dự phòng: {secondary_error}"[:400],)
+    for flag in _BLOCKING_FLAGS:
+        setattr(combined, flag, bool(getattr(primary_error, flag, False) and getattr(secondary_error, flag, False)))
+    if _blocked(primary_error) and _blocked(secondary_error) and not _blocked(combined):
+        combined.permanent = True  # Blocked for different reasons: still nothing left to try.
+    return combined
+
+
+class FallbackTranslator:
+    """Primary translator with a secondary (possibly another FallbackTranslator) for failed calls.
+
+    Once the primary reports a rate limit, an outage or a permanent error it is
+    skipped for the rest of the job, so a blocked provider does not cost one
+    failed request per cue.
     """
 
     accepts_durations = True
@@ -519,22 +562,27 @@ class FallbackTranslator:
         return f"{primary}+{self.secondary.name}" if self.secondary_used else primary
 
     def _primary_failed(self, exc: Exception) -> None:
-        if getattr(exc, "rate_limited", False) or getattr(exc, "permanent", False):
+        if any(getattr(exc, flag, False) for flag in _BLOCKING_FLAGS):
             self.primary_down = True
+            logger.warning("Translator %s blocked (%s); using %s for the rest of the job",
+                           getattr(self.primary, "name", "primary"), type(exc).__name__,
+                           getattr(self.secondary, "name", "secondary"))
 
     def translate(self, text: str) -> str:
+        primary_error = None
         if not self.primary_down:
             try:
                 return self.primary.translate(text)
             except Exception as exc:
                 self._primary_failed(exc)
                 primary_error = exc
-        else:
-            primary_error = None
         if '<vts id="' in text:
             # Marker batches are a primary-only optimisation; let cues retry singly.
             raise primary_error or TranslationServiceError("secondary_translator_skips_batches")
-        value = self.secondary.translate(text)
+        try:
+            value = self.secondary.translate(text)
+        except Exception as exc:
+            raise _combined_failure(primary_error, exc) from exc
         self.secondary_used = True
         return value
 
@@ -545,33 +593,48 @@ class FallbackTranslator:
         return translator.translate_lines(lines)
 
     def _translate_lines(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
+        primary_error = None
         if not self.primary_down:
             try:
                 return self._call_lines(self.primary, lines, durations)
             except Exception as exc:
                 self._primary_failed(exc)
-        if hasattr(self.secondary, "translate_lines"):
-            values = self._call_lines(self.secondary, lines, durations)
-        else:
-            values = [self.secondary.translate(line) for line in lines]
+                primary_error = exc
+        try:
+            if hasattr(self.secondary, "translate_lines"):
+                values = self._call_lines(self.secondary, lines, durations)
+            else:
+                values = [self.secondary.translate(line) for line in lines]
+        except Exception as exc:
+            raise _combined_failure(primary_error, exc) from exc
         self.secondary_used = True
         return values
 
 
 def create_translation_provider(provider: str, *, source_language: str, target_language: str):
+    """The chosen translator, backed by every other working one.
+
+    Order: chosen -> Google -> ready local models. One broken provider (missing Ollama
+    model, exhausted quota, outage) then costs a fallback, not the whole job.
+    """
     resolved = normalize_translation_provider(provider)
+    languages = {"source_language": source_language, "target_language": target_language}
     if resolved in LOCAL_TRANSLATORS:
-        return LOCAL_TRANSLATORS[resolved](source_language=source_language, target_language=target_language)
-    if resolved == "gemini":
-        primary = GeminiContextTranslator(source_language=source_language, target_language=target_language)
+        chain = [LOCAL_TRANSLATORS[resolved](**languages)]
+    elif resolved == "gemini":
+        chain = [GeminiContextTranslator(**languages)]
     else:
-        primary = GoogleVietnameseTranslator(source_language=source_language, target_language=target_language)
-    backup = next((key for key in LOCAL_BACKUP_ORDER if local_model_available(key)), None)
-    if backup:
-        return FallbackTranslator(
-            primary, LOCAL_TRANSLATORS[backup](source_language=source_language, target_language=target_language)
-        )
-    return primary
+        chain = []
+    if resolved != "google":
+        chain.append(GoogleVietnameseTranslator(**languages))
+    else:
+        chain.insert(0, GoogleVietnameseTranslator(**languages))
+    chain += [LOCAL_TRANSLATORS[key](**languages) for key in LOCAL_BACKUP_ORDER
+              if key != resolved and local_model_available(key)]
+    translator = chain[-1]
+    for primary in reversed(chain[:-1]):
+        translator = FallbackTranslator(primary, translator)
+    return translator
 
 
 LOCAL_TRANSLATORS = {"translategemma": TranslateGemmaTranslator, "qwen3": Qwen3Translator}
