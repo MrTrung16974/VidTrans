@@ -118,6 +118,14 @@ services:
       # Truyện → Video: model chia cảnh (mặc định theo GEMINI_TRANSLATION_MODEL) và model vẽ ảnh.
       VIDTRANS_COMIC_LLM_MODEL: "${VIDTRANS_COMIC_LLM_MODEL:-}"
       VIDTRANS_COMIC_IMAGE_MODEL: "${VIDTRANS_COMIC_IMAGE_MODEL:-gemini-2.5-flash-image}"
+      # Hoạt hình AI: Veo (dùng GEMINI_API_KEY) hoặc GPU worker riêng (docs/animation-worker-api.md).
+      VIDTRANS_ANIMATION_CONCURRENCY: "${VIDTRANS_ANIMATION_CONCURRENCY:-1}"
+      VIDTRANS_VEO_MODEL: "${VIDTRANS_VEO_MODEL:-veo-3.0-fast-generate-001}"
+      VIDTRANS_VEO_DURATIONS: "${VIDTRANS_VEO_DURATIONS:-4,6,8}"
+      VIDTRANS_ANIMATION_WORKER_URL: "${VIDTRANS_ANIMATION_WORKER_URL:-}"
+      VIDTRANS_ANIMATION_WORKER_TOKEN: "${VIDTRANS_ANIMATION_WORKER_TOKEN:-}"
+      VIDTRANS_ANIMATION_WORKER_MODEL: "${VIDTRANS_ANIMATION_WORKER_MODEL:-gpu-worker}"
+      VIDTRANS_ANIMATION_WORKER_MAX_SECONDS: "${VIDTRANS_ANIMATION_WORKER_MAX_SECONDS:-8}"
       GEMINI_TRANSLATION_MODEL: "${GEMINI_TRANSLATION_MODEL:-gemini-3.5-flash-lite}"
       GEMINI_TRANSLATION_MODELS: "${GEMINI_TRANSLATION_MODELS:-gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash,gemini-3.6-flash,gemini-2.5-flash-lite,gemini-2.5-flash}"
       # Local translators via Ollama on the host: `ollama pull qwen3:4b` / `ollama pull translategemma`.

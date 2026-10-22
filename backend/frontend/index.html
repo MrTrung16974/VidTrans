@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261022-comic" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261022-animation" />
   </head>
   <body>
     <div class="app-shell">
@@ -610,6 +610,21 @@
                 <small id="comicStoryLimit" class="field-hint"></small>
               </label>
               <label class="field"><span>Hoặc tải file truyện (.txt, .docx)</span><input name="file" type="file" accept=".txt,.md,.docx" /></label>
+
+              <div class="comic-mode-switch" role="radiogroup" aria-label="Loại video">
+                <label><input type="radio" name="video_mode" value="comic" checked /><span><strong>Truyện tranh</strong><small>Ảnh tĩnh + pan/zoom, nhanh và rẻ</small></span></label>
+                <label><input type="radio" name="video_mode" value="animated" /><span><strong>Hoạt hình AI</strong><small>Chia shot, keyframe → Image-to-Video</small></span></label>
+              </div>
+              <div class="field-grid comic-animated-only is-hidden">
+                <label class="field"><span>AI tạo chuyển động</span><select name="animation_provider"></select></label>
+                <label class="field"><span>Chất lượng</span>
+                  <select name="quality"><option value="draft">Nháp 720p (thử nhanh, tiết kiệm)</option><option value="final" selected>Hoàn thiện 1080p</option></select></label>
+                <label class="field"><span>FPS</span><select name="fps"><option value="24">24</option><option value="30" selected>30</option></select></label>
+                <label class="field"><span>Độ mạnh chuyển động</span><input name="motion_strength" type="number" min="0" max="1" step="0.05" value="0.45" /></label>
+                <label class="field"><span>Số lần thử AI mỗi shot</span><input name="max_animation_attempts" type="number" min="1" max="4" value="2" /></label>
+                <label class="field"><span>Ngân sách AI mỗi lần render (giây video)</span><input name="animation_budget_seconds" type="number" min="0" max="3600" step="10" value="240" /></label>
+                <small class="field-hint comic-wide">Shot lỗi QC sau số lần thử, hoặc vượt ngân sách, tự chuyển sang camera 2.5D để video luôn xuất được.</small>
+              </div>
 
               <div class="field-grid">
                 <label class="field"><span>Phong cách hình ảnh</span><select name="style"></select></label>
@@ -1852,6 +1867,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261022-comic"></script>
+    <script type="module" src="/js/app.js?v=20261022-animation"></script>
   </body>
 </html>

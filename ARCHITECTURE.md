@@ -71,6 +71,20 @@ validation + bounded repair, or sentence splitter) -> storyboard.json (versioned
   scene regenerates only that scene's image/voice/clip; images and voice survive edits
   so reverting is free. The storyboard can only be edited while the job is idle.
 
+### Animated mode
+
+`video_mode = "animated"` splits every scene into shots (one camera set-up, one simple
+3-8 s action). Per shot: keyframe (from the approved character reference) -> voice, which
+fixes the shot length -> image-to-video (`infrastructure/video_providers.py`: Veo, a
+self-hosted GPU worker per `docs/animation-worker-api.md`, or the local 2.5D camera) ->
+automatic QC (`pipeline/animation_qc.py`: unreadable, too short, frozen, black) -> bounded
+retries with new seeds -> 2.5D fallback when attempts or the render's AI-seconds budget run
+out -> normalised clip (size, fps, <= 25 % slow-down, last-frame hold). A process-wide
+semaphore (`VIDTRANS_ANIMATION_CONCURRENCY`) caps concurrent AI generations. Editing a
+motion prompt, or "regenerate" (a new take/seed), re-animates only that shot; approved
+character references are pinned so profile edits create variants instead of overwriting.
+Lip-sync is not implemented yet.
+
 ## Job state
 
 Job state is stored in PostgreSQL configured by `VIDTRANS_DATABASE_URL`. Docker

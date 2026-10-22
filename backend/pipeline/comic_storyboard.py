@@ -27,6 +27,13 @@ from domain.comic import (
 )
 from domain.languages import language_profile
 from infrastructure.story_text import chunk_story, split_sentences
+from pipeline.animation_storyboard import (
+    ANIMATED_DRAFT_SCHEMA,
+    animated_system_prompt,
+    finalize_shots,
+    heuristic_animated_scenes,
+    prepare_animated_draft,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,16 +116,28 @@ def _prepare_draft(data: Any) -> Any:
     return data
 
 
+def _validate_draft(answer: str, animated: bool) -> StoryboardDraft:
+    data = extract_json(answer)
+    draft = StoryboardDraft.model_validate(prepare_animated_draft(data) if animated else _prepare_draft(data))
+    if animated:
+        missing = [scene.scene_index for scene in draft.scenes if not scene.shots]
+        if missing:
+            raise ValueError(f"scenes {missing} have no shots; every scene needs 1-4 shots")
+    return draft
+
+
 def analyze_chunk(llm, settings: ComicSettings, chunk: str, characters: list[ComicCharacter],
                   position: int, total: int) -> StoryboardDraft:
-    system = system_prompt(settings)
+    animated = settings.video_mode == "animated"
+    system = animated_system_prompt(settings, CHARS_PER_SECOND) if animated else system_prompt(settings)
+    schema = ANIMATED_DRAFT_SCHEMA if animated else DRAFT_SCHEMA
     prompt = user_prompt(chunk, characters, position, total)
     request = prompt
     for round_number in range(MAX_REPAIR_ROUNDS + 1):
-        answer = llm.generate_json(system, request, DRAFT_SCHEMA)
+        answer = llm.generate_json(system, request, schema)
         try:
-            return StoryboardDraft.model_validate(_prepare_draft(extract_json(answer)))
-        except (ValidationError, json.JSONDecodeError) as exc:
+            return _validate_draft(answer, animated)
+        except (ValidationError, ValueError) as exc:
             if round_number == MAX_REPAIR_ROUNDS:
                 raise
             problems = str(exc)[:1500]
@@ -161,8 +180,15 @@ def _merge_characters(registry: dict[str, ComicCharacter], draft: StoryboardDraf
         # The first description wins: later chunks must not redraw a known character.
         registry.setdefault(character.id, character)
     for scene in draft.scenes:
-        for cid in [*scene.characters, *(line.character for line in scene.dialogue)]:
+        for cid in _scene_character_ids(scene):
             registry.setdefault(cid, ComicCharacter(id=cid, name=cid.replace("_", " ").title()))
+
+
+def _scene_character_ids(scene: ComicScene) -> list[str]:
+    ids = [*scene.characters, *(line.character for line in scene.dialogue)]
+    for shot in scene.shots:
+        ids += [*shot.characters, *(line.character for line in shot.dialogue)]
+    return ids
 
 
 def build_storyboard(
@@ -197,7 +223,10 @@ def build_storyboard(
                                position, type(exc).__name__)
                 warnings.append(f"Đoạn {position}: AI chia cảnh lỗi ({str(reason)[:120]}), đã chia theo câu.")
         if draft_scenes is None:
-            draft_scenes = heuristic_scenes(chunk, settings, len(scenes) + 1)
+            if settings.video_mode == "animated":
+                draft_scenes = heuristic_animated_scenes(chunk, settings, len(scenes) + 1, CHARS_PER_SECOND)
+            else:
+                draft_scenes = heuristic_scenes(chunk, settings, len(scenes) + 1)
             methods.add("heuristic")
         scenes.extend(draft_scenes)
         progress(position, len(chunks))
@@ -211,17 +240,18 @@ def build_storyboard(
         scene.scene_index = position
         if not scene.negative_prompt:
             scene.negative_prompt = DEFAULT_NEGATIVE_PROMPT
+        finalize_shots(scene, settings)
         excerpt = _comparable(scene.source_excerpt)
         if excerpt and excerpt[:60] not in source:
             warnings.append(f"Cảnh {position}: trích dẫn không khớp văn bản gốc, nên kiểm tra lại nội dung.")
 
-    used = {cid for scene in scenes for cid in scene.characters} | {
-        line.character for scene in scenes for line in scene.dialogue}
+    used = {cid for scene in scenes for cid in _scene_character_ids(scene)}
     characters = [c for c in registry.values() if c.id in used]
     return Storyboard(
         title=settings.title,
         language=settings.language,
         style=settings.style,
+        mode=settings.video_mode,
         analysis_method="+".join(sorted(methods)),
         characters=characters,
         scenes=scenes,

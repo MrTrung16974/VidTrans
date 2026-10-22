@@ -183,17 +183,24 @@ class ComicVideoProducer:
         self.images = image_provider
         self.rt = runtime
         self.width, self.height = settings.size
+        self.fps = FPS
         self.cache_hits = 0
         self.cache_misses = 0
 
     # ---------------------------------------------------------------- images
     def build_references(self, storyboard: Storyboard) -> dict[str, tuple[Path, str]]:
-        if not self.images.supports_references:
-            return {}
         refs: dict[str, tuple[Path, str]] = {}
-        cast = [c for c in storyboard.characters if c.appearance]
+        # Uploaded/approved references are honoured even by providers that cannot draw new ones.
+        cast = [c for c in storyboard.characters if c.appearance or c.approved_reference]
+        if not self.images.supports_references:
+            cast = [c for c in cast if self.project.asset_path("refs", c.approved_reference or "")]
         for position, character in enumerate(cast, 1):
             self.rt.check_active()
+            pinned = self.project.asset_path("refs", character.approved_reference or "")
+            if pinned is not None:
+                # An approved reference is used verbatim, whatever the profile says now.
+                refs[character.id] = (pinned, content_hash("approved", file_hash(pinned)))
+                continue
             key = content_hash(PIPELINE_VERSION, "ref", self.images.cache_key, storyboard.style,
                                character_prompt(character), self.settings.seed)
             path = self.project.dir("refs") / f"{character.id}-{key[:16]}.png"
@@ -254,14 +261,19 @@ class ComicVideoProducer:
         return gender, (6 if gender == narrator else 0)
 
     def scene_audio(self, scene: ComicScene, storyboard: Storyboard) -> tuple[Path, str, float, list[dict]]:
+        return self.speech_audio(f"s{scene.scene_index:03d}", scene.spoken_parts(), storyboard)
+
+    def speech_audio(self, label: str, spoken: list[tuple[str | None, str]], storyboard: Storyboard,
+                     min_duration: float = MIN_SCENE_SECONDS) -> tuple[Path, str, float, list[dict]]:
         rate = int(round((self.settings.speech_rate - 1.0) * 100))
         part_specs = []
-        for character_id, text in scene.spoken_parts():
+        for character_id, text in spoken:
             gender, pitch = self._voice_for(character_id, storyboard)
             part_specs.append((text, gender, pitch))
-        key = content_hash(PIPELINE_VERSION, "audio", self.settings.language, rate, part_specs)
+        extra = [] if (min_duration == MIN_SCENE_SECONDS and self.fps == FPS) else [min_duration, self.fps]
+        key = content_hash(PIPELINE_VERSION, "audio", self.settings.language, rate, part_specs, *extra)
         audio_dir = self.project.dir("audio")
-        wav = audio_dir / f"s{scene.scene_index:03d}-{key[:16]}.wav"
+        wav = audio_dir / f"{label}-{key[:16]}.wav"
         meta_path = wav.with_suffix(".json")
         if wav.is_file() and meta_path.is_file():
             self.cache_hits += 1
@@ -291,7 +303,13 @@ class ComicVideoProducer:
             part_wavs.append(part_wav)
             cursor += duration
         # Whole frames: clip lengths then add up exactly, so the joined SRT never drifts.
-        total = math.ceil(max(MIN_SCENE_SECONDS, cursor + SCENE_TAIL_SECONDS) * FPS) / FPS
+        spoken_end = cursor + SCENE_TAIL_SECONDS if part_wavs else 0.0
+        total = math.ceil(max(min_duration, spoken_end) * self.fps) / self.fps
+        if not part_wavs:  # A silent shot still needs an audio track to concatenate.
+            self.rt.run_ffmpeg([self.rt.ffmpeg, "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+                                "-t", f"{total:.3f}", str(wav)])
+            meta_path.write_text(json.dumps({"duration": total, "parts": []}), "utf-8")
+            return wav, key, total, []
         inputs: list[str] = []
         labels = []
         for index, part_wav in enumerate(part_wavs):
@@ -480,8 +498,11 @@ def remove_stale_assets(project: ComicProject, manifest: dict[str, Any]) -> None
 
     Images and voice are kept: they are the costly API calls, and reverting an edit reuses them.
     """
-    keep = {entry.get("clip") for entry in manifest.get("scenes", {}).values()}
-    for path in (project.root / "clips").glob("s*-*.mp4"):
-        if path.name not in keep:
-            path.unlink(missing_ok=True)
+    entries = [*manifest.get("scenes", {}).values(), *manifest.get("shots", {}).values(),
+               *manifest.get("previews", {}).values()]
+    keep = {entry.get("clip") for entry in entries}
+    for pattern in ("s*-*.mp4", "c*-*.mp4"):
+        for path in (project.root / "clips").glob(pattern):
+            if path.name not in keep:
+                path.unlink(missing_ok=True)
     shutil.rmtree(project.root / "render", ignore_errors=True)

@@ -17,6 +17,8 @@ from domain.comic import ComicSettings
 from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import create_image_provider
 from infrastructure.llm_providers import create_story_llm
+from infrastructure.video_providers import Camera25DProvider, create_video_provider
+from pipeline.animation_video import AnimatedVideoProducer
 from pipeline.comic_storyboard import build_storyboard
 from pipeline.comic_video import ComicRuntime, ComicVideoProducer, remove_stale_assets
 
@@ -32,6 +34,15 @@ RENDER_STAGES = {
 }
 PREVIEW_STAGES = {
     "comic_storyboard": (0.02, 0.2), "comic_references": (0.2, 0.3), "comic_images": (0.3, 0.99),
+    "comic_keyframes": (0.3, 0.99),
+}
+# Animated shots run keyframe -> voice -> motion -> clip one after another, so those steps share
+# one range and the per-shot fraction keeps the bar monotonic.
+_SHOT_RANGE = (0.2, 0.95)
+ANIMATED_STAGES = {
+    "comic_storyboard": (0.02, 0.15), "comic_references": (0.15, 0.2), "comic_keyframes": _SHOT_RANGE,
+    "comic_voice": _SHOT_RANGE, "comic_animation": _SHOT_RANGE, "comic_clips": _SHOT_RANGE,
+    "comic_export": (0.95, 0.99),
 }
 
 
@@ -50,7 +61,12 @@ def comic_summary(settings: ComicSettings, storyboard=None, manifest: dict[str, 
                        warnings=len(storyboard.warnings))
     if manifest:
         summary.update(duration=manifest.get("duration"), rendered_revision=manifest.get("revision"),
-                       cache=manifest.get("cache"))
+                       cache=manifest.get("cache"), metrics=manifest.get("metrics"))
+    summary["video_mode"] = settings.video_mode
+    if settings.video_mode == "animated":
+        summary["animation_provider"] = settings.animation_provider
+        if storyboard is not None:
+            summary["shots"] = sum(len(scene.shots) for scene in storyboard.scenes)
     return summary
 
 
@@ -71,7 +87,9 @@ class ComicJobRunner:
         owner = str(job.get("owner_user_id") or "__legacy__")
         settings = ComicSettings.model_validate(request["settings"])
         render = bool(request.get("render", settings.auto_render))
-        stages = RENDER_STAGES if render else PREVIEW_STAGES
+        preview_shot = request.get("preview_shot")
+        animated = settings.video_mode == "animated"
+        stages = PREVIEW_STAGES if not render else ANIMATED_STAGES if animated else RENDER_STAGES
         project = ComicProject(self.project_root(owner, job_id))
         music_value = request.get("music_path")
         music = Path(str(music_value)) if music_value else None
@@ -97,10 +115,24 @@ class ComicJobRunner:
         storyboard = project.load_storyboard()
         self.update_job(job_id, comic=comic_summary(settings, storyboard))
 
-        producer = ComicVideoProducer(
-            project, settings, create_image_provider(settings.image_provider, font_path=self.font_path),
-            self.make_runtime(job_id, report),
-        )
+        runtime = self.make_runtime(job_id, report)
+        images = create_image_provider(settings.image_provider, font_path=self.font_path)
+        if animated:
+            if storyboard.mode != "animated":
+                raise ValueError("Storyboard này được tạo cho truyện tranh; hãy bấm Phân tích lại để chia shot")
+            producer = AnimatedVideoProducer(
+                project, settings, images,
+                create_video_provider(settings.animation_provider, ffmpeg=runtime.ffmpeg, run_ffmpeg=runtime.run_ffmpeg),
+                Camera25DProvider(runtime.ffmpeg, runtime.run_ffmpeg), runtime,
+            )
+        else:
+            producer = ComicVideoProducer(project, settings, images, runtime)
+        if animated and preview_shot:
+            manifest = producer.preview_shot(storyboard, str(preview_shot))
+            self.update_job(job_id, status="completed", step="shot_preview_ready", progress=1.0,
+                            step_detail=f"Đã dựng xem trước shot {preview_shot}",
+                            comic=comic_summary(settings, storyboard, manifest), finished_at=self.utc_now())
+            return
         if not render:
             manifest = producer.preview_images(storyboard)
             self.update_job(job_id, status="completed", step="storyboard_ready", progress=1.0,
@@ -115,7 +147,18 @@ class ComicJobRunner:
         remove_stale_assets(project, manifest)
         self.update_job(
             job_id, status="completed", step="completed", progress=1.0,
-            step_detail=f"Đã xuất {len(storyboard.scenes)} cảnh · dùng lại {manifest['cache']['hits']} tài nguyên",
+            step_detail=_completion_detail(storyboard, manifest),
             output_video=self.artifact_name(video), subtitle_file=self.artifact_name(srt),
             comic=comic_summary(settings, storyboard, manifest), finished_at=self.utc_now(),
         )
+
+
+def _completion_detail(storyboard, manifest: dict[str, Any]) -> str:
+    reused = manifest["cache"]["hits"]
+    if manifest.get("mode") != "animated":
+        return f"Đã xuất {len(storyboard.scenes)} cảnh · dùng lại {reused} tài nguyên"
+    metrics = manifest.get("metrics") or {}
+    detail = f"Đã xuất {len(manifest['shots'])} shot · dùng lại {reused} tài nguyên · AI {metrics.get('ai_seconds', 0):g}s"
+    if metrics.get("fallback_shots"):
+        detail += f" · {metrics['fallback_shots']} shot dùng camera 2.5D dự phòng"
+    return detail

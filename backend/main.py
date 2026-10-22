@@ -5673,9 +5673,10 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     if source.get("status") in {"queued", "scheduled", "processing", "cancelling"}:
         raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý")
     if is_comic_job(source):
-        render = bool((source.get("resume_request") or {}).get("render", True))
+        previous = source.get("resume_request") or {}
         try:
-            requeue_comic_job(COMIC_ROUTE_DEPS, request, job_id, source, render=render)
+            requeue_comic_job(COMIC_ROUTE_DEPS, request, job_id, source, render=bool(previous.get("render", True)),
+                              preview_shot=previous.get("preview_shot"))
         except JobStateConflictError:
             raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý") from None
         return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)

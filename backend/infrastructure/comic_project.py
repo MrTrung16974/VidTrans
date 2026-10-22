@@ -7,6 +7,7 @@ comic/
   history/rNNNN.json   snapshot of every saved revision
   manifest.json        what the last render produced, per scene
   refs/ images/ audio/ subs/ clips/   content-addressed caches
+  keyframes/ animations/              animated mode: per-shot first frames and generated motion
   uploads/             user-supplied scene images
 ```
 """
@@ -22,7 +23,7 @@ from infrastructure.artifact_io import write_json_atomic
 
 HISTORY_LIMIT = 50
 _ASSET_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,120}$")
-ASSET_KINDS = ("refs", "images", "uploads")
+ASSET_KINDS = ("refs", "images", "uploads", "keyframes", "animations", "clips")
 
 
 class ComicProject:

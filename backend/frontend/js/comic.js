@@ -1,9 +1,13 @@
-// Story -> comic video workspace: create projects, review the storyboard, edit scenes and re-render.
+// Story -> comic / animated video workspace: create projects, review the storyboard, edit scenes or shots
+// and re-render only what changed.
+import { renderAnimatedScenes, renderReferenceGallery, shotPatchFromForm } from "./animation-editor.js?v=20261022-1";
+
 const ACTIVE = new Set(["queued", "scheduled", "processing", "cancelling"]);
 const STEP_LABELS = {
   queued: "Đang xếp hàng", comic_storyboard: "Phân tích truyện & chia cảnh", comic_references: "Ảnh tham chiếu nhân vật",
   comic_images: "Sinh ảnh minh họa", comic_voice: "Lồng tiếng", comic_clips: "Dựng clip từng cảnh",
   comic_export: "Ghép & xuất video", storyboard_ready: "Storyboard sẵn sàng để duyệt", completed: "Đã xuất video",
+  comic_keyframes: "Sinh keyframe", comic_animation: "Tạo chuyển động AI", shot_preview_ready: "Đã dựng xem trước shot",
   failed: "Thất bại", cancelled: "Đã hủy", cancelling: "Đang dừng",
 };
 const MOTION_LABELS = {
@@ -22,6 +26,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   let current = null;
   let pollTimer = null;
   let entered = false;
+  const openGalleries = new Set();
 
   const api = (path, init = {}) => requestJson(`/api/v1/comic${path}`, init);
   const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
@@ -45,6 +50,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     fillSelect(form.elements.llm_provider, options.llm_providers, "auto");
     const gemini = options.image_providers.find(item => item.key === "gemini");
     fillSelect(form.elements.image_provider, options.image_providers, gemini?.configured ? "gemini" : "placeholder");
+    fillSelect(form.elements.animation_provider, options.animation_providers, "camera_2_5d");
     $("#comicStoryLimit").textContent = `Tối đa ${options.max_story_chars.toLocaleString("vi-VN")} ký tự mỗi dự án.`;
   }
 
@@ -59,7 +65,8 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       }
       list.innerHTML = projects.map(job => {
         const comic = job.comic || {};
-        const meta = [comic.scenes ? `${comic.scenes} cảnh` : "", comic.aspect_ratio || ""].filter(Boolean).join(" · ");
+        const meta = [comic.video_mode === "animated" ? "Hoạt hình" : "Truyện tranh", comic.scenes ? `${comic.scenes} cảnh` : "",
+          comic.shots ? `${comic.shots} shot` : "", comic.aspect_ratio || ""].filter(Boolean).join(" · ");
         return `<button type="button" class="comic-project${current?.job?.job_id === job.job_id ? " is-active" : ""}" data-job="${escapeHtml(job.job_id)}">
           <strong>${escapeHtml(comic.title || job.filename || job.job_id)}</strong>
           <span class="status-pill status-${statusClass(job)}">${escapeHtml(STEP_LABELS[job.step] || job.status)}</span>
@@ -134,11 +141,33 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       ? `<strong>Cần kiểm tra (${warnings.length})</strong><ul>${warnings.slice(0, 12).map(w => `<li>${escapeHtml(w)}</li>`).join("")}</ul>`
       : "";
     $("#comicWarnings").classList.toggle("is-hidden", !warnings.length);
+    const animated = storyboard?.mode === "animated";
+    const metrics = current.metrics;
+    const shotCount = animated ? storyboard.scenes.reduce((total, scene) => total + scene.shots.length, 0) : 0;
     $("#comicMeta").textContent = storyboard
-      ? `Bản ${storyboard.revision} · ${storyboard.scenes.length} cảnh · ${storyboard.characters.length} nhân vật · chia cảnh: ${storyboard.analysis_method}`
+      ? [`Bản ${storyboard.revision}`, `${storyboard.scenes.length} cảnh`, animated ? `${shotCount} shot` : "",
+        `${storyboard.characters.length} nhân vật`, `chia cảnh: ${storyboard.analysis_method}`,
+        metrics ? `AI ${metrics.ai_seconds}s · ${metrics.attempts} lượt sinh · ${metrics.fallback_shots} shot dự phòng 2.5D` : ""]
+        .filter(Boolean).join(" · ")
       : "Storyboard đang được tạo…";
+    $('[data-comic-action="images"]').textContent = animated ? "Chỉ sinh keyframe" : "Chỉ sinh ảnh";
     renderCharacters(storyboard, media, locked);
-    renderScenes(storyboard, media, locked);
+    if (animated) {
+      $("#comicScenes").innerHTML = renderAnimatedScenes({ storyboard, media, shots: current.shots, options, locked, escapeHtml });
+    } else {
+      renderScenes(storyboard, media, locked);
+    }
+  }
+
+  async function refreshGallery(characterId) {
+    const box = editor.querySelector(`[data-ref-box="${CSS.escape(characterId)}"]`);
+    if (!box || !current) return;
+    try {
+      const data = await api(`/projects/${encodeURIComponent(current.job.job_id)}/characters/${encodeURIComponent(characterId)}/references`);
+      box.innerHTML = renderReferenceGallery(data, escapeHtml, isActive(current.job));
+    } catch (error) {
+      box.innerHTML = `<p class="comic-empty">${escapeHtml(error.message)}</p>`;
+    }
   }
 
   function renderCharacters(storyboard, media, locked) {
@@ -156,10 +185,15 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
           </div>
           <label class="field"><span>Ngoại hình cố định (tiếng Anh, giữ nhất quán)</span><textarea name="appearance" rows="2" maxlength="600">${escapeHtml(c.appearance)}</textarea></label>
           <label class="field"><span>Trang phục</span><input name="outfit" value="${escapeHtml(c.outfit)}" maxlength="400"></label>
-          <small class="field-hint">id: ${escapeHtml(c.id)} · sửa ngoại hình sẽ vẽ lại ảnh tham chiếu và các cảnh có nhân vật này</small>
-          <button class="button secondary" type="submit"${locked ? " disabled" : ""}>Lưu nhân vật</button>
+          <small class="field-hint">id: ${escapeHtml(c.id)} · ${c.approved_reference ? "đang ghim ảnh tham chiếu đã duyệt" : "sửa ngoại hình sẽ vẽ lại ảnh tham chiếu và các cảnh có nhân vật này"}</small>
+          <div class="comic-scene-actions">
+            <button class="button secondary" type="submit"${locked ? " disabled" : ""}>Lưu nhân vật</button>
+            <button class="button secondary" type="button" data-ref-op="toggle">${openGalleries.has(c.id) ? "Ẩn phiên bản" : "Phiên bản ảnh tham chiếu"}</button>
+          </div>
+          <div class="comic-ref-box${openGalleries.has(c.id) ? "" : " is-hidden"}" data-ref-box="${escapeHtml(c.id)}"></div>
         </div></form>`;
     }).join("");
+    openGalleries.forEach(id => refreshGallery(id));
   }
 
   function dialogueText(lines) {
@@ -245,6 +279,12 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     }
   });
 
+  const syncMode = () => {
+    const animated = form.elements.video_mode.value === "animated";
+    form.querySelectorAll(".comic-animated-only").forEach(element => element.classList.toggle("is-hidden", !animated));
+  };
+  form.querySelectorAll('[name="video_mode"]').forEach(radio => radio.addEventListener("change", syncMode));
+
   form.elements.text.addEventListener("input", () => {
     $("#comicStoryCount").textContent = `${form.elements.text.value.length.toLocaleString("vi-VN")} ký tự`;
   });
@@ -257,8 +297,50 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   editor.addEventListener("click", async event => {
     const action = event.target.closest("[data-comic-action]")?.dataset.comicAction;
     const op = event.target.closest("[data-scene-op]")?.dataset.sceneOp;
-    if (!current || (!action && !op)) return;
+    const shotOp = event.target.closest("[data-shot-op]")?.dataset.shotOp;
+    const refOp = event.target.closest("[data-ref-op]")?.dataset.refOp;
+    if (!current || (!action && !op && !shotOp && !refOp)) return;
     const jobId = encodeURIComponent(current.job.job_id);
+    if (shotOp) {
+      const label = event.target.closest("[data-shot]").dataset.shot;
+      const [sceneIndex, shotIndex] = label.split(".");
+      const shotPath = `/projects/${jobId}/scenes/${sceneIndex}/shots/${shotIndex}`;
+      if (shotOp === "preview") {
+        try {
+          // One key per click: a double-click or network retry cannot queue (and bill) the shot twice.
+          await api(`/projects/${jobId}/render`, { ...json("POST", { shot: label }),
+            headers: { "Content-Type": "application/json", "Idempotency-Key": `${label}-${current.storyboard.revision}-${Date.now()}` } });
+          toast(`Đang dựng xem trước shot ${label}…`);
+          await open(current.job.job_id);
+        } catch (error) { toast(error.message, true); }
+      } else if (shotOp === "regenerate") {
+        await mutate(api(`${shotPath}/regenerate`, { method: "POST" }), `Shot ${label}: sẽ tạo chuyển động mới ở lần dựng tới`);
+      } else if (shotOp === "clear-keyframe") {
+        await mutate(api(`${shotPath}/keyframe`, { method: "DELETE" }), "Đã bỏ keyframe tải lên");
+      } else if (shotOp === "delete") {
+        if (confirm(`Xóa shot ${label}?`)) await mutate(api(shotPath, { method: "DELETE" }), "Đã xóa shot");
+      } else if (shotOp === "insert") {
+        const keyframe = prompt("Mô tả khung hình đầu của shot mới (tiếng Anh):");
+        if (!keyframe?.trim()) return;
+        const narration = prompt("Lời dẫn (có thể để trống):") || "";
+        await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}/shots`, json("POST", { after: Number(shotIndex), keyframe_prompt: keyframe, narration })), "Đã chèn shot");
+      }
+      return;
+    }
+    if (refOp) {
+      const characterId = event.target.closest("[data-character]").dataset.character;
+      const base = `/projects/${jobId}/characters/${encodeURIComponent(characterId)}/references`;
+      if (refOp === "toggle") {
+        if (openGalleries.has(characterId)) openGalleries.delete(characterId); else openGalleries.add(characterId);
+        render();
+      } else if (refOp === "approve") {
+        const name = event.target.closest("[data-ref-name]").dataset.refName;
+        await mutate(api(`${base}/${encodeURIComponent(name)}/approve`, { method: "POST" }), "Đã duyệt ảnh tham chiếu");
+      } else if (refOp === "unpin") {
+        await mutate(api(`${base}/approval`, { method: "DELETE" }), "Đã bỏ ghim ảnh tham chiếu");
+      }
+      return;
+    }
     if (action === "cancel") {
       try { await requestJson(`/api/v1/jobs/${jobId}/cancel`, { method: "POST" }); toast("Đã yêu cầu dừng"); }
       catch (error) { toast(error.message, true); }
@@ -289,6 +371,23 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   });
 
   editor.addEventListener("change", async event => {
+    const jobId = encodeURIComponent(current?.job?.job_id || "");
+    const shotUpload = event.target.closest("[data-shot-upload]");
+    const refUpload = event.target.closest("[data-ref-upload]");
+    for (const upload of [shotUpload, refUpload]) {
+      if (!upload?.files.length || !current) continue;
+      const data = new FormData();
+      data.append("file", upload.files[0]);
+      if (upload === shotUpload) {
+        const [sceneIndex, shotIndex] = upload.closest("[data-shot]").dataset.shot.split(".");
+        await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}/shots/${shotIndex}/keyframe`, { method: "POST", body: data }), "Đã thay keyframe");
+      } else {
+        const characterId = upload.closest("[data-character]").dataset.character;
+        await mutate(api(`/projects/${jobId}/characters/${encodeURIComponent(characterId)}/references`, { method: "POST", body: data }),
+          "Đã tải và duyệt ảnh tham chiếu");
+      }
+      return;
+    }
     const input = event.target.closest("[data-scene-upload]");
     if (!input?.files.length || !current) return;
     const data = new FormData();
@@ -305,7 +404,18 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const jobId = encodeURIComponent(current.job.job_id);
     const values = Object.fromEntries(new FormData(target));
     if (target.dataset.character !== undefined) {
-      await mutate(api(`/projects/${jobId}/characters/${encodeURIComponent(target.dataset.character)}`, json("PATCH", values)), "Đã lưu nhân vật");
+      const { name, gender, appearance, outfit } = values;
+      await mutate(api(`/projects/${jobId}/characters/${encodeURIComponent(target.dataset.character)}`, json("PATCH", { name, gender, appearance, outfit })), "Đã lưu nhân vật");
+      return;
+    }
+    if (target.dataset.shot !== undefined) {
+      const [sceneIndex, shotIndex] = target.dataset.shot.split(".");
+      try {
+        const patch = shotPatchFromForm(target, parseDialogue);
+        await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}/shots/${shotIndex}`, json("PATCH", patch)), `Đã lưu shot ${target.dataset.shot}`);
+      } catch (error) {
+        toast(error.message, true);
+      }
       return;
     }
     const sceneIndex = target.closest("[data-scene]")?.dataset.scene;

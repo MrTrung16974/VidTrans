@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -18,10 +18,14 @@ from domain.comic import (
     CAMERA_MOTIONS,
     COMIC_STYLES,
     MAX_STORY_CHARS,
+    SHOT_ANGLES,
+    SHOT_MOVEMENTS,
+    SHOT_TYPES,
     ComicCharacter,
     ComicScene,
     ComicSettings,
     DialogueLine,
+    Shot,
     Storyboard,
 )
 from domain.languages import LANGUAGES
@@ -29,6 +33,7 @@ from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import image_provider_statuses
 from infrastructure.llm_providers import llm_provider_statuses
 from infrastructure.story_text import StoryTextError, normalize_story_text, read_story_upload
+from infrastructure.video_providers import animation_provider_statuses
 
 MAX_IMAGE_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_MUSIC_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -79,10 +84,53 @@ class CharacterPatch(BaseModel):
     voice: str | None = None
 
 
+class ShotPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    duration_seconds: float | None = None
+    characters: list[str] | None = None
+    action: str | None = None
+    emotion: str | None = None
+    camera: dict[str, str] | None = None
+    animation: dict[str, Any] | None = None
+    narration: str | None = None
+    dialogue: list[DialogueLine] | None = None
+    keyframe_prompt: str | None = None
+    motion_prompt: str | None = None
+    negative_prompt: str | None = None
+
+
+class ShotInsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    after: int = Field(ge=0)
+    keyframe_prompt: str = Field(min_length=3, max_length=1200)
+    narration: str = Field(default="", max_length=800)
+    motion_prompt: str = Field(default="", max_length=800)
+
+
 class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     images_only: bool = False
     reanalyze: bool = False
+    # "scene.shot" (e.g. "2.1"): render only that shot as a preview.
+    shot: str | None = Field(default=None, pattern=r"^\d{1,3}\.\d{1,2}$")
+
+
+def read_upload_png(data: bytes, directory: Path, stem: str) -> str:
+    """Validate an uploaded picture and store it as PNG named by its content hash."""
+    if len(data) > MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(400, "Ảnh vượt quá 15 MB")
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image.load()
+            if image.width * image.height > 40_000_000:
+                raise HTTPException(400, "Ảnh quá lớn")
+            name = f"{stem}-{hashlib.sha256(data).hexdigest()[:16]}.png"
+            image.convert("RGB").save(directory / name, format="PNG")
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(400, "File không phải ảnh hợp lệ (PNG, JPG, WEBP)") from exc
+    return name
 
 
 def form_flag(value: str) -> bool:
@@ -95,22 +143,24 @@ def _validation_detail(exc: ValidationError) -> str:
 
 
 def requeue_comic_job(deps: ComicRouteDependencies, request: Request, job_id: str, job: dict[str, Any],
-                      *, render: bool) -> dict[str, Any]:
+                      *, render: bool, preview_shot: str | None = None,
+                      idempotency_key: str | None = None) -> dict[str, Any]:
     """Return a finished comic job to the queue; the worker reuses every unchanged asset."""
     resume_request = dict(job.get("resume_request") or {})
     resume_request["render"] = render
+    resume_request["preview_shot"] = preview_shot
     deps.reserve_quota(job_id, deps.quota_account(request, job))
     try:
         deps.retry_job(
             job_id, step="queued", progress=0.0, error=None, error_message=None, step_detail=None,
             cancel_requested=0, worker_id=None, started_at=None, finished_at=None, completed_at=None,
-            resume_request=resume_request,
+            resume_request=resume_request, comic_idempotency_key=idempotency_key,
         )
     except Exception:
         deps.release_quota(job_id)
         raise
     deps.notify_scheduler()
-    return {"job_id": job_id, "status": "queued", "render": render}
+    return {"job_id": job_id, "status": "queued", "render": render, "preview_shot": preview_shot}
 
 
 def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
@@ -143,6 +193,10 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         manifest = project.load_manifest()
         base = f"/api/v1/comic/projects/{job_id}/media"
         scenes_media = manifest.get("scenes", {})
+        shots_media = manifest.get("shots", {})
+
+        def urls(kind: str, field: str, entries: dict[str, Any]) -> dict[str, str]:
+            return {label: f"{base}/{kind}/{entry[field]}" for label, entry in entries.items() if entry.get(field)}
         payload: dict[str, Any] = {
             "job": deps.job_response(job_id, job),
             "settings": (job.get("resume_request") or {}).get("settings"),
@@ -158,9 +212,26 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                     str(scene.scene_index): f"{base}/uploads/{scene.image_override}"
                     for scene in (storyboard.scenes if storyboard else []) if scene.image_override
                 },
+                "keyframes": urls("keyframes", "keyframe", shots_media),
+                "animations": urls("animations", "animation", shots_media),
+                "previews": urls("clips", "clip", manifest.get("previews", {})),
+                "keyframe_uploads": {
+                    f"{scene.scene_index}.{shot.shot_index}": f"{base}/uploads/{shot.keyframe_override}"
+                    for scene, shot in (storyboard.iter_shots() if storyboard else []) if shot.keyframe_override
+                },
             },
+            # Per-shot generation report: provider, QC, fallback, seed, cost.
+            "shots": {label: {k: v for k, v in entry.items() if k != "cues"} for label, entry in shots_media.items()},
+            "metrics": manifest.get("metrics"),
         }
         return payload
+
+    def locate_shot(storyboard: Storyboard, scene_index: int, shot_index: int) -> tuple[int, int]:
+        try:
+            scene = storyboard.scene(scene_index)
+            return storyboard.scenes.index(scene), scene.shots.index(scene.shot(shot_index))
+        except KeyError:
+            raise HTTPException(404, "Không có shot này") from None
 
     @router.get("/options")
     def options() -> JSONResponse:
@@ -171,6 +242,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             "languages": [{"key": code, "label": profile.label_vi} for code, profile in LANGUAGES.items()],
             "llm_providers": llm_provider_statuses(),
             "image_providers": image_provider_statuses(),
+            "animation_providers": animation_provider_statuses(),
+            "shot_types": list(SHOT_TYPES), "shot_movements": list(SHOT_MOVEMENTS), "shot_angles": list(SHOT_ANGLES),
             "max_story_chars": MAX_STORY_CHARS,
         })
 
@@ -194,6 +267,13 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         music_volume: float = Form(0.15),
         seed: int = Form(0),
         auto_render: str = Form("true"),
+        video_mode: str = Form("comic"),
+        animation_provider: str = Form("camera_2_5d"),
+        quality: str = Form("final"),
+        fps: int = Form(30),
+        motion_strength: float = Form(0.45),
+        max_animation_attempts: int = Form(2),
+        animation_budget_seconds: float = Form(240.0),
     ) -> JSONResponse:
         account = deps.current_account(request)
         owner = str(account["user_id"])
@@ -204,12 +284,18 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 narrator_voice=narrator_voice, speech_rate=speech_rate,
                 target_scene_duration=target_scene_duration, max_scenes=max_scenes,
                 burn_subtitles=form_flag(burn_subtitles), music_volume=music_volume, seed=seed,
-                auto_render=form_flag(auto_render),
+                auto_render=form_flag(auto_render), video_mode=video_mode, animation_provider=animation_provider,
+                quality=quality, fps=fps, motion_strength=motion_strength,
+                max_animation_attempts=max_animation_attempts, animation_budget_seconds=animation_budget_seconds,
             )
         except ValidationError as exc:
             raise HTTPException(400, _validation_detail(exc)) from exc
-        unavailable = [s["label"] for s in [*llm_provider_statuses(), *image_provider_statuses()]
-                       if s["key"] in {settings.llm_provider, settings.image_provider} and not s["configured"]]
+        chosen = {settings.llm_provider, settings.image_provider}
+        statuses = [*llm_provider_statuses(), *image_provider_statuses()]
+        if settings.video_mode == "animated":
+            chosen.add(settings.animation_provider)
+            statuses += animation_provider_statuses()
+        unavailable = [s["label"] for s in statuses if s["key"] in chosen and not s["configured"]]
         if unavailable:
             raise HTTPException(400, "Chưa cấu hình: " + ", ".join(unavailable))
         try:
@@ -333,21 +419,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             storyboard.scene(scene_index)
         except KeyError:
             raise HTTPException(404, "Không có cảnh này") from None
-        data = await file.read(MAX_IMAGE_UPLOAD_BYTES + 1)
-        if len(data) > MAX_IMAGE_UPLOAD_BYTES:
-            raise HTTPException(400, "Ảnh vượt quá 15 MB")
-        from PIL import Image, UnidentifiedImageError
-
-        try:
-            with Image.open(io.BytesIO(data)) as image:
-                image.load()
-                if image.width * image.height > 40_000_000:
-                    raise HTTPException(400, "Ảnh quá lớn")
-                name = f"s{scene_index:03d}-{hashlib.sha256(data).hexdigest()[:16]}.png"
-                path = project.dir("uploads") / name
-                image.convert("RGB").save(path, format="PNG")
-        except (UnidentifiedImageError, OSError) as exc:
-            raise HTTPException(400, "File không phải ảnh hợp lệ (PNG, JPG, WEBP)") from exc
+        name = read_upload_png(await file.read(MAX_IMAGE_UPLOAD_BYTES + 1), project.dir("uploads"),
+                               f"s{scene_index:03d}")
         storyboard_data = storyboard.model_dump(mode="json")
         for scene in storyboard_data["scenes"]:
             if scene["scene_index"] == scene_index:
@@ -367,15 +440,166 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         save(project, data)
         return JSONResponse(project_payload(job_id, job, project))
 
+    # ------------------------------------------------------------------ shots
+    @router.patch("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}")
+    def patch_shot(request: Request, job_id: str, scene_index: int, shot_index: int, patch: ShotPatch) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        scene_pos, shot_pos = locate_shot(storyboard, scene_index, shot_index)
+        changes = patch.model_dump(exclude_none=True, mode="json")
+        if changes:
+            data = storyboard.model_dump(mode="json")
+            target = data["scenes"][scene_pos]["shots"][shot_pos]
+            for nested in ("camera", "animation"):
+                if nested in changes:
+                    changes[nested] = {**target[nested], **changes[nested]}
+            target.update(changes)
+            target["version"] += 1
+            save(project, data)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    @router.post("/projects/{job_id}/scenes/{scene_index}/shots")
+    def insert_shot(request: Request, job_id: str, scene_index: int, body: ShotInsert) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        if storyboard.mode != "animated":
+            raise HTTPException(409, "Chỉ storyboard hoạt hình mới có shot")
+        try:
+            scene = storyboard.scene(scene_index)
+        except KeyError:
+            raise HTTPException(404, "Không có cảnh này") from None
+        data = storyboard.model_dump(mode="json")
+        shots = data["scenes"][storyboard.scenes.index(scene)]["shots"]
+        if len(shots) >= 8:
+            raise HTTPException(409, "Mỗi cảnh tối đa 8 shot")
+        shot = Shot(shot_index=1, keyframe_prompt=body.keyframe_prompt, narration=body.narration,
+                    motion_prompt=body.motion_prompt or "subtle natural motion, smooth camera")
+        shots.insert(min(body.after, len(shots)), shot.model_dump(mode="json"))
+        save(project, data)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    @router.delete("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}")
+    def delete_shot(request: Request, job_id: str, scene_index: int, shot_index: int) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        scene_pos, shot_pos = locate_shot(storyboard, scene_index, shot_index)
+        data = storyboard.model_dump(mode="json")
+        if len(data["scenes"][scene_pos]["shots"]) == 1:
+            raise HTTPException(409, "Cảnh phải còn ít nhất một shot; hãy xóa cả cảnh")
+        del data["scenes"][scene_pos]["shots"][shot_pos]
+        save(project, data)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    @router.post("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}/regenerate")
+    def regenerate_shot(request: Request, job_id: str, scene_index: int, shot_index: int) -> JSONResponse:
+        """New take of the motion only: keyframe and voice are kept, the seed changes."""
+        job, project, storyboard = editable_project(request, job_id)
+        scene_pos, shot_pos = locate_shot(storyboard, scene_index, shot_index)
+        data = storyboard.model_dump(mode="json")
+        target = data["scenes"][scene_pos]["shots"][shot_pos]
+        target["animation"]["take"] += 1
+        target["version"] += 1
+        save(project, data)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    @router.post("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}/keyframe")
+    async def upload_keyframe(request: Request, job_id: str, scene_index: int, shot_index: int,
+                              file: UploadFile = File(...)) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        scene_pos, shot_pos = locate_shot(storyboard, scene_index, shot_index)
+        name = read_upload_png(await file.read(MAX_IMAGE_UPLOAD_BYTES + 1), project.dir("uploads"),
+                               f"k{scene_index:03d}-{shot_index:02d}")
+        data = storyboard.model_dump(mode="json")
+        target = data["scenes"][scene_pos]["shots"][shot_pos]
+        target["keyframe_override"] = name
+        target["version"] += 1
+        save(project, data)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    @router.delete("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}/keyframe")
+    def clear_keyframe(request: Request, job_id: str, scene_index: int, shot_index: int) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        scene_pos, shot_pos = locate_shot(storyboard, scene_index, shot_index)
+        data = storyboard.model_dump(mode="json")
+        target = data["scenes"][scene_pos]["shots"][shot_pos]
+        if target.get("keyframe_override"):
+            target["keyframe_override"] = None
+            target["version"] += 1
+            save(project, data)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    # ------------------------------------------------------------- references
+    def character_or_404(storyboard: Storyboard, character_id: str) -> ComicCharacter:
+        character = storyboard.character(character_id)
+        if character is None:
+            raise HTTPException(404, "Không có nhân vật này")
+        return character
+
+    def set_approved(project: ComicProject, storyboard: Storyboard, character_id: str, name: str | None) -> None:
+        data = storyboard.model_dump(mode="json")
+        for character in data["characters"]:
+            if character["id"] == character_id:
+                character["approved_reference"] = name
+        save(project, data)
+
+    @router.get("/projects/{job_id}/characters/{character_id}/references")
+    def list_references(request: Request, job_id: str, character_id: str) -> JSONResponse:
+        _job, project = owned_project(request, job_id)
+        if not project.has_storyboard():
+            raise HTTPException(409, "Storyboard chưa được tạo")
+        character = character_or_404(project.load_storyboard(), character_id)
+        refs_dir = project.root / "refs"
+        files = sorted(refs_dir.glob(f"{character.id}-*.png"), key=lambda p: p.stat().st_mtime) \
+            if refs_dir.is_dir() else []
+        base = f"/api/v1/comic/projects/{job_id}/media/refs"
+        return JSONResponse({"character_id": character.id, "approved": character.approved_reference, "variants": [
+            {"name": path.name, "url": f"{base}/{path.name}", "approved": path.name == character.approved_reference,
+             "uploaded": "-upload-" in path.name, "version": version}
+            for version, path in enumerate(files, 1)]})
+
+    @router.post("/projects/{job_id}/characters/{character_id}/references")
+    async def upload_reference(request: Request, job_id: str, character_id: str,
+                               file: UploadFile = File(...)) -> JSONResponse:
+        """A user-supplied character sheet becomes a new variant and is approved right away."""
+        job, project, storyboard = editable_project(request, job_id)
+        character = character_or_404(storyboard, character_id)
+        name = read_upload_png(await file.read(MAX_IMAGE_UPLOAD_BYTES + 1), project.dir("refs"),
+                               f"{character.id}-upload")
+        set_approved(project, storyboard, character.id, name)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    @router.post("/projects/{job_id}/characters/{character_id}/references/{name}/approve")
+    def approve_reference(request: Request, job_id: str, character_id: str, name: str) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        character = character_or_404(storyboard, character_id)
+        if not name.startswith(f"{character.id}-") or project.asset_path("refs", name) is None:
+            raise HTTPException(404, "Không có phiên bản ảnh tham chiếu này")
+        set_approved(project, storyboard, character.id, name)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    @router.delete("/projects/{job_id}/characters/{character_id}/references/approval")
+    def unpin_reference(request: Request, job_id: str, character_id: str) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        set_approved(project, storyboard, character_or_404(storyboard, character_id).id, None)
+        return JSONResponse(project_payload(job_id, job, project))
+
+    # ----------------------------------------------------------------- render
     @router.post("/projects/{job_id}/render")
-    def render(request: Request, job_id: str, body: RenderRequest | None = None) -> JSONResponse:
+    def render(request: Request, job_id: str, body: RenderRequest | None = None,
+               idempotency_key: str | None = Header(default=None, max_length=128)) -> JSONResponse:
         body = body or RenderRequest()
         job, project = owned_project(request, job_id)
+        if idempotency_key and job.get("comic_idempotency_key") == idempotency_key and job.get("status") != "failed":
+            # A retried client request must not queue (and pay for) the same render twice.
+            return JSONResponse({"job_id": job_id, "status": job.get("status"), "duplicate": True})
         if job.get("status") in ACTIVE_STATUSES:
             raise HTTPException(409, "Dự án đang được xử lý")
+        if body.shot:
+            if not project.has_storyboard() or project.load_storyboard().mode != "animated":
+                raise HTTPException(409, "Chỉ xem trước được shot của storyboard hoạt hình")
+            scene_index, shot_index = (int(part) for part in body.shot.split("."))
+            locate_shot(project.load_storyboard(), scene_index, shot_index)
         if body.reanalyze:
             project.reset_storyboard()
-        return JSONResponse(requeue_comic_job(deps, request, job_id, job, render=not body.images_only),
+        return JSONResponse(requeue_comic_job(deps, request, job_id, job, render=not body.images_only,
+                                              preview_shot=body.shot, idempotency_key=idempotency_key),
                             status_code=202)
 
     @router.get("/projects/{job_id}/media/{kind}/{name}")
@@ -383,9 +607,10 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         _job, project = owned_project(request, job_id)
         path = project.asset_path(kind, name)
         if path is None:
-            raise HTTPException(404, "Không tìm thấy ảnh")
+            raise HTTPException(404, "Không tìm thấy tài nguyên")
         # Names are content hashes, so a cached copy can never be stale.
-        return FileResponse(path, media_type="image/png",
+        media_type = "video/mp4" if path.suffix == ".mp4" else "image/png"
+        return FileResponse(path, media_type=media_type,
                             headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
 
     return router
