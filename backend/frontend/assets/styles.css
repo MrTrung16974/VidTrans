@@ -3673,7 +3673,7 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
     display: none !important;
   }
 
-  /* Netflix Floating Pill Bar */
+  /* Netflix Floating Pill Bar - Light Studio Theme */
   .dock-footer {
     padding: 0 12px max(14px, env(safe-area-inset-bottom)) !important;
   }
@@ -3682,12 +3682,12 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
   .nav-tabs.mac-dock {
     width: min(390px, calc(100vw - 24px)) !important;
     max-width: 390px !important;
-    background: rgba(22, 27, 34, 0.94) !important;
-    backdrop-filter: blur(28px) saturate(200%) !important;
-    -webkit-backdrop-filter: blur(28px) saturate(200%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    background: rgba(255, 255, 255, 0.92) !important;
+    backdrop-filter: blur(28px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+    border: 1px solid rgba(226, 232, 240, 0.95) !important;
     border-radius: 36px !important;
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.15) !important;
+    box-shadow: 0 14px 34px -4px rgba(15, 23, 42, 0.12), 0 4px 12px rgba(15, 23, 42, 0.05), inset 0 1px 1px rgba(255, 255, 255, 1) !important;
     padding: 5px 6px !important;
     display: flex !important;
     justify-content: space-around !important;
@@ -3708,18 +3708,19 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
     min-height: 50px !important;
     padding: 4px 2px !important;
     border-radius: 20px !important;
-    color: #94a3b8 !important;
+    color: #64748b !important;
     gap: 2px !important;
     background: transparent !important;
     box-shadow: none !important;
     transform: none !important;
     position: relative !important;
+    border: 1px solid transparent !important;
   }
 
   .dock-footer .nav-tabs a:hover {
     transform: none !important;
-    background: rgba(255, 255, 255, 0.08) !important;
-    color: #cbd5e1 !important;
+    background: rgba(241, 245, 249, 0.8) !important;
+    color: #0f172a !important;
     box-shadow: none !important;
   }
 
@@ -3729,7 +3730,7 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
     flex: 0 0 24px !important;
     background: transparent !important;
     box-shadow: none !important;
-    color: #94a3b8 !important;
+    color: #64748b !important;
     display: grid !important;
     place-items: center !important;
     border-radius: 0 !important;
@@ -3748,17 +3749,18 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
     font-weight: 600 !important;
     line-height: 1 !important;
     letter-spacing: -0.01em !important;
-    color: #94a3b8 !important;
+    color: #64748b !important;
     text-align: center !important;
     white-space: nowrap !important;
   }
 
-  /* Netflix active item highlight */
+  /* Netflix active item highlight - warm brand accent */
   .dock-footer .nav-tabs a.active,
   .nav-tabs.mac-dock a.active {
-    background: rgba(255, 255, 255, 0.14) !important;
-    color: #ffffff !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+    background: #fff7ed !important;
+    color: var(--brand, #ea580c) !important;
+    border: 1px solid rgba(251, 146, 60, 0.35) !important;
+    box-shadow: 0 2px 8px rgba(234, 88, 12, 0.12) !important;
   }
 
   .dock-footer .nav-tabs a.active:hover {
@@ -3766,17 +3768,17 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
   }
 
   .dock-footer .nav-tabs a.active > i {
-    color: #ffffff !important;
+    color: var(--brand, #ea580c) !important;
     background: transparent !important;
     box-shadow: none !important;
   }
 
   .dock-footer .nav-tabs a.active > i svg {
-    stroke: #ffffff !important;
+    stroke: var(--brand, #ea580c) !important;
   }
 
   .dock-footer .nav-tabs a.active span {
-    color: #ffffff !important;
+    color: var(--brand-dark, #c2410c) !important;
     font-weight: 750 !important;
   }
 
@@ -3799,7 +3801,7 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
     line-height: 15px !important;
     border-radius: 999px !important;
     margin: 0 !important;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4) !important;
+    box-shadow: 0 2px 6px rgba(234, 88, 12, 0.35) !important;
     z-index: 2 !important;
   }
 
@@ -3809,7 +3811,7 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
 
   .dock-footer .nav-tabs a .nav-badge.has-active {
     display: inline-grid !important;
-    background: #ea580c !important;
+    background: linear-gradient(135deg, var(--brand), #ea580c) !important;
     color: #ffffff !important;
   }
   .page-heading {
