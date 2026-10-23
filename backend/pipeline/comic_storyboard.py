@@ -219,8 +219,8 @@ def build_storyboard(
                 if settings.llm_provider != "auto":
                     raise
                 reason = exc.args[0] if exc.args and isinstance(exc.args[0], str) else type(exc).__name__
-                logger.warning("Storyboard LLM failed on chunk %d (%s); using sentence splitter",
-                               position, type(exc).__name__)
+                logger.warning("Storyboard LLM failed on chunk %d (%s: %s); using sentence splitter",
+                               position, type(exc).__name__, str(reason)[:200])
                 warnings.append(f"Đoạn {position}: AI chia cảnh lỗi ({str(reason)[:120]}), đã chia theo câu.")
         if draft_scenes is None:
             if settings.video_mode == "animated":

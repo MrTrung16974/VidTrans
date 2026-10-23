@@ -301,8 +301,8 @@ class ComicVideoProducer:
             except ImageGenerationError as exc:
                 if self.image_fallback is None:
                     raise
-                logger.warning("Image provider failed (%s); drawing a stand-in", type(exc).__name__)
                 reason = str(exc)[:200]
+                logger.warning("Image provider failed (%s: %s); drawing a stand-in", type(exc).__name__, reason)
                 if getattr(exc, "unavailable", False):
                     self.images_down = reason
         if not allow_fallback or self.image_fallback is None:

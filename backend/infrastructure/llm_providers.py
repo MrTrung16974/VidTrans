@@ -55,6 +55,7 @@ class GeminiJSONClient:
             "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"},
         }).encode("utf-8")
         limited = False
+        busy: int | None = None
         for model in self.models:
             request = urllib.request.Request(
                 f"{GEMINI_BASE_URL}/{model}:generateContent",
@@ -70,7 +71,8 @@ class GeminiJSONClient:
                     limited = limited or exc.code == 429
                     continue  # Try the next configured model.
                 if exc.code >= 500:
-                    raise LLMUnavailableError(f"Gemini API lỗi HTTP {exc.code}") from exc
+                    busy = exc.code
+                    continue  # An overloaded model (503) should not stop the next one from answering.
                 raise LLMError(f"Gemini API lỗi HTTP {exc.code}") from exc
             except TimeoutError as exc:
                 raise LLMUnavailableError(f"Gemini API không phản hồi sau {self.timeout:.0f} giây") from exc
@@ -82,6 +84,8 @@ class GeminiJSONClient:
             except (KeyError, IndexError, TypeError) as exc:
                 raise LLMError("Gemini không trả về nội dung (có thể bị chặn bởi bộ lọc an toàn)") from exc
             return "".join(str(part.get("text") or "") for part in parts)
+        if busy is not None:
+            raise LLMUnavailableError(f"Gemini API lỗi HTTP {busy}")
         if limited:
             raise LLMRateLimitedError("Các model Gemini đã hết hạn mức tạm thời (HTTP 429)")
         raise LLMError("Không tìm thấy model Gemini khả dụng: " + ", ".join(self.models))
