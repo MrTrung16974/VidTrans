@@ -162,7 +162,10 @@ class TikTokBrowserManager:
         with urllib.request.urlopen(f"{self.cdp_url.rstrip('/')}/json/version", timeout=3) as response:
             ws_url = json.load(response)["webSocketDebuggerUrl"]
         with sync_playwright() as playwright:
-            browser = playwright.chromium.connect_over_cdp(ws_url, timeout=8_000)
+            # The browser sidecar mounts outputs at the same absolute path, so
+            # it can read local paths. Without is_local Playwright treats a
+            # non-localhost CDP endpoint as remote and rejects files >50 MB.
+            browser = playwright.chromium.connect_over_cdp(ws_url, timeout=8_000, is_local=True)
             if not browser.contexts:
                 raise TikTokBrowserError("Trình duyệt chưa sẵn sàng")
 
@@ -441,7 +444,9 @@ class TikTokBrowserManager:
             logger.info("TikTok preparation needs review: %s", exc)
             self._update(attempt_id, "needs_review", str(exc))
         except Exception as exc:
-            logger.warning("TikTok preparation stopped: %s", type(exc).__name__)
+            # Playwright raises a bare ``Error`` for most failures, so the class
+            # name alone is not diagnosable. Keep the message (and its call log).
+            logger.warning("TikTok preparation stopped: %s: %s", type(exc).__name__, str(exc)[:1500])
             self._update(attempt_id, "needs_review", "Chưa thể hoàn tất tự động. Mở TikTok Studio để kiểm tra đăng nhập, xác minh hoặc video đang tải. Không tự động thử lại.")
         finally:
             self._browser_lock.release()

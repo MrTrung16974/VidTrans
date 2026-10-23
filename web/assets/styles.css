@@ -426,6 +426,11 @@ input[type="submit"].button.primary {
   box-shadow: 0 4px 14px -1px rgba(234, 88, 12, 0.38), 0 2px 5px -1px rgba(234, 88, 12, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
+.button.primary:disabled,
+button.primary:disabled,
+input[type="submit"].button.primary:disabled {
+  box-shadow: none !important;
+}
 .button.primary:hover:not(:disabled),
 button.primary:hover:not(:disabled) {
   background: linear-gradient(135deg, #fb923c 0%, #ea580c 50%, #c2410c 100%) !important;
@@ -2278,27 +2283,27 @@ input[type="file"]::-webkit-file-upload-button:active {
 
 .tiktok-check {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 11px;
-  padding: 12px 16px;
-  border: 1px solid #e2e8f0;
+  padding: 12px 14px;
+  border: 1.5px solid #e2e8f0;
   border-radius: 12px;
   background: #f8fafc;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: #334155;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #1e293b;
   cursor: pointer;
-  margin-bottom: 18px;
-  transition: all 0.15s ease;
+  margin-bottom: 16px;
+  transition: all 0.18s ease;
 }
 .tiktok-check:hover {
   background: #f1f5f9;
   border-color: #cbd5e1;
 }
 .tiktok-check input {
-  margin-top: 3px;
-  width: 17px;
-  height: 17px;
+  margin: 0;
+  width: 18px;
+  height: 18px;
   accent-color: var(--brand);
   flex-shrink: 0;
   cursor: pointer;
@@ -2476,12 +2481,15 @@ input[type="file"]::-webkit-file-upload-button:active {
 
 /* Status Attempt Banner - High-Grade Attention Alert */
 .tiktok-attempt {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   padding: 18px 20px;
   border: 1px solid #fed7aa;
   border-left: 4px solid #ea580c;
   border-radius: 16px;
   background: linear-gradient(135deg, #fffbeb 0%, #ffffff 88%);
-  margin-top: 16px;
+  margin-top: 14px;
   margin-bottom: 0;
   box-shadow: 0 4px 18px rgba(234, 88, 12, 0.08);
   animation: panelSlideIn 0.25s ease;
@@ -2494,27 +2502,32 @@ input[type="file"]::-webkit-file-upload-button:active {
   align-items: center;
   gap: 8px;
   letter-spacing: -0.01em;
+  line-height: 1.35;
 }
 .tiktok-attempt strong::before {
   content: "⚠️";
   font-size: 1rem;
+  flex-shrink: 0;
 }
 .tiktok-attempt p {
   font-size: 0.82rem;
-  line-height: 1.6;
-  margin: 8px 0 14px;
+  line-height: 1.58;
+  margin: 0;
   color: #451a03;
 }
 .tiktok-text-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  align-self: flex-start;
   gap: 6px;
-  padding: 6px 12px;
-  border-radius: 8px;
+  min-height: 36px;
+  padding: 7px 14px;
+  border-radius: 10px;
   background: #ffedd5;
-  border: 1px solid #fed7aa;
+  border: 1px solid #fdba74;
   color: #c2410c;
-  font-size: 0.77rem;
+  font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -2522,6 +2535,11 @@ input[type="file"]::-webkit-file-upload-button:active {
 .tiktok-text-button:hover {
   background: #fed7aa;
   color: #9a3412;
+}
+#tiktokResolveControls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .tiktok-check {
   display: flex;
@@ -2531,7 +2549,7 @@ input[type="file"]::-webkit-file-upload-button:active {
   border: 1.5px solid #e2e8f0;
   border-radius: 12px;
   background: #ffffff;
-  margin: 14px 0;
+  margin: 0;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -2540,6 +2558,7 @@ input[type="file"]::-webkit-file-upload-button:active {
   background: #f8fafc;
 }
 .tiktok-check input[type="checkbox"] {
+  margin: 0;
   width: 18px;
   height: 18px;
   border-radius: 5px;
@@ -2552,20 +2571,27 @@ input[type="file"]::-webkit-file-upload-button:active {
   font-weight: 600;
   color: #1e293b;
   line-height: 1.45;
+  flex: 1;
+  min-width: 0;
 }
 .tiktok-attempt-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 14px;
+  margin-top: 2px;
+}
+.tiktok-attempt-actions .button {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+  white-space: normal;
+  text-align: center;
 }
 .tiktok-studio-prepare {
   display: grid;
   gap: 12px;
   padding: 16px;
-  margin-top: 16px;
+  margin-top: 14px;
   margin-bottom: 0;
   border: 1px solid #fed7aa;
   border-radius: 14px;
@@ -2578,7 +2604,7 @@ input[type="file"]::-webkit-file-upload-button:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
   flex-wrap: wrap;
 }
 .tiktok-studio-prepare small {
@@ -2593,40 +2619,33 @@ input[type="file"]::-webkit-file-upload-button:active {
   padding: 0 22px;
 }
 #tiktokPublishButton {
-  min-height: 42px;
-  padding: 0 22px;
+  min-height: 44px;
+  padding: 10px 18px;
   border-radius: 11px;
   font-size: 0.83rem;
   font-weight: 800;
-  border: 0;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: #ffffff;
-  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
-}
-#tiktokPublishButton:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.4);
-  filter: brightness(1.04);
 }
 #tiktokPublishButton:disabled {
-  background: #f1f5f9;
-  color: #94a3b8;
-  border: 1px solid #e2e8f0;
-  box-shadow: none;
-  cursor: not-allowed;
-  transform: none;
+  background: #f1f5f9 !important;
+  color: #94a3b8 !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  opacity: 1 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
 }
 #tiktokResolveButton {
-  min-height: 42px;
-  padding: 0 18px;
+  min-height: 44px;
+  padding: 10px 16px;
   border-radius: 11px;
-  font-size: 0.81rem;
+  font-size: 0.82rem;
   font-weight: 700;
   border: 1px solid #cbd5e1;
   background: #ffffff;
-  color: #475569;
+  color: #334155;
   cursor: pointer;
   transition: all 0.18s ease;
 }
@@ -2637,11 +2656,13 @@ input[type="file"]::-webkit-file-upload-button:active {
   transform: translateY(-1px);
 }
 #tiktokResolveButton:disabled {
-  background: #f8fafc;
-  border-color: #e2e8f0;
-  color: #94a3b8;
-  cursor: not-allowed;
-  transform: none;
+  background: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
 }
 
 /* Mock Browser Window Container */
@@ -2742,14 +2763,17 @@ input[type="file"]::-webkit-file-upload-button:active {
 .tiktok-studio-footnote {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
+  gap: 10px;
   margin: 0;
-  color: #64748b;
-  font-size: 0.75rem;
-  line-height: 1.55;
-  padding: 8px 4px 4px;
+  color: #475569;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
 }
-.footnote-shield { flex-shrink: 0; font-size: 0.95rem; }
+.footnote-shield { flex-shrink: 0; font-size: 0.95rem; line-height: 1.35; }
 
 .channel-badge-mini {
   width: 36px;
@@ -4627,8 +4651,75 @@ input[type="file"]::-webkit-file-upload-button:active {
     padding: 4px 8px;
   }
   .browser-bar-spacer { display: none; }
-  .tiktok-browser-stage { height: 380px; min-height: 320px; }
-  .tiktok-studio-footnote { font-size: 0.7rem; padding: 4px 0; }
+  .tiktok-browser-stage { height: 360px; min-height: 300px; }
+  .tiktok-browser-placeholder { padding: 24px 16px; }
+  .tiktok-browser-placeholder strong { font-size: 1.02rem; }
+  .tiktok-browser-placeholder p { font-size: 0.78rem; }
+  .tiktok-studio-footnote {
+    font-size: 0.73rem;
+    padding: 10px 12px;
+    border-radius: 11px;
+  }
+  .tiktok-studio-prepare {
+    padding: 14px;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .tiktok-studio-prepare-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .tiktok-studio-prepare small {
+    flex: none;
+    font-size: 0.75rem;
+  }
+  .tiktok-studio-prepare .publish-studio-btn {
+    width: 100%;
+    margin-left: 0;
+    min-height: 44px;
+    justify-content: center;
+  }
+  .tiktok-attempt {
+    padding: 15px 14px;
+    gap: 11px;
+    margin-top: 12px;
+    border-radius: 14px;
+  }
+  .tiktok-attempt strong {
+    font-size: 0.88rem;
+  }
+  .tiktok-attempt p {
+    font-size: 0.79rem;
+    line-height: 1.52;
+  }
+  .tiktok-text-button {
+    width: 100%;
+    min-height: 38px;
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    justify-content: center;
+  }
+  .tiktok-check {
+    padding: 11px 12px;
+    gap: 10px;
+  }
+  .tiktok-check span {
+    font-size: 0.78rem;
+    line-height: 1.42;
+  }
+  .tiktok-attempt-actions {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-top: 0;
+  }
+  .tiktok-attempt-actions .button,
+  #tiktokPublishButton,
+  #tiktokResolveButton {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
 
   /* 4. Douyin View (#douyinView) */
   .douyin-header {
