@@ -847,6 +847,12 @@ function showView() {
   $("#adminView").classList.toggle("is-hidden", view !== "admin");
   $("#billingView").classList.toggle("is-hidden", view !== "billing");
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
+  if (window.innerWidth <= 1024) {
+    const activeDockLink = $(`#mainNavigation a[data-view-link="${view}"]`);
+    if (activeDockLink?.scrollIntoView) {
+      try { activeDockLink.scrollIntoView({ inline: "center", behavior: "smooth", block: "nearest" }); } catch (_) {}
+    }
+  }
   if (view === "jobs" && state.appStarted) loadJobs();
   if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
   else stopDouyinBrowserPolling();

@@ -19,6 +19,28 @@ services:
       retries: 20
     restart: unless-stopped
 
+  web:
+    image: vidtrans-web
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: vidtrans-web
+    depends_on:
+      vidtrans:
+        condition: service_started
+    ports:
+      # Local entry point: static web client, API paths proxied to the vidtrans container.
+      - "127.0.0.1:5200:80"
+    environment:
+      VIDTRANS_PUBLIC_BASE_URL: "${VIDTRANS_PUBLIC_BASE_URL:-}"
+      VIDTRANS_API_UPSTREAM: "http://vidtrans:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/web-health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   social-browser:
     image: vidtrans-social-browser
     build:
@@ -90,8 +112,9 @@ services:
       tiktok-browser:
         condition: service_healthy
     ports:
-      # Keep the FastAPI port private to the VPS. Production traffic must enter via Nginx.
-      - "127.0.0.1:5200:8000"
+      # API only (no web pages). Loopback-only: browsers use the web container on 5200;
+      # this port is for API clients in development, e.g. the Flutter app on a simulator.
+      - "127.0.0.1:${VIDTRANS_API_PORT:-5210}:8000"
     environment:
       # Build the internal DSN from the same credentials used to initialize
       # PostgreSQL, preventing a stale VIDTRANS_DATABASE_URL password.
@@ -174,6 +197,8 @@ services:
       VIDTRANS_YOUTUBE_CLIENT_SECRET: "${VIDTRANS_YOUTUBE_CLIENT_SECRET:-}"
       VIDTRANS_YOUTUBE_REDIRECT_URI: "${VIDTRANS_YOUTUBE_REDIRECT_URI:-}"
       VIDTRANS_PUBLIC_BASE_URL: "${VIDTRANS_PUBLIC_BASE_URL:-}"
+      # Mobile deep links the OAuth callbacks may return to, e.g. vidtrans://oauth (docs/mobile-api.md).
+      VIDTRANS_APP_REDIRECT_URIS: "${VIDTRANS_APP_REDIRECT_URIS:-}"
       VIDTRANS_MEDIA_SIGNING_SECRET: "${VIDTRANS_MEDIA_SIGNING_SECRET:-}"
       VIDTRANS_THREADS_CLIENT_ID: "${VIDTRANS_THREADS_CLIENT_ID:-}"
       VIDTRANS_THREADS_CLIENT_SECRET: "${VIDTRANS_THREADS_CLIENT_SECRET:-}"

@@ -1,15 +1,23 @@
 # VidTrans — Video Translator Web App
 
 ## Cấu trúc
+
+Backend (API) và các ứng dụng khách tách riêng, chỉ nói chuyện với nhau qua HTTP/WebSocket theo
+hợp đồng `contracts/openapi.json`:
+
 ```
-video_translator/
-├── backend/
-│   └── main.py          ← FastAPI server
-├── frontend/
-│   └── index.html       ← Giao diện web
-├── requirements.txt
-└── README.md
+VidTrans/
+├── backend/             ← API FastAPI + pipeline xử lý (container vidtrans), không phục vụ HTML
+├── web/                 ← Giao diện web tĩnh (container vidtrans-web, nginx)
+├── contracts/
+│   └── openapi.json     ← Hợp đồng API cho web và app Flutter (iOS/Android)
+├── deploy/nginx/        ← Gateway production: /api → backend, / → web
+└── docs/mobile-api.md   ← Hướng dẫn tích hợp cho app di động
 ```
+
+Local bằng Docker: web ở `http://localhost:5200` (tự chuyển tiếp API), API trực tiếp ở
+`http://localhost:5210`. Chạy `uvicorn` trực tiếp trong `backend/` thì backend vẫn phục vụ luôn
+thư mục `web/` để tiện phát triển.
 
 ## Cài đặt
 

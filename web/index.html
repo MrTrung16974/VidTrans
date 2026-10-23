@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261023-studiotheme" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261023-buttonstyles" />
   </head>
   <body>
     <div class="app-shell">
@@ -72,6 +72,14 @@
           <span class="brand-mark"><img src="/assets/vidtrans-mark.svg" alt="VidTrans logo" /></span>
           <span class="brand-copy"><strong>VidTrans</strong><small>Creator Studio</small></span>
         </a>
+        <nav id="mainNavigation" class="nav-tabs" aria-label="Điều hướng chính">
+          <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span><span class="nav-label-full">Dịch video</span><span class="nav-label-short">Dịch</span></span></a>
+          <a href="#comic" data-view-link="comic" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v6h-7zM13 13h7v6h-7z"/></svg></i><span><span class="nav-label-full">Truyện → Video</span><span class="nav-label-short">Truyện</span></span></a>
+          <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
+          <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span><span class="nav-label-full">Đăng bài mạng xã hội</span><span class="nav-label-short">Đăng bài</span></span></a>
+          <a href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span><span class="nav-label-full">Đăng nhập nguồn</span><span class="nav-label-short">Nguồn</span></span></a>
+          <a href="#admin" data-view-link="admin" data-admin-only class="is-hidden" hidden><i aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M6 19c.5-3.2 2.5-5 6-5s5.5 1.8 6 5M19 5v4M17 7h4"/></svg></i><span>Quản trị</span></a>
+        </nav>
         <div class="topbar-actions">
           <div id="systemState" class="system-state" role="status" title="Hệ thống sẵn sàng"><span class="system-dot" aria-hidden="true"></span><span class="system-text">Hệ thống sẵn sàng</span></div>
           <div id="userMenu" class="user-menu is-hidden">
@@ -1806,16 +1814,6 @@
         </section>
       </main>
 
-      <footer class="dock-footer" role="navigation" aria-label="Thanh điều hướng macOS Dock">
-        <nav id="mainNavigation" class="nav-tabs mac-dock" aria-label="Điều hướng chính">
-          <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span>Dịch video</span></a>
-          <a href="#comic" data-view-link="comic" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v6h-7zM13 13h7v6h-7z"/></svg></i><span><span class="nav-label-full">Truyện → Video</span><span class="nav-label-short">Truyện</span></span></a>
-          <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
-          <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span><span class="nav-label-full">Đăng bài mạng xã hội</span><span class="nav-label-short">Đăng bài</span></span></a>
-          <a href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span>Đăng nhập nguồn</span></a>
-          <a href="#admin" data-view-link="admin" data-admin-only class="is-hidden" hidden><i aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M6 19c.5-3.2 2.5-5 6-5s5.5 1.8 6 5M19 5v4M17 7h4"/></svg></i><span>Quản trị</span></a>
-        </nav>
-      </footer>
     </div>
 
     <div id="authGate" class="auth-gate is-hidden" role="dialog" aria-modal="true" aria-labelledby="authTitle">

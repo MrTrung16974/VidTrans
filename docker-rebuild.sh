@@ -119,13 +119,15 @@ else
             docker image tag "$APP_IMAGE" "$DEPS_IMAGE"
         fi
     fi
-    printf '%s\n' "Building only changed backend/frontend code; apt and pip are skipped..."
+    printf '%s\n' "Building only changed backend code; apt and pip are skipped..."
     docker build --file Dockerfile.code --tag "$APP_IMAGE" .
 fi
 
 # The interactive source browser has its own dependency image. Docker keeps
 # this layer cached, so normal code-only rebuilds remain fast after first use.
 "${compose[@]}" build social-browser tiktok-browser
+# The web client is a small static nginx image, rebuilt every time.
+"${compose[@]}" build web
 
 cleanup_compose_oneoffs
 
@@ -148,10 +150,10 @@ if [[ "$PRODUCTION" -eq 1 ]]; then
     public_host="$(awk -F= '$1 == "VIDTRANS_PUBLIC_HOST" { print substr($0, index($0, "=") + 1); exit }' .env.production)"
     "${compose[@]}" build nginx
     printf 'Applying the new image behind Nginx at https://%s...\n' "$public_host"
-    "${compose[@]}" up -d --force-recreate --remove-orphans social-browser tiktok-browser vidtrans nginx certbot
-    "${compose[@]}" ps social-browser tiktok-browser vidtrans nginx certbot
+    "${compose[@]}" up -d --force-recreate --remove-orphans social-browser tiktok-browser vidtrans web nginx certbot
+    "${compose[@]}" ps social-browser tiktok-browser vidtrans web nginx certbot
 else
     printf '%s\n' "Applying the new image at http://localhost:5200..."
-    "${compose[@]}" up -d --force-recreate --remove-orphans social-browser tiktok-browser vidtrans
-    "${compose[@]}" ps social-browser tiktok-browser vidtrans
+    "${compose[@]}" up -d --force-recreate --remove-orphans social-browser tiktok-browser vidtrans web
+    "${compose[@]}" ps social-browser tiktok-browser vidtrans web
 fi

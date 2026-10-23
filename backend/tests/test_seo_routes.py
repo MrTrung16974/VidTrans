@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from application.seo_routes import PLACEHOLDER, create_seo_router
 
-FRONTEND = Path(__file__).resolve().parents[1] / "frontend"
+FRONTEND = Path(__file__).resolve().parents[2] / "web"
 
 
 class SeoRouteTests(unittest.TestCase):

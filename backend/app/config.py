@@ -36,7 +36,9 @@ class AppSettings:
         ocr_backend = cls._ocr_backend()
         settings = cls(
             base_dir=base_dir,
-            frontend_dir=base_dir / "frontend",
+            # The web client is its own app (repo-root web/, served by the vidtrans-web
+            # container). The API serves it only for single-process local development.
+            frontend_dir=Path(os.environ.get("VIDTRANS_WEB_DIR") or base_dir.parent / "web").resolve(),
             upload_dir=base_dir / "uploads",
             output_dir=base_dir / "outputs",
             work_dir=base_dir / "work",

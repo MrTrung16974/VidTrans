@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 const test = (name, run) => { run(); console.log(`PASS ${name}`); };
-const source = readFileSync(new URL('../frontend/js/job-events.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../web/js/job-events.js', import.meta.url), 'utf8');
 const { applyJobChanges, jobEventsUrl } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const jobs = [
   { job_id: 'a', status: 'processing', progress: 0.1 },

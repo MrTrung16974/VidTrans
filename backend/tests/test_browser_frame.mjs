@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 const test = (name, run) => { run(); console.log(`PASS ${name}`); };
-const source = readFileSync(new URL('../frontend/js/browser-frame.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../web/js/browser-frame.js', import.meta.url), 'utf8');
 const { resolveTikTokFrameUrl, resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl, frameResponseProblem } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const page = 'https://169.58.116.223/#tiktok';
 test('Douyin keeps a complete noVNC URL and repairs the websocket path', () => {

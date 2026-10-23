@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, Field, ValidationError
 from infrastructure.frontend_static import FrontendStaticFiles
 from gtts import gTTS
 from starlette.background import BackgroundTask
@@ -78,7 +79,7 @@ from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccoun
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SocialPublishStore
-from infrastructure.social_credentials import SocialCredentialStore
+from infrastructure.social_credentials import SocialCredentialStore, is_app_redirect_uri
 from infrastructure.tenant_governance import QuotaExceededError, TenantGovernanceStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
@@ -690,17 +691,56 @@ def tenant_publisher_for_request(request: Request, platform: str):
     return tenant_social_registry(user_id).get(platform.upper())
 
 
+def app_redirect_allowed(uri: str) -> bool:
+    """Mobile deep links the OAuth callbacks may return to (VIDTRANS_APP_REDIRECT_URIS)."""
+    allowed = {
+        item.strip() for item in re.split(r"[,;\s]+", os.environ.get("VIDTRANS_APP_REDIRECT_URIS", "")) if item.strip()
+    }
+    base = uri.split("#", 1)[0].split("?", 1)[0]
+    return is_app_redirect_uri(uri) and base in allowed
+
+
 def register_tenant_oauth_session(request: Request, platform: str, authorization_url: str) -> None:
     state = (parse_qs(urlsplit(authorization_url).query).get("state") or [""])[0]
     if not state:
         raise HTTPException(status_code=503, detail="Nhà cung cấp OAuth không trả về state")
+    # Apps start OAuth with ?return_to=<deep link>; the callback then returns there instead of the web UI.
+    return_to = request.query_params.get("return_to", "").strip()
+    if return_to and not app_redirect_allowed(return_to):
+        raise HTTPException(status_code=400, detail="return_to không nằm trong VIDTRANS_APP_REDIRECT_URIS")
     SOCIAL_CREDENTIALS.create_oauth_session(
         user_id=str(current_account(request)["user_id"]),
         platform=platform,
         state=state,
         expires_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
-        return_path="/#tiktok",
+        return_path=return_to or "/#tiktok",
     )
+
+
+OAUTH_CALLBACK_PATH = re.compile(r"^/api/v1/([a-z]+)-auth/callback$")
+
+
+@app.middleware("http")
+async def oauth_app_redirect(request: Request, call_next):
+    """Send an OAuth callback started from the mobile app back to the app's deep link.
+
+    Every platform's callback redirects to the web UI with ?<platform>=connected or
+    ?<platform>_error=...; for app-started sessions that query is moved onto the deep link.
+    """
+    match = OAUTH_CALLBACK_PATH.match(request.url.path)
+    state = request.query_params.get("state", "") if match else ""
+    return_to = (
+        await asyncio.to_thread(SOCIAL_CREDENTIALS.oauth_return_path, platform=match[1], state=state)
+        if state else None
+    )
+    response = await call_next(request)
+    if return_to and response.status_code in (302, 303, 307) and app_redirect_allowed(return_to):
+        query = urlsplit(response.headers.get("location", "")).query
+        base, _, fragment = return_to.partition("#")
+        separator = "&" if "?" in base else "?"
+        target = f"{base}{separator}{query}" if query else base
+        response.headers["location"] = f"{target}#{fragment}" if fragment else target
+    return response
 
 
 def tenant_publisher_for_oauth_callback(platform: str, state: str):
@@ -4420,6 +4460,22 @@ def account_token_scope(account: dict[str, Any]) -> str:
     return "admin" if account["role"] in {"owner", "admin"} else "user"
 
 
+def issue_refresh_token(account: dict[str, Any], *, remember: bool) -> tuple[str, int]:
+    return AUTH_MANAGER.issue_token(
+        account["email"],
+        user_id=account["user_id"],
+        role=account["role"],
+        scope=account_token_scope(account),
+        token_use="refresh",
+        remember=remember,
+    )
+
+
+# Native apps (Flutter) keep tokens in secure storage instead of cookies: they ask for
+# client=native at login and send the refresh token in the body of /auth/refresh.
+AUTH_CLIENT_TYPES = {"web", "native"}
+
+
 def set_auth_cookies(
     response: Response,
     account: dict[str, Any],
@@ -4432,14 +4488,7 @@ def set_auth_cookies(
 
     Without "remember me" both are session cookies that end with the browser.
     """
-    refresh_token, refresh_expires_in = AUTH_MANAGER.issue_token(
-        account["email"],
-        user_id=account["user_id"],
-        role=account["role"],
-        scope=account_token_scope(account),
-        token_use="refresh",
-        remember=remember,
-    )
+    refresh_token, refresh_expires_in = issue_refresh_token(account, remember=remember)
     cookie_options = {
         "httponly": True,
         "secure": AUTH_MANAGER.config.cookie_secure,
@@ -4501,7 +4550,10 @@ def create_auth_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     remember: bool = Form(default=False),
+    client: str = Form(default="web"),
 ) -> JSONResponse:
+    if client not in AUTH_CLIENT_TYPES:
+        raise HTTPException(status_code=422, detail="client phải là web hoặc native")
     client_id = auth_client_id(request)
     account = ADMIN_ACCOUNTS.get_by_email(form_data.username)
     if account is None and form_data.username == AUTH_MANAGER.config.username:
@@ -4531,52 +4583,80 @@ def create_auth_token(
     token, expires_in = AUTH_MANAGER.issue_token(
         account["email"], user_id=account["user_id"], role=account["role"], scope=scope
     )
-    response = JSONResponse(
-        {
-            "access_token": token,
-            "token_type": "bearer",
-            "expires_in": expires_in,
-            "scope": scope,
-            "role": account["role"],
-            "remember": remember,
-        },
-        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
-    )
+    payload = {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": expires_in,
+        "scope": scope,
+        "role": account["role"],
+        "remember": remember,
+    }
+    if client == "native":
+        refresh_token, refresh_expires_in = issue_refresh_token(account, remember=remember)
+        payload.update(refresh_token=refresh_token, refresh_expires_in=refresh_expires_in)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+    response = JSONResponse(payload, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
     set_auth_cookies(response, account, token, expires_in, remember=remember)
     return response
 
 
-@app.post("/api/v1/auth/refresh")
-def refresh_auth_token(request: Request) -> JSONResponse:
-    """Exchange the HttpOnly refresh cookie for a new short-lived access token."""
+class RefreshTokenBody(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=4096)
+
+
+@app.post("/api/v1/auth/refresh", openapi_extra={"requestBody": {
+    "required": False,
+    "description": "Native apps only. Web clients send no body and use the refresh cookie.",
+    "content": {"application/json": {"schema": RefreshTokenBody.model_json_schema()}},
+}})
+async def refresh_auth_token(request: Request) -> JSONResponse:
+    """Exchange a refresh token for a new short-lived access token.
+
+    Web: the HttpOnly refresh cookie plus the anti-CSRF header. Native apps: a JSON body
+    ``{"refresh_token": ...}``; nothing ambient is sent, so no CSRF header is needed.
+    """
 
     if not AUTH_MANAGER.config.configured:
         raise HTTPException(status_code=503, detail="Xác thực đã bật nhưng cấu hình máy chủ chưa hợp lệ")
-    if request.headers.get("x-vidtrans-request") != "1":
+    body_token = None
+    if request.headers.get("content-type", "").split(";")[0].strip() == "application/json":
+        try:
+            body_token = RefreshTokenBody.model_validate(await request.json()).refresh_token
+        except (ValueError, ValidationError):
+            return JSONResponse({"detail": "Body phải có refresh_token"}, status_code=422, headers={"Cache-Control": "no-store"})
+    native = body_token is not None
+    if not native and request.headers.get("x-vidtrans-request") != "1":
         return JSONResponse({"detail": "Thiếu tiêu đề chống CSRF"}, status_code=403, headers={"Cache-Control": "no-store"})
-    refresh_token = request.cookies.get(AUTH_MANAGER.config.refresh_cookie_name)
+    refresh_token = body_token or request.cookies.get(AUTH_MANAGER.config.refresh_cookie_name)
     if not refresh_token:
         return unauthorized_response()
+
+    def rejected(response: JSONResponse) -> JSONResponse:
+        if not native:
+            clear_auth_cookies(response)
+        return response
+
     try:
-        claims = AUTH_MANAGER.verify_token(refresh_token, token_use="refresh")
-        account = ADMIN_ACCOUNTS.get(str(claims["user_id"]))
-    except (AuthConfigurationError, InvalidTokenError, AdminAccountError):
-        response = unauthorized_response()
-        clear_auth_cookies(response)
-        return response
+        claims = await asyncio.to_thread(AUTH_MANAGER.verify_token, refresh_token, token_use="refresh")
+        account = await asyncio.to_thread(ADMIN_ACCOUNTS.get, str(claims["user_id"]))
+    except (AuthConfigurationError, InvalidTokenError, AdminAccountError, KeyError):
+        return rejected(unauthorized_response())
     if account["approval_status"] != "approved":
-        response = JSONResponse({"detail": "Tài khoản chưa được phê duyệt hoặc đã bị khóa"}, status_code=403)
-        clear_auth_cookies(response)
-        return response
+        return rejected(JSONResponse({"detail": "Tài khoản chưa được phê duyệt hoặc đã bị khóa"}, status_code=403))
     if token_predates_password_change(claims, account):
-        response = unauthorized_response("Mật khẩu đã được thay đổi. Hãy đăng nhập lại.")
-        clear_auth_cookies(response)
-        return response
+        return rejected(unauthorized_response("Mật khẩu đã được thay đổi. Hãy đăng nhập lại."))
     scope = account_token_scope(account)
     token, expires_in = AUTH_MANAGER.issue_token(
         account["email"], user_id=account["user_id"], role=account["role"], scope=scope
     )
     remember = bool(claims.get("remember"))
+    if native:
+        # The refresh token keeps its original expiry; the app keeps using the one it has.
+        return JSONResponse(
+            {"access_token": token, "token_type": "bearer", "expires_in": expires_in, "scope": scope,
+             "role": account["role"], "remember": remember},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
     response = JSONResponse(
         {"token_type": "bearer", "expires_in": expires_in, "scope": scope, "role": account["role"], "remember": remember},
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
@@ -4929,8 +5009,8 @@ def translation_providers_endpoint() -> JSONResponse:
     return JSONResponse({"providers": [status.__dict__ for status in translation_provider_statuses()]})
 
 
-@app.post("/process-video")
-@app.post("/convert")
+@app.post("/process-video", deprecated=True)
+@app.post("/convert", deprecated=True)
 async def process_video_endpoint(
     http_request: Request,
     file: UploadFile = File(...),
@@ -5552,20 +5632,26 @@ def filter_job_event_for_user(message: dict[str, Any], owner_user_id: str, *, al
 def websocket_auth_claims(websocket: WebSocket) -> dict[str, Any] | None:
     """Apply the HTTP middleware's auth rules to a WebSocket handshake.
 
-    Browsers cannot attach an Authorization header to a WebSocket, so only the
-    session cookie is accepted. Because cookies ride along on cross-site
-    handshakes, the Origin must match the Host the page was served from.
+    Native apps send ``Authorization: Bearer``; nothing ambient rides along, so the
+    Origin is not checked. Browsers cannot set that header on a WebSocket and use the
+    session cookie instead; because cookies ride along on cross-site handshakes, the
+    Origin must then match the Host the page was served from.
     """
 
-    origin = websocket.headers.get("origin")
-    host = websocket.headers.get("host", "").rsplit(":", 1)[0].strip("[]").lower()
-    if origin and (urlsplit(origin).hostname or "").lower() != host:
+    authorization = websocket.headers.get("authorization", "").strip()
+    scheme, _, bearer = authorization.partition(" ")
+    if authorization and (scheme.lower() != "bearer" or not bearer.strip()):
         return None
+    if not authorization:
+        origin = websocket.headers.get("origin")
+        host = websocket.headers.get("host", "").rsplit(":", 1)[0].strip("[]").lower()
+        if origin and (urlsplit(origin).hostname or "").lower() != host:
+            return None
     if not AUTH_MANAGER.config.enabled:
         return {}
     if not AUTH_MANAGER.config.configured:
         return None
-    token = websocket.cookies.get(AUTH_MANAGER.config.cookie_name)
+    token = bearer.strip() or websocket.cookies.get(AUTH_MANAGER.config.cookie_name)
     if not token:
         return None
     try:
@@ -5857,7 +5943,7 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     return JSONResponse({"job_id": job_id, "deleted": True})
 
 
-@app.get("/status/{job_id}")
+@app.get("/status/{job_id}", deprecated=True)
 def get_status(request: Request, job_id: str) -> JSONResponse:
     job = job_for_request(request, job_id)
     if not job:
@@ -5865,7 +5951,7 @@ def get_status(request: Request, job_id: str) -> JSONResponse:
     return JSONResponse(job_response(job_id, job, JOB_SERVICE.queue_positions()))
 
 
-@app.get("/download/{filename}")
+@app.get("/download/{filename}", deprecated=True)
 def download(request: Request, filename: str) -> FileResponse:
     """Compatibility download with mandatory ownership verification."""
     owner_user_id = str(current_account(request)["user_id"])
@@ -5945,12 +6031,15 @@ def custom_openapi() -> dict[str, Any]:
             }
         },
     }
+    # Plain bearer for generated clients (Flutter/Dart): send the access token from
+    # /api/v1/auth/token (client=native) as "Authorization: Bearer <token>".
+    security_schemes["bearerAuth"] = {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
     for path, path_item in schema.get("paths", {}).items():
         if not is_protected_path(path):
             continue
         for method, operation in path_item.items():
             if method.lower() in {"get", "post", "put", "patch", "delete", "options", "head"}:
-                operation["security"] = [{"OAuth2PasswordBearer": ["admin"]}]
+                operation["security"] = [{"OAuth2PasswordBearer": ["admin"]}, {"bearerAuth": []}]
     app.openapi_schema = schema
     return schema
 

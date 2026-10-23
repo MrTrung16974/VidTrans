@@ -198,7 +198,7 @@ compose=(
 )
 
 printf '%s\n' "Starting the private app and HTTP-only ACME bootstrap..."
-"${compose[@]}" up -d --build --force-recreate vidtrans nginx
+"${compose[@]}" up -d --build --force-recreate vidtrans web nginx
 
 nginx_ready=0
 for attempt in {1..30}; do

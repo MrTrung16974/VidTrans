@@ -10,7 +10,7 @@ from infrastructure.frontend_static import FrontendStaticFiles
 
 class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
     async def test_instagram_publishing_controls_and_module_are_shipped(self):
-        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        frontend = Path(__file__).resolve().parents[2] / "web"
         html = (frontend / "index.html").read_text(encoding="utf-8")
         javascript = (frontend / "js" / "instagram.js").read_text(encoding="utf-8")
 
@@ -28,8 +28,8 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_facebook_and_youtube_publishing_controls_are_shipped(self):
         backend = Path(__file__).resolve().parents[1]
-        html = (backend / "frontend" / "index.html").read_text(encoding="utf-8")
-        javascript = (backend / "frontend" / "js" / "social-extra.js").read_text(encoding="utf-8")
+        html = (backend.parent / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (backend.parent / "web" / "js" / "social-extra.js").read_text(encoding="utf-8")
         main = (backend / "main.py").read_text(encoding="utf-8")
         for element_id in ("facebookConnect", "facebookPublish", "youtubeConnect", "youtubeTitle", "youtubePrivacy", "youtubePublish"):
             self.assertIn(f'id="{element_id}"', html)
@@ -49,7 +49,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(variable, env_example)
 
     async def test_tiktok_web_is_primary_and_api_is_fallback(self):
-        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        frontend = Path(__file__).resolve().parents[2] / "web"
         html = (frontend / "index.html").read_text(encoding="utf-8")
         javascript = (frontend / "js" / "tiktok.js").read_text(encoding="utf-8")
 
@@ -78,7 +78,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('class="tiktok-repost-button"', html)
 
     async def test_source_links_include_youtube_and_facebook(self):
-        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        frontend = Path(__file__).resolve().parents[2] / "web"
         html = (frontend / "index.html").read_text(encoding="utf-8")
         javascript = (frontend / "js" / "app.js").read_text(encoding="utf-8")
 
@@ -89,7 +89,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('? "FB"', javascript)
 
     async def test_source_browser_workspace_ships_platform_tabs(self):
-        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        frontend = Path(__file__).resolve().parents[2] / "web"
         html = (frontend / "index.html").read_text(encoding="utf-8")
         javascript = (frontend / "js" / "app.js").read_text(encoding="utf-8")
         for platform in ("douyin", "youtube", "facebook"):
@@ -115,10 +115,11 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('button.addEventListener("click", () => selectSourceBrowserTab', javascript)
 
     async def test_source_login_and_cookie_configuration_are_admin_only(self):
-        frontend = Path(__file__).resolve().parents[1] / "frontend"
+        frontend = Path(__file__).resolve().parents[2] / "web"
+        backend = Path(__file__).resolve().parents[1]
         html = (frontend / "index.html").read_text(encoding="utf-8")
         javascript = (frontend / "js" / "app.js").read_text(encoding="utf-8")
-        main = (frontend.parents[0] / "main.py").read_text(encoding="utf-8")
+        main = (backend / "main.py").read_text(encoding="utf-8")
 
         self.assertIn('href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden', html)
         self.assertIn('href="#admin" data-view-link="admin" data-admin-only class="is-hidden" hidden', html)
@@ -130,8 +131,8 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_login_screen_supports_free_self_registration(self):
         backend = Path(__file__).resolve().parents[1]
-        html = (backend / "frontend" / "index.html").read_text(encoding="utf-8")
-        javascript = (backend / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        html = (backend.parent / "web" / "index.html").read_text(encoding="utf-8")
+        javascript = (backend.parent / "web" / "js" / "app.js").read_text(encoding="utf-8")
         main = (backend / "main.py").read_text(encoding="utf-8")
 
         self.assertIn('id="authRegisterForm"', html)

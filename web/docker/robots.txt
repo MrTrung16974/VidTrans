@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /status/
+Disallow: /download/
+Disallow: /docs
+Disallow: /redoc
+Sitemap: __VIDTRANS_PUBLIC_URL__/sitemap.xml

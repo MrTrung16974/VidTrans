@@ -15,6 +15,28 @@ file upload / TikTok-Douyin URL -> persistent queue -> source downloader
              -> social summary + TTS -> audio mix -> render -> artifacts
 ```
 
+## Clients and API boundary
+
+```text
+browser ──> gateway nginx ─┬─ /api/*, /docs, legacy routes, WebSocket ──> vidtrans (FastAPI)
+                           └─ everything else ──────────────────────────> vidtrans-web (static)
+Flutter app (iOS/Android) ──────────── /api/* (Bearer token) ──────────> vidtrans (FastAPI)
+```
+
+- `backend/` is API-only in containers. It serves `web/` only when run directly with uvicorn
+  for local development (or when `VIDTRANS_WEB_DIR` points at a web build).
+- `web/` is a static client with its own nginx image. It fills in SEO URLs per request and,
+  locally, proxies API paths to the backend.
+- `contracts/openapi.json` is the API contract; the Flutter client is generated from it
+  (`backend/scripts/export_openapi.py`, `docs/mobile-api.md`). A test fails when routes and the
+  contract diverge.
+- Web clients authenticate with HttpOnly cookies plus an anti-CSRF header. Native clients use
+  `client=native` at login, keep tokens themselves, send `Authorization: Bearer` (HTTP and
+  WebSocket) and refresh with a JSON body. OAuth flows started by an app return to an
+  allow-listed deep link (`VIDTRANS_APP_REDIRECT_URIS`).
+- New features must be usable through `/api/v1` with JSON in and out; UI-only behaviour belongs
+  in the clients, not in the API.
+
 ## Current modules
 
 ```text

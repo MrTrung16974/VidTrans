@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 import sqlite3
 
@@ -10,6 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
+from urllib.parse import urlsplit
 
 
 SUPPORTED_PLATFORMS = {
@@ -17,6 +19,17 @@ SUPPORTED_PLATFORMS = {
 }
 CONNECTION_STATUSES = {"active", "expired", "revoked", "error"}
 
+
+
+def is_app_redirect_uri(value: str) -> bool:
+    """Absolute URI with a custom scheme (vidtrans://...) or https (universal/app links)."""
+    parts = urlsplit(value)
+    scheme = parts.scheme.lower()
+    if not scheme or scheme in {"http", "javascript", "data", "file", "vbscript"}:
+        return False
+    if not re.fullmatch(r"[a-z][a-z0-9+.-]*", scheme) or any(ch in value for ch in "\r\n\\ "):
+        return False
+    return scheme != "https" or bool(parts.netloc)
 
 class SocialCredentialError(ValueError):
     pass
@@ -173,7 +186,9 @@ class SocialCredentialStore:
         platform = self._platform(platform)
         if not user_id.strip() or not expires_at.strip():
             raise SocialCredentialError("Thiếu user hoặc thời hạn phiên OAuth")
-        if not return_path.startswith("/") or return_path.startswith("//") or len(return_path) > 500:
+        # A site path, or an app redirect URI that the caller checked against its allowlist.
+        is_path = return_path.startswith("/") and not return_path.startswith("//")
+        if not (is_path or is_app_redirect_uri(return_path)) or len(return_path) > 500:
             raise SocialCredentialError("Đường dẫn quay lại không hợp lệ")
         with self._db() as db:
             db.execute(
@@ -188,6 +203,20 @@ class SocialCredentialStore:
                     encryption_key_id, return_path, expires_at, utc_now(),
                 ),
             )
+
+    def oauth_return_path(self, *, platform: str, state: str) -> str | None:
+        """Where the OAuth callback sends the user back; readable after the session is consumed."""
+        try:
+            platform = self._platform(platform)
+            state_hash = self.state_hash(state)
+        except SocialCredentialError:
+            return None
+        with self._db() as db:
+            row = db.execute(
+                "SELECT return_path FROM social_oauth_sessions WHERE state_hash=? AND platform=?",
+                (state_hash, platform),
+            ).fetchone()
+        return str(row["return_path"]) if row is not None else None
 
     def consume_oauth_session(self, *, platform: str, state: str, now: str | None = None) -> dict[str, Any] | None:
         platform = self._platform(platform)

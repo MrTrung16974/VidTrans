@@ -166,7 +166,8 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
     }
 
-    location / {
+    # API (also used by the mobile apps), legacy routes, docs and the job WebSocket.
+    location ~ ^/(api/|process-video$|convert$|status/|download/|docs|redoc|openapi\.json$) {
         proxy_pass http://vidtrans:8000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -180,5 +181,15 @@ server {
         proxy_connect_timeout 30s;
         proxy_send_timeout 3600s;
         proxy_read_timeout 3600s;
+    }
+
+    # Web client: static files in the vidtrans-web container.
+    location / {
+        proxy_pass http://web:80;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_connect_timeout 30s;
     }
 }

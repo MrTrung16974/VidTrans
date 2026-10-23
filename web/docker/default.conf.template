@@ -1,0 +1,92 @@
+# Canonical, Open Graph and JSON-LD URLs must be absolute. VIDTRANS_PUBLIC_BASE_URL wins;
+# otherwise the URL is rebuilt from the (forwarded) request host, which must look like a host.
+map $http_x_forwarded_proto $vidtrans_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+map $http_x_forwarded_host $vidtrans_forwarded_host {
+    default $http_x_forwarded_host;
+    ""      $http_host;
+}
+map $vidtrans_forwarded_host $vidtrans_host {
+    "~^[A-Za-z0-9.-]+(:[0-9]{1,5})?$" $vidtrans_forwarded_host;
+    default "";
+}
+# An unusable host leaves the URL empty, so links stay relative ("/") as before.
+map $vidtrans_host $vidtrans_derived_url {
+    ""      "";
+    default "$vidtrans_proto://$vidtrans_host";
+}
+map $http_upgrade $vidtrans_connection_upgrade {
+    default upgrade;
+    ""      close;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    client_max_body_size 2048m;
+    client_body_timeout 3600s;
+    # Docker's DNS: the API container may start after this one.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    set $vidtrans_public_url "${VIDTRANS_PUBLIC_BASE_URL}";
+    if ($vidtrans_public_url = "") {
+        set $vidtrans_public_url $vidtrans_derived_url;
+    }
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    location = /web-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # API paths, for local runs where this container is the entry point. In production
+    # the gateway nginx routes them to the API directly and never reaches here.
+    location ~ ^/(api/|process-video$|convert$|status/|download/|docs|redoc|openapi\.json$) {
+        set $vidtrans_api "${VIDTRANS_API_UPSTREAM}";
+        proxy_pass $vidtrans_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $vidtrans_proto;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $vidtrans_connection_upgrade;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;
+    }
+
+    location = / {
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "same-origin" always;
+        sub_filter "__VIDTRANS_PUBLIC_URL__" $vidtrans_public_url;
+        sub_filter_once off;
+        try_files /index.html =404;
+    }
+
+    location = /index.html {
+        return 301 /;
+    }
+
+    location ~ ^/(robots\.txt|sitemap\.xml)$ {
+        add_header Cache-Control "public, max-age=3600" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        sub_filter "__VIDTRANS_PUBLIC_URL__" $vidtrans_public_url;
+        sub_filter_once off;
+        sub_filter_types text/plain application/xml text/xml;
+    }
+
+    location / {
+        try_files $uri =404;
+    }
+}
