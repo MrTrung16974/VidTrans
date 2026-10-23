@@ -227,11 +227,16 @@ class Qwen3Tests(unittest.TestCase):
         self.assertEqual(translator.translate("你好"), "Xin chào")
         self.assertEqual(len(bodies), 2)
 
-    def test_wrong_line_count_is_rejected(self) -> None:
+    def test_wrong_line_count_is_retried_in_halves(self) -> None:
         opener = lambda *_a, **_k: _Response({"message": {"content": '{"translations": ["một"]}'}})
         translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)
+        self.assertEqual(translator.translate_lines(["一", "二"]), ["một", "một"])
+
+    def test_single_line_with_unusable_output_is_rejected(self) -> None:
+        opener = lambda *_a, **_k: _Response({"message": {"content": '{"translations": []}'}})
+        translator = Qwen3Translator(source_language="zh-CN", target_language="vi", opener=opener)
         with self.assertRaisesRegex(TranslationServiceError, "count_mismatch"):
-            translator.translate_lines(["一", "二"])
+            translator.translate_lines(["一"])
 
     def test_source_script_left_by_the_model_is_rescued_by_google(self) -> None:
         reply = '{"translations": [{"id": 1, "text": "Đây là 小米"}]}'
@@ -459,3 +464,102 @@ class FallbackTranslatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# Lines 19-23 of job 05a05e62: Gemini skipped the song lyric and shifted every translation up.
+JOB_05A05E62_SOURCES = ["不要生情来只编织自己的爱", "关别人是说好还是说坏", "你我也不是天才", "只是很怕你的坏小孩", "肯定是亲生的"]
+JOB_05A05E62_TRANSLATIONS = ["Đừng sống vì ánh mắt người khác", "Đừng bận tâm người ta nói tốt hay xấu",
+                             "Cả anh và em đều chẳng phải thiên tài", "Chỉ là đứa trẻ sợ mất em thôi",
+                             "Chắc chắn là con ruột rồi"]
+
+
+def _gemini_reply(items: list[dict]) -> _Response:
+    text = json.dumps({"translations": items}, ensure_ascii=False)
+    return _Response({"candidates": [{"content": {"parts": [{"text": text}]}}]})
+
+
+class MisalignedBatchTests(unittest.TestCase):
+    def test_shifted_echo_is_rejected(self) -> None:
+        from infrastructure.translation_prompt import TranslationOutputError, parse_translations
+
+        shifted = [{"id": i + 1, "source": JOB_05A05E62_SOURCES[i + 1], "text": JOB_05A05E62_TRANSLATIONS[i + 1]}
+                   for i in range(4)]
+        shifted.append({"id": 5, "source": JOB_05A05E62_SOURCES[4], "text": JOB_05A05E62_TRANSLATIONS[4]})
+        with self.assertRaisesRegex(TranslationOutputError, "misaligned"):
+            parse_translations(json.dumps({"translations": shifted}), 5, provider="gemini",
+                               sources=JOB_05A05E62_SOURCES)
+
+    def test_repeat_padding_without_echo_is_rejected(self) -> None:
+        from infrastructure.translation_prompt import TranslationOutputError, parse_translations
+
+        padded = [*JOB_05A05E62_TRANSLATIONS[1:], JOB_05A05E62_TRANSLATIONS[4]]
+        with self.assertRaisesRegex(TranslationOutputError, "misaligned"):
+            parse_translations(json.dumps(padded), 5, provider="gemini", sources=JOB_05A05E62_SOURCES)
+
+    def test_echo_tolerates_script_and_punctuation_and_real_repeats(self) -> None:
+        from infrastructure.translation_prompt import parse_translations
+
+        items = [{"id": 1, "source": "這個 怎麼了？", "text": "Sao thế"},
+                 {"id": 2, "source": "浩浩", "text": "Hạo Hạo"}, {"id": 3, "source": "浩浩浩浩", "text": "Hạo Hạo"}]
+        self.assertEqual(
+            parse_translations(json.dumps({"translations": items}, ensure_ascii=False), 3, provider="gemini",
+                               sources=["这个怎么了", "浩浩", "浩浩浩浩"]),
+            ["Sao thế", "Hạo Hạo", "Hạo Hạo"],
+        )
+
+    def test_gemini_retries_a_shifted_batch_in_halves_instead_of_using_google(self) -> None:
+        requests: list[list[str]] = []
+
+        def opener(request, **_kwargs):
+            sent = json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"].split("items: ", 1)[1])
+            lines = [item["text"] for item in sent]
+            requests.append(lines)
+            if len(lines) == 5:
+                return _gemini_reply([{"id": i + 1, "source": JOB_05A05E62_SOURCES[min(i + 1, 4)],
+                                       "text": JOB_05A05E62_TRANSLATIONS[min(i + 1, 4)]} for i in range(5)])
+            return _gemini_reply([{"id": i + 1, "source": line,
+                                   "text": JOB_05A05E62_TRANSLATIONS[JOB_05A05E62_SOURCES.index(line)]}
+                                  for i, line in enumerate(lines)])
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+            translator = GeminiContextTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+        self.assertEqual(translator.translate_lines(list(JOB_05A05E62_SOURCES)), JOB_05A05E62_TRANSLATIONS)
+        self.assertEqual([len(lines) for lines in requests], [5, 2, 3])
+
+
+class FallbackReportingTests(unittest.TestCase):
+    def test_cues_translated_by_the_backup_are_reported(self) -> None:
+        from infrastructure.translation_prompt import TranslationOutputError
+        from infrastructure.translation_providers import FallbackTranslator
+        from pipeline.translation import translate_segments
+
+        class Primary:
+            name = "gemini-test"
+            supports_markers = False
+
+            def translate_lines(self, lines, durations=None):
+                if "坏" in "".join(lines):
+                    raise TranslationOutputError("gemini_translation_misaligned")
+                return [f"vi:{line}" for line in lines]
+
+            def translate(self, text):
+                return self.translate_lines([text])[0]
+
+        class Backup:
+            name = "google"
+
+            def translate(self, text):
+                return f"gg:{text}"
+
+        translator = FallbackTranslator(Primary(), Backup())
+        segments = [{"start": float(i), "end": float(i) + 1, "text": text}
+                    for i, text in enumerate(["你好", "坏人", "谢谢"])]
+        output = translate_segments(segments, translator, source_language="zh-CN", max_batch_chars=200,
+                                    sleeper=lambda _seconds: None)
+        self.assertEqual([cue["translation_fallback"] for cue in output], [True, True, True])
+        self.assertEqual({cue["translation_provider"] for cue in output}, {"google"})
+
+        single = translate_segments(segments[:1], FallbackTranslator(Primary(), Backup()),
+                                    source_language="zh-CN", max_batch_chars=200, sleeper=lambda _seconds: None)
+        self.assertFalse(single[0]["translation_fallback"])
+        self.assertEqual(single[0]["translation_provider"], "gemini-test")

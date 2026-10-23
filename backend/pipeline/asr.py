@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,12 +22,53 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[float, float | None], None]
 
 # Silero VAD can discard whole stretches of dialogue mixed with loud music or sound
-# effects. Gaps at least this long after a VAD pass are transcribed again without VAD.
+# effects, and Whisper can lock into a repetition loop that covers real dialogue.
+# Stretches at least this long without usable speech are transcribed again.
 VAD_GAP_SECONDS = 4.0
 VAD_GAP_PADDING_SECONDS = 0.3
+# The recovery pass starts this far before the gap: decoding cold inside loud music
+# produces garbage, while a little preceding dialogue anchors the decoder.
+RECOVERY_CONTEXT_SECONDS = 10.0
 # Whisper's own hallucination test: text decoded from audio it believes is not speech.
 GAP_MAX_NO_SPEECH_PROB = 0.6
 GAP_MIN_LOGPROB = -1.0
+# Repetition loops: the same line three or more times in a row, one short unit repeated
+# five or more times inside a line, or a few characters stretched over many seconds.
+LOOP_MIN_RUN = 3
+LOOP_REPEATED_UNIT = re.compile(r"(.{1,4}?)\1{4,}")
+LOOP_MIN_SECONDS = 8.0
+LOOP_MIN_CHARS_PER_SECOND = 0.6
+
+
+def _loop_text(text: str) -> str:
+    return "".join(character for character in str(text or "") if character.isalnum()).casefold()
+
+
+def drop_repetition_loops(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove Whisper repetition-loop output so the time it covered can be re-heard.
+
+    A genuine repeat ("别别别别", "有鬼 有鬼") is short and appears at most twice in a
+    row; a loop repeats a whole line, stutters one unit, or stretches over silence.
+    """
+
+    kept: list[dict[str, Any]] = []
+    run_text, run_length = "", 0
+    for segment in segments:
+        text = _loop_text(segment.get("text"))
+        duration = float(segment["end"]) - float(segment["start"])
+        run_length = run_length + 1 if text and text == run_text else 1
+        run_text = text
+        if run_length >= LOOP_MIN_RUN:
+            # The first two of a run may be real; everything after is the loop.
+            continue
+        if LOOP_REPEATED_UNIT.search(text):
+            continue
+        if duration >= LOOP_MIN_SECONDS and len(text) / duration < LOOP_MIN_CHARS_PER_SECOND:
+            continue
+        kept.append(segment)
+    if len(kept) != len(segments):
+        logger.info("Dropped %d repetition-loop segment(s)", len(segments) - len(kept))
+    return kept
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -155,8 +197,8 @@ class ASRService:
                 logger.warning("No transcript segments with requested language, retrying with auto language detection")
             if self.config.engine == "faster":
                 result = self._faster_result(model, audio, attempt, progress)
-                if attempt["vad"] and result.segments:
-                    result = self._fill_vad_gaps(model, audio, result, attempt)
+                if attempt["strict"] and result.segments:
+                    result = self._recover_lost_speech(model, audio, result, attempt)
             else:
                 result = self._openai_result(model, audio, attempt)
             if any((segment.get("text") or "").strip() for segment in result.segments):
@@ -180,11 +222,13 @@ class ASRService:
 
         return whisper.load_audio(str(media_path))
 
-    def _fill_vad_gaps(self, model: Any, audio: Any, result: ASRResult, attempt: dict[str, Any]) -> ASRResult:
-        """Re-transcribe long stretches the VAD pass left empty, without VAD."""
+    def _recover_lost_speech(self, model: Any, audio: Any, result: ASRResult, attempt: dict[str, Any]) -> ASRResult:
+        """Re-transcribe long stretches with no usable speech: dropped by VAD or eaten by a loop."""
 
         if not hasattr(audio, "shape"):
             return result
+        result = ASRResult(drop_repetition_loops(result.segments), result.detected_language,
+                           result.language_probability)
         rate = int(model.feature_extractor.sampling_rate)
         total = len(audio) / rate
         boundaries = [0.0, *(edge for segment in result.segments for edge in (segment["start"], segment["end"])), total]
@@ -198,10 +242,11 @@ class ASRService:
         language = attempt["language"] or result.detected_language
         recovered: list[dict[str, Any]] = []
         for gap_start, gap_end in gaps:
-            offset = max(0.0, gap_start - VAD_GAP_PADDING_SECONDS)
+            offset = max(0.0, gap_start - RECOVERY_CONTEXT_SECONDS)
             clip = audio[int(offset * rate) : int(min(total, gap_end + VAD_GAP_PADDING_SECONDS) * rate)]
-            gap_attempt = {**attempt, "language": language, "vad": False}
-            for segment in self._faster_result(model, clip, gap_attempt, None).segments:
+            gap_attempt = {**attempt, "language": language, "vad": False, "recovery": True}
+            heard = drop_repetition_loops(self._faster_result(model, clip, gap_attempt, None).segments)
+            for segment in heard:
                 if segment["no_speech_prob"] > GAP_MAX_NO_SPEECH_PROB and segment["avg_logprob"] < GAP_MIN_LOGPROB:
                     continue
                 segment["start"] += offset
@@ -209,12 +254,12 @@ class ASRService:
                 for word in segment["words"]:
                     word["start"] = None if word["start"] is None else word["start"] + offset
                     word["end"] = None if word["end"] is None else word["end"] + offset
-                # Padding may re-hear the neighbouring cue; keep only speech inside the gap.
+                # The context before the gap re-hears known cues; keep only speech inside the gap.
                 if gap_start < (segment["start"] + segment["end"]) / 2 < gap_end:
                     recovered.append(segment)
         if not recovered:
             return result
-        logger.info("Recovered %d speech segment(s) that VAD dropped", len(recovered))
+        logger.info("Recovered %d speech segment(s) lost to VAD or repetition loops", len(recovered))
         segments = sorted([*result.segments, *recovered], key=lambda segment: (segment["start"], segment["end"]))
         return ASRResult(segments, result.detected_language, result.language_probability)
 
@@ -233,7 +278,11 @@ class ASRService:
         }
         if attempt["vad"]:
             options["vad_parameters"] = {"min_silence_duration_ms": self.config.vad_min_silence_ms}
-        if attempt["strict"]:
+        if attempt.get("recovery"):
+            # Without the previous-text prompt a loop cannot carry across windows; the silence
+            # guard is left out because it discards whole windows of speech under music.
+            options.update(temperature=0, condition_on_previous_text=False)
+        elif attempt["strict"]:
             options.update(temperature=0, condition_on_previous_text=True, hallucination_silence_threshold=1.0)
         generator, info = model.transcribe(audio, **options)
         total = float(getattr(info, "duration", 0) or 0) or None

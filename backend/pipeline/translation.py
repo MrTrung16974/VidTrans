@@ -468,10 +468,17 @@ def translate_segments(
         text, status, error = translations.get(
             index, (sources[index], "skipped" if skipped else "source_fallback", None if skipped else "empty_source")
         )
+        provider_for = getattr(translator, "provider_for", None)
+        used_fallback = getattr(translator, "used_fallback_for", None)
         result = {
             **segment, "start": float(segment["start"]), "end": float(segment["end"]),
             "source_text": sources[index], "text": text, "translation_status": status,
-            "translation_provider": getattr(translator, "name", type(translator).__name__),
+            "translation_provider": (
+                provider_for(sources[index]) if provider_for and status != "preserved"
+                else getattr(translator, "name", type(translator).__name__)
+            ),
+            # Translated by a backup provider because the chosen one failed on this cue.
+            "translation_fallback": bool(used_fallback and used_fallback(sources[index])),
             "source_language": source_language,
             "target_language": target_language,
             "needs_review": bool(segment.get("needs_review")) or status == "source_fallback",

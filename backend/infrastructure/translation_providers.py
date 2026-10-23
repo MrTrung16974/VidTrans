@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from domain.languages import language_profile, validate_language_pair
 from infrastructure.translation_prompt import (
     TranslationHistory,
+    TranslationOutputError,
     is_traditional_chinese,
     leaks_source_script,
     parse_translations,
@@ -173,6 +174,29 @@ def translation_provider_statuses() -> list[TranslationProviderStatus]:
     ]
 
 
+def translate_halving(translate_chunk, lines: list[str], durations: list[float | None] | None,
+                      *, provider: str) -> list[str]:
+    """Retry a batch the model mangled (bad JSON, wrong count, shifted lines) in halves.
+
+    A long batch is where an LLM loses track of which line it is on; halves keep
+    the context benefit, and a single line that still fails is a real failure.
+    """
+    try:
+        return translate_chunk(lines, durations)
+    except TranslationOutputError as exc:
+        if len(lines) == 1:
+            raise
+        middle = len(lines) // 2
+        logger.warning("%s returned unusable output for %d lines (%s); retrying in halves",
+                       provider, len(lines), exc)
+        return [
+            *translate_halving(translate_chunk, lines[:middle], durations[:middle] if durations else None,
+                               provider=provider),
+            *translate_halving(translate_chunk, lines[middle:], durations[middle:] if durations else None,
+                               provider=provider),
+        ]
+
+
 class GeminiContextTranslator:
     supports_markers = False
     accepts_durations = True
@@ -232,6 +256,9 @@ class GeminiContextTranslator:
         )
 
     def translate_lines(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
+        return translate_halving(self._translate_chunk, lines, durations, provider="Gemini")
+
+    def _translate_chunk(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
         body = json.dumps({
             "systemInstruction": {
                 "parts": [{"text": system_prompt(self.source_language, self.target_language, "".join(lines))}]
@@ -282,7 +309,7 @@ class GeminiContextTranslator:
                     f"Không tìm thấy model Gemini khả dụng: {attempted_label}"
                 )
             text = payload["candidates"][0]["content"]["parts"][0]["text"]
-            translated = parse_translations(text, len(lines), provider="gemini")
+            translated = parse_translations(text, len(lines), provider="gemini", sources=lines)
             self.history.extend(lines, translated)
             return translated
         except urllib.error.HTTPError as exc:
@@ -418,8 +445,10 @@ class Qwen3Translator:
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "properties": {"id": {"type": "integer"}, "text": {"type": "string"}},
-                            "required": ["id", "text"],
+                            "properties": {
+                                "id": {"type": "integer"}, "source": {"type": "string"}, "text": {"type": "string"},
+                            },
+                            "required": ["id", "source", "text"],
                         },
                     }
                 },
@@ -468,7 +497,7 @@ class Qwen3Translator:
         except Exception as exc:
             raise TranslationServiceError(f"Qwen3 lỗi: {type(exc).__name__}") from exc
         content = str((payload.get("message") or {}).get("content") or "")
-        return parse_translations(content, len(lines), provider="qwen3")
+        return parse_translations(content, len(lines), provider="qwen3", sources=lines)
 
     def translate_lines(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
         translated: list[str] = []
@@ -477,7 +506,9 @@ class Qwen3Translator:
             end = start + self.chunk_lines
             chunk_durations = durations[start:end] if durations else None
             try:
-                translated.extend(self._translate_chunk(lines[start:end], chunk_durations))
+                translated.extend(translate_halving(
+                    self._translate_chunk, lines[start:end], chunk_durations, provider="Qwen3"
+                ))
             except TranslationServiceError as exc:
                 if not getattr(exc, "timed_out", False):
                     raise
@@ -559,6 +590,8 @@ class FallbackTranslator:
         self.supports_markers = getattr(primary, "supports_markers", True)
         self.primary_down = False
         self.secondary_used = False
+        # Source lines the secondary translated, so each cue can report who translated it.
+        self.fallback_sources: set[str] = set()
         if hasattr(primary, "translate_lines"):
             self.translate_lines = self._translate_lines
 
@@ -566,6 +599,15 @@ class FallbackTranslator:
     def name(self) -> str:
         primary = getattr(self.primary, "name", type(self.primary).__name__)
         return f"{primary}+{self.secondary.name}" if self.secondary_used else primary
+
+    def used_fallback_for(self, source: str) -> bool:
+        return source in self.fallback_sources
+
+    def provider_for(self, source: str) -> str:
+        if source in self.fallback_sources:
+            secondary_provider = getattr(self.secondary, "provider_for", None)
+            return secondary_provider(source) if secondary_provider else getattr(self.secondary, "name", "secondary")
+        return getattr(self.primary, "name", type(self.primary).__name__)
 
     def _primary_failed(self, exc: Exception) -> None:
         if any(getattr(exc, flag, False) for flag in _BLOCKING_FLAGS):
@@ -590,6 +632,7 @@ class FallbackTranslator:
         except Exception as exc:
             raise _combined_failure(primary_error, exc) from exc
         self.secondary_used = True
+        self.fallback_sources.add(text)
         return value
 
     @staticmethod
@@ -614,6 +657,11 @@ class FallbackTranslator:
         except Exception as exc:
             raise _combined_failure(primary_error, exc) from exc
         self.secondary_used = True
+        self.fallback_sources.update(lines)
+        logger.warning("%s could not translate %d lines (%s); used %s",
+                       getattr(self.primary, "name", "primary"), len(lines),
+                       type(primary_error).__name__ if primary_error else "provider down",
+                       getattr(self.secondary, "name", "secondary"))
         return values
 
 

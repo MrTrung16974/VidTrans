@@ -12,9 +12,17 @@ from __future__ import annotations
 import json
 import re
 from collections import deque
+from difflib import SequenceMatcher
 from typing import Any, Sequence
 
 from infrastructure.vietnamese_translator import TranslationServiceError
+
+
+class TranslationOutputError(TranslationServiceError):
+    """The model answered, but the answer is unusable for these lines (bad JSON, wrong count,
+    lines shifted). A smaller batch usually fixes it, unlike rate limits or outages."""
+
+    bad_output = True
 
 CJK_IDEOGRAPH = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 CJK_TARGETS = frozenset({"zh-CN", "ja", "ko"})
@@ -85,9 +93,9 @@ _EXAMPLES = {
             {"id": 3, "text": "这家店真的yyds", "seconds": 1.5},
         ],
         [
-            {"id": 1, "text": "Sao anh lại đến muộn nữa vậy"},
-            {"id": 2, "text": "Kẹt xe mà, anh cũng chịu thôi"},
-            {"id": 3, "text": "Quán này đỉnh thật sự"},
+            {"id": 1, "source": "你怎么又迟到了啊", "text": "Sao anh lại đến muộn nữa vậy"},
+            {"id": 2, "source": "堵车嘛，我也没办法", "text": "Kẹt xe mà, anh cũng chịu thôi"},
+            {"id": 3, "source": "这家店真的yyds", "text": "Quán này đỉnh thật sự"},
         ],
     ),
 }
@@ -109,7 +117,9 @@ def system_prompt(source_language: str, target_language: str, sample: str = "") 
         "5. Keep names consistent. Chinese person names become their Sino-Vietnamese reading when translating to "
         "Vietnamese (王小明 → Vương Tiểu Minh); keep brand names as written.",
         f"6. Output only {target}. Never leave Chinese characters, pinyin, notes, brackets or explanations.",
-        '7. Reply with JSON only: {"translations": [{"id": <id>, "text": "<translation>"}]}.',
+        '7. Reply with JSON only: {"translations": [{"id": <id>, "source": "<the item text copied exactly>", '
+        '"text": "<translation>"}]}. "source" must be the text of that same id, so each translation stays '
+        "on its own line; translate song lyrics and fragments too instead of skipping them.",
     ]
     example = _EXAMPLES.get((source_language, target_language))
     if example:
@@ -144,37 +154,74 @@ def user_prompt(
     return "\n".join(parts)
 
 
-def parse_translations(text: str, count: int, *, provider: str) -> list[str]:
-    """Accept {"translations": [{id, text}]}, {"translations": [str]} or a bare list."""
+def _comparable(text: str) -> str:
+    """Letters and digits only, Simplified script, case-folded: what an echo must preserve."""
+
+    table = str.maketrans(_TRADITIONAL, _SIMPLIFIED)
+    return "".join(character for character in str(text).translate(table).casefold() if character.isalnum())
+
+
+def _same_line(sent: str, echoed: str) -> bool:
+    sent, echoed = _comparable(sent), _comparable(echoed)
+    if not sent or not echoed:
+        return sent == echoed
+    if sent in echoed or echoed in sent:
+        return min(len(sent), len(echoed)) / max(len(sent), len(echoed)) >= 0.5
+    return SequenceMatcher(None, sent, echoed).ratio() >= 0.6
+
+
+def parse_translations(
+    text: str, count: int, *, provider: str, sources: Sequence[str] | None = None
+) -> list[str]:
+    """Accept {"translations": [{id, source?, text}]}, {"translations": [str]} or a bare list.
+
+    With ``sources``, a model that drops one line and shifts the rest up (padding the
+    end with a repeat) is caught: echoed sources must match, and two different source
+    lines may not come back as the same adjacent translation.
+    """
 
     value = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     value = re.sub(r"^```(?:json)?\s*|\s*```$", "", value, flags=re.IGNORECASE)
     try:
         payload = json.loads(value)
     except ValueError as exc:
-        raise TranslationServiceError(f"{provider}_invalid_translation_json") from exc
+        raise TranslationOutputError(f"{provider}_invalid_translation_json") from exc
     items = payload.get("translations") if isinstance(payload, dict) else payload
     if not isinstance(items, list):
-        raise TranslationServiceError(f"{provider}_invalid_translation_array")
+        raise TranslationOutputError(f"{provider}_invalid_translation_array")
+    echoes: dict[int, str] = {}
     if items and all(isinstance(item, dict) for item in items):
         by_id: dict[int, str] = {}
         for item in items:
             try:
                 by_id[int(item["id"])] = str(item["text"])
             except (KeyError, TypeError, ValueError) as exc:
-                raise TranslationServiceError(f"{provider}_invalid_translation_array") from exc
+                raise TranslationOutputError(f"{provider}_invalid_translation_array") from exc
+            if isinstance(item.get("source"), str):
+                echoes[int(item["id"])] = item["source"]
         if sorted(by_id) != list(range(1, count + 1)):
-            raise TranslationServiceError(f"{provider}_translation_count_mismatch")
+            raise TranslationOutputError(f"{provider}_translation_count_mismatch")
         translated = [by_id[index] for index in range(1, count + 1)]
     elif all(isinstance(item, str) for item in items):
         translated = list(items)
     else:
-        raise TranslationServiceError(f"{provider}_invalid_translation_array")
+        raise TranslationOutputError(f"{provider}_invalid_translation_array")
     if len(translated) != count:
-        raise TranslationServiceError(f"{provider}_translation_count_mismatch")
+        raise TranslationOutputError(f"{provider}_translation_count_mismatch")
     if not all(item.strip() for item in translated):
-        raise TranslationServiceError(f"{provider}_invalid_translation_array")
-    return [item.strip() for item in translated]
+        raise TranslationOutputError(f"{provider}_invalid_translation_array")
+    translated = [item.strip() for item in translated]
+    if sources is not None:
+        for index, echoed in echoes.items():
+            if not _same_line(sources[index - 1], echoed):
+                raise TranslationOutputError(f"{provider}_translation_misaligned")
+        for index in range(1, count):
+            if (
+                _comparable(translated[index]) == _comparable(translated[index - 1])
+                and not _same_line(sources[index], sources[index - 1])
+            ):
+                raise TranslationOutputError(f"{provider}_translation_misaligned")
+    return translated
 
 
 class TranslationHistory:

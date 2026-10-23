@@ -58,7 +58,7 @@ class ASRServiceTests(unittest.TestCase):
 
         model = FakeFasterModel([
             [_segment(0.0, 2.0, "你好"), _segment(30.0, 32.0, "谢谢")],
-            # The gap clip starts 0.3s before the first segment ends.
+            # The recovery clip starts up to 10s before the gap, here at 0s.
             [_segment(10.0, 11.0, "有鬼"), _segment(0.0, 0.4, "好")],
             [],
         ])
@@ -67,12 +67,42 @@ class ASRServiceTests(unittest.TestCase):
         asr._load_audio = lambda model, path: np.zeros(16000 * 40, dtype=np.float32)
         segments = asr.transcribe_chinese("small", Path("v.mp4"))
         self.assertEqual([s["text"] for s in segments], ["你好", "有鬼", "谢谢"])
-        self.assertAlmostEqual(segments[1]["start"], 11.7)
-        self.assertAlmostEqual(segments[1]["words"][0]["end"], 12.7)
+        self.assertAlmostEqual(segments[1]["start"], 10.0)
+        self.assertAlmostEqual(segments[1]["words"][0]["end"], 11.0)
         self.assertFalse(model.calls[1]["vad_filter"])
-        self.assertEqual(len(model.inputs[1]), int(16000 * (30.3 - 1.7)))
+        self.assertFalse(model.calls[1]["condition_on_previous_text"])
+        self.assertNotIn("hallucination_silence_threshold", model.calls[1])
+        self.assertEqual(len(model.inputs[1]), int(16000 * 30.3))
         # The 8s tail after the last segment is a gap too.
         self.assertEqual(len(model.calls), 3)
+
+    def test_repetition_loop_is_dropped_and_its_time_heard_again(self):
+        import numpy as np
+
+        # Job 05a05e62: "我死定了" looped, one segment stretched over 37s of real dialogue.
+        loop = [_segment(0.0, 2.0, "你好"), _segment(190.07, 195.21, "我死定了"),
+                _segment(195.21, 232.56, "我死定了"), _segment(232.56, 233.1, "我死定了"),
+                _segment(240.0, 241.0, "谢谢")]
+        model = FakeFasterModel([loop, [_segment(5.0, 6.0, "我凭什么后悔"), _segment(30.0, 31.0, "我想吃水果")], [], []])
+        model.feature_extractor = SimpleNamespace(sampling_rate=16000)
+        asr = service(model)
+        asr._load_audio = lambda model, path: np.zeros(16000 * 242, dtype=np.float32)
+        texts = [s["text"] for s in asr.transcribe_chinese("small", Path("v.mp4"))]
+        self.assertEqual(texts.count("我死定了"), 1)
+        self.assertIn("我想吃水果", texts)
+
+    def test_loop_filter_keeps_real_repeats(self):
+        from pipeline.asr import drop_repetition_loops
+
+        def seg(start, end, text):
+            return {"start": start, "end": end, "text": text}
+
+        kept = drop_repetition_loops([
+            seg(0, 1, "别别别别"), seg(1, 2, "有鬼"), seg(2, 3, "有鬼"),
+            seg(3, 9, "有诗,有诗,有诗,有诗,有诗,有诗"), seg(10, 11, "媽媽"), seg(11, 12, "媽媽"), seg(12, 13, "媽媽"),
+            seg(14, 15, "喊喊喊喊喊喊"), seg(20, 40, "我死定了"),
+        ])
+        self.assertEqual([s["text"] for s in kept], ["别别别别", "有鬼", "有鬼", "媽媽", "媽媽"])
 
     def test_gap_hallucinations_are_discarded(self):
         import numpy as np

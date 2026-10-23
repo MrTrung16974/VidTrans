@@ -2616,7 +2616,7 @@ def process_video(
                 "asr_beam_size": ASR_SERVICE.config.beam_size,
                 "asr_vad": ASR_SERVICE.config.vad,
                 "asr_vad_min_silence_ms": ASR_SERVICE.config.vad_min_silence_ms,
-                "asr_vad_gap_recovery": 1,
+                "asr_vad_gap_recovery": 2,
                 "ocr_enabled": SETTINGS.ocr_backend != "off",
                 "ocr_backend": SETTINGS.ocr_backend,
                 "ocr_sample_fps": ocr_sample_fps,
@@ -2710,7 +2710,7 @@ def process_video(
                 "source_language": effective_source_language,
                 "target_language": target_language,
                 "translation_provider": translation_provider,
-                "translation_pipeline_version": 3,
+                "translation_pipeline_version": 4,
                 "max_batch_chars": 1200,
             }
         )
@@ -2759,15 +2759,22 @@ def process_video(
         translation_fallback_cues = sum(
             1 for segment in translated_segments if segment.get("translation_status") == "source_fallback"
         )
+        translation_backup_cues = sum(1 for segment in translated_segments if segment.get("translation_fallback"))
+        if translation_fallback_cues:
+            translation_detail = f"Có {translation_fallback_cues} câu cần kiểm tra lại bản dịch"
+        elif translation_backup_cues:
+            translation_detail = (
+                f"Đã dịch đầy đủ; {translation_backup_cues} câu phải dịch bằng nhà cung cấp dự phòng "
+                "vì AI dịch đã chọn bị lỗi"
+            )
+        else:
+            translation_detail = "Đã dịch đầy đủ các câu"
         update_job(
             job_id,
             translation_fallback_cues=translation_fallback_cues,
+            translation_backup_cues=translation_backup_cues,
             review_cues=sum(1 for segment in translated_segments if segment.get("needs_review")),
-            step_detail=(
-                f"Có {translation_fallback_cues} câu cần kiểm tra lại bản dịch"
-                if translation_fallback_cues
-                else "Đã dịch đầy đủ các câu"
-            ),
+            step_detail=translation_detail,
         )
         # Publish diagnostics even on failure, before any TTS, rendering or posting.
         translation_path = output_dir / f"{job_id}.translation.json"
@@ -3213,7 +3220,14 @@ def process_video(
             **artifact_fields,
             **tiktok_publish_fields,
         }
-        tts_fallback = (JOB_SERVICE.get(job_id) or {}).get("tts_fallback")
+        finished_job = JOB_SERVICE.get(job_id) or {}
+        tts_fallback = finished_job.get("tts_fallback")
+        backup_cues = int(finished_job.get("translation_backup_cues") or 0)
+        if backup_cues:
+            completion_fields["step_detail"] = (
+                f"Hoàn tất; {backup_cues} câu được dịch bằng nhà cung cấp dự phòng vì AI dịch đã chọn bị lỗi. "
+                "Bấm Chạy lại nếu muốn dịch lại toàn bộ bằng AI đã chọn"
+            )
         if tts_fallback:
             completion_fields["step_detail"] = (
                 f"Đã lồng tiếng bằng Edge TTS vì {tts_fallback['from']} {tts_fallback['reason']}; "
@@ -6002,6 +6016,7 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         "tiktok_publish_status": None,
         "tiktok_publish_detail": None,
         "tts_fallback": None,
+        "translation_backup_cues": None,
     }
     artifact_keys = ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file")
     for key in artifact_keys:
