@@ -34,7 +34,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
   function controls() {
     const caption = $('#tiktokCaption').value;
     $('#tiktokCaptionCount').textContent = `${caption.length.toLocaleString('vi-VN')} / 2.200`;
-    $('#tiktokPrepareButton').disabled = locked || submitting || loading || !draft || !status?.available || Boolean(status?.attempt) || !caption.trim() || caption.length > 2200 || !$('#tiktokReviewConsent').checked;
+    $('#tiktokPrepareButton').disabled = locked || submitting || loading || !draft || !status?.available || Boolean(status?.attempt) || !caption.trim() || caption.length > 2200 || !$('#tiktokStudioReviewConsent').checked;
     $('#tiktokRepostButton').disabled = locked || submitting || loading || !draft || !status?.available || Boolean(status?.attempt) || !caption.trim() || caption.length > 2200;
     const mode = $('#tiktokPublishMode').value;
     const needsCaption = mode !== 'INBOX_DRAFT';
@@ -93,6 +93,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     const attempt = result.attempt;
     if (attemptId !== attempt?.id) $('#tiktokResolveConsent').checked = false;
     attemptId = attempt?.id;
+    $('#tiktokStudioPrepare').classList.toggle('is-hidden', Boolean(attempt));
     $('#tiktokAttemptPanel').classList.toggle('is-hidden', !attempt);
     if (attempt) {
       $('#tiktokAttemptTitle').textContent = labels[attempt.state] || 'Kiểm tra TikTok Web';
@@ -177,6 +178,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokCaptionSuggestion').classList.add('is-hidden');
     loading = true;
     $('#tiktokReviewConsent').checked = false;
+    $('#tiktokStudioReviewConsent').checked = false;
     controls();
     try {
       const data = await requestJson(`/api/v1/jobs/${encodeURIComponent(jobId)}/tiktok-draft`);
@@ -301,7 +303,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       body.set('caption', $('#tiktokCaption').value);
       body.set('reviewed', 'true');
       await requestJson(`/api/v1/jobs/${encodeURIComponent(current.job_id)}/tiktok-browser/prepare`, { method: 'POST', body });
-      $('#tiktokReviewConsent').checked = false;
+      $('#tiktokStudioReviewConsent').checked = false;
       await refresh();
       switchPlatform('tiktok-studio');
       toast(repost ? 'Đang tải lại video lên TikTok Web.' : 'Đã nhận yêu cầu chuẩn bị. Đang mở TikTok Web để bạn kiểm tra và đăng.');
@@ -375,11 +377,16 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       controls();
     }
   });
-  $('#tiktokCaption').addEventListener('input', () => { $('#tiktokReviewConsent').checked = false; instagram.changed(); extraSocial.forEach(workspace => workspace.changed()); controls(); });
+  $('#tiktokCaption').addEventListener('input', () => {
+    $('#tiktokReviewConsent').checked = false;
+    $('#tiktokStudioReviewConsent').checked = false;
+    instagram.changed(); extraSocial.forEach(workspace => workspace.changed()); controls();
+  });
   $('#tiktokPublishMode').addEventListener('change', updatePublishMode);
   $('#tiktokPrivacy').addEventListener('change', () => { $('#tiktokReviewConsent').checked = false; publishKey = null; controls(); });
   $('#tiktokScheduleAt').addEventListener('change', () => { $('#tiktokReviewConsent').checked = false; publishKey = null; controls(); });
   $('#tiktokReviewConsent').addEventListener('change', controls);
+  $('#tiktokStudioReviewConsent').addEventListener('change', controls);
   $('#tiktokOfficialPublish').addEventListener('click', submitOfficialPublish);
   $('#tiktokCancelSchedule').addEventListener('click', async () => {
     if (!publishAttempt || publishAttempt.status !== 'SCHEDULED_LOCAL') return;
@@ -409,6 +416,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     $('#tiktokCaption').value = suggestion;
     edits.set(draft.job_id, suggestion);
     $('#tiktokReviewConsent').checked = false;
+    $('#tiktokStudioReviewConsent').checked = false;
     $('#tiktokCaptionSuggestion').classList.add('is-hidden');
     controls();
   });
@@ -437,6 +445,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       const result = await requestJson(`/api/v1/tiktok-browser/attempts/${status.attempt.id}/resolve`, { method: 'POST', body });
       render(result);
       $('#tiktokReviewConsent').checked = false;
+      $('#tiktokStudioReviewConsent').checked = false;
       if (draft) await openDraft(draft.job_id);
       toast('Đã kết thúc lượt chuẩn bị.');
     } catch (error) { toast(error.message, true); controls(); }
@@ -505,6 +514,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       clearInterval(apiTimer); apiTimer = null;
       $('#tiktokVideoPreview').pause();
       $('#tiktokReviewConsent').checked = false;
+      $('#tiktokStudioReviewConsent').checked = false;
       $('#tiktokBrowserFrame').removeAttribute('src');
       lastBrowserUrl = null;
       instagram.leave(); extraSocial.forEach(workspace => workspace.leave());

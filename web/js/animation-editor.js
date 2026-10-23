@@ -48,35 +48,49 @@ export function renderAnimatedScenes({ storyboard, media, shots: reports, option
         : still ? `<img src="${escapeHtml(still)}" alt="Keyframe ${label}" loading="lazy">`
           : '<span class="comic-scene-noimg">Chưa có keyframe — bấm "Chỉ sinh keyframe" hoặc "Xem trước shot"</span>';
       return `<form class="comic-shot" data-shot="${label}">
-        <div class="comic-shot-media">${visual}${shot.keyframe_override ? '<b class="comic-badge">Keyframe tải lên</b>' : ""}</div>
-        <div class="comic-shot-status">${statusBadges(report, shot, escapeHtml)}</div>
-        <header><strong>Shot ${label}</strong>
-          ${select("mode", ["image_to_video", "camera_2_5d"], { image_to_video: "Chuyển động theo dự án", camera_2_5d: "Chỉ camera 2.5D" }, shot.animation.mode, disabled, escapeHtml)}</header>
-        <div class="comic-shot-camera">
-          ${select("shot_type", options.shot_types, SHOT_TYPE_LABELS, shot.camera.shot_type, disabled, escapeHtml)}
-          ${select("movement", options.shot_movements, SHOT_MOVEMENT_LABELS, shot.camera.movement, disabled, escapeHtml)}
-          ${select("angle", options.shot_angles, SHOT_ANGLE_LABELS, shot.camera.angle, disabled, escapeHtml)}
-        </div>
-        <label class="field"><span>Lời dẫn</span><textarea name="narration" rows="2" maxlength="800"${disabled}>${escapeHtml(shot.narration)}</textarea></label>
-        <label class="field"><span>Lời thoại — <code>id: lời</code></span><textarea name="dialogue" rows="1"${disabled}>${escapeHtml(dialogueText(shot.dialogue))}</textarea></label>
-        <label class="field"><span>Chuyển động (tiếng Anh)</span><textarea name="motion_prompt" rows="2" maxlength="800"${disabled}>${escapeHtml(shot.motion_prompt)}</textarea></label>
-        <details><summary>Keyframe, nhân vật, thời lượng</summary>
-          <label class="field"><span>Khung hình đầu (tiếng Anh)</span><textarea name="keyframe_prompt" rows="3" maxlength="1200"${disabled}>${escapeHtml(shot.keyframe_prompt)}</textarea></label>
-          <label class="field"><span>Nhân vật (id, dấu phẩy)</span><input name="characters" value="${escapeHtml(shot.characters.join(", "))}"${disabled}></label>
-          <div class="comic-inline">
-            <label class="field"><span>Thời lượng tối thiểu (s)</span><input name="duration_seconds" type="number" min="2" max="10" step="0.5" value="${shot.duration_seconds}"${disabled}></label>
-            <label class="field"><span>Độ mạnh chuyển động</span><input name="motion_strength" type="number" min="0" max="1" step="0.05" value="${shot.animation.motion_strength}"${disabled}></label>
+        <div class="comic-shot-visual-col">
+          <header class="comic-shot-head">
+            <div class="comic-shot-title-group">
+              <strong class="comic-shot-title">Shot ${label}</strong>
+              <div class="comic-shot-status">${statusBadges(report, shot, escapeHtml)}</div>
+            </div>
+            <div class="comic-shot-head-actions">
+              <button class="button secondary comic-shot-icon-btn" type="button" data-shot-op="insert"${disabled} title="Chèn thêm shot ngay sau shot này">+ Shot sau</button>
+              <button class="button secondary comic-danger comic-shot-icon-btn" type="button" data-shot-op="delete"${disabled} title="Xóa shot này">Xóa</button>
+            </div>
+          </header>
+          <div class="comic-shot-media">${visual}${shot.keyframe_override ? '<b class="comic-badge">Keyframe tải lên</b>' : ""}</div>
+          <div class="comic-shot-media-bar">
+            ${select("mode", ["image_to_video", "camera_2_5d"], { image_to_video: "Chuyển động theo dự án", camera_2_5d: "Chỉ camera 2.5D" }, shot.animation.mode, disabled, escapeHtml)}
+            <label class="button secondary comic-upload${locked ? " is-disabled" : ""}">Đổi keyframe<input type="file" accept="image/png,image/jpeg,image/webp" data-shot-upload${disabled} hidden></label>
+            ${shot.keyframe_override ? `<button class="button secondary" type="button" data-shot-op="clear-keyframe"${disabled}>Bỏ keyframe</button>` : ""}
           </div>
-          <label class="field"><span>Negative prompt</span><input name="negative_prompt" value="${escapeHtml(shot.negative_prompt)}" maxlength="600"${disabled}></label>
-        </details>
-        <div class="comic-scene-actions">
-          <button class="button primary" type="submit"${disabled}>Lưu</button>
-          <button class="button secondary" type="button" data-shot-op="preview"${disabled}>Xem trước shot</button>
-          <button class="button secondary" type="button" data-shot-op="regenerate"${disabled} title="Giữ keyframe và giọng, tạo chuyển động mới với seed khác">Tạo lại chuyển động</button>
-          <label class="button secondary comic-upload${locked ? " is-disabled" : ""}">Đổi keyframe<input type="file" accept="image/png,image/jpeg,image/webp" data-shot-upload${disabled} hidden></label>
-          ${shot.keyframe_override ? `<button class="button secondary" type="button" data-shot-op="clear-keyframe"${disabled}>Bỏ keyframe tải lên</button>` : ""}
-          <button class="button secondary" type="button" data-shot-op="insert"${disabled}>+ Shot sau</button>
-          <button class="button secondary comic-danger" type="button" data-shot-op="delete"${disabled}>Xóa shot</button>
+          <div class="comic-shot-camera">
+            <label class="comic-camera-field"><span>Cỡ cảnh</span>${select("shot_type", options.shot_types, SHOT_TYPE_LABELS, shot.camera.shot_type, disabled, escapeHtml)}</label>
+            <label class="comic-camera-field"><span>Chuyển động máy</span>${select("movement", options.shot_movements, SHOT_MOVEMENT_LABELS, shot.camera.movement, disabled, escapeHtml)}</label>
+            <label class="comic-camera-field"><span>Góc máy</span>${select("angle", options.shot_angles, SHOT_ANGLE_LABELS, shot.camera.angle, disabled, escapeHtml)}</label>
+          </div>
+        </div>
+        <div class="comic-shot-body-col">
+          <label class="field"><span>Lời dẫn</span><textarea name="narration" rows="2" maxlength="800"${disabled}>${escapeHtml(shot.narration)}</textarea></label>
+          <label class="field"><span>Lời thoại — <code>id: lời</code></span><textarea name="dialogue" rows="1" placeholder="id_nhan_vat: Lời thoại…"${disabled}>${escapeHtml(dialogueText(shot.dialogue))}</textarea></label>
+          <label class="field"><span>Chuyển động (tiếng Anh)</span><textarea name="motion_prompt" rows="2" maxlength="800"${disabled}>${escapeHtml(shot.motion_prompt)}</textarea></label>
+          <details class="comic-shot-details"><summary>Keyframe, nhân vật, thời lượng</summary>
+            <div class="comic-shot-details-body">
+              <label class="field"><span>Khung hình đầu (tiếng Anh)</span><textarea name="keyframe_prompt" rows="3" maxlength="1200"${disabled}>${escapeHtml(shot.keyframe_prompt)}</textarea></label>
+              <label class="field"><span>Nhân vật (id, dấu phẩy)</span><input name="characters" value="${escapeHtml(shot.characters.join(", "))}"${disabled}></label>
+              <div class="comic-inline">
+                <label class="field"><span>Thời lượng tối thiểu (s)</span><input name="duration_seconds" type="number" min="2" max="10" step="0.5" value="${shot.duration_seconds}"${disabled}></label>
+                <label class="field"><span>Độ mạnh chuyển động</span><input name="motion_strength" type="number" min="0" max="1" step="0.05" value="${shot.animation.motion_strength}"${disabled}></label>
+              </div>
+              <label class="field"><span>Negative prompt</span><input name="negative_prompt" value="${escapeHtml(shot.negative_prompt)}" maxlength="600"${disabled}></label>
+            </div>
+          </details>
+          <div class="comic-scene-actions comic-shot-footer">
+            <button class="button primary" type="submit"${disabled}>Lưu</button>
+            <button class="button secondary" type="button" data-shot-op="preview"${disabled}>Xem trước shot</button>
+            <button class="button secondary" type="button" data-shot-op="regenerate"${disabled} title="Giữ keyframe và giọng, tạo chuyển động mới với seed khác">Tạo lại chuyển động</button>
+          </div>
         </div>
       </form>`;
     }).join("");

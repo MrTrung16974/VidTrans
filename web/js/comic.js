@@ -1,6 +1,6 @@
 // Story -> comic / animated video workspace: create projects, review the storyboard, edit scenes or shots
 // and re-render only what changed.
-import { renderAnimatedScenes, renderReferenceGallery, shotPatchFromForm } from "./animation-editor.js?v=20261022-1";
+import { renderAnimatedScenes, renderReferenceGallery, shotPatchFromForm } from "./animation-editor.js?v=20261023-smooth";
 
 const ACTIVE = new Set(["queued", "scheduled", "processing", "cancelling"]);
 const STEP_LABELS = {
@@ -15,6 +15,11 @@ const MOTION_LABELS = {
   pan_up: "Lia lên", pan_down: "Lia xuống", static: "Đứng yên",
 };
 const POLL_MS = 2500;
+// #comic/new shows the "new story" form, #comic/<job id> one project; both go through the
+// hash so the browser's Back button moves between them.
+const NEW_ROUTE = "#comic/new";
+const projectRoute = jobId => `#comic/${encodeURIComponent(jobId)}`;
+const narrowLayout = () => window.matchMedia("(max-width: 960px)").matches;
 
 export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   const $ = selector => document.querySelector(selector);
@@ -81,14 +86,15 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       const data = await requestJson("/api/v1/jobs?limit=200");
       const projects = (data.items || []).filter(job => job.job_action === "comic_video");
       if (!projects.length) {
-        list.innerHTML = '<p class="comic-empty">Chưa có dự án nào. Dán một chương truyện bên cạnh để bắt đầu.</p>';
+        list.innerHTML = '<p class="comic-empty">Chưa có dự án nào. Bấm "Tạo truyện mới" để bắt đầu.</p>';
         return;
       }
       list.innerHTML = projects.map(job => {
         const comic = job.comic || {};
         const meta = [comic.video_mode === "animated" ? "Hoạt hình" : "Truyện tranh", comic.scenes ? `${comic.scenes} cảnh` : "",
           comic.shots ? `${comic.shots} shot` : "", comic.aspect_ratio || ""].filter(Boolean).join(" · ");
-        return `<button type="button" class="comic-project${current?.job?.job_id === job.job_id ? " is-active" : ""}" data-job="${escapeHtml(job.job_id)}">
+        const active = current?.job?.job_id === job.job_id;
+        return `<button type="button" class="comic-project${active ? " is-active" : ""}"${active ? ' aria-current="true"' : ""} data-job="${escapeHtml(job.job_id)}">
           <strong>${escapeHtml(comic.title || job.filename || job.job_id)}</strong>
           <span class="status-pill status-${statusClass(job)}">${escapeHtml(STEP_LABELS[job.step] || job.status)}</span>
           <small>${escapeHtml(meta)}</small></button>`;
@@ -98,13 +104,23 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     }
   }
 
-  async function open(jobId) {
+  async function open(jobId, { reveal = false } = {}) {
     current = await api(`/projects/${encodeURIComponent(jobId)}`);
     // A shareable link straight to this project.
-    if (location.hash !== `#comic/${jobId}`) history.replaceState(null, "", `#comic/${jobId}`);
+    if (location.hash !== projectRoute(jobId)) history.replaceState(null, "", projectRoute(jobId));
     render();
     schedulePoll();
     loadProjects();
+    // On one-column layouts the project opens below the list; bring it into view.
+    if (reveal && narrowLayout()) editor.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function showNew() {
+    current = null;
+    clearTimeout(pollTimer);
+    render();
+    loadProjects();
+    if (narrowLayout()) form.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function schedulePoll() {
@@ -125,6 +141,9 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   }
 
   function render() {
+    // The main column shows either the new-story form or the selected project, never both.
+    form.classList.toggle("is-hidden", Boolean(current));
+    $("#comicNewButton")?.classList.toggle("is-current", !current);
     if (!current) { editor.classList.add("is-hidden"); return; }
     editor.classList.remove("is-hidden");
     const { job, storyboard, media } = current;
@@ -291,6 +310,8 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       toast("Đã tạo dự án, hệ thống đang chia cảnh…");
       form.elements.text.value = "";
       form.elements.file.value = "";
+      // Push the project's route so Back returns to the form.
+      history.pushState(null, "", projectRoute(created.job_id));
       await open(created.job_id);
       editor.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (error) {
@@ -314,10 +335,31 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
 
   $("#comicProjectList").addEventListener("click", event => {
     const button = event.target.closest("[data-job]");
-    if (button) open(button.dataset.job).catch(error => toast(error.message, true));
+    if (!button) return;
+    if (location.hash === projectRoute(button.dataset.job)) {
+      open(button.dataset.job, { reveal: true }).catch(error => toast(error.message, true));
+    } else {
+      location.hash = projectRoute(button.dataset.job);  // hashchange -> enter() opens it
+    }
   });
 
   editor.addEventListener("click", async event => {
+    const viewModeBtn = event.target.closest("[data-comic-view-mode]");
+    if (viewModeBtn) {
+      const mode = viewModeBtn.dataset.comicViewMode;
+      $("#comicScenes")?.setAttribute("data-view-mode", mode);
+      $$("[data-comic-view-mode]").forEach(btn => btn.classList.toggle("is-active", btn === viewModeBtn));
+      try { localStorage.setItem("vidtrans_comic_view_mode", mode); } catch (_) {}
+      return;
+    }
+    const sidebarBtn = event.target.closest("#comicSidebarToggle");
+    if (sidebarBtn) {
+      const layout = view.querySelector(".comic-layout");
+      const collapsed = layout?.classList.toggle("is-sidebar-collapsed");
+      sidebarBtn.classList.toggle("is-active", Boolean(collapsed));
+      sidebarBtn.textContent = collapsed ? "◨ Hiện dự án" : "◧ Mở rộng khung";
+      return;
+    }
     const action = event.target.closest("[data-comic-action]")?.dataset.comicAction;
     const op = event.target.closest("[data-scene-op]")?.dataset.sceneOp;
     const shotOp = event.target.closest("[data-shot-op]")?.dataset.shotOp;
@@ -461,14 +503,30 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     async enter() {
       entered = true;
       try {
+        const savedMode = localStorage.getItem("vidtrans_comic_view_mode");
+        if (savedMode && ["grid", "wide", "list"].includes(savedMode)) {
+          $("#comicScenes")?.setAttribute("data-view-mode", savedMode);
+          $$("[data-comic-view-mode]").forEach(btn => btn.classList.toggle("is-active", btn.dataset.comicViewMode === savedMode));
+        }
+      } catch (_) {}
+      try {
         await loadOptions();
       } catch (error) {
         toast(error.message, true);
       }
+      if (location.hash === NEW_ROUTE) {
+        showNew();
+        return;
+      }
       const linked = location.hash.match(/^#comic\/([A-Za-z0-9_-]{1,64})$/)?.[1];
       if (linked && linked !== current?.job?.job_id) {
-        await open(linked).catch(error => toast(error.message, true));
+        await open(linked, { reveal: true }).catch(error => {
+          toast(error.message, true);
+          showNew();
+        });
       } else {
+        // Plain #comic (the nav link) keeps the last opened project, or shows the form.
+        render();
         await loadProjects();
         if (current) schedulePoll();
       }

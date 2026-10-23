@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261023-dock4" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261023-comic-smooth" />
   </head>
   <body>
     <div class="app-shell">
@@ -654,6 +654,15 @@
           </div>
 
           <div class="comic-layout">
+            <aside class="card comic-projects" aria-label="Dự án truyện">
+              <div class="comic-projects-head">
+                <h2>Dự án truyện</h2>
+                <a id="comicNewButton" class="button primary small-btn" href="#comic/new">+ Tạo truyện mới</a>
+              </div>
+              <div id="comicProjectList" class="comic-project-list"><p class="comic-empty">Đang tải…</p></div>
+            </aside>
+
+            <div class="comic-main">
             <form id="comicForm" class="card comic-form" novalidate>
               <div class="step-heading">
                 <span class="step-badge">1</span>
@@ -707,12 +716,6 @@
               <button class="button primary full" type="submit">Tạo video truyện</button>
             </form>
 
-            <aside class="card comic-projects">
-              <h2>Dự án truyện</h2>
-              <div id="comicProjectList" class="comic-project-list"><p class="comic-empty">Đang tải…</p></div>
-            </aside>
-          </div>
-
           <section id="comicEditor" class="comic-editor is-hidden" aria-live="polite">
             <div class="card comic-editor-head">
               <div class="comic-editor-title">
@@ -734,14 +737,28 @@
               <div id="comicWarnings" class="comic-warnings is-hidden"></div>
             </div>
             <div id="comicCharactersBlock" class="comic-block">
-              <h3>Nhân vật</h3>
+              <div class="comic-block-head">
+                <h3>Nhân vật</h3>
+              </div>
               <div id="comicCharacters" class="comic-characters"></div>
             </div>
             <div class="comic-block">
-              <h3>Storyboard</h3>
-              <div id="comicScenes" class="comic-scenes"></div>
+              <div class="comic-block-head">
+                <h3>Storyboard</h3>
+                <div class="comic-layout-toolbar">
+                  <button id="comicSidebarToggle" type="button" class="comic-sidebar-toggle" title="Ẩn/hiện danh sách dự án để mở rộng không gian biên tập">◧ Mở rộng khung</button>
+                  <div class="comic-layout-switch" role="group" aria-label="Bố cục Storyboard">
+                    <button type="button" class="comic-layout-btn is-active" data-comic-view-mode="grid" title="Bố cục lưới tiêu chuẩn (2-3 cột)">Lưới cân đối</button>
+                    <button type="button" class="comic-layout-btn" data-comic-view-mode="wide" title="Bố cục lưới 2 cột rộng">2 cột rộng</button>
+                    <button type="button" class="comic-layout-btn" data-comic-view-mode="list" title="Bố cục danh sách ngang">Danh sách ngang</button>
+                  </div>
+                </div>
+              </div>
+              <div id="comicScenes" class="comic-scenes" data-view-mode="grid"></div>
             </div>
           </section>
+            </div>
+          </div>
         </section>
 
         <section id="jobsView" class="view is-hidden">
@@ -1090,9 +1107,6 @@
                       <span class="tiktok-note-symbol">♪</span>
                       <span>Đăng ngay qua TikTok API</span>
                     </button>
-                    <button id="tiktokPrepareButton" class="button secondary full publish-studio-btn" type="button" disabled>
-                      <span>Chuyển sang TikTok Web chính</span>
-                    </button>
                   </div>
                 </div>
               </section>
@@ -1125,6 +1139,16 @@
                       <button id="tiktokBrowserCheck" class="button secondary small-btn" type="button" title="Kiểm tra trạng thái phiên">Kiểm tra phiên</button>
                       <button id="tiktokBrowserLogout" class="button secondary small-btn" type="button" title="Đăng xuất phiên trình duyệt">Ngắt kết nối</button>
                     </div>
+                  </div>
+                  <div id="tiktokStudioPrepare" class="tiktok-studio-prepare">
+                    <label class="tiktok-check">
+                      <input id="tiktokStudioReviewConsent" type="checkbox" />
+                      <span>Tôi đã xem video, duyệt caption và xác nhận đây là nội dung muốn chuyển sang TikTok Web.</span>
+                    </label>
+                    <button id="tiktokPrepareButton" class="button primary full publish-studio-btn" type="button" disabled>
+                      <span>Chuyển video sang TikTok Web</span>
+                    </button>
+                    <small>Sau khi video được tải lên, nút “Đăng bài ngay” sẽ xuất hiện để bạn kiểm tra và xác nhận lần cuối.</small>
                   </div>
                   <div id="tiktokAttemptPanel" class="tiktok-attempt is-hidden" role="status">
                     <strong id="tiktokAttemptTitle"></strong>
@@ -1948,6 +1972,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261022-cit"></script>
+    <script type="module" src="/js/app.js?v=20261023-comic-projects"></script>
   </body>
 </html>

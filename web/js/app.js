@@ -1,8 +1,8 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20261019-1";
+import { createTikTokWorkspace } from "./tiktok.js?v=20261023-publish-cta";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
-import { createComicWorkspace } from "./comic.js?v=20261022-cit";
+import { createComicWorkspace } from "./comic.js?v=20261023-smooth";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
