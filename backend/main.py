@@ -4751,12 +4751,19 @@ def send_password_reset_email(email: str, code: str) -> None:
     try:
         MAILER.send(
             to=email,
-            subject="Mã đặt lại mật khẩu VidTrans",
+            subject="[VidTrans] Mã xác nhận đặt lại mật khẩu",
             text=(
-                f"Mã xác nhận đặt lại mật khẩu VidTrans của bạn là: {code}\n\n"
-                f"Mã có hiệu lực trong {minutes} phút và chỉ dùng được một lần.\n"
-                "Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này; "
-                "mật khẩu hiện tại vẫn giữ nguyên.\n"
+                "Xin chào,\n\n"
+                "VidTrans đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. "
+                "Vui lòng sử dụng mã xác nhận dưới đây để tiếp tục:\n\n"
+                f"MÃ XÁC NHẬN: {code}\n\n"
+                f"Mã có hiệu lực trong {minutes} phút và chỉ có thể sử dụng một lần. "
+                "Vì lý do bảo mật, vui lòng không chia sẻ mã này với bất kỳ ai.\n\n"
+                "Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email. "
+                "Mật khẩu hiện tại của bạn vẫn được giữ nguyên.\n\n"
+                "Trân trọng,\n"
+                "Đội ngũ VidTrans\n"
+                "Liên hệ hỗ trợ: 095510400\n"
             ),
         )
     except MailDeliveryError:

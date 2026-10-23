@@ -1264,6 +1264,7 @@ function canResetPassword(account) {
 function setPasswordVisible(button, visible) {
   if (!button) return;
   const input = document.getElementById(button.dataset.passwordToggle);
+  if (!input) return;
   input.type = visible ? "text" : "password";
   const label = visible ? "Ẩn mật khẩu" : "Hiện mật khẩu";
   button.setAttribute("aria-pressed", String(visible));
@@ -1981,6 +1982,7 @@ function setAuthMode(mode, message) {
   const authMessage = $("#authMessage");
   authMessage.textContent = message ?? config.message;
   authMessage.classList.remove("error");
+  $$("#authGate [data-password-toggle]").forEach(btn => setPasswordVisible(btn, false));
   setTimeout(() => $(config.focus).focus(), 0);
 }
 
@@ -2051,6 +2053,7 @@ $("#authResetConfirmForm").addEventListener("submit", async event => {
     const payload = await requestJson("/api/v1/auth/password-reset/confirm", { method: "POST", body });
     form.reset();
     setPasswordVisible($("[data-password-toggle=resetNewPassword]"), false);
+    setPasswordVisible($("[data-password-toggle=resetNewPasswordConfirm]"), false);
     $("#authUsername").value = passwordResetEmail;
     setAuthMode("login", payload.message);
     setTimeout(() => $("#authPassword").focus(), 0);

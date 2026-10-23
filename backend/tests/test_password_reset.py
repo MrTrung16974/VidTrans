@@ -224,6 +224,9 @@ class PasswordResetApiTests(unittest.TestCase):
         response = self.request_code()
         self.assertEqual(response.status_code, 202)
         self.assertEqual(self.mailer.sent[0]["to"], "editor@test.local")
+        self.assertEqual(self.mailer.sent[0]["subject"], "[VidTrans] Mã xác nhận đặt lại mật khẩu")
+        self.assertIn("Đội ngũ VidTrans", self.mailer.sent[0]["text"])
+        self.assertIn("Liên hệ hỗ trợ: 095510400", self.mailer.sent[0]["text"])
 
         confirmed = self.confirm(self.sent_code())
 
