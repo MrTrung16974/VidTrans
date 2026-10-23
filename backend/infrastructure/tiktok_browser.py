@@ -38,6 +38,11 @@ BROWSER_AVAILABILITY_GRACE_SECONDS = 20.0
 CAPTION_STABLE_CHECKS = 15
 # TikTok Studio's Description is a DraftJS editor. Its role has changed between
 # builds (textbox -> combobox), so anchor on the caption container instead.
+# After Post succeeds TikTok Studio leaves the upload route for its content
+# list. Seeing that redirect is enough to close the attempt without a second
+# manual confirmation; otherwise the operator still checks the result.
+PUBLISH_CONFIRM_CHECKS = 60
+PUBLISH_CONFIRM_POLL_SECONDS = 1.0
 CAPTION_EDITOR_SELECTOR = (
     '[data-e2e="caption_container"] [contenteditable="true"]:visible, '
     '.caption-editor [contenteditable="true"]:visible, '
@@ -596,12 +601,19 @@ class TikTokBrowserManager:
                 raise TikTokBrowserError("Trình duyệt đang bận. Hãy thử lại sau")
             self._update(attempt_id, "publishing", "Đang gửi yêu cầu đăng bài tới TikTok")
         try:
-            self._with_browser(self._click_publish)
-            self._update(
-                attempt_id,
-                "publish_submitted",
-                "Đã bấm Đăng trên TikTok. Kiểm tra thông báo kết quả trong TikTok Studio rồi kết thúc lượt chuẩn bị",
-            )
+            confirmed = self._with_browser(self._click_publish)
+            if confirmed:
+                with self._db() as db:
+                    db.execute("UPDATE attempts SET active=0, state='published', message=? WHERE id=? AND active=1", (
+                        "TikTok đã nhận bài và chuyển sang trang Quản lý nội dung. Bài có thể đang chờ TikTok duyệt",
+                        attempt_id,
+                    ))
+            else:
+                self._update(
+                    attempt_id,
+                    "publish_submitted",
+                    "Đã bấm Đăng trên TikTok. Kiểm tra thông báo kết quả trong TikTok Studio rồi kết thúc lượt chuẩn bị",
+                )
         except TikTokBrowserError:
             self._update(attempt_id, "needs_review", "Chưa thể bấm Đăng. Kiểm tra nút Post và các yêu cầu còn thiếu trong TikTok Studio")
             raise
@@ -614,7 +626,7 @@ class TikTokBrowserManager:
             self._browser_lock.release()
         return self.status()
 
-    def _click_publish(self, browser) -> None:
+    def _click_publish(self, browser) -> bool:
         page = self._page(browser)
         page.bring_to_front()
         if not is_tiktok_url(page.url) or not urllib.parse.urlsplit(page.url).path.startswith("/tiktokstudio/upload"):
@@ -625,3 +637,8 @@ class TikTokBrowserManager:
         if button.count() != 1 or not button.first.is_enabled():
             raise TikTokBrowserError("Nút Post chưa sẵn sàng. Kiểm tra quyền riêng tư và các mục bắt buộc")
         button.first.click(timeout=10_000)
+        for _ in range(PUBLISH_CONFIRM_CHECKS):
+            if is_tiktok_url(page.url) and urllib.parse.urlsplit(page.url).path.startswith("/tiktokstudio/content"):
+                return True
+            page.wait_for_timeout(PUBLISH_CONFIRM_POLL_SECONDS * 1000)
+        return False

@@ -207,7 +207,9 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
       $('#tiktokPreviousAttempt').classList.toggle('is-hidden', !warn);
       if (warn) {
         const when = new Date(previous.created_at * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-        $('#tiktokPreviousAttemptText').textContent = `Video này đã được tải lên TikTok Web lúc ${when}. Kiểm tra mục Bài đăng / Bản nháp trên TikTok để tránh đăng trùng.`;
+        $('#tiktokPreviousAttemptText').textContent = previous.state === 'published'
+          ? `Video này đã được đăng lên TikTok lúc ${when}. Kiểm tra mục Bài đăng trên TikTok trước khi đăng lại để tránh trùng.`
+          : `Video này đã được tải lên TikTok Web lúc ${when}. Kiểm tra mục Bài đăng / Bản nháp trên TikTok để tránh đăng trùng.`;
       }
       await loadLatestPublish(jobId);
       instagram.setDraft();
@@ -444,7 +446,15 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
     try {
       const result = await requestJson(`/api/v1/tiktok-browser/attempts/${status.attempt.id}/publish`, { method: 'POST', body });
       render(result);
-      toast('Đã bấm Đăng trên TikTok. Kiểm tra thông báo kết quả trong khung TikTok Web.');
+      if (result.attempt) {
+        toast('Đã bấm Đăng trên TikTok. Kiểm tra thông báo kết quả trong khung TikTok Web.');
+      } else {
+        // TikTok opened its content list, so the backend already closed the attempt.
+        $('#tiktokReviewConsent').checked = false;
+        $('#tiktokStudioReviewConsent').checked = false;
+        if (draft) await openDraft(draft.job_id);
+        toast('Đã đăng lên TikTok. Bài có thể đang chờ TikTok duyệt.');
+      }
     } catch (error) { toast(error.message, true); await refresh(); }
   });
   $('#tiktokResolveButton').addEventListener('click', async () => {

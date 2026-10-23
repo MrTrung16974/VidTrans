@@ -241,6 +241,21 @@ class TikTokBrowserTests(unittest.TestCase):
         self.assertEqual(page.post_clicks, 1)
         self.assertEqual(result['attempt']['state'], 'publish_submitted')
 
+    def test_publish_closes_attempt_when_tiktok_opens_content_list(self):
+        page = FakePage(post_redirect='https://www.tiktok.com/tiktokstudio/content')
+        browser = FakeBrowser(page)
+        self.manager._with_browser = lambda operation: operation(browser)
+        with self.manager._db() as db:
+            db.execute('INSERT INTO attempts (id, job_id, state, caption, message, active, created_at) VALUES (?,?,?,?,?,1,?)',
+                       ('publish-3', 'job1', 'awaiting_review', 'Caption', 'Ready', time.time()))
+
+        result = self.manager.publish('publish-3')
+
+        self.assertEqual(page.post_clicks, 1)
+        self.assertIsNone(result['attempt'])
+        latest = self.manager.latest_attempt('job1')
+        self.assertEqual((latest['state'], latest['active']), ('published', 0))
+
     def test_publish_rejects_attempt_that_is_not_ready(self):
         with self.manager._db() as db:
             db.execute('INSERT INTO attempts (id, job_id, state, caption, message, active, created_at) VALUES (?,?,?,?,?,1,?)',
@@ -264,6 +279,8 @@ class FakeLocator:
         if 'post_video_button' not in self.selector and self.selector != 'post-button':
             raise AssertionError('Preparation must not click any publish control')
         self.page.post_clicks += 1
+        if self.page.post_redirect:
+            self.page.url = self.page.post_redirect
     def press(self, key, **kwargs):
         if key == 'Control+A':
             self.page.editor_selected = True
@@ -287,7 +304,7 @@ class FakeKeyboard:
 
 class FakePage:
     def __init__(self, input_count=1, redirect=None, progress=None, caption_overwrites=None,
-                 initial_url='https://www.tiktok.com/tiktokstudio/upload'):
+                 initial_url='https://www.tiktok.com/tiktokstudio/upload', post_redirect=None):
         self.url = initial_url
         self.uploads, self.caption, self.input_count, self.redirect = [], '', input_count, redirect
         self.progress, self.upload_waits, self.goto_calls = list(progress or []), 0, []
@@ -295,7 +312,7 @@ class FakePage:
         self.caption_fill_count = 0
         self.editor_focused, self.editor_selected = False, False
         self.keyboard = FakeKeyboard(self)
-        self.post_clicks, self.post_enabled = 0, True
+        self.post_clicks, self.post_enabled, self.post_redirect = 0, True, post_redirect
     def bring_to_front(self): pass
     def goto(self, url, **kwargs): self.goto_calls.append(url); self.url = self.redirect or url
     def locator(self, selector): return FakeLocator(self, selector)
