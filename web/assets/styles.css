@@ -3720,6 +3720,13 @@ input[type="file"]::-webkit-file-upload-button:active {
     display: inline !important;
   }
 
+  /* Ẩn các tab quản trị / nguồn khỏi floating bottom dock trên mobile & tablet.
+     Chỉ giữ 4 tab chính: Dịch, Truyện, Tiến trình, Đăng bài.
+     Các chức năng admin vẫn truy cập bình thường qua menu avatar người dùng trên topbar. */
+  .nav-tabs a[data-admin-only] {
+    display: none !important;
+  }
+
   .nav-tabs {
     position: fixed !important;
     bottom: max(12px, env(safe-area-inset-bottom)) !important;
@@ -3855,16 +3862,16 @@ input[type="file"]::-webkit-file-upload-button:active {
 @media (min-width: 641px) and (max-width: 1024px) {
   .nav-tabs {
     width: auto !important;
-    max-width: 620px !important;
+    max-width: 460px !important;
     padding: 5px 8px !important;
-    gap: 4px !important;
+    gap: 6px !important;
     justify-content: center !important;
   }
   .nav-tabs a {
     flex: 0 1 auto !important;
-    min-width: 64px !important;
+    min-width: 72px !important;
     height: 48px !important;
-    padding: 4px 10px !important;
+    padding: 4px 12px !important;
     border-radius: 16px !important;
     gap: 2px !important;
   }
@@ -3951,25 +3958,28 @@ input[type="file"]::-webkit-file-upload-button:active {
   .nav-label-full { display: none !important; }
   .nav-label-short { display: inline !important; }
 
-  /* Phone Bottom Bar (width <= 640px) */
+  /* Phone Bottom Bar (width <= 640px) - 4 tab cốt lõi tinh gọn như trước */
   .nav-tabs {
-    width: min(440px, calc(100vw - 16px)) !important;
-    max-width: 440px !important;
-    padding: 4px 3px !important;
-    gap: 2px !important;
-    justify-content: space-between !important;
-    overflow-x: auto !important;
+    width: min(390px, calc(100vw - 20px)) !important;
+    max-width: 390px !important;
+    padding: 4px 6px !important;
+    gap: 4px !important;
+    justify-content: space-around !important;
+    overflow-x: hidden !important;
   }
   .nav-tabs a {
     flex: 1 1 0 !important;
-    min-width: 48px !important;
+    min-width: 58px !important;
     width: auto !important;
     height: 48px !important;
     min-height: 48px !important;
-    padding: 3px 1px !important;
+    padding: 4px 2px !important;
     border-radius: 14px !important;
     gap: 2px !important;
     flex-shrink: 0 !important;
+  }
+  .nav-tabs a span {
+    font-size: 0.64rem !important;
   }
   .page-heading {
     padding: 22px 0 14px;

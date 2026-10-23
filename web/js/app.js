@@ -849,7 +849,7 @@ function showView() {
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
   if (window.innerWidth <= 1024) {
     const activeDockLink = $(`#mainNavigation a[data-view-link="${view}"]`);
-    if (activeDockLink?.scrollIntoView) {
+    if (activeDockLink && activeDockLink.offsetParent !== null && activeDockLink.scrollIntoView) {
       try { activeDockLink.scrollIntoView({ inline: "center", behavior: "smooth", block: "nearest" }); } catch (_) {}
     }
   }
