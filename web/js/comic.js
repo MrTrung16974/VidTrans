@@ -53,8 +53,10 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     fillSelect(form.elements.style, options.styles, "anime_comic");
     fillSelect(form.elements.language, options.languages, "vi");
     fillSelect(form.elements.llm_provider, options.llm_providers, "auto");
+    const comfyui = options.image_providers.find(item => item.key === "comfyui");
     const gemini = options.image_providers.find(item => item.key === "gemini");
-    fillSelect(form.elements.image_provider, options.image_providers, gemini?.configured ? "gemini" : "placeholder");
+    fillSelect(form.elements.image_provider, options.image_providers,
+      comfyui?.configured ? "comfyui" : gemini?.configured ? "gemini" : "placeholder");
     fillSelect(form.elements.animation_provider, options.animation_providers, "camera_2_5d");
     fillSelect(form.elements.tts_provider, options.tts_providers, "edge");
     syncTtsVoices();

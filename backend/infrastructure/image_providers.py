@@ -1,9 +1,9 @@
 """Scene image generators behind one interface.
 
-``placeholder`` draws a styled card locally so the whole pipeline runs without a
-GPU or API key; ``gemini`` calls the Gemini image model and accepts character
-reference images for consistency. Every provider writes a PNG of exactly the
-requested size, so the renderer never has to care which one produced it.
+GPU or API key; ``comfyui`` uses a locally hosted ComfyUI server; ``gemini``
+calls the Gemini image model and accepts character reference images for
+consistency. Every provider writes a PNG of exactly the requested size, so the
+renderer never has to care which one produced it.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import textwrap
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -127,9 +128,125 @@ class PlaceholderImageProvider:
         for line in textwrap.wrap(request.display_text or request.prompt, chars_per_line)[:12]:
             draw.text((margin, y), line, font=body_font, fill=(235, 238, 245))
             y += int(unit / 30 * 1.45)
-        draw.text((margin, height - margin * 2.2), "Ảnh minh họa tạm — chọn Gemini để sinh ảnh AI",
+        draw.text((margin, height - margin * 2.2), "Ảnh minh họa tạm — chọn AI vẽ ảnh để sinh ảnh thật",
                   font=body_font, fill=(255, 255, 255))
         save_png_atomic(image, output_path)
+
+
+@dataclass
+class ComfyUIImageProvider:
+    """Generate images through ComfyUI's built-in HTTP API.
+
+    The bundled workflow deliberately uses only core ComfyUI nodes so it works
+    with ordinary checkpoint models without installing custom nodes.
+    """
+
+    key = "comfyui"
+    supports_references = False
+    timeout: float = 300.0
+    poll_interval: float = 1.0
+    opener: Callable[..., Any] | None = None
+    sleeper: Callable[[float], None] = time.sleep
+    base_url: str = field(default_factory=lambda: os.environ.get("VIDTRANS_COMFYUI_URL", "").strip().rstrip("/"))
+    checkpoint: str = field(default_factory=lambda: os.environ.get("VIDTRANS_COMFYUI_CHECKPOINT", "").strip())
+    steps: int = field(default_factory=lambda: int(os.environ.get("VIDTRANS_COMFYUI_STEPS", "20")))
+    cfg: float = field(default_factory=lambda: float(os.environ.get("VIDTRANS_COMFYUI_CFG", "7")))
+    sampler: str = field(default_factory=lambda: os.environ.get("VIDTRANS_COMFYUI_SAMPLER", "euler").strip())
+    scheduler: str = field(default_factory=lambda: os.environ.get("VIDTRANS_COMFYUI_SCHEDULER", "normal").strip())
+    max_side: int = field(default_factory=lambda: int(os.environ.get("VIDTRANS_COMFYUI_MAX_SIDE", "1024")))
+
+    def __post_init__(self) -> None:
+        if not self.base_url or not self.checkpoint:
+            raise ImageGenerationError(
+                "ComfyUI chưa được cấu hình (VIDTRANS_COMFYUI_URL và VIDTRANS_COMFYUI_CHECKPOINT)"
+            )
+        self._open = self.opener or urllib.request.urlopen
+
+    @property
+    def cache_key(self) -> str:
+        return f"comfyui-{self.checkpoint}-{self.steps}-{self.cfg}-{self.sampler}-{self.scheduler}-{self.max_side}"
+
+    def _workflow(self, request: ImageRequest) -> dict[str, Any]:
+        # Avoid exhausting consumer VRAM on a 1080x1920 final video. The result
+        # is upscaled by fit_cover after generation. Latent dimensions use /8.
+        scale = min(1.0, self.max_side / max(request.width, request.height))
+        width = max(64, round(request.width * scale) // 8 * 8)
+        height = max(64, round(request.height * scale) // 8 * 8)
+        negative = request.negative_prompt or "text, watermark, logo, blurry, low quality, malformed anatomy"
+        return {
+            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": self.checkpoint}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"text": request.prompt, "clip": ["1", 1]}},
+            "3": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["1", 1]}},
+            "4": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
+            "5": {"class_type": "KSampler", "inputs": {
+                "seed": request.seed or int.from_bytes(hashlib.sha256(request.prompt.encode()).digest()[:4], "big"),
+                "steps": self.steps, "cfg": self.cfg, "sampler_name": self.sampler,
+                "scheduler": self.scheduler, "denoise": 1.0, "model": ["1", 0],
+                "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0],
+            }},
+            "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
+            "7": {"class_type": "SaveImage", "inputs": {"filename_prefix": "VidTrans", "images": ["6", 0]}},
+        }
+
+    def _json(self, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(
+            self.base_url + path, data=data,
+            headers={"Content-Type": "application/json"} if data else {},
+            method="POST" if data else "GET",
+        )
+        try:
+            with self._open(request, timeout=min(self.timeout, 30.0)) as response:
+                return json.loads(response.read(16 * 1024 * 1024).decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read(4096).decode("utf-8", "replace")
+            except Exception:
+                pass
+            raise ImageGenerationError(f"ComfyUI lỗi HTTP {exc.code}: {detail[:300]}") from exc
+        except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:
+            error = ImageGenerationError("Không kết nối được ComfyUI; hãy kiểm tra URL và ứng dụng ComfyUI")
+            error.unavailable = True
+            raise error from exc
+
+    def generate(self, request: ImageRequest, output_path: Path) -> None:
+        from PIL import Image
+
+        queued = self._json("/prompt", body={"prompt": self._workflow(request)})
+        prompt_id = queued.get("prompt_id")
+        if not prompt_id:
+            raise ImageGenerationError(f"ComfyUI không nhận workflow: {queued.get('error', 'thiếu prompt_id')}")
+        deadline = time.monotonic() + self.timeout
+        image_info: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            history = self._json(f"/history/{urllib.parse.quote(str(prompt_id))}")
+            result = history.get(str(prompt_id)) or {}
+            status = result.get("status") or {}
+            if status.get("status_str") == "error":
+                messages = status.get("messages") or []
+                raise ImageGenerationError(f"ComfyUI sinh ảnh thất bại: {str(messages[-1] if messages else status)[:500]}")
+            for output in (result.get("outputs") or {}).values():
+                images = output.get("images") or []
+                if images:
+                    image_info = images[0]
+                    break
+            if image_info:
+                break
+            self.sleeper(self.poll_interval)
+        if not image_info:
+            raise ImageGenerationError(f"ComfyUI quá thời gian chờ ({self.timeout:.0f} giây)")
+        query = urllib.parse.urlencode({
+            "filename": image_info["filename"], "subfolder": image_info.get("subfolder", ""),
+            "type": image_info.get("type", "output"),
+        })
+        view = urllib.request.Request(f"{self.base_url}/view?{query}", method="GET")
+        try:
+            with self._open(view, timeout=min(self.timeout, 60.0)) as response:
+                image = Image.open(io.BytesIO(response.read(64 * 1024 * 1024)))
+                save_png_atomic(fit_cover(image, request.width, request.height), output_path)
+        except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
+            raise ImageGenerationError("ComfyUI đã sinh ảnh nhưng VidTrans không tải được ảnh kết quả") from exc
 
 
 @dataclass
@@ -225,12 +342,17 @@ class GeminiImageProvider:
 def image_provider_statuses() -> list[dict[str, Any]]:
     return [
         {"key": "placeholder", "label": "Ảnh minh họa tạm (offline, miễn phí)", "configured": True},
+        {"key": "comfyui", "label": "ComfyUI local (AI, miễn phí)",
+         "configured": bool(os.environ.get("VIDTRANS_COMFYUI_URL", "").strip()
+                            and os.environ.get("VIDTRANS_COMFYUI_CHECKPOINT", "").strip())},
         {"key": "gemini", "label": "Gemini Image (AI, giữ nhân vật nhất quán)",
          "configured": bool(os.environ.get("GEMINI_API_KEY", "").strip())},
     ]
 
 
 def create_image_provider(key: str, *, font_path: Path | None = None) -> ImageProvider:
+    if key == "comfyui":
+        return ComfyUIImageProvider()
     if key == "gemini":
         return GeminiImageProvider()
     if key == "placeholder":

@@ -135,6 +135,8 @@ class ComicApiTests(unittest.TestCase):
         self.assertEqual(self.create(text="x" * 60_001).status_code, 400)
         with patch.dict("os.environ", {"GEMINI_API_KEY": ""}):
             self.assertEqual(self.create(image_provider="gemini").status_code, 400)
+        with patch.dict("os.environ", {"VIDTRANS_COMFYUI_URL": "", "VIDTRANS_COMFYUI_CHECKPOINT": ""}):
+            self.assertEqual(self.create(image_provider="comfyui").status_code, 400)
         upload = self.client.post("/api/v1/comic/projects", data={"llm_provider": "heuristic"},
                                   files={"file": ("story.pdf", b"%PDF-1.4", "application/pdf")})
         self.assertEqual(upload.status_code, 400)
@@ -215,6 +217,7 @@ class ComicApiTests(unittest.TestCase):
         self.assertIn("anime_comic", [s["key"] for s in options["styles"]])
         self.assertEqual(options["aspect_ratios"], ["9:16", "16:9"])
         self.assertTrue(next(p for p in options["image_providers"] if p["key"] == "placeholder")["configured"])
+        self.assertIn("comfyui", [p["key"] for p in options["image_providers"]])
 
 
 if __name__ == "__main__":
