@@ -62,8 +62,9 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   function fillSelect(select, items, selected) {
     if (!select) return;
     select.innerHTML = items.map(item => {
-      const disabled = item.configured === false;
-      const label = item.label + (disabled ? " — chưa cấu hình" : "");
+      const locked = item.allowed === false;
+      const disabled = locked || item.configured === false;
+      const label = item.label + (locked ? " — cần gói Creator/Pro" : disabled ? " — chưa cấu hình" : "");
       return `<option value="${escapeHtml(item.key)}"${disabled ? " disabled" : ""}${item.key === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
     }).join("");
   }
@@ -77,7 +78,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const comfyui = options.image_providers.find(item => item.key === "comfyui");
     const gemini = options.image_providers.find(item => item.key === "gemini");
     fillSelect(form.elements.image_provider, options.image_providers,
-      comfyui?.configured ? "comfyui" : gemini?.configured ? "gemini" : "placeholder");
+      comfyui?.configured ? "comfyui" : gemini?.configured && gemini.allowed !== false ? "gemini" : "placeholder");
     fillSelect(form.elements.animation_provider, options.animation_providers, "camera_2_5d");
     const cit = options.tts_providers.find(item => item.key === "cit");
     fillSelect(form.elements.tts_provider, options.tts_providers, cit?.configured ? "cit" : "edge");

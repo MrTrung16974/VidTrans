@@ -940,6 +940,18 @@
         "title": "Body_register_account_api_v1_auth_register_post",
         "type": "object"
       },
+      "Body_reject_bank_payment_api_v1_admin_billing_orders__order_id__reject_post": {
+        "properties": {
+          "reason": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "Body_reject_bank_payment_api_v1_admin_billing_orders__order_id__reject_post",
+        "type": "object"
+      },
       "Body_request_password_reset_api_v1_auth_password_reset_request_post": {
         "properties": {
           "email": {
@@ -2106,6 +2118,94 @@
         "summary": "Admin List Audit Events"
       }
     },
+    "/api/v1/admin/billing/orders": {
+      "get": {
+        "operationId": "list_billing_orders_for_admin_api_v1_admin_billing_orders_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "awaiting_review",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Awaiting Review",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Billing Orders For Admin"
+      }
+    },
     "/api/v1/admin/billing/orders/{order_id}/confirm": {
       "post": {
         "operationId": "confirm_bank_payment_api_v1_admin_billing_orders__order_id__confirm_post",
@@ -2151,6 +2251,62 @@
           }
         ],
         "summary": "Confirm Bank Payment"
+      }
+    },
+    "/api/v1/admin/billing/orders/{order_id}/reject": {
+      "post": {
+        "operationId": "reject_bank_payment_api_v1_admin_billing_orders__order_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_reject_bank_payment_api_v1_admin_billing_orders__order_id__reject_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Reject Bank Payment"
       }
     },
     "/api/v1/admin/jobs": {
@@ -3129,6 +3285,7 @@
     },
     "/api/v1/billing/orders/{order_id}/confirm": {
       "post": {
+        "description": "The customer reports a bank transfer; the order stays pending until reconciled.\n\nOnly a signed provider callback or an owner/admin confirmation may mark an order paid\n(URD rbac-customer-billing §IV), so this never activates a plan.",
         "operationId": "confirm_billing_order_api_v1_billing_orders__order_id__confirm_post",
         "parameters": [
           {

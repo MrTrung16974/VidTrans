@@ -154,6 +154,10 @@ class PaymentOrderStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_payment_orders_user ON payment_orders(user_id, created_at DESC)")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(payment_orders)").fetchall()}
+            if "customer_reported_at" not in columns:
+                # When the customer said they transferred; activation still needs an admin or a bank callback.
+                db.execute("ALTER TABLE payment_orders ADD COLUMN customer_reported_at TEXT")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS payment_events (
                     event_key TEXT PRIMARY KEY,
@@ -204,6 +208,50 @@ class PaymentOrderStore:
                 (user_id, max(1, min(limit, 100))),
             ).fetchall()
         return [self._row(row) for row in rows]
+
+    def list_orders(self, *, status: str | None = None, awaiting_review: bool = False,
+                    limit: int = 50, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+        """Orders of every user for reconciliation, newest first, with the payer's account."""
+
+        clauses: list[str] = []
+        values: list[Any] = []
+        if status:
+            if status not in PAYMENT_STATUSES:
+                raise PaymentError("Trạng thái đơn không hợp lệ")
+            clauses.append("o.status=?")
+            values.append(status)
+        if awaiting_review:
+            clauses.append("o.status='pending' AND o.customer_reported_at IS NOT NULL")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._db() as db:
+            total = int(db.execute(f"SELECT COUNT(*) FROM payment_orders o{where}", values).fetchone()[0])
+            rows = db.execute(
+                "SELECT o.*,a.email user_email,a.display_name user_display_name FROM payment_orders o "
+                f"LEFT JOIN admin_accounts a ON a.user_id=o.user_id{where} "
+                "ORDER BY o.customer_reported_at IS NULL, o.created_at DESC LIMIT ? OFFSET ?",
+                (*values, max(1, min(limit, 200)), max(0, offset)),
+            ).fetchall()
+        return [self._row(row) for row in rows], total
+
+    def report_transfer(self, order_id: str, *, user_id: str) -> dict[str, Any]:
+        """Record the customer's "I have transferred" without activating anything."""
+
+        with self._db() as db:
+            row = db.execute(
+                "SELECT * FROM payment_orders WHERE order_id=? AND user_id=?", (order_id, user_id)
+            ).fetchone()
+            if row is None:
+                raise PaymentError("Không tìm thấy đơn thanh toán")
+            if row["provider"] != "bank":
+                raise PaymentError("Đơn này được xác nhận tự động qua cổng thanh toán")
+            if row["status"] != "pending":
+                raise PaymentError("Đơn thanh toán không còn ở trạng thái chờ")
+            if not row["customer_reported_at"]:
+                db.execute(
+                    "UPDATE payment_orders SET customer_reported_at=?,updated_at=? WHERE order_id=?",
+                    (utc_now(), utc_now(), order_id),
+                )
+        return self.get(order_id)
 
     def set_provider_order_ref(self, order_id: str, provider_order_ref: str) -> dict[str, Any]:
         if not provider_order_ref or len(provider_order_ref) > 200:

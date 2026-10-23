@@ -122,6 +122,12 @@ from infrastructure.tts_providers import (
     synthesize_elevenlabs,
     tts_account_blocked,
 )
+from domain.plan_entitlements import (
+    PlanEntitlementError,
+    annotate_providers,
+    ensure_comic_settings_allowed,
+    ensure_video_providers_allowed,
+)
 from infrastructure.translation_providers import (
     create_translation_provider,
     default_translation_provider,
@@ -4331,6 +4337,53 @@ async def zalopay_payment_callback(request: Request) -> JSONResponse:
     return JSONResponse({"return_code": 1, "return_message": "Success"})
 
 
+@app.get("/api/v1/admin/billing/orders")
+def list_billing_orders_for_admin(
+    request: Request,
+    status: str | None = Query(default=None, max_length=16),
+    awaiting_review: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> JSONResponse:
+    actor = require_roles(request, "owner", "admin")
+    try:
+        items, total = PAYMENT_ORDERS.list_orders(
+            status=status or None, awaiting_review=awaiting_review, limit=limit, offset=offset
+        )
+    except PaymentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=actor["user_id"],
+        action="admin.billing.orders.list",
+        resource_type="order",
+        metadata={"status": status or "", "awaiting_review": awaiting_review},
+    )
+    return JSONResponse(
+        {"items": items, "total": total, "limit": limit, "offset": offset},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/v1/admin/billing/orders/{order_id}/reject")
+def reject_bank_payment(
+    request: Request, order_id: str, reason: str = Form("", max_length=200)
+) -> JSONResponse:
+    actor = require_roles(request, "owner", "admin")
+    try:
+        updated = PAYMENT_ORDERS.cancel(order_id)
+    except PaymentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=actor["user_id"],
+        action="billing.order_reject",
+        resource_type="order",
+        resource_id=order_id,
+        target_user_id=updated.get("user_id"),
+        metadata={"order_id": order_id, "plan": updated.get("plan"), "reason": reason.strip()},
+    )
+    return JSONResponse(updated, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/v1/admin/billing/orders/{order_id}/confirm")
 def confirm_bank_payment(request: Request, order_id: str) -> JSONResponse:
     actor = require_roles(request, "owner", "admin")
@@ -4344,7 +4397,7 @@ def confirm_bank_payment(request: Request, order_id: str) -> JSONResponse:
             payload=f"confirmed-by:{actor['user_id']}".encode("utf-8"),
             provider_transaction_ref="manual-bank-confirmation",
         )
-        ADMIN_ACCOUNTS.update(updated["user_id"], plan=updated["plan"], payment_status="active")
+        activate_paid_order(updated)
         TENANT_GOVERNANCE.audit(
             actor_user_id=actor["user_id"],
             action="billing.order_confirm",
@@ -4380,18 +4433,14 @@ def get_billing_order_detail(request: Request, order_id: str) -> JSONResponse:
 
 @app.post("/api/v1/billing/orders/{order_id}/confirm")
 def confirm_billing_order(request: Request, order_id: str) -> JSONResponse:
-    actor = current_account(request)
+    """The customer reports a bank transfer; the order stays pending until reconciled.
+
+    Only a signed provider callback or an owner/admin confirmation may mark an order paid
+    (URD rbac-customer-billing §IV), so this never activates a plan.
+    """
+    account = current_account(request)
     try:
-        order = PAYMENT_ORDERS.get(order_id)
-        if actor["role"] not in {"owner", "admin"} and order["user_id"] != actor["user_id"]:
-            raise HTTPException(status_code=403, detail="Bạn không có quyền xác nhận đơn này")
-        updated, _ = PAYMENT_ORDERS.mark_paid(
-            order_id,
-            event_key=f"billing-confirm:{order_id}",
-            payload=f"confirmed-by:{actor['user_id']}".encode("utf-8"),
-            provider_transaction_ref=f"confirm:{actor.get('email') or actor.get('username') or actor.get('user_id')}",
-        )
-        ADMIN_ACCOUNTS.update(updated["user_id"], plan=updated["plan"], payment_status="active")
+        updated = PAYMENT_ORDERS.report_transfer(order_id, user_id=account["user_id"])
     except PaymentError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return JSONResponse(updated, headers={"Cache-Control": "no-store"})
@@ -4401,10 +4450,8 @@ def confirm_billing_order(request: Request, order_id: str) -> JSONResponse:
 def cancel_billing_order(request: Request, order_id: str) -> JSONResponse:
     actor = current_account(request)
     try:
-        order = PAYMENT_ORDERS.get(order_id)
-        if actor["role"] not in {"owner", "admin"} and order["user_id"] != actor["user_id"]:
-            raise HTTPException(status_code=403, detail="Bạn không có quyền hủy đơn này")
-        updated = PAYMENT_ORDERS.cancel(order_id)
+        # Admins reject other users' orders through the audited admin endpoint.
+        updated = PAYMENT_ORDERS.cancel(order_id, user_id=actor["user_id"])
     except PaymentError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return JSONResponse(updated, headers={"Cache-Control": "no-store"})
@@ -4970,8 +5017,9 @@ def disconnect_tiktok(request: Request, account_id: str = Query(default="")) -> 
 
 
 @app.get("/api/v1/tts-providers")
-def tts_providers_endpoint() -> JSONResponse:
-    return JSONResponse({"providers": [status.__dict__ for status in provider_statuses()]})
+def tts_providers_endpoint(request: Request) -> JSONResponse:
+    providers = [dict(status.__dict__) for status in provider_statuses()]
+    return JSONResponse({"providers": annotate_providers(current_account(request), "tts", providers)})
 
 
 @app.get("/api/v1/tts-providers/elevenlabs/voices/{voice_key}/preview")
@@ -5025,8 +5073,9 @@ def tts_voice_preview_endpoint(provider: str, voice_key: str) -> Response:
 
 
 @app.get("/api/v1/translation-providers")
-def translation_providers_endpoint() -> JSONResponse:
-    return JSONResponse({"providers": [status.__dict__ for status in translation_provider_statuses()]})
+def translation_providers_endpoint(request: Request) -> JSONResponse:
+    providers = [dict(status.__dict__) for status in translation_provider_statuses()]
+    return JSONResponse({"providers": annotate_providers(current_account(request), "translation", providers)})
 
 
 @app.post("/process-video", deprecated=True)
@@ -5067,8 +5116,14 @@ async def process_video_endpoint(
 ) -> JSONResponse:
     account = current_account(http_request)
     owner_user_id = str(account["user_id"])
-    tts_provider = tts_provider.strip() or default_tts_provider()
-    translation_provider = translation_provider.strip() or default_translation_provider()
+    tts_provider = tts_provider.strip().lower() or default_tts_provider()
+    translation_provider = translation_provider.strip().lower() or default_translation_provider()
+    try:
+        ensure_video_providers_allowed(
+            account, translation_provider=translation_provider, tts_provider=tts_provider, dubbing=mode != 1
+        )
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     video_ext = Path(file.filename or "video.mp4").suffix.lower() or ".mp4"
     if video_ext not in SUPPORTED_VIDEO_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Định dạng video không được hỗ trợ: {video_ext}")
@@ -5267,8 +5322,14 @@ async def create_batch_endpoint(
 ) -> JSONResponse:
     account = current_account(request)
     owner_user_id = str(account["user_id"])
-    tts_provider = tts_provider.strip() or default_tts_provider()
-    translation_provider = translation_provider.strip() or default_translation_provider()
+    tts_provider = tts_provider.strip().lower() or default_tts_provider()
+    translation_provider = translation_provider.strip().lower() or default_translation_provider()
+    try:
+        ensure_video_providers_allowed(
+            account, translation_provider=translation_provider, tts_provider=tts_provider, dubbing=mode != 1
+        )
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     # Browsers serialize an untouched <input type="file"> as an empty UploadFile.
     # Ignore only that unnamed placeholder; named zero-byte uploads are still
     # validated below and reported to the user as invalid videos.
@@ -5890,8 +5951,14 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     owner_user_id = str(source.get("owner_user_id") or account["user_id"])
     if source.get("status") in {"queued", "scheduled", "processing", "cancelling"}:
         raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý")
+    # A job keeps the providers it was created with; a later downgrade must not keep paid AI running.
+    entitlement_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
     if is_comic_job(source):
         previous = source.get("resume_request") or {}
+        try:
+            ensure_comic_settings_allowed(entitlement_account, previous.get("settings") or {})
+        except PlanEntitlementError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         try:
             requeue_comic_job(COMIC_ROUTE_DEPS, request, job_id, source, render=bool(previous.get("render", True)),
                               preview_shot=previous.get("preview_shot"))
@@ -5906,6 +5973,15 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     source_url = resume_request.get("source_url")
     if not video_path.is_file() and not source_url:
         raise HTTPException(status_code=409, detail="file video nguồn không còn tồn tại")
+    try:
+        ensure_video_providers_allowed(
+            entitlement_account,
+            translation_provider=str(resume_request.get("translation_provider") or "google"),
+            tts_provider=str(resume_request.get("tts_provider") or "edge"),
+            dubbing=int(resume_request.get("mode") or 1) != 1,
+        )
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     quota_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
     reserve_job_quota(job_id, quota_account, minutes=1)

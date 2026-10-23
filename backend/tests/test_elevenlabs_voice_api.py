@@ -50,7 +50,8 @@ class ElevenLabsVoiceApiTests(unittest.TestCase):
         values = {}
         for name, parameter in inspect.signature(main.create_batch_endpoint).parameters.items():
             if name == "request":
-                values[name] = request_for(account("user-a"), "POST")
+                # ElevenLabs needs a paid plan; this test is about voice selection.
+                values[name] = request_for({**account("user-a"), "plan": "pro"}, "POST")
             elif name == "source_links":
                 values[name] = "https://youtu.be/dQw4w9WgXcQ"
             else:

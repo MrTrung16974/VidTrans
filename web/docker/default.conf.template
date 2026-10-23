@@ -87,6 +87,9 @@ server {
     }
 
     location / {
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "same-origin" always;
         try_files $uri =404;
     }
 }

@@ -2,7 +2,7 @@ import { createTikTokWorkspace } from "./tiktok.js?v=20261023-owner-publish-fix"
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
-import { createComicWorkspace } from "./comic.js?v=20261023-voicepreview";
+import { createComicWorkspace } from "./comic.js?v=20261023-plan-entitlements";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -189,10 +189,14 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   if (jobsBody) renderJobs([]);
   $("#userMenu").classList.add("is-hidden");
   $("#authGate").classList.remove("is-hidden");
+  $("#authLoginForm").reset();
+  $("#authRegisterForm").reset();
+  $("#authResetRequestForm").reset();
+  $("#authResetConfirmForm").reset();
+  passwordResetEmail = "";
+  setAuthMode("login", message);
   const authMessage = $("#authMessage");
-  authMessage.textContent = message;
   authMessage.classList.toggle("error", isError);
-  setTimeout(() => $("#authUsername").focus(), 0);
 }
 
 async function requestJson(url, options = {}) {
@@ -743,6 +747,9 @@ async function playVoicePreview(button) {
 
 $$("[data-voice-preview]").forEach(button => button.addEventListener("click", () => playVoicePreview(button)));
 
+// Gemini and ElevenLabs need a Creator, Pro or Enterprise plan (server-enforced).
+const PAID_PLAN_SUFFIX = " — cần gói Creator/Pro";
+
 async function loadTtsProviders() {
   const select = $("#ttsProvider");
   const hint = $("#ttsProviderHint");
@@ -752,8 +759,9 @@ async function loadTtsProviders() {
     const providers = new Map((data.providers || []).map(provider => [provider.key, provider]));
     [...select.options].forEach(option => {
       const provider = providers.get(option.value);
-      option.disabled = provider ? !provider.configured : true;
-      if (provider && !provider.configured) option.textContent += option.value === "cit" ? " — chưa mở ứng dụng" : " — chưa cấu hình key";
+      option.disabled = provider ? !provider.configured || provider.allowed === false : true;
+      if (provider?.allowed === false) option.textContent += PAID_PLAN_SUFFIX;
+      else if (provider && !provider.configured) option.textContent += option.value === "cit" ? " — chưa mở ứng dụng" : " — chưa cấu hình key";
     });
     if (select.selectedOptions[0]?.disabled) select.value = "edge";
     const applyProviderConfiguration = () => {
@@ -787,8 +795,10 @@ async function loadTranslationProviders() {
     const providers = new Map((data.providers || []).map(provider => [provider.key, provider]));
     [...select.options].forEach(option => {
       const provider = providers.get(option.value);
-      option.disabled = provider ? !provider.configured : true;
-      if (provider && !provider.configured && !option.textContent.includes("chưa cấu hình")) {
+      option.disabled = provider ? !provider.configured || provider.allowed === false : true;
+      if (provider?.allowed === false) {
+        option.textContent += PAID_PLAN_SUFFIX;
+      } else if (provider && !provider.configured && !option.textContent.includes("chưa cấu hình")) {
         option.textContent += ["translategemma", "qwen3"].includes(option.value) ? " — chưa chạy Ollama" : " — chưa cấu hình key";
       }
     });
@@ -893,9 +903,6 @@ function selectBillingPlan(planKey, { scroll = true } = {}) {
   $("#checkoutTitle").textContent = `Thanh toán gói ${plan.name}`;
   $("#checkoutDescription").textContent = `${plan.minutes.toLocaleString("vi-VN")} phút xử lý mỗi tháng · ${money(plan.amount)}/tháng. Chọn phương thức thanh toán để tiếp tục.`;
   $("#createPaymentLabel").textContent = `Tiếp tục với ${plan.name} · ${money(plan.amount)}`;
-  const notice = $("#billingNotice");
-  notice.innerHTML = `<strong>Đã chọn gói ${escapeHtml(plan.name)}</strong><span>${plan.minutes.toLocaleString("vi-VN")} phút/tháng · ${money(plan.amount)}. Hoàn tất phương thức thanh toán bên dưới.</span>`;
-  notice.classList.remove("is-hidden");
   if (scroll) {
     const checkout = $(".payment-checkout");
     checkout.classList.remove("is-focused");
@@ -968,6 +975,8 @@ function renderBilling(data) {
         </div>
         <ul class="plan-features">
           <li><span class="feature-icon check">✓</span><span>Xử lý video đa luồng & phụ đề AI</span></li>
+          <li><span class="feature-icon check">✓</span><span>Dịch Google, TranslateGemma · lồng tiếng Edge TTS, CIT Voice Studio</span></li>
+          <li>${plan.key === "free" ? '<span class="feature-icon dash">—</span><span class="feature-muted">Gemini AI & ElevenLabs</span>' : '<span class="feature-icon check">✓</span><span>Gemini AI & ElevenLabs</span>'}</li>
           <li><span class="feature-icon check">✓</span><span>Lưu trữ kết quả đám mây an toàn</span></li>
           <li>${plan.key === "free" ? '<span class="feature-icon dash">—</span><span class="feature-muted">Hỗ trợ ưu tiên 24/7</span>' : '<span class="feature-icon check">✓</span><span>Hỗ trợ ưu tiên chuyên sâu 24/7</span>'}</li>
         </ul>
@@ -1046,12 +1055,16 @@ function renderPaymentInstructions(order) {
       </dl>
       <div class="transfer-note-box">
         <span class="note-icon" aria-hidden="true">💡</span>
-        <p>Mã QR đã chứa đúng số tiền và cú pháp. Bạn có thể bấm xác nhận bên dưới sau khi chuyển khoản thành công để kích hoạt gói ngay lập tức.</p>
+        <p>Mã QR đã chứa đúng số tiền và cú pháp. Sau khi chuyển khoản, hãy bấm báo đã chuyển khoản; gói được kích hoạt khi quản trị viên đối soát xong giao dịch.</p>
       </div>
       <div class="transfer-action-buttons">
+        ${order.customer_reported_at ? `
+        <button class="button primary transfer-confirm-btn" type="button" disabled>
+          <span>⏳ Đã báo chuyển khoản — chờ đối soát</span>
+        </button>` : `
         <button class="button primary transfer-confirm-btn" type="button" data-confirm-order="${escapeHtml(order.order_id)}">
-          <span>✓ Xác nhận đã chuyển khoản & Kích hoạt gói</span>
-        </button>
+          <span>✓ Tôi đã chuyển khoản</span>
+        </button>`}
         <button class="button secondary transfer-cancel-btn" type="button" data-cancel-order="${escapeHtml(order.order_id)}">
           <span>✕ Hủy yêu cầu này</span>
         </button>
@@ -1059,6 +1072,11 @@ function renderPaymentInstructions(order) {
     </div>`;
   instructions.classList.remove("is-hidden");
   instructions.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function orderStatusLabel(order) {
+  if (order.status === "pending" && order.customer_reported_at) return "Chờ đối soát";
+  return billingLabels.order[order.status] || order.status;
 }
 
 function renderBillingOrders(orders) {
@@ -1075,12 +1093,12 @@ function renderBillingOrders(orders) {
         <b class="order-amount">${money(order.amount)}</b>
         <span class="order-status-badge order-${order.status}">
           <span class="status-dot-mini" aria-hidden="true"></span>
-          <span>${billingLabels.order[order.status] || order.status}</span>
+          <span>${orderStatusLabel(order)}</span>
         </span>
         ${order.status === "pending" ? `
           <div class="order-actions">
             <button class="button secondary mini-btn" type="button" data-view-order="${escapeHtml(order.order_id)}" title="Xem mã QR thanh toán">Xem QR</button>
-            <button class="button primary mini-btn" type="button" data-confirm-order="${escapeHtml(order.order_id)}" title="Kích hoạt gói">Kích hoạt</button>
+            ${order.provider === "bank" && !order.customer_reported_at ? `<button class="button primary mini-btn" type="button" data-confirm-order="${escapeHtml(order.order_id)}" title="Báo đã chuyển khoản để quản trị viên đối soát">Đã chuyển khoản</button>` : ""}
             <button class="button secondary mini-btn cancel-btn" type="button" data-cancel-order="${escapeHtml(order.order_id)}" title="Hủy yêu cầu">Hủy</button>
           </div>` : ""}
       </div>
@@ -1381,6 +1399,52 @@ function renderAdminJobs(jobs) {
   }).join("");
 }
 
+async function loadAdminBilling() {
+  const list = $("#adminBillingList");
+  if (!list) return;
+  list.innerHTML = '<div class="empty-state"><strong>Đang tải đơn thanh toán…</strong></div>';
+  try {
+    const filter = $("#adminBillingFilter")?.value ?? "review";
+    const params = new URLSearchParams({ limit: "100" });
+    if (filter === "review") params.set("awaiting_review", "true");
+    else if (filter) params.set("status", filter);
+    const data = await requestJson(`/api/v1/admin/billing/orders?${params}`);
+    renderAdminBilling(data.items || []);
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state error"><strong>${escapeHtml(err.message)}</strong></div>`;
+  }
+}
+
+function renderAdminBilling(orders) {
+  const list = $("#adminBillingList");
+  if (!list) return;
+  if (!orders.length) {
+    list.innerHTML = '<div class="empty-state"><strong>Không có đơn thanh toán nào phù hợp</strong></div>';
+    return;
+  }
+  list.innerHTML = orders.map(order => {
+    const badgeClass = order.status === "paid" ? "badge-success" : order.status === "pending" ? "badge-warning" : "badge-danger";
+    const reportedAt = order.customer_reported_at ? new Date(order.customer_reported_at).toLocaleString("vi-VN") : "";
+    const createdAt = order.created_at ? new Date(order.created_at).toLocaleString("vi-VN") : "—";
+    const actions = order.status === "pending" ? `
+      ${order.provider === "bank" ? `<button class="button primary mini-btn" type="button" data-admin-confirm-order="${escapeHtml(order.order_id)}" data-amount="${escapeHtml(money(order.amount))}" data-transfer="${escapeHtml(order.transfer_content)}" title="Xác nhận đã nhận tiền (Có ghi Audit)">Xác nhận</button>` : ""}
+      <button class="button secondary mini-btn cancel-btn" type="button" data-admin-reject-order="${escapeHtml(order.order_id)}" title="Từ chối đơn (Có ghi Audit)">Từ chối</button>` : "—";
+    return `
+      <div class="admin-jobs-row" data-order-id="${escapeHtml(order.order_id)}">
+        <code>${escapeHtml(order.transfer_content)}</code>
+        <div class="user-meta" title="${escapeHtml(order.user_id)}">
+          <strong>${escapeHtml(order.user_email || order.user_id)}</strong>
+          ${order.user_display_name ? `<br><small>${escapeHtml(order.user_display_name)}</small>` : ""}
+        </div>
+        <div>${escapeHtml(String(order.plan).toUpperCase())} · ${escapeHtml(order.provider)}</div>
+        <div><span class="badge ${badgeClass}">${escapeHtml(orderStatusLabel(order))}</span></div>
+        <div>${money(order.amount)}</div>
+        <small>${escapeHtml(createdAt)}${reportedAt ? `<br>Báo CK: ${escapeHtml(reportedAt)}` : ""}</small>
+        <div>${actions}</div>
+      </div>`;
+  }).join("");
+}
+
 async function loadAdminAudit() {
   const list = $("#adminAuditList");
   if (!list) return;
@@ -1555,27 +1619,27 @@ function jobActions(job) {
   let downloads = "";
   if (job.video_url) {
     const videoName = job.output_video || `${job.job_id}.mp4`;
-    downloads += `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Tải video MP4 hoàn tất"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span>Video</span></button>`;
+    downloads += `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Tải video MP4 hoàn tất" aria-label="Tải video MP4 hoàn tất"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span translate="no">Video</span></button>`;
   }
   if (job.download_all_url) {
     const zipName = `${job.job_id}.artifacts.zip`;
-    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg><span>ZIP</span></button>`;
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)" aria-label="Tải toàn bộ tài nguyên (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg><span translate="no">ZIP</span></button>`;
   }
   const cancel = ["queued", "scheduled", "processing"].includes(job.status)
-    ? `<button type="button" class="btn-job-action btn-cancel" data-action="cancel" data-job="${job.job_id}" title="Hủy tiến trình"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
+    ? `<button type="button" class="btn-job-action btn-cancel" data-action="cancel" data-job="${job.job_id}" title="Hủy tiến trình" aria-label="Hủy tiến trình"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
     : "";
   const retry = terminal
-    ? `<button type="button" class="btn-job-action btn-retry" data-action="retry" data-job="${job.job_id}" title="Chạy lại video này"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>Chạy lại</span></button>`
+    ? `<button type="button" class="btn-job-action btn-retry" data-action="retry" data-job="${job.job_id}" title="Chạy lại video này" aria-label="Chạy lại video này"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>Chạy lại</span></button>`
     : "";
   const remove = terminal
-    ? `<button type="button" class="btn-job-action btn-delete" data-action="delete" data-job="${job.job_id}" title="Xóa video và dữ liệu liên quan"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg><span>Xóa</span></button>`
+    ? `<button type="button" class="btn-job-action btn-delete" data-action="delete" data-job="${job.job_id}" title="Xóa video và dữ liệu liên quan" aria-label="Xóa video và dữ liệu liên quan"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg><span>Xóa</span></button>`
     : "";
   const refreshTikTok = job.tiktok_publish_id && !["PUBLISH_COMPLETE", "FAILED"].includes(job.tiktok_publish_status)
-    ? `<button type="button" class="btn-job-action btn-tiktok-status" data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.49 6.27 6.27 0 0 0 1.86-4.49v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-.86-.09z"/></svg><span>TikTok</span></button>`
+    ? `<button type="button" class="btn-job-action btn-tiktok-status" data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok" aria-label="Cập nhật trạng thái TikTok"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.49 6.27 6.27 0 0 0 1.86-4.49v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-.86-.09z"/></svg><span translate="no">TikTok</span></button>`
     : "";
   const review = job.status === "completed" && job.video_url
     && (state.auth.role === "owner" || !state.auth.user_id || job.owner_user_id === state.auth.user_id)
-    ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Mở trang chuẩn bị và đăng bài"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4Z"></path></svg><span>Đăng bài</span></button>`
+    ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Mở trang chuẩn bị và đăng bài" aria-label="Mở trang chuẩn bị và đăng bài"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4Z"></path></svg><span>Đăng bài</span></button>`
     : "";
   return downloads + refreshTikTok + cancel + retry + remove + review;
 }
@@ -1709,8 +1773,8 @@ function renderPendingUpload(upload) {
   const statusClass = active ? "processing" : "failed";
   const statusText = active ? (progress >= 100 ? "Đang tạo job" : "Đang upload") : upload.status === "cancelled" ? "Đã hủy" : "Upload lỗi";
   const action = active
-    ? `<button class="btn-job-action btn-cancel" data-upload-cancel="${escapeHtml(upload.id)}" type="button"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
-    : `<button class="btn-job-action btn-dismiss" data-upload-dismiss="${escapeHtml(upload.id)}" type="button"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Ẩn</span></button>`;
+    ? `<button class="btn-job-action btn-cancel" data-upload-cancel="${escapeHtml(upload.id)}" type="button" title="Hủy tải lên" aria-label="Hủy tải lên"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
+    : `<button class="btn-job-action btn-dismiss" data-upload-dismiss="${escapeHtml(upload.id)}" type="button" title="Ẩn dòng này" aria-label="Ẩn dòng này"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Ẩn</span></button>`;
   const uploadIcon = active
     ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>`
     : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
@@ -1779,7 +1843,7 @@ function renderJobs(jobs) {
       : job.tiktok_publish_status
         ? `TikTok: ${job.tiktok_publish_status}${job.tiktok_publish_title ? ` · ${job.tiktok_publish_title}` : ""}`
         : (job.error || job.step_detail || "");
-    const batchBadge = job.batch_id ? `<span class="batch-tag">${escapeHtml(job.batch_id)}</span>` : `<span class="single-tag">Video đơn</span>`;
+    const batchBadge = job.batch_id ? `<span class="batch-tag" translate="no">${escapeHtml(job.batch_id)}</span>` : `<span class="single-tag">Video đơn</span>`;
     const ownerName = job.owner_display_name || job.owner_email || job.owner_user_id || "Chưa xác định";
     const ownerEmail = job.owner_email && job.owner_email !== ownerName ? job.owner_email : "";
     const createdDate = job.created_at ? new Date(job.created_at) : null;
@@ -2248,17 +2312,16 @@ $("#billingView").addEventListener("click", async event => {
     return;
   }
 
-  // 4. Confirm payment order & activate plan
+  // 4. Report a bank transfer; an admin reconciles it before the plan activates
   const confirmBtn = event.target.closest("[data-confirm-order]");
   if (confirmBtn) {
     const orderId = confirmBtn.dataset.confirmOrder;
     confirmBtn.disabled = true;
     try {
       await requestJson(`/api/v1/billing/orders/${orderId}/confirm`, { method: "POST" });
-      toast("Đã xác nhận thanh toán & kích hoạt gói thành công!");
+      toast("Đã ghi nhận. Gói sẽ được kích hoạt sau khi quản trị viên đối soát giao dịch.");
       $("#paymentInstructions").classList.add("is-hidden");
       await loadBilling();
-      await refreshApplicationAuth();
     } catch (err) {
       toast(err.message, true);
     } finally {
@@ -2387,6 +2450,9 @@ $$("[data-admin-subtab]").forEach(tabBtn => {
     } else if (tabName === "jobs") {
       $("#adminSubtabJobs")?.classList.remove("is-hidden");
       loadAdminJobs();
+    } else if (tabName === "billing") {
+      $("#adminSubtabBilling")?.classList.remove("is-hidden");
+      loadAdminBilling();
     } else if (tabName === "audit") {
       $("#adminSubtabAudit")?.classList.remove("is-hidden");
       loadAdminAudit();
@@ -2408,6 +2474,35 @@ $("#adminJobsList")?.addEventListener("click", async event => {
       const job = await requestJson(`/api/v1/admin/jobs/${jobId}`);
       alert(`[Audit Logged] Chi tiết tiến trình ${jobId}:\nNgười dùng: ${job.owner_email || job.owner_user_id}\nTrạng thái: ${job.status}\nTiến độ: ${Math.round((job.progress || 0) * 100)}%\nTạo lúc: ${job.created_at}`);
     } catch (err) { toast(err.message, true); }
+  }
+});
+$("#refreshAdminBilling")?.addEventListener("click", loadAdminBilling);
+$("#adminBillingFilter")?.addEventListener("change", loadAdminBilling);
+$("#adminBillingList")?.addEventListener("click", async event => {
+  const confirmBtn = event.target.closest("[data-admin-confirm-order]");
+  const rejectBtn = event.target.closest("[data-admin-reject-order]");
+  const button = confirmBtn || rejectBtn;
+  if (!button) return;
+  let request;
+  if (confirmBtn) {
+    if (!confirm(`Xác nhận đã nhận ${confirmBtn.dataset.amount} với nội dung "${confirmBtn.dataset.transfer}"?\nGói của khách sẽ được kích hoạt ngay.`)) return;
+    request = { method: "POST" };
+  } else {
+    const reason = prompt("Lý do từ chối đơn (ghi vào Audit):", "Không tìm thấy giao dịch trong sao kê");
+    if (reason === null) return;
+    const formData = new FormData();
+    formData.set("reason", reason.slice(0, 200));
+    request = { method: "POST", body: formData };
+  }
+  const orderId = encodeURIComponent(button.closest("[data-order-id]").dataset.orderId);
+  button.disabled = true;
+  try {
+    await requestJson(`/api/v1/admin/billing/orders/${orderId}/${confirmBtn ? "confirm" : "reject"}`, request);
+    toast(confirmBtn ? "Đã xác nhận thanh toán và kích hoạt gói" : "Đã từ chối đơn thanh toán");
+    await loadAdminBilling();
+  } catch (err) {
+    toast(err.message, true);
+    button.disabled = false;
   }
 });
 $("#refreshAdminAudit")?.addEventListener("click", loadAdminAudit);

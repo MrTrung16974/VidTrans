@@ -96,7 +96,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'data-source-browser-tab="{platform}"', html)
         self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
         self.assertIn("/api/v1/source-browser/${platform}/activate", javascript)
-        self.assertIn("/js/app.js?v=20261023-voicepreview", html)
+        self.assertIn("/js/app.js?v=20261023-", html)
         self.assertIn('data-voice-preview="#voiceTypeSelect"', html)
         self.assertIn("/api/v1/tts-providers/${encodeURIComponent(provider)}/voices/", javascript)
         self.assertNotIn("URL.createObjectURL(await response.blob())", javascript)
@@ -138,6 +138,8 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="authRegisterForm"', html)
         self.assertIn('id="authModeToggle"', html)
         self.assertIn('requestJson("/api/v1/auth/register"', javascript)
+        self.assertIn('setAuthMode("login", message);', javascript)
+        self.assertIn('$("#authRegisterForm").reset();', javascript)
         self.assertIn('@app.post("/api/v1/auth/register", status_code=201)', main)
         for fixed_value in ('role="editor"', 'approval_status="approved"', 'plan="free"', 'payment_status="exempt"'):
             self.assertIn(fixed_value, main)

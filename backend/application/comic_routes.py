@@ -29,6 +29,12 @@ from domain.comic import (
     Storyboard,
 )
 from domain.languages import LANGUAGES
+from domain.plan_entitlements import (
+    PlanEntitlementError,
+    annotate_providers,
+    ensure_comic_settings_allowed,
+    has_paid_features,
+)
 from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import image_provider_statuses
 from infrastructure.llm_providers import llm_provider_statuses
@@ -309,15 +315,16 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             raise HTTPException(404, "Không có shot này") from None
 
     @router.get("/options")
-    def options() -> JSONResponse:
+    def options(request: Request) -> JSONResponse:
+        account = deps.current_account(request)
         return JSONResponse({
             "styles": [{"key": key, "label": label} for key, (label, _prompt) in COMIC_STYLES.items()],
             "aspect_ratios": list(ASPECT_RATIOS),
             "camera_motions": list(CAMERA_MOTIONS),
             "languages": [{"key": code, "label": profile.label_vi} for code, profile in LANGUAGES.items()],
-            "llm_providers": llm_provider_statuses(),
-            "image_providers": image_provider_statuses(),
-            "animation_providers": animation_provider_statuses(),
+            "llm_providers": annotate_providers(account, "comic_llm", llm_provider_statuses()),
+            "image_providers": annotate_providers(account, "comic_image", image_provider_statuses()),
+            "animation_providers": annotate_providers(account, "comic_animation", animation_provider_statuses()),
             "tts_providers": [
                 {"key": s.key, "label": s.label, "configured": s.configured, "voices": s.voices}
                 for s in provider_statuses() if s.key in ("edge", "cit")
@@ -361,6 +368,10 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
     ) -> JSONResponse:
         account = deps.current_account(request)
         owner = str(account["user_id"])
+        if llm_provider == "auto" and not has_paid_features(account):
+            # "Auto" prefers Gemini; free plans fall back to the next engine in its chain.
+            qwen3 = next((s for s in llm_provider_statuses() if s["key"] == "qwen3"), None)
+            llm_provider = "qwen3" if qwen3 and qwen3["configured"] else "heuristic"
         tts_provider = tts_provider.strip() or default_tts_provider()
         tts_voices: dict[str, str] = {}
         if tts_provider == "cit":
@@ -396,6 +407,10 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         unavailable = [s["label"] for s in statuses if s["key"] in chosen and not s["configured"]]
         if unavailable:
             raise HTTPException(400, "Chưa cấu hình: " + ", ".join(unavailable))
+        try:
+            ensure_comic_settings_allowed(account, settings.model_dump(mode="json"))
+        except PlanEntitlementError as exc:
+            raise HTTPException(403, str(exc)) from exc
         try:
             if file is not None and file.filename:
                 story = read_story_upload(file.filename, await file.read(5 * 1024 * 1024 + 1))
@@ -722,6 +737,12 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             return JSONResponse({"job_id": job_id, "status": job.get("status"), "duplicate": True})
         if job.get("status") in ACTIVE_STATUSES:
             raise HTTPException(409, "Dự án đang được xử lý")
+        try:
+            ensure_comic_settings_allowed(
+                deps.quota_account(request, job), (job.get("resume_request") or {}).get("settings") or {}
+            )
+        except PlanEntitlementError as exc:
+            raise HTTPException(403, str(exc)) from exc
         if body.shot:
             if not project.has_storyboard() or project.load_storyboard().mode != "animated":
                 raise HTTPException(409, "Chỉ xem trước được shot của storyboard hoạt hình")
