@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[float, float | None], None]
 
+# Silero VAD can discard whole stretches of dialogue mixed with loud music or sound
+# effects. Gaps at least this long after a VAD pass are transcribed again without VAD.
+VAD_GAP_SECONDS = 4.0
+VAD_GAP_PADDING_SECONDS = 0.3
+# Whisper's own hallucination test: text decoded from audio it believes is not speech.
+GAP_MAX_NO_SPEECH_PROB = 0.6
+GAP_MIN_LOGPROB = -1.0
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -147,6 +155,8 @@ class ASRService:
                 logger.warning("No transcript segments with requested language, retrying with auto language detection")
             if self.config.engine == "faster":
                 result = self._faster_result(model, audio, attempt, progress)
+                if attempt["vad"] and result.segments:
+                    result = self._fill_vad_gaps(model, audio, result, attempt)
             else:
                 result = self._openai_result(model, audio, attempt)
             if any((segment.get("text") or "").strip() for segment in result.segments):
@@ -169,6 +179,44 @@ class ASRService:
         import whisper
 
         return whisper.load_audio(str(media_path))
+
+    def _fill_vad_gaps(self, model: Any, audio: Any, result: ASRResult, attempt: dict[str, Any]) -> ASRResult:
+        """Re-transcribe long stretches the VAD pass left empty, without VAD."""
+
+        if not hasattr(audio, "shape"):
+            return result
+        rate = int(model.feature_extractor.sampling_rate)
+        total = len(audio) / rate
+        boundaries = [0.0, *(edge for segment in result.segments for edge in (segment["start"], segment["end"])), total]
+        gaps = [
+            (start, end)
+            for start, end in zip(boundaries[::2], boundaries[1::2])
+            if end - start >= VAD_GAP_SECONDS
+        ]
+        if not gaps:
+            return result
+        language = attempt["language"] or result.detected_language
+        recovered: list[dict[str, Any]] = []
+        for gap_start, gap_end in gaps:
+            offset = max(0.0, gap_start - VAD_GAP_PADDING_SECONDS)
+            clip = audio[int(offset * rate) : int(min(total, gap_end + VAD_GAP_PADDING_SECONDS) * rate)]
+            gap_attempt = {**attempt, "language": language, "vad": False}
+            for segment in self._faster_result(model, clip, gap_attempt, None).segments:
+                if segment["no_speech_prob"] > GAP_MAX_NO_SPEECH_PROB and segment["avg_logprob"] < GAP_MIN_LOGPROB:
+                    continue
+                segment["start"] += offset
+                segment["end"] += offset
+                for word in segment["words"]:
+                    word["start"] = None if word["start"] is None else word["start"] + offset
+                    word["end"] = None if word["end"] is None else word["end"] + offset
+                # Padding may re-hear the neighbouring cue; keep only speech inside the gap.
+                if gap_start < (segment["start"] + segment["end"]) / 2 < gap_end:
+                    recovered.append(segment)
+        if not recovered:
+            return result
+        logger.info("Recovered %d speech segment(s) that VAD dropped", len(recovered))
+        segments = sorted([*result.segments, *recovered], key=lambda segment: (segment["start"], segment["end"]))
+        return ASRResult(segments, result.detected_language, result.language_probability)
 
     def _faster(self, model: Any, media_path: Path, attempt: dict[str, Any],
                 progress: ProgressCallback | None) -> list[dict[str, Any]]:

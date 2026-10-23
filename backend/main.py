@@ -2608,6 +2608,7 @@ def process_video(
                 "asr_beam_size": ASR_SERVICE.config.beam_size,
                 "asr_vad": ASR_SERVICE.config.vad,
                 "asr_vad_min_silence_ms": ASR_SERVICE.config.vad_min_silence_ms,
+                "asr_vad_gap_recovery": 1,
                 "ocr_enabled": SETTINGS.ocr_backend != "off",
                 "ocr_backend": SETTINGS.ocr_backend,
                 "ocr_sample_fps": ocr_sample_fps,

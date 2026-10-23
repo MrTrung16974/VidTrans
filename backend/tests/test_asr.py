@@ -53,6 +53,39 @@ class ASRServiceTests(unittest.TestCase):
         self.assertFalse(model.calls[1]["vad_filter"])
         self.assertEqual(model.calls[1]["beam_size"], 1)
 
+    def test_long_gap_left_by_vad_is_transcribed_again_without_vad(self):
+        import numpy as np
+
+        model = FakeFasterModel([
+            [_segment(0.0, 2.0, "你好"), _segment(30.0, 32.0, "谢谢")],
+            # The gap clip starts 0.3s before the first segment ends.
+            [_segment(10.0, 11.0, "有鬼"), _segment(0.0, 0.4, "好")],
+            [],
+        ])
+        model.feature_extractor = SimpleNamespace(sampling_rate=16000)
+        asr = service(model)
+        asr._load_audio = lambda model, path: np.zeros(16000 * 40, dtype=np.float32)
+        segments = asr.transcribe_chinese("small", Path("v.mp4"))
+        self.assertEqual([s["text"] for s in segments], ["你好", "有鬼", "谢谢"])
+        self.assertAlmostEqual(segments[1]["start"], 11.7)
+        self.assertAlmostEqual(segments[1]["words"][0]["end"], 12.7)
+        self.assertFalse(model.calls[1]["vad_filter"])
+        self.assertEqual(len(model.inputs[1]), int(16000 * (30.3 - 1.7)))
+        # The 8s tail after the last segment is a gap too.
+        self.assertEqual(len(model.calls), 3)
+
+    def test_gap_hallucinations_are_discarded(self):
+        import numpy as np
+
+        noise = _segment(1.0, 3.0, "谢谢观看")
+        noise.avg_logprob, noise.no_speech_prob = -1.4, 0.9
+        model = FakeFasterModel([[_segment(0.0, 1.0, "你好")], [noise]])
+        model.feature_extractor = SimpleNamespace(sampling_rate=16000)
+        asr = service(model)
+        asr._load_audio = lambda model, path: np.zeros(16000 * 10, dtype=np.float32)
+        segments = asr.transcribe_chinese("small", Path("v.mp4"))
+        self.assertEqual([s["text"] for s in segments], ["你好"])
+
     def test_audio_is_decoded_once_and_reused_by_every_retry(self):
         model = FakeFasterModel([[], [], [_segment(1.0, 2.0, "你好")]])
         asr = service(model)

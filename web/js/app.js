@@ -1729,6 +1729,7 @@ function renderPendingUpload(upload) {
       </div>
     </div>
     <div class="job-owner job-owner-pending">—</div>
+    <time class="job-created job-created-pending">Đang tạo…</time>
     <span class="status-pill status-${statusClass}"><span class="status-dot"></span><span>${statusText}</span></span>
     <div class="job-progress"><div class="progress-track ${active ? "progress-active" : "progress-failed"}"><span style="width:${active ? progress : 100}%"></span></div><small>${active ? `${progress}%` : "—"}</small></div>
     <div class="job-step"><strong>${progress >= 100 && active ? "Đang tạo tiến trình" : active ? "Đang tải batch" : "Tải lên không thành công"}</strong><small title="${escapeHtml(upload.detail)}">${escapeHtml(upload.detail)}</small></div>
@@ -1780,6 +1781,15 @@ function renderJobs(jobs) {
     const batchBadge = job.batch_id ? `<span class="batch-tag">${escapeHtml(job.batch_id)}</span>` : `<span class="single-tag">Video đơn</span>`;
     const ownerName = job.owner_display_name || job.owner_email || job.owner_user_id || "Chưa xác định";
     const ownerEmail = job.owner_email && job.owner_email !== ownerName ? job.owner_email : "";
+    const createdDate = job.created_at ? new Date(job.created_at) : null;
+    const hasValidCreatedDate = createdDate && !Number.isNaN(createdDate.getTime());
+    const createdDateLabel = hasValidCreatedDate
+      ? createdDate.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" })
+      : "—";
+    const createdTimeLabel = hasValidCreatedDate
+      ? createdDate.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
+      : "";
+    const createdDateTime = hasValidCreatedDate ? createdDate.toISOString() : "";
     return `<article class="job-row${selected ? " selected" : ""}" data-job-row="${escapeHtml(job.job_id)}">
       <label class="job-select" title="Chọn job"><input type="checkbox" data-job-select="${escapeHtml(job.job_id)}" ${selected ? "checked" : ""} aria-label="Chọn ${escapeHtml(job.filename || job.job_id)}" /></label>
       <div class="job-file">
@@ -1795,6 +1805,10 @@ function renderJobs(jobs) {
         <strong>${escapeHtml(ownerName)}</strong>
         ${ownerEmail ? `<small>${escapeHtml(ownerEmail)}</small>` : ""}
       </div>
+      <time class="job-created" ${createdDateTime ? `datetime="${createdDateTime}" title="${createdDateLabel} ${createdTimeLabel}"` : ""}>
+        <strong>${createdDateLabel}</strong>
+        ${createdTimeLabel ? `<small>${createdTimeLabel}</small>` : ""}
+      </time>
       <span class="status-pill status-${escapeHtml(job.status)}"><span class="status-dot"></span><span>${statusLabels[job.status] || escapeHtml(job.status)}</span></span>
       <div class="job-progress"><div class="progress-track progress-${escapeHtml(job.status)}"><span style="width:${progress}%"></span></div><small>${progress}%</small></div>
       <div class="job-step"><strong>${escapeHtml(stepLabels[job.step] || job.step || "Đang cập nhật")}</strong><small title="${escapeHtml(detail)}">${escapeHtml(detail)}</small></div>
