@@ -91,6 +91,29 @@ class CITVoiceStudioProviderTest(unittest.TestCase):
         self.assertFalse(status.supports_pitch_matching)
         self.assertEqual(status.male_voice_label, voices["Minh Đức"].label)
 
+    @patch.dict(os.environ, CIT_ENV, clear=True)
+    def test_busy_app_keeps_the_last_voice_list(self) -> None:
+        opener, calls = fake_cit()
+        clock = [1000.0]
+        with patch("infrastructure.tts_providers.time.monotonic", lambda: clock[0]):
+            with patch("infrastructure.tts_providers.urlopen", side_effect=opener):
+                self.assertEqual(len(cit_voices()), 3)
+            # /health is slow while the app synthesises; it must not decide availability.
+            self.assertNotIn("/health", " ".join(request.full_url for request in calls))
+            clock[0] += tts_providers.CIT_STATUS_TTL_SECONDS + 1
+            # A timeout means the app is synthesising: keep the list however long that takes.
+            with patch("infrastructure.tts_providers.urlopen", side_effect=URLError(TimeoutError("busy"))):
+                clock[0] += tts_providers.CIT_STALE_SECONDS * 5
+                self.assertEqual(len(cit_voices()), 3)
+                ensure_provider_configured("cit")
+            # A refused connection means it was closed: keep the list only briefly.
+            with patch("infrastructure.tts_providers.urlopen", side_effect=URLError(ConnectionRefusedError())) as refused:
+                clock[0] += 1
+                self.assertEqual(len(cit_voices()), 3)
+                refused.assert_not_called()  # "Busy" is remembered for the TTL, so no new wait.
+                clock[0] += tts_providers.CIT_STALE_SECONDS
+                self.assertEqual(cit_voices(), [])
+
     @patch.dict(os.environ, {**CIT_ENV, "VIDTRANS_CIT_VOICE_API_KEY": "lan-key"}, clear=True)
     def test_generate_sends_voice_speed_language_and_key(self) -> None:
         opener, calls = fake_cit()

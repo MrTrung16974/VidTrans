@@ -44,6 +44,10 @@ _elevenlabs_locks_guard = threading.Lock()
 # accounts or credits, but it is CPU-bound and only reachable while the app is open.
 CIT_SPEED_RANGE = (0.75, 1.5)
 CIT_STATUS_TTL_SECONDS = 15.0
+# The app answers no request while it synthesises a passage, so a timed-out poll means "busy":
+# the last good voice list is kept. Other failures (app closed) keep it only briefly.
+CIT_VOICES_TIMEOUT_SECONDS = 5
+CIT_STALE_SECONDS = 120.0
 CIT_GENERATE_TIMEOUT_SECONDS = 600
 _cit_cache: dict[str, tuple[float, object]] = {}
 _cit_cache_lock = threading.Lock()
@@ -420,32 +424,6 @@ def _cit_request(path: str, payload: dict | None = None) -> Request:
     return Request(cit_base_url() + path, data=data, method="POST" if data else "GET", headers=headers)
 
 
-def _cit_cached(name: str, loader):
-    now = time.monotonic()
-    with _cit_cache_lock:
-        cached = _cit_cache.get(name)
-        if cached is not None and now - cached[0] < CIT_STATUS_TTL_SECONDS:
-            return cached[1]
-    value = loader()
-    with _cit_cache_lock:
-        _cit_cache[name] = (now, value)
-    return value
-
-
-def cit_available() -> bool:
-    if not cit_base_url():
-        return False
-
-    def probe() -> bool:
-        try:
-            with urlopen(_cit_request("/health"), timeout=2) as response:
-                return 200 <= response.status < 300
-        except (HTTPError, URLError, OSError, ValueError):
-            return False
-
-    return bool(_cit_cached("health", probe))
-
-
 def _cit_voice_gender(item: dict) -> str:
     text = " ".join(str(item.get(field) or "") for field in ("gender", "sex", "description", "name", "label")).lower()
     # "Nam" alone also names the southern accent ("giọng Nam"), so prefer explicit fields.
@@ -486,18 +464,30 @@ def _parse_cit_voices(payload: object) -> list[CITVoice]:
 def cit_voices() -> list[CITVoice]:
     """Voices offered by the running CIT Voice Studio app (built-in and cloned)."""
 
-    if not cit_available():
+    if not cit_base_url():
         return []
-
-    def load() -> list[CITVoice]:
-        try:
-            with urlopen(_cit_request("/voices"), timeout=5) as response:
-                return _parse_cit_voices(json.loads(response.read(2 * 1024 * 1024)))
-        except (HTTPError, URLError, OSError, ValueError) as exc:
-            logger.warning("CIT Voice Studio voice list failed: %s", type(exc).__name__)
-            return []
-
-    return list(_cit_cached("voices", load))
+    now = time.monotonic()
+    with _cit_cache_lock:
+        cached = _cit_cache.get("voices")
+    if cached is not None and now - cached[0] < CIT_STATUS_TTL_SECONDS:
+        return list(cached[1])
+    try:
+        with urlopen(_cit_request("/voices"), timeout=CIT_VOICES_TIMEOUT_SECONDS) as response:
+            voices = _parse_cit_voices(json.loads(response.read(2 * 1024 * 1024)))
+    except (HTTPError, URLError, OSError, ValueError) as exc:
+        busy = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
+        if cached is not None and cached[1] and busy:
+            # Remember "busy" for a TTL so the next page loads do not each wait for the timeout.
+            with _cit_cache_lock:
+                _cit_cache["voices"] = (now, cached[1])
+            return list(cached[1])
+        if cached is not None and cached[1] and now - cached[0] < CIT_STALE_SECONDS:
+            return list(cached[1])
+        logger.warning("CIT Voice Studio voice list failed: %s", type(exc).__name__)
+        voices = []
+    with _cit_cache_lock:
+        _cit_cache["voices"] = (now, voices)
+    return list(voices)
 
 
 def _cit_status() -> TTSProviderStatus:
