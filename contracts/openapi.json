@@ -300,7 +300,7 @@
             "title": "Tiktok Publish At"
           },
           "translation_provider": {
-            "default": "google",
+            "default": "",
             "title": "Translation Provider",
             "type": "string"
           },
@@ -315,7 +315,7 @@
             "type": "string"
           },
           "tts_provider": {
-            "default": "edge",
+            "default": "",
             "title": "Tts Provider",
             "type": "string"
           },
@@ -510,7 +510,7 @@
             "type": "string"
           },
           "tts_provider": {
-            "default": "edge",
+            "default": "",
             "title": "Tts Provider",
             "type": "string"
           },
@@ -674,7 +674,7 @@
             "title": "Tiktok Publish At"
           },
           "translation_provider": {
-            "default": "google",
+            "default": "",
             "title": "Translation Provider",
             "type": "string"
           },
@@ -689,7 +689,7 @@
             "type": "string"
           },
           "tts_provider": {
-            "default": "edge",
+            "default": "",
             "title": "Tts Provider",
             "type": "string"
           },
@@ -852,7 +852,7 @@
             "title": "Tiktok Publish At"
           },
           "translation_provider": {
-            "default": "google",
+            "default": "",
             "title": "Translation Provider",
             "type": "string"
           },
@@ -867,7 +867,7 @@
             "type": "string"
           },
           "tts_provider": {
-            "default": "edge",
+            "default": "",
             "title": "Tts Provider",
             "type": "string"
           },
@@ -3256,6 +3256,101 @@
       }
     },
     "/api/v1/comic/projects": {
+      "get": {
+        "operationId": "list_projects_endpoint_api_v1_comic_projects_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Offset"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Projects Endpoint",
+        "tags": [
+          "Comic Video"
+        ]
+      },
       "post": {
         "operationId": "create_project_api_v1_comic_projects_post",
         "requestBody": {
@@ -3314,6 +3409,41 @@
             "schema": {
               "title": "Job Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scene_page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scene Page"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scene_limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 120,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scene Limit"
             }
           }
         ],
@@ -5244,6 +5374,39 @@
                 }
               ],
               "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "job_action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Job Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page"
             }
           },
           {
@@ -7474,6 +7637,62 @@
           }
         ],
         "summary": "Elevenlabs Voice Preview Endpoint"
+      }
+    },
+    "/api/v1/tts-providers/{provider}/voices/{voice_key}/preview": {
+      "get": {
+        "operationId": "tts_voice_preview_endpoint_api_v1_tts_providers__provider__voices__voice_key__preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "voice_key",
+            "required": true,
+            "schema": {
+              "title": "Voice Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Tts Voice Preview Endpoint"
       }
     },
     "/api/v1/youtube-auth": {

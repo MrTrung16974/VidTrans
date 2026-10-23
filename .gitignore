@@ -10,3 +10,11 @@ __pycache__/
 /deploy/.vps-configured
 /deploy/nginx/runtime/
 /secrets/
+/comfyui/app/
+/comfyui/output/
+/comfyui/input/
+/comfyui/user/
+/comfyui/models/*
+!/comfyui/models/checkpoints/
+/comfyui/models/checkpoints/*
+!/comfyui/models/checkpoints/.gitkeep

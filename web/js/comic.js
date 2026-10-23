@@ -31,12 +31,33 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   let current = null;
   let pollTimer = null;
   let entered = false;
+  let projectPage = 1;
+  let projectPageSize = 6;
+  let projectTotal = 0;
+  let projectTotalPages = 1;
+  let scenePage = 1;
+  let scenePageSize = 6;
+  try {
+    const savedSceneSize = parseInt(localStorage.getItem("vidtrans_comic_scenes_page_size") || "", 10);
+    if ([6, 10, 20, 40].includes(savedSceneSize)) scenePageSize = savedSceneSize;
+  } catch (_) {}
   const openGalleries = new Set();
 
   const api = (path, init = {}) => requestJson(`/api/v1/comic${path}`, init);
+  const withSceneQuery = path => {
+    const sep = path.includes("?") ? "&" : "?";
+    return `${path}${sep}scene_page=${scenePage}&scene_limit=${scenePageSize}`;
+  };
   const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
   const isActive = job => ACTIVE.has(job?.status);
   const statusClass = job => isActive(job) ? "processing" : job?.status === "completed" ? "completed" : job?.status === "failed" ? "failed" : "queued";
+
+  function paginationPages(currentPage, totalPages) {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    if (currentPage <= 4) return [1, 2, 3, 4, 5, "...", totalPages];
+    if (currentPage >= totalPages - 3) return [1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+    return [1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages];
+  }
 
   function fillSelect(select, items, selected) {
     if (!select) return;
@@ -58,7 +79,8 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     fillSelect(form.elements.image_provider, options.image_providers,
       comfyui?.configured ? "comfyui" : gemini?.configured ? "gemini" : "placeholder");
     fillSelect(form.elements.animation_provider, options.animation_providers, "camera_2_5d");
-    fillSelect(form.elements.tts_provider, options.tts_providers, "edge");
+    const cit = options.tts_providers.find(item => item.key === "cit");
+    fillSelect(form.elements.tts_provider, options.tts_providers, cit?.configured ? "cit" : "edge");
     syncTtsVoices();
     $("#comicStoryLimit").textContent = `Tối đa ${options.max_story_chars.toLocaleString("vi-VN")} ký tự mỗi dự án.`;
   }
@@ -82,13 +104,34 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     fill(form.elements.cit_male_voice, "male");
   }
 
-  async function loadProjects() {
+  function renderProjectPagination() {
+    const nav = $("#comicProjectPagination");
+    if (!nav) return;
+    if (projectTotal <= 0 || projectTotalPages <= 1) {
+      nav.classList.add("is-hidden");
+      nav.innerHTML = "";
+      return;
+    }
+    nav.classList.remove("is-hidden");
+    nav.innerHTML = `
+      <button type="button" class="pagination-btn" data-project-page="${projectPage - 1}" ${projectPage <= 1 ? "disabled" : ""} aria-label="Trang dự án trước">‹ Trước</button>
+      <span class="comic-project-page-info">Trang <strong>${projectPage}</strong>/${projectTotalPages} <small>(${projectTotal})</small></span>
+      <button type="button" class="pagination-btn" data-project-page="${projectPage + 1}" ${projectPage >= projectTotalPages ? "disabled" : ""} aria-label="Trang dự án sau">Sau ›</button>
+    `;
+  }
+
+  async function loadProjects(page = projectPage) {
     const list = $("#comicProjectList");
+    projectPage = Math.max(1, page);
     try {
-      const data = await requestJson("/api/v1/jobs?limit=200");
-      const projects = (data.items || []).filter(job => job.job_action === "comic_video");
+      const data = await api(`/projects?page=${projectPage}&limit=${projectPageSize}`);
+      const projects = data.items || [];
+      projectTotal = Number(data.total ?? projects.length);
+      projectTotalPages = Math.max(1, Number(data.total_pages || Math.ceil(projectTotal / projectPageSize) || 1));
+      projectPage = Math.min(Math.max(1, Number(data.page || projectPage)), projectTotalPages);
       if (!projects.length) {
         list.innerHTML = '<p class="comic-empty">Chưa có dự án nào. Bấm "Tạo truyện mới" để bắt đầu.</p>';
+        renderProjectPagination();
         return;
       }
       list.innerHTML = projects.map(job => {
@@ -101,13 +144,17 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
           <span class="status-pill status-${statusClass(job)}">${escapeHtml(STEP_LABELS[job.step] || job.status)}</span>
           <small>${escapeHtml(meta)}</small></button>`;
       }).join("");
+      renderProjectPagination();
     } catch (error) {
       list.innerHTML = `<p class="comic-empty">${escapeHtml(error.message)}</p>`;
+      $("#comicProjectPagination")?.classList.add("is-hidden");
     }
   }
 
-  async function open(jobId, { reveal = false } = {}) {
-    current = await api(`/projects/${encodeURIComponent(jobId)}`);
+  async function open(jobId, { reveal = false, keepPage = false, scrollScenes = false } = {}) {
+    if (!keepPage && current?.job?.job_id !== jobId) scenePage = 1;
+    current = await api(withSceneQuery(`/projects/${encodeURIComponent(jobId)}`));
+    if (current?.scenes_pagination?.page) scenePage = current.scenes_pagination.page;
     // A shareable link straight to this project.
     if (location.hash !== projectRoute(jobId)) history.replaceState(null, "", projectRoute(jobId));
     render();
@@ -115,6 +162,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     loadProjects();
     // On one-column layouts the project opens below the list; bring it into view.
     if (reveal && narrowLayout()) editor.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (scrollScenes) $("#comicScenes")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function showNew() {
@@ -131,7 +179,8 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     pollTimer = setTimeout(async () => {
       try {
         const wasActive = isActive(current.job);
-        current = await api(`/projects/${encodeURIComponent(current.job.job_id)}`);
+        current = await api(withSceneQuery(`/projects/${encodeURIComponent(current.job.job_id)}`));
+        if (current?.scenes_pagination?.page) scenePage = current.scenes_pagination.page;
         render();
         if (wasActive && !isActive(current.job)) {
           loadProjects();
@@ -185,9 +234,13 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     $("#comicWarnings").classList.toggle("is-hidden", !warnings.length);
     const animated = storyboard?.mode === "animated";
     const metrics = current.metrics;
-    const shotCount = animated ? storyboard.scenes.reduce((total, scene) => total + scene.shots.length, 0) : 0;
+    const pagination = current.scenes_pagination;
+    const totalScenes = pagination?.total_scenes ?? (storyboard ? storyboard.scenes.length : 0);
+    const shotCount = animated
+      ? (pagination?.total_shots ?? storyboard.scenes.reduce((total, scene) => total + scene.shots.length, 0))
+      : 0;
     $("#comicMeta").textContent = storyboard
-      ? [`Bản ${storyboard.revision}`, `${storyboard.scenes.length} cảnh`, animated ? `${shotCount} shot` : "",
+      ? [`Bản ${storyboard.revision}`, `${totalScenes} cảnh`, animated ? `${shotCount} shot` : "",
         `${storyboard.characters.length} nhân vật`, `chia cảnh: ${storyboard.analysis_method}`,
         metrics ? `AI ${metrics.ai_seconds}s · ${metrics.attempts} lượt sinh · ${metrics.fallback_shots} shot dự phòng 2.5D` : ""]
         .filter(Boolean).join(" · ")
@@ -199,6 +252,53 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     } else {
       renderScenes(storyboard, media, locked);
     }
+    renderScenesPagination(storyboard, pagination);
+  }
+
+  function renderScenesPagination(storyboard, pagination) {
+    const container = $("#comicScenesPagination");
+    if (!container) return;
+    const totalScenes = pagination?.total_scenes ?? (storyboard?.scenes?.length || 0);
+    if (!storyboard || totalScenes === 0) {
+      container.classList.add("is-hidden");
+      container.innerHTML = "";
+      return;
+    }
+    const page = pagination?.page || scenePage || 1;
+    const pageSize = pagination?.limit || scenePageSize || 6;
+    const totalPages = Math.max(1, pagination?.total_pages || Math.ceil(totalScenes / pageSize));
+    const startIndex = pagination?.offset ?? (page - 1) * pageSize;
+    const endIndex = Math.min(startIndex + storyboard.scenes.length, totalScenes);
+    const pages = paginationPages(page, totalPages);
+    const pagesHtml = pages.map(p => {
+      if (p === "...") return `<span class="pagination-ellipsis" aria-hidden="true">…</span>`;
+      const isCurrent = p === page;
+      return `<button type="button" class="pagination-page-btn${isCurrent ? " active" : ""}" data-scene-page="${p}" ${isCurrent ? 'aria-current="page"' : ""} aria-label="Trang cảnh ${p}">${p}</button>`;
+    }).join("");
+
+    container.classList.remove("is-hidden");
+    container.innerHTML = `
+      <div class="pagination-info">
+        <span class="pagination-text">Hiển thị cảnh <strong>${startIndex + 1}</strong> – <strong>${endIndex}</strong> trong số <strong>${totalScenes}</strong> cảnh</span>
+        <div class="pagination-size-wrap">
+          <label for="comicScenesPageSizeSelect">Hiển thị:</label>
+          <select id="comicScenesPageSizeSelect" class="pagination-size-select" aria-label="Số cảnh mỗi trang">
+            ${[6, 10, 20, 40].map(size => `<option value="${size}" ${pageSize === size ? "selected" : ""}>${size} cảnh / trang</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="pagination-nav" role="navigation" aria-label="Phân trang cảnh storyboard">
+        <button type="button" class="pagination-btn pagination-first" data-scene-page="1" ${page <= 1 ? "disabled" : ""} title="Trang đầu" aria-label="Trang đầu">«</button>
+        <button type="button" class="pagination-btn pagination-prev" data-scene-page="${page - 1}" ${page <= 1 ? "disabled" : ""} title="Trang trước" aria-label="Trang trước">
+          <span class="btn-label-prev">‹ Trước</span>
+        </button>
+        <div class="pagination-pages">${pagesHtml}</div>
+        <button type="button" class="pagination-btn pagination-next" data-scene-page="${page + 1}" ${page >= totalPages ? "disabled" : ""} title="Trang sau" aria-label="Trang sau">
+          <span class="btn-label-next">Sau ›</span>
+        </button>
+        <button type="button" class="pagination-btn pagination-last" data-scene-page="${totalPages}" ${page >= totalPages ? "disabled" : ""} title="Trang cuối" aria-label="Trang cuối">»</button>
+      </div>
+    `;
   }
 
   async function refreshGallery(characterId) {
@@ -287,7 +387,9 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   async function mutate(promise, message) {
     try {
       current = await promise;
+      if (current?.scenes_pagination?.page) scenePage = current.scenes_pagination.page;
       render();
+      loadProjects();
       if (message) toast(message);
     } catch (error) {
       toast(error.message, true);
@@ -345,7 +447,25 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     }
   });
 
+  $("#comicProjectPagination")?.addEventListener("click", event => {
+    const button = event.target.closest("[data-project-page]");
+    if (!button || button.disabled) return;
+    const nextPage = parseInt(button.dataset.projectPage, 10);
+    if (!isNaN(nextPage) && nextPage !== projectPage) {
+      loadProjects(nextPage);
+    }
+  });
+
   editor.addEventListener("click", async event => {
+    const scenePageBtn = event.target.closest("[data-scene-page]");
+    if (scenePageBtn && !scenePageBtn.disabled && current) {
+      const nextScenePage = parseInt(scenePageBtn.dataset.scenePage, 10);
+      if (!isNaN(nextScenePage) && nextScenePage !== scenePage) {
+        scenePage = nextScenePage;
+        await open(current.job.job_id, { keepPage: true, scrollScenes: true });
+      }
+      return;
+    }
     const viewModeBtn = event.target.closest("[data-comic-view-mode]");
     if (viewModeBtn) {
       const mode = viewModeBtn.dataset.comicViewMode;
@@ -378,19 +498,19 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
           await api(`/projects/${jobId}/render`, { ...json("POST", { shot: label }),
             headers: { "Content-Type": "application/json", "Idempotency-Key": `${label}-${current.storyboard.revision}-${Date.now()}` } });
           toast(`Đang dựng xem trước shot ${label}…`);
-          await open(current.job.job_id);
+          await open(current.job.job_id, { keepPage: true });
         } catch (error) { toast(error.message, true); }
       } else if (shotOp === "regenerate") {
-        await mutate(api(`${shotPath}/regenerate`, { method: "POST" }), `Shot ${label}: sẽ tạo chuyển động mới ở lần dựng tới`);
+        await mutate(api(withSceneQuery(`${shotPath}/regenerate`), { method: "POST" }), `Shot ${label}: sẽ tạo chuyển động mới ở lần dựng tới`);
       } else if (shotOp === "clear-keyframe") {
-        await mutate(api(`${shotPath}/keyframe`, { method: "DELETE" }), "Đã bỏ keyframe tải lên");
+        await mutate(api(withSceneQuery(`${shotPath}/keyframe`), { method: "DELETE" }), "Đã bỏ keyframe tải lên");
       } else if (shotOp === "delete") {
-        if (confirm(`Xóa shot ${label}?`)) await mutate(api(shotPath, { method: "DELETE" }), "Đã xóa shot");
+        if (confirm(`Xóa shot ${label}?`)) await mutate(api(withSceneQuery(shotPath), { method: "DELETE" }), "Đã xóa shot");
       } else if (shotOp === "insert") {
         const keyframe = prompt("Mô tả khung hình đầu của shot mới (tiếng Anh):");
         if (!keyframe?.trim()) return;
         const narration = prompt("Lời dẫn (có thể để trống):") || "";
-        await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}/shots`, json("POST", { after: Number(shotIndex), keyframe_prompt: keyframe, narration })), "Đã chèn shot");
+        await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}/shots`), json("POST", { after: Number(shotIndex), keyframe_prompt: keyframe, narration })), "Đã chèn shot");
       }
       return;
     }
@@ -402,9 +522,9 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         render();
       } else if (refOp === "approve") {
         const name = event.target.closest("[data-ref-name]").dataset.refName;
-        await mutate(api(`${base}/${encodeURIComponent(name)}/approve`, { method: "POST" }), "Đã duyệt ảnh tham chiếu");
+        await mutate(api(withSceneQuery(`${base}/${encodeURIComponent(name)}/approve`), { method: "POST" }), "Đã duyệt ảnh tham chiếu");
       } else if (refOp === "unpin") {
-        await mutate(api(`${base}/approval`, { method: "DELETE" }), "Đã bỏ ghim ảnh tham chiếu");
+        await mutate(api(withSceneQuery(`${base}/approval`), { method: "DELETE" }), "Đã bỏ ghim ảnh tham chiếu");
       }
       return;
     }
@@ -419,25 +539,37 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       try {
         await api(`/projects/${jobId}/render`, json("POST", body));
         toast(action === "images" ? "Đang sinh ảnh cho các cảnh đã đổi…" : "Đang render — chỉ tạo lại phần đã thay đổi");
-        await open(current.job.job_id);
+        if (action === "reanalyze") scenePage = 1;
+        await open(current.job.job_id, { keepPage: action !== "reanalyze" });
       } catch (error) { toast(error.message, true); }
       return;
     }
     const sceneIndex = event.target.closest("[data-scene]")?.dataset.scene;
     if (op === "delete") {
       if (!confirm(`Xóa cảnh ${sceneIndex}?`)) return;
-      await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}`, { method: "DELETE" }), "Đã xóa cảnh");
+      await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}`), { method: "DELETE" }), "Đã xóa cảnh");
     } else if (op === "clear-image") {
-      await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}/image`, { method: "DELETE" }), "Đã bỏ ảnh tải lên");
+      await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}/image`), { method: "DELETE" }), "Đã bỏ ảnh tải lên");
     } else if (op === "insert") {
       const narration = prompt("Lời dẫn cho cảnh mới:");
       if (!narration?.trim()) return;
       const visual = prompt("Mô tả hình ảnh (tiếng Anh):", narration) || narration;
-      await mutate(api(`/projects/${jobId}/scenes`, json("POST", { after: Number(sceneIndex), narration, visual_prompt: visual })), "Đã chèn cảnh");
+      await mutate(api(withSceneQuery(`/projects/${jobId}/scenes`), json("POST", { after: Number(sceneIndex), narration, visual_prompt: visual })), "Đã chèn cảnh");
     }
   });
 
   editor.addEventListener("change", async event => {
+    const sizeSelect = event.target.closest("#comicScenesPageSizeSelect");
+    if (sizeSelect && current) {
+      const nextSize = parseInt(sizeSelect.value, 10);
+      if (!isNaN(nextSize) && nextSize > 0) {
+        scenePageSize = nextSize;
+        scenePage = 1;
+        try { localStorage.setItem("vidtrans_comic_scenes_page_size", String(nextSize)); } catch (_) {}
+        await open(current.job.job_id, { keepPage: true, scrollScenes: true });
+      }
+      return;
+    }
     const jobId = encodeURIComponent(current?.job?.job_id || "");
     const shotUpload = event.target.closest("[data-shot-upload]");
     const refUpload = event.target.closest("[data-ref-upload]");
@@ -447,10 +579,10 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       data.append("file", upload.files[0]);
       if (upload === shotUpload) {
         const [sceneIndex, shotIndex] = upload.closest("[data-shot]").dataset.shot.split(".");
-        await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}/shots/${shotIndex}/keyframe`, { method: "POST", body: data }), "Đã thay keyframe");
+        await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}/shots/${shotIndex}/keyframe`), { method: "POST", body: data }), "Đã thay keyframe");
       } else {
         const characterId = upload.closest("[data-character]").dataset.character;
-        await mutate(api(`/projects/${jobId}/characters/${encodeURIComponent(characterId)}/references`, { method: "POST", body: data }),
+        await mutate(api(withSceneQuery(`/projects/${jobId}/characters/${encodeURIComponent(characterId)}/references`), { method: "POST", body: data }),
           "Đã tải và duyệt ảnh tham chiếu");
       }
       return;
@@ -460,7 +592,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const data = new FormData();
     data.append("file", input.files[0]);
     const sceneIndex = input.closest("[data-scene]").dataset.scene;
-    await mutate(api(`/projects/${encodeURIComponent(current.job.job_id)}/scenes/${sceneIndex}/image`, { method: "POST", body: data }),
+    await mutate(api(withSceneQuery(`/projects/${encodeURIComponent(current.job.job_id)}/scenes/${sceneIndex}/image`), { method: "POST", body: data }),
       `Đã thay ảnh cảnh ${sceneIndex}`);
   });
 
@@ -472,14 +604,14 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const values = Object.fromEntries(new FormData(target));
     if (target.dataset.character !== undefined) {
       const { name, gender, appearance, outfit } = values;
-      await mutate(api(`/projects/${jobId}/characters/${encodeURIComponent(target.dataset.character)}`, json("PATCH", { name, gender, appearance, outfit })), "Đã lưu nhân vật");
+      await mutate(api(withSceneQuery(`/projects/${jobId}/characters/${encodeURIComponent(target.dataset.character)}`), json("PATCH", { name, gender, appearance, outfit })), "Đã lưu nhân vật");
       return;
     }
     if (target.dataset.shot !== undefined) {
       const [sceneIndex, shotIndex] = target.dataset.shot.split(".");
       try {
         const patch = shotPatchFromForm(target, parseDialogue);
-        await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}/shots/${shotIndex}`, json("PATCH", patch)), `Đã lưu shot ${target.dataset.shot}`);
+        await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}/shots/${shotIndex}`), json("PATCH", patch)), `Đã lưu shot ${target.dataset.shot}`);
       } catch (error) {
         toast(error.message, true);
       }
@@ -495,7 +627,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         negative_prompt: values.negative_prompt,
         camera_motion: values.camera_motion,
       };
-      await mutate(api(`/projects/${jobId}/scenes/${sceneIndex}`, json("PATCH", patch)), `Đã lưu cảnh ${sceneIndex}`);
+      await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}`), json("PATCH", patch)), `Đã lưu cảnh ${sceneIndex}`);
     } catch (error) {
       toast(error.message, true);
     }

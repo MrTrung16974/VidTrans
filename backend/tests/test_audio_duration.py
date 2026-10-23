@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from infrastructure.media_probe import probe_media_file
 from main import (
@@ -42,6 +43,30 @@ class AudioDurationIntegrationTests(unittest.TestCase):
         self.assertTrue(segments[0]["skip_tts"])
         self.assertEqual(segments[0]["tts_skip_reason"], "no_speakable_text")
         self.assertAlmostEqual(duration, 1.0, places=2)
+
+    def test_tts_reads_translation_without_pauses_from_source_word_gaps(self) -> None:
+        spoken: list[str] = []
+
+        def fake_edge(text, output_path, *_args, **_kwargs) -> None:
+            spoken.append(text)
+            subprocess.run(
+                [FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=1", str(output_path)],
+                check=True,
+            )
+
+        with tempfile.TemporaryDirectory(prefix="vidtrans-tts-text-") as directory:
+            segments = [{
+                "start": 0.0,
+                "end": 3.0,
+                "text": "Tôi có thể vỡ nát, nhưng không thể héo mòn",
+                # Long pauses between the Chinese words used to turn into commas.
+                "words": [
+                    {"start": 0.0, "end": 0.4}, {"start": 1.0, "end": 1.4}, {"start": 2.0, "end": 2.4},
+                ],
+            }]
+            with patch("main.tts_edge_with_retry", side_effect=fake_edge):
+                synthesize_tts_segments(segments, Path(directory), voice_type="female", speech_rate=1.0)
+        self.assertEqual(spoken[0], "Tôi có thể vỡ nát, nhưng không thể héo mòn")
 
     def test_tts_speakable_check_supports_vietnamese_and_chinese(self) -> None:
         self.assertTrue(is_speakable_tts_text("Được rồi"))

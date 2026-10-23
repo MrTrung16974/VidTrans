@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -53,6 +54,10 @@ _cit_cache: dict[str, tuple[float, object]] = {}
 _cit_cache_lock = threading.Lock()
 _cit_semaphore: threading.BoundedSemaphore | None = None
 _cit_semaphore_guard = threading.Lock()
+# Sentence read aloud when a user previews a voice before dubbing.
+VOICE_PREVIEW_TEXT = "Xin chào, đây là giọng đọc thử. Bạn có thể chọn giọng này để lồng tiếng cho video."
+_cit_previews: dict[str, tuple[bytes, str]] = {}
+_cit_previews_lock = threading.Lock()
 
 
 class TTSProviderHTTPError(RuntimeError):
@@ -156,6 +161,12 @@ def normalize_tts_provider(value: str | None) -> str:
     if provider not in TTS_PROVIDERS:
         raise ValueError(f"tts_provider must be one of: {', '.join(TTS_PROVIDERS)}")
     return provider
+
+
+def default_tts_provider() -> str:
+    """CIT Voice Studio when its app is reachable, otherwise the always-available Edge TTS."""
+
+    return "cit" if cit_voices() else "edge"
 
 
 def provider_statuses() -> list[TTSProviderStatus]:
@@ -591,3 +602,36 @@ def synthesize_cit(
     if not audio or content_type.startswith(("application/json", "text/")):
         raise RuntimeError("CIT Voice Studio không trả về dữ liệu âm thanh")
     output_path.write_bytes(audio)
+
+
+def audio_content_type(audio: bytes) -> str:
+    if audio.startswith(b"RIFF"):
+        return "audio/wav"
+    if audio.startswith(b"OggS"):
+        return "audio/ogg"
+    if audio.startswith(b"fLaC"):
+        return "audio/flac"
+    return "audio/mpeg"
+
+
+def cit_voice_preview(voice_key: str) -> tuple[bytes, str]:
+    """Synthesize the preview sentence with a CIT Voice Studio voice.
+
+    Generation runs on the server CPU, so each voice's clip is cached in memory.
+    """
+
+    ensure_provider_configured("cit")
+    if voice_key not in {voice.key for voice in cit_voices()}:
+        raise LookupError("Giọng CIT Voice Studio không còn trong ứng dụng")
+    with _cit_previews_lock:
+        cached = _cit_previews.get(voice_key)
+    if cached is not None:
+        return cached
+    with tempfile.TemporaryDirectory(prefix="vidtrans-preview-") as directory:
+        output_path = Path(directory) / "preview.audio"
+        synthesize_cit(VOICE_PREVIEW_TEXT, output_path, voice_key=voice_key)
+        audio = output_path.read_bytes()
+    result = (audio, audio_content_type(audio))
+    with _cit_previews_lock:
+        _cit_previews[voice_key] = result
+    return result

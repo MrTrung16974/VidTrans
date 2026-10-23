@@ -131,6 +131,12 @@ def installed_local_model(provider: str, *, opener=None) -> str:
     return tags[0]
 
 
+def default_translation_provider() -> str:
+    """TranslateGemma when Ollama has it, otherwise the always-available Google Translate."""
+
+    return "translategemma" if local_model_available("translategemma") else "google"
+
+
 def translategemma_available(*, opener=None, refresh: bool = False) -> bool:
     return local_model_available("translategemma", opener=opener, refresh=refresh)
 

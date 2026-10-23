@@ -2,7 +2,7 @@ import { createTikTokWorkspace } from "./tiktok.js?v=20261023-publish-cta";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
-import { createComicWorkspace } from "./comic.js?v=20261023-comfyui";
+import { createComicWorkspace } from "./comic.js?v=20261023-voicepreview";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -657,7 +657,6 @@ function renderProviderVoices(provider) {
   const select = $("#voiceTypeSelect");
   const previewButton = $("#voicePreviewButton");
   if (!select || !previewButton) return;
-  const isElevenLabs = provider?.key === "elevenlabs";
   const hasVoiceList = ["elevenlabs", "cit"].includes(provider?.key);
   const voices = hasVoiceList ? provider.voices || [] : [
     { key: "female", gender: "female", label: provider?.female_voice_label || "Giọng nữ" },
@@ -670,7 +669,7 @@ function renderProviderVoices(provider) {
   }).join("");
   if (voices.some(voice => voice.key === previous)) select.value = previous;
   select.disabled = voices.length === 0;
-  previewButton.classList.toggle("is-hidden", !isElevenLabs || voices.length === 0);
+  previewButton.classList.toggle("is-hidden", !VOICE_PREVIEW_PROVIDERS.has(provider?.key) || voices.length === 0);
   syncSelectedVoice();
 }
 
@@ -688,6 +687,7 @@ function syncSelectedVoice() {
   $("#ttsMaleVoice").value = hasVoiceList ? select.value : "";
 }
 
+const VOICE_PREVIEW_PROVIDERS = new Set(["edge", "elevenlabs", "cit"]);
 let voicePreviewAudio = null;
 let voicePreviewButton = null;
 
@@ -704,13 +704,16 @@ function stopVoicePreview() {
 async function playVoicePreview(button) {
   const voiceSelect = $(button.dataset.voicePreview);
   const voiceKey = voiceSelect?.value;
+  const provider = $("#ttsProvider")?.value || "edge";
   const wasPlaying = voicePreviewButton === button;
   stopVoicePreview();
   if (wasPlaying || !voiceKey) return;
   button.disabled = true;
   // Play the same-origin URL directly: the production CSP (default-src 'self')
   // blocks blob: media, and the session cookie authenticates this GET.
-  const url = `/api/v1/tts-providers/elevenlabs/voices/${encodeURIComponent(voiceKey)}/preview`;
+  // CIT synthesizes the sample on the server CPU, so the first play can take a while.
+  const url = `/api/v1/tts-providers/${encodeURIComponent(provider)}/voices/${encodeURIComponent(voiceKey)}/preview`;
+  button.textContent = "… Đang tạo";
   const start = async () => {
     const audio = new Audio(url);
     voicePreviewAudio = audio;
@@ -731,7 +734,8 @@ async function playVoicePreview(button) {
     }
   } catch (_) {
     stopVoicePreview();
-    toast("Không phát được bản nghe thử. Kiểm tra cấu hình ElevenLabs hoặc log máy chủ.", true);
+    button.textContent = "▶ Nghe thử";
+    toast("Không phát được bản nghe thử. Kiểm tra cấu hình nhà cung cấp giọng đọc hoặc log máy chủ.", true);
   } finally {
     button.disabled = false;
   }
@@ -769,6 +773,7 @@ async function loadTtsProviders() {
     select.addEventListener("change", applyProviderConfiguration);
     $("#voiceTypeSelect")?.addEventListener("change", () => syncSelectedVoice());
   } catch (_) {
+    select.value = "edge";
     hint.textContent = "Edge TTS sẵn sàng; không đọc được trạng thái API khác.";
   }
 }
@@ -1581,12 +1586,7 @@ function eligibleJobs(action) {
 }
 
 function getCurrentPageJobs() {
-  const jobs = state.jobs || [];
-  const pageSize = state.jobsPageSize || 10;
-  const totalPages = Math.max(1, Math.ceil(jobs.length / pageSize));
-  const page = Math.min(Math.max(1, state.jobsPage || 1), totalPages);
-  const startIndex = (page - 1) * pageSize;
-  return jobs.slice(startIndex, startIndex + pageSize);
+  return state.jobs || [];
 }
 
 function getPaginationPages(current, total) {
@@ -1737,7 +1737,8 @@ function renderPendingUpload(upload) {
 }
 
 function renderJobs(jobs) {
-  const totalJobs = jobs.length;
+  const pageJobs = jobs || [];
+  const totalJobs = Number.isFinite(state.jobsTotal) ? state.jobsTotal : pageJobs.length;
   const pageSize = state.jobsPageSize || 10;
   const totalPages = Math.max(1, Math.ceil(totalJobs / pageSize));
 
@@ -1746,8 +1747,7 @@ function renderJobs(jobs) {
 
   const page = state.jobsPage;
   const startIndex = (page - 1) * pageSize;
-  const endIndex = Math.min(startIndex + pageSize, totalJobs);
-  const pageJobs = jobs.slice(startIndex, endIndex);
+  const endIndex = Math.min(startIndex + pageJobs.length, totalJobs);
 
   const pendingHtml = page === 1 ? state.pendingUploads.map(renderPendingUpload).join("") : "";
   if (!totalJobs && !state.pendingUploads.length) {
@@ -1808,7 +1808,7 @@ function renderJobs(jobs) {
 
 function renderJobDashboard() {
   renderJobs(state.jobs);
-  const counts = state.jobs.reduce((result, job) => ({ ...result, [job.status]: (result[job.status] || 0) + 1 }), {});
+  const counts = state.jobStatusCounts || state.jobs.reduce((result, job) => ({ ...result, [job.status]: (result[job.status] || 0) + 1 }), {});
   const activeUploads = state.pendingUploads.filter(upload => upload.status === "uploading").length;
   const failedUploads = state.pendingUploads.filter(upload => upload.status !== "uploading").length;
   const queuedCount = (counts.queued || 0) + (counts.scheduled || 0);
@@ -1870,7 +1870,13 @@ async function loadJobs() {
   state.jobsLoading = true;
   const refreshButton = $("#refreshJobs");
   if (refreshButton) refreshButton.classList.add("is-refreshing");
-  const params = new URLSearchParams({ limit: "500" });
+  const pageSize = state.jobsPageSize || 10;
+  const page = Math.max(1, state.jobsPage || 1);
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: String(pageSize),
+    offset: String((page - 1) * pageSize),
+  });
   const status = $("#statusFilter").value;
   const search = $("#jobSearch").value.trim();
   if (status) params.set("status", status);
@@ -1880,7 +1886,10 @@ async function loadJobs() {
     if (response.status === 401) lockApplication();
     if (!response.ok) throw new Error("Không tải được danh sách job");
     const data = await response.json();
-    state.jobs = data.items;
+    state.jobs = data.items || [];
+    state.jobsTotal = Number(data.total ?? state.jobs.length);
+    if (data.page) state.jobsPage = Number(data.page);
+    if (data.counts) state.jobStatusCounts = data.counts;
     const visibleIds = new Set(state.jobs.map(job => job.job_id));
     state.selectedJobIds = new Set([...state.selectedJobIds].filter(jobId => visibleIds.has(jobId)));
     renderJobDashboard();
@@ -2443,7 +2452,7 @@ $("#jobsPagination")?.addEventListener("click", event => {
   const targetPage = parseInt(btn.dataset.page, 10);
   if (!isNaN(targetPage) && targetPage !== state.jobsPage) {
     state.jobsPage = targetPage;
-    renderJobs(state.jobs);
+    loadJobs();
     const panel = $(".jobs-panel");
     if (panel) {
       const rect = panel.getBoundingClientRect();
@@ -2463,7 +2472,7 @@ $("#jobsPagination")?.addEventListener("change", event => {
     try {
       localStorage.setItem("vidtrans_jobs_page_size", String(newSize));
     } catch (_) {}
-    renderJobs(state.jobs);
+    loadJobs();
   }
 });
 $$('[data-bulk-action]').forEach(button => button.addEventListener("click", () => bulkJobAction(button.dataset.bulkAction)));

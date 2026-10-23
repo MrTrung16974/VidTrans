@@ -62,8 +62,8 @@
     <link rel="shortcut icon" href="/assets/vidtrans-mark.svg?v=20260901-1" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261023-comic-mobile-fix" />
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261023-vn-font-fix" />
   </head>
   <body>
     <div class="app-shell">
@@ -342,12 +342,12 @@
                         <label class="field">
                           <span class="field-label-group"><span>AI dịch phụ đề</span></span>
                           <select id="translationProvider" name="translation_provider">
-                            <option value="google" selected>Google Translate — nhanh, miễn phí (mặc định)</option>
+                            <option value="google">Google Translate — nhanh, miễn phí</option>
                             <option value="gemini">Gemini AI — mượt theo ngữ cảnh (Free tier)</option>
                             <option value="qwen3">Qwen3-4B — AI local hiểu ngữ cảnh, chậm trên CPU (~2.5–3 GB)</option>
-                            <option value="translategemma">TranslateGemma — AI dịch local qua Ollama (miễn phí, không giới hạn)</option>
+                            <option value="translategemma" selected>TranslateGemma — AI dịch local qua Ollama (mặc định, miễn phí, không giới hạn)</option>
                           </select>
-                          <small id="translationProviderHint" class="field-hint">Mặc định dùng Google Translate. Gemini hoặc AI local (Qwen3, TranslateGemma) hiểu ngữ cảnh tốt hơn nhưng chậm hơn.</small>
+                          <small id="translationProviderHint" class="field-hint">Mặc định dùng TranslateGemma (AI local). Nếu Ollama chưa chạy sẽ tự chuyển sang Google Translate.</small>
                         </label>
                         <label class="field">
                           <span class="field-label-group"><span>Nguồn phụ đề</span></span>
@@ -399,10 +399,10 @@
                           <label id="ttsProviderField" class="field wide">
                             <span>AI lồng tiếng</span>
                             <select name="tts_provider" id="ttsProvider">
-                              <option value="edge">Edge TTS — giọng ban đầu (mặc định, miễn phí)</option>
+                              <option value="edge">Edge TTS — giọng ban đầu, miễn phí</option>
                               <option value="azure">Azure Speech — API chính thức, free tier lớn</option>
                               <option value="elevenlabs">ElevenLabs — giọng tự nhiên, 10K credit/tháng</option>
-                              <option value="cit">CIT Voice Studio — VieNeu-TTS chạy local, miễn phí</option>
+                              <option value="cit" selected>CIT Voice Studio — VieNeu-TTS chạy local (mặc định, miễn phí)</option>
                             </select>
                             <small id="ttsProviderHint">Đang kiểm tra cấu hình nhà cung cấp…</small>
                           </label>
@@ -660,6 +660,7 @@
                 <a id="comicNewButton" class="button primary small-btn" href="#comic/new">+ Tạo truyện mới</a>
               </div>
               <div id="comicProjectList" class="comic-project-list"><p class="comic-empty">Đang tải…</p></div>
+              <div id="comicProjectPagination" class="comic-project-pagination is-hidden"></div>
             </aside>
 
             <div class="comic-main">
@@ -755,6 +756,7 @@
                 </div>
               </div>
               <div id="comicScenes" class="comic-scenes" data-view-mode="grid"></div>
+              <div id="comicScenesPagination" class="jobs-pagination comic-scenes-pagination is-hidden"></div>
             </div>
           </section>
             </div>
@@ -1972,6 +1974,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261023-comfyui"></script>
+    <script type="module" src="/js/app.js?v=20261023-voicepreview"></script>
   </body>
 </html>

@@ -67,6 +67,9 @@ class JobService:
     def list_jobs(self, **filters: Any) -> tuple[list[dict[str, Any]], int]:
         return self._store.list_jobs(**filters)
 
+    def status_counts(self, **filters: Any) -> dict[str, int]:
+        return self._store.status_counts(**filters)
+
     def list_batches(self, **filters: Any) -> tuple[list[dict[str, Any]], int]:
         return self._store.list_batches(**filters)
 

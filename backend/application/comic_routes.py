@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -33,7 +33,12 @@ from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import image_provider_statuses
 from infrastructure.llm_providers import llm_provider_statuses
 from infrastructure.story_text import StoryTextError, normalize_story_text, read_story_upload
-from infrastructure.tts_providers import ensure_provider_configured, provider_statuses, resolve_tts_voice_selection
+from infrastructure.tts_providers import (
+    default_tts_provider,
+    ensure_provider_configured,
+    provider_statuses,
+    resolve_tts_voice_selection,
+)
 from infrastructure.video_providers import animation_provider_statuses
 
 MAX_IMAGE_UPLOAD_BYTES = 15 * 1024 * 1024
@@ -54,6 +59,7 @@ class ComicRouteDependencies:
     notify_scheduler: Callable[[], None]
     project_root: Callable[[str, str], Path]
     upload_dir: Callable[[str, str], Path]
+    list_projects: Callable[..., tuple[list[dict[str, Any]], int]] | None = None
 
 
 class ScenePatch(BaseModel):
@@ -189,40 +195,108 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             raise HTTPException(422, _validation_detail(exc)) from exc
         return project.save_storyboard(storyboard)
 
-    def project_payload(job_id: str, job: dict[str, Any], project: ComicProject) -> dict[str, Any]:
+    def project_payload(
+        job_id: str,
+        job: dict[str, Any],
+        project: ComicProject,
+        request: Request | None = None,
+        *,
+        focus_scene: int | None = None,
+    ) -> dict[str, Any]:
         storyboard = project.load_storyboard() if project.has_storyboard() else None
         manifest = project.load_manifest()
         base = f"/api/v1/comic/projects/{job_id}/media"
         scenes_media = manifest.get("scenes", {})
         shots_media = manifest.get("shots", {})
 
+        all_scenes = list(storyboard.scenes) if storyboard else []
+        total_scenes = len(all_scenes)
+        total_shots = sum(len(s.shots) for s in all_scenes)
+
+        raw_page = request.query_params.get("scene_page") if request is not None else None
+        raw_limit = request.query_params.get("scene_limit") if request is not None else None
+        paginate_scenes = bool(raw_page or raw_limit)
+        if paginate_scenes:
+            try:
+                scene_limit = max(1, min(int(raw_limit or 6), 120))
+            except ValueError:
+                scene_limit = 6
+            try:
+                scene_page = max(1, int(raw_page or 1))
+            except ValueError:
+                scene_page = 1
+            if focus_scene is not None and focus_scene >= 1:
+                scene_page = (focus_scene - 1) // scene_limit + 1
+            total_pages = max(1, (total_scenes + scene_limit - 1) // scene_limit)
+            scene_page = min(scene_page, total_pages)
+            start = (scene_page - 1) * scene_limit
+            end = start + scene_limit
+            visible_scenes = all_scenes[start:end]
+        else:
+            scene_limit = max(1, total_scenes)
+            scene_page = 1
+            total_pages = 1
+            start = 0
+            visible_scenes = all_scenes
+
+        visible_indices = {str(scene.scene_index) for scene in visible_scenes}
+        visible_shot_labels = {
+            f"{scene.scene_index}.{shot.shot_index}"
+            for scene in visible_scenes
+            for shot in scene.shots
+        }
+        storyboard_dump = storyboard.model_dump(mode="json") if storyboard else None
+        if storyboard_dump is not None and paginate_scenes:
+            storyboard_dump["scenes"] = storyboard_dump["scenes"][start : start + scene_limit]
+
         def urls(kind: str, field: str, entries: dict[str, Any]) -> dict[str, str]:
-            return {label: f"{base}/{kind}/{entry[field]}" for label, entry in entries.items() if entry.get(field)}
+            return {
+                label: f"{base}/{kind}/{entry[field]}"
+                for label, entry in entries.items()
+                if entry.get(field) and (not paginate_scenes or label in visible_shot_labels)
+            }
+
         payload: dict[str, Any] = {
             "job": deps.job_response(job_id, job),
             "settings": (job.get("resume_request") or {}).get("settings"),
-            "storyboard": storyboard.model_dump(mode="json") if storyboard else None,
+            "storyboard": storyboard_dump,
+            "scenes_pagination": {
+                "page": scene_page,
+                "limit": scene_limit,
+                "offset": start,
+                "total_scenes": total_scenes,
+                "total_pages": total_pages,
+                "total_shots": total_shots,
+            },
             "rendered_revision": manifest.get("revision"),
             "media": {
                 "scenes": {
-                    index: f"{base}/images/{entry['image']}" for index, entry in scenes_media.items()
-                    if entry.get("image")
+                    index: f"{base}/images/{entry['image']}"
+                    for index, entry in scenes_media.items()
+                    if entry.get("image") and (not paginate_scenes or index in visible_indices)
                 },
                 "references": {cid: f"{base}/refs/{name}" for cid, name in manifest.get("references", {}).items()},
                 "uploads": {
                     str(scene.scene_index): f"{base}/uploads/{scene.image_override}"
-                    for scene in (storyboard.scenes if storyboard else []) if scene.image_override
+                    for scene in visible_scenes
+                    if scene.image_override
                 },
                 "keyframes": urls("keyframes", "keyframe", shots_media),
                 "animations": urls("animations", "animation", shots_media),
                 "previews": urls("clips", "clip", manifest.get("previews", {})),
                 "keyframe_uploads": {
                     f"{scene.scene_index}.{shot.shot_index}": f"{base}/uploads/{shot.keyframe_override}"
-                    for scene, shot in (storyboard.iter_shots() if storyboard else []) if shot.keyframe_override
+                    for scene in visible_scenes
+                    for shot in scene.shots
+                    if shot.keyframe_override
                 },
             },
             # Per-shot generation report: provider, QC, fallback, seed, cost.
-            "shots": {label: {k: v for k, v in entry.items() if k != "cues"} for label, entry in shots_media.items()},
+            "shots": {
+                label: {k: v for k, v in entry.items() if k != "cues"}
+                for label, entry in shots_media.items()
+                if not paginate_scenes or label in visible_shot_labels
+            },
             "metrics": manifest.get("metrics"),
         }
         return payload
@@ -265,7 +339,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         llm_provider: str = Form("auto"),
         image_provider: str = Form("placeholder"),
         narrator_voice: str = Form("female"),
-        tts_provider: str = Form("edge"),
+        # Empty means CIT Voice Studio when its app is running, otherwise Edge TTS.
+        tts_provider: str = Form(""),
         cit_narrator_voice: str = Form(""),
         cit_female_voice: str = Form(""),
         cit_male_voice: str = Form(""),
@@ -286,6 +361,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
     ) -> JSONResponse:
         account = deps.current_account(request)
         owner = str(account["user_id"])
+        tts_provider = tts_provider.strip() or default_tts_provider()
         tts_voices: dict[str, str] = {}
         if tts_provider == "cit":
             try:
@@ -369,10 +445,43 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         deps.notify_scheduler()
         return JSONResponse({"job_id": job_id, "status": "queued", "story_chars": len(story)}, status_code=202)
 
+    @router.get("/projects")
+    def list_projects_endpoint(
+        request: Request,
+        page: int = Query(default=1, ge=1),
+        limit: int = Query(default=6, ge=1, le=100),
+        offset: int | None = Query(default=None, ge=0),
+        search: str | None = Query(default=None),
+    ) -> JSONResponse:
+        if deps.list_projects is None:
+            return JSONResponse({"items": [], "total": 0, "page": 1, "limit": limit, "offset": 0, "total_pages": 1})
+        resolved_offset = offset if offset is not None else (page - 1) * limit
+        items, total = deps.list_projects(request, limit=limit, offset=resolved_offset, search=search)
+        total_pages = max(1, (total + limit - 1) // limit)
+        if offset is None and page > total_pages and total > 0:
+            page = total_pages
+            resolved_offset = (page - 1) * limit
+            items, total = deps.list_projects(request, limit=limit, offset=resolved_offset, search=search)
+        resolved_page = page if offset is None else (resolved_offset // limit) + 1
+        return JSONResponse({
+            "items": items,
+            "total": total,
+            "page": resolved_page,
+            "limit": limit,
+            "offset": resolved_offset,
+            "total_pages": total_pages,
+        })
+
     @router.get("/projects/{job_id}")
-    def get_project(request: Request, job_id: str) -> JSONResponse:
+    def get_project(
+        request: Request,
+        job_id: str,
+        scene_page: int | None = Query(default=None, ge=1),
+        scene_limit: int | None = Query(default=None, ge=1, le=120),
+    ) -> JSONResponse:
+        _ = (scene_page, scene_limit)
         job, project = owned_project(request, job_id)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.get("/projects/{job_id}/story")
     def get_story(request: Request, job_id: str) -> JSONResponse:
@@ -393,7 +502,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             target.update(changes)
             target["version"] = scene.version + 1
             save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.post("/projects/{job_id}/scenes")
     def insert_scene(request: Request, job_id: str, body: SceneInsert) -> JSONResponse:
@@ -403,7 +512,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         new_scene = ComicScene(scene_index=position + 1, narration=body.narration, visual_prompt=body.visual_prompt)
         data["scenes"].insert(position, new_scene.model_dump(mode="json"))
         save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request, focus_scene=position + 1))
 
     @router.delete("/projects/{job_id}/scenes/{scene_index}")
     def delete_scene(request: Request, job_id: str, scene_index: int) -> JSONResponse:
@@ -415,7 +524,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         if len(data["scenes"]) == len(storyboard.scenes):
             raise HTTPException(404, "Không có cảnh này")
         save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.patch("/projects/{job_id}/characters/{character_id}")
     def patch_character(request: Request, job_id: str, character_id: str, patch: CharacterPatch) -> JSONResponse:
@@ -431,7 +540,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         except ValidationError as exc:
             raise HTTPException(422, _validation_detail(exc)) from exc
         save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.post("/projects/{job_id}/scenes/{scene_index}/image")
     async def upload_scene_image(request: Request, job_id: str, scene_index: int,
@@ -449,7 +558,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 scene["image_override"] = name
                 scene["version"] += 1
         save(project, storyboard_data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.delete("/projects/{job_id}/scenes/{scene_index}/image")
     def clear_scene_image(request: Request, job_id: str, scene_index: int) -> JSONResponse:
@@ -460,7 +569,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 scene["image_override"] = None
                 scene["version"] += 1
         save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     # ------------------------------------------------------------------ shots
     @router.patch("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}")
@@ -477,7 +586,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             target.update(changes)
             target["version"] += 1
             save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.post("/projects/{job_id}/scenes/{scene_index}/shots")
     def insert_shot(request: Request, job_id: str, scene_index: int, body: ShotInsert) -> JSONResponse:
@@ -496,7 +605,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                     motion_prompt=body.motion_prompt or "subtle natural motion, smooth camera")
         shots.insert(min(body.after, len(shots)), shot.model_dump(mode="json"))
         save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.delete("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}")
     def delete_shot(request: Request, job_id: str, scene_index: int, shot_index: int) -> JSONResponse:
@@ -507,7 +616,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             raise HTTPException(409, "Cảnh phải còn ít nhất một shot; hãy xóa cả cảnh")
         del data["scenes"][scene_pos]["shots"][shot_pos]
         save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.post("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}/regenerate")
     def regenerate_shot(request: Request, job_id: str, scene_index: int, shot_index: int) -> JSONResponse:
@@ -519,7 +628,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         target["animation"]["take"] += 1
         target["version"] += 1
         save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.post("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}/keyframe")
     async def upload_keyframe(request: Request, job_id: str, scene_index: int, shot_index: int,
@@ -533,7 +642,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         target["keyframe_override"] = name
         target["version"] += 1
         save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.delete("/projects/{job_id}/scenes/{scene_index}/shots/{shot_index}/keyframe")
     def clear_keyframe(request: Request, job_id: str, scene_index: int, shot_index: int) -> JSONResponse:
@@ -545,7 +654,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             target["keyframe_override"] = None
             target["version"] += 1
             save(project, data)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     # ------------------------------------------------------------- references
     def character_or_404(storyboard: Storyboard, character_id: str) -> ComicCharacter:
@@ -585,7 +694,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         name = read_upload_png(await file.read(MAX_IMAGE_UPLOAD_BYTES + 1), project.dir("refs"),
                                f"{character.id}-upload")
         set_approved(project, storyboard, character.id, name)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.post("/projects/{job_id}/characters/{character_id}/references/{name}/approve")
     def approve_reference(request: Request, job_id: str, character_id: str, name: str) -> JSONResponse:
@@ -594,13 +703,13 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         if not name.startswith(f"{character.id}-") or project.asset_path("refs", name) is None:
             raise HTTPException(404, "Không có phiên bản ảnh tham chiếu này")
         set_approved(project, storyboard, character.id, name)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     @router.delete("/projects/{job_id}/characters/{character_id}/references/approval")
     def unpin_reference(request: Request, job_id: str, character_id: str) -> JSONResponse:
         job, project, storyboard = editable_project(request, job_id)
         set_approved(project, storyboard, character_or_404(storyboard, character_id).id, None)
-        return JSONResponse(project_payload(job_id, job, project))
+        return JSONResponse(project_payload(job_id, job, project, request))
 
     # ----------------------------------------------------------------- render
     @router.post("/projects/{job_id}/render")

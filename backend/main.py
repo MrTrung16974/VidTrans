@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import textwrap
 import threading
 import time
@@ -107,8 +108,12 @@ from infrastructure.social_video_downloader import (
     social_platform,
 )
 from infrastructure.tts_providers import (
+    default_tts_provider,
     ensure_provider_configured,
     normalize_tts_provider,
+    VOICE_PREVIEW_TEXT,
+    audio_content_type,
+    cit_voice_preview,
     elevenlabs_voice_preview,
     provider_statuses,
     resolve_tts_voice_selection,
@@ -119,6 +124,7 @@ from infrastructure.tts_providers import (
 )
 from infrastructure.translation_providers import (
     create_translation_provider,
+    default_translation_provider,
     ensure_translation_provider_configured,
     translation_provider_statuses,
 )
@@ -1621,42 +1627,10 @@ def synthesize_tts_segments(
             segment["tts_skip_reason"] = "no_speakable_text"
             return None
 
-        # Optimize Translation text pacing using Original Word Timestamps
-        # If the original Chinese text had long gaps between words, we insert commas
-        # in the translated text to force edge-tts to pause naturally.
+        # Read the translation exactly as subtitled. Source-language word gaps must not
+        # become commas here: word order differs between languages, so a pause mapped by
+        # character position lands inside Vietnamese compounds ("vỡ, nát", "héo, mòn").
         text = raw_text
-        words = segment.get("words", [])
-        if words and len(words) > 1:
-            seg_start = float(segment.get("start", 0))
-            seg_end = float(segment.get("end", seg_start + 1))
-            seg_dur = max(0.1, seg_end - seg_start)
-
-            chars = list(text)
-            inserts = []
-            for i in range(len(words) - 1):
-                gap = float(words[i+1].get("start", 0)) - float(words[i].get("end", 0))
-                if gap > 0.4:
-                    # Map the temporal pause to character position proportionally
-                    ratio = (float(words[i].get("end", 0)) - seg_start) / seg_dur
-                    char_idx = min(len(chars) - 1, max(0, int(ratio * len(chars))))
-                    # Find nearest space to insert the punctuation
-                    offset = 0
-                    best_idx = char_idx
-                    while offset < 15:
-                        if char_idx + offset < len(chars) and chars[char_idx + offset] == " ":
-                            best_idx = char_idx + offset
-                            break
-                        if char_idx - offset >= 0 and chars[char_idx - offset] == " ":
-                            best_idx = char_idx - offset
-                            break
-                        offset += 1
-                    # Avoid double punctuation
-                    if best_idx > 0 and chars[best_idx - 1] not in (",", ".", "!", "?", ":", ";"):
-                        inserts.append((best_idx, ","))
-
-            for idx, punct in sorted(inserts, reverse=True):
-                chars.insert(idx, punct)
-            text = "".join(chars)
 
         output_path = tts_dir / f"{index:04d}.mp3"
         selected_voice_type = str(segment.get("voice_type", voice_type))
@@ -5011,6 +4985,42 @@ def elevenlabs_voice_preview_endpoint(voice_key: str) -> Response:
     return Response(audio, media_type=content_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
+_edge_voice_previews: dict[str, bytes] = {}
+
+
+def edge_voice_preview(voice_key: str) -> tuple[bytes, str]:
+    voice_name = VOICE_OPTIONS.get(voice_key)
+    if voice_name is None:
+        raise LookupError("Giọng Edge TTS không tồn tại")
+    if voice_key not in _edge_voice_previews:
+        with tempfile.TemporaryDirectory(prefix="vidtrans-preview-") as directory:
+            output_path = Path(directory) / "preview.mp3"
+            try:
+                tts_edge_with_retry(VOICE_PREVIEW_TEXT, output_path, voice_name, "+0%")
+            except Exception as exc:
+                raise RuntimeError("Edge TTS không tạo được bản nghe thử") from exc
+            _edge_voice_previews[voice_key] = output_path.read_bytes()
+    audio = _edge_voice_previews[voice_key]
+    return audio, audio_content_type(audio)
+
+
+@app.get("/api/v1/tts-providers/{provider}/voices/{voice_key}/preview")
+def tts_voice_preview_endpoint(provider: str, voice_key: str) -> Response:
+    previewers = {"cit": cit_voice_preview, "edge": edge_voice_preview}
+    if provider not in previewers:
+        raise HTTPException(status_code=404, detail="Nhà cung cấp này chưa hỗ trợ nghe thử")
+    try:
+        audio, content_type = previewers[provider](voice_key)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.warning("%s voice preview failed: %s", provider, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(audio, media_type=content_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.get("/api/v1/translation-providers")
 def translation_providers_endpoint() -> JSONResponse:
     return JSONResponse({"providers": [status.__dict__ for status in translation_provider_statuses()]})
@@ -5025,12 +5035,13 @@ async def process_video_endpoint(
     voice_type: str = Form("female"),
     voice_mode: str = Form("auto"),
     voice_style: str = Form("natural"),
-    tts_provider: str = Form("edge"),
+    # Empty means the server default: CIT Voice Studio / TranslateGemma when running.
+    tts_provider: str = Form(""),
     elevenlabs_female_voice: str = Form(""),
     elevenlabs_male_voice: str = Form(""),
     tts_female_voice: str = Form(""),
     tts_male_voice: str = Form(""),
-    translation_provider: str = Form("google"),
+    translation_provider: str = Form(""),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -5053,6 +5064,8 @@ async def process_video_endpoint(
 ) -> JSONResponse:
     account = current_account(http_request)
     owner_user_id = str(account["user_id"])
+    tts_provider = tts_provider.strip() or default_tts_provider()
+    translation_provider = translation_provider.strip() or default_translation_provider()
     video_ext = Path(file.filename or "video.mp4").suffix.lower() or ".mp4"
     if video_ext not in SUPPORTED_VIDEO_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Định dạng video không được hỗ trợ: {video_ext}")
@@ -5222,12 +5235,13 @@ async def create_batch_endpoint(
     voice_type: str = Form("female"),
     voice_mode: str = Form("auto"),
     voice_style: str = Form("natural"),
-    tts_provider: str = Form("edge"),
+    # Empty means the server default: CIT Voice Studio / TranslateGemma when running.
+    tts_provider: str = Form(""),
     elevenlabs_female_voice: str = Form(""),
     elevenlabs_male_voice: str = Form(""),
     tts_female_voice: str = Form(""),
     tts_male_voice: str = Form(""),
-    translation_provider: str = Form("google"),
+    translation_provider: str = Form(""),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
     whisper_model: str = Form("base"),
@@ -5250,6 +5264,8 @@ async def create_batch_endpoint(
 ) -> JSONResponse:
     account = current_account(request)
     owner_user_id = str(account["user_id"])
+    tts_provider = tts_provider.strip() or default_tts_provider()
+    translation_provider = translation_provider.strip() or default_translation_provider()
     # Browsers serialize an untouched <input type="file"> as an empty UploadFile.
     # Ignore only that unnamed placeholder; named zero-byte uploads are still
     # validated below and reported to the user as invalid videos.
@@ -5571,24 +5587,52 @@ def list_jobs_endpoint(
     status: str | None = Query(default=None),
     batch_id: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    job_action: str | None = Query(default=None),
+    page: int | None = Query(default=None, ge=1),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> JSONResponse:
     account = current_account(request)
+    owner_scope = None if can_manage_all_jobs(account) else str(account["user_id"])
+    resolved_offset = (page - 1) * limit if page is not None else offset
     jobs, total = JOB_SERVICE.list_jobs(
-        owner_user_id=None if can_manage_all_jobs(account) else str(account["user_id"]),
+        owner_user_id=owner_scope,
         status=status,
         batch_id=batch_id,
         search=search,
+        job_action=job_action,
         limit=limit,
-        offset=offset,
+        offset=resolved_offset,
     )
+    total_pages = max(1, (total + limit - 1) // limit)
+    if page is not None and page > total_pages and total > 0:
+        page = total_pages
+        resolved_offset = (page - 1) * limit
+        jobs, total = JOB_SERVICE.list_jobs(
+            owner_user_id=owner_scope,
+            status=status,
+            batch_id=batch_id,
+            search=search,
+            job_action=job_action,
+            limit=limit,
+            offset=resolved_offset,
+        )
+    resolved_page = page if page is not None else (resolved_offset // limit) + 1
     positions = JOB_SERVICE.queue_positions()
+    counts = JOB_SERVICE.status_counts(owner_user_id=owner_scope)
     items = [
         add_job_owner_identity(job_response(str(job["job_id"]), job, positions), job)
         for job in jobs
     ]
-    return JSONResponse({"items": items, "total": total, "limit": limit, "offset": offset})
+    return JSONResponse({
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": resolved_offset,
+        "page": resolved_page,
+        "total_pages": total_pages,
+        "counts": counts,
+    })
 
 
 JOB_EVENT_RESYNC = {"type": "jobs", "resync": True, "items": [], "removed": []}
@@ -6008,6 +6052,30 @@ def comic_quota_account(request: Request, job: dict[str, Any]) -> dict[str, Any]
     return ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
 
 
+def list_comic_projects_for_request(
+    request: Request,
+    *,
+    limit: int = 6,
+    offset: int = 0,
+    search: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    account = current_account(request)
+    owner_scope = None if can_manage_all_jobs(account) else str(account["user_id"])
+    jobs, total = JOB_SERVICE.list_jobs(
+        owner_user_id=owner_scope,
+        job_action=COMIC_JOB_ACTION,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+    positions = JOB_SERVICE.queue_positions()
+    items = [
+        add_job_owner_identity(job_response(str(job["job_id"]), job, positions), job)
+        for job in jobs
+    ]
+    return items, total
+
+
 COMIC_ROUTE_DEPS = ComicRouteDependencies(
     current_account=lambda request: current_account(request),
     job_for_request=lambda request, job_id: job_for_request(request, job_id),
@@ -6020,6 +6088,7 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     notify_scheduler=notify_scheduler,
     project_root=comic_project_root,
     upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
+    list_projects=list_comic_projects_for_request,
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
 

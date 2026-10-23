@@ -219,6 +219,33 @@ class ComicApiTests(unittest.TestCase):
         self.assertTrue(next(p for p in options["image_providers"] if p["key"] == "placeholder")["configured"])
         self.assertIn("comfyui", [p["key"] for p in options["image_providers"]])
 
+    def test_projects_and_scenes_are_paginated_on_the_backend(self) -> None:
+        # Non-comic job must not leak into comic projects pagination.
+        self.service.create("vid-0001", {"status": "completed", "job_action": "translate_video", "filename": "v.mp4"},
+                            owner_user_id="user-a")
+        ids = [self.create(title=f"Truyện {idx}", auto_render="false").json()["job_id"] for idx in range(1, 4)]
+
+        page1 = self.client.get("/api/v1/comic/projects?page=1&limit=2").json()
+        page2 = self.client.get("/api/v1/comic/projects?page=2&limit=2").json()
+        self.assertEqual((page1["total"], page1["page"], page1["limit"], page1["total_pages"]), (3, 1, 2, 2))
+        self.assertEqual(len(page1["items"]), 2)
+        self.assertEqual(len(page2["items"]), 1)
+        self.assertTrue(all(item["job_action"] == "comic_video" for item in page1["items"] + page2["items"]))
+
+        # Add scenes so we have 4 scenes and verify backend scene pagination.
+        job_id = ids[0]
+        self.run_job(job_id)
+        base = f"/api/v1/comic/projects/{job_id}"
+        for idx in range(2):
+            self.client.post(f"{base}/scenes", json={"after": idx, "narration": f"Cảnh thêm {idx + 1}.",
+                                                     "visual_prompt": f"Extra scene {idx + 1}"})
+        s_page1 = self.client.get(f"{base}?scene_page=1&scene_limit=2").json()
+        s_page2 = self.client.get(f"{base}?scene_page=2&scene_limit=2").json()
+        self.assertGreaterEqual(s_page1["scenes_pagination"]["total_scenes"], 4)
+        self.assertEqual(len(s_page1["storyboard"]["scenes"]), 2)
+        self.assertEqual([s["scene_index"] for s in s_page1["storyboard"]["scenes"]], [1, 2])
+        self.assertEqual([s["scene_index"] for s in s_page2["storyboard"]["scenes"]], [3, 4])
+
 
 if __name__ == "__main__":
     unittest.main()

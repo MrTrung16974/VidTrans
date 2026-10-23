@@ -36,3 +36,31 @@ thiếu VRAM. VidTrans tự upscale/crop ảnh về đúng kích thước video 
 Provider mặc định chưa nhận ảnh tham chiếu nhân vật. Cùng seed và mô tả nhân vật
 giúp hình ổn định hơn, nhưng độ nhất quán sẽ kém Gemini cho tới khi có workflow
 IP-Adapter/LoRA tùy chỉnh.
+
+## Cài local cô lập trên macOS
+
+Script quản lý giữ toàn bộ ứng dụng, virtualenv, cache, model và log trong thư
+mục `comfyui/`; không cài package vào Python hệ thống:
+
+```bash
+./deploy/comfyui-local.sh install
+./deploy/comfyui-local.sh start
+./deploy/comfyui-local.sh status
+./deploy/comfyui-local.sh logs
+./deploy/comfyui-local.sh stop
+```
+
+`uninstall` xóa ComfyUI, Python virtualenv và cache nhưng giữ model đã tải:
+
+```bash
+./deploy/comfyui-local.sh uninstall
+```
+
+`purge` yêu cầu nhập `DELETE` rồi mới xóa cả model:
+
+```bash
+./deploy/comfyui-local.sh purge
+```
+
+ComfyUI chạy native qua Metal/MPS. Khi VidTrans chạy trong Docker Desktop, dùng
+`VIDTRANS_COMFYUI_URL=http://host.docker.internal:8188`.

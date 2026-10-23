@@ -393,6 +393,7 @@ class JobStore:
         status: str | None = None,
         batch_id: str | None = None,
         search: str | None = None,
+        job_action: str | None = None,
         limit: int = 50,
         offset: int = 0,
         owner_user_id: str | None = None,
@@ -408,6 +409,9 @@ class JobStore:
         if batch_id:
             clauses.append("batch_id = ?")
             values.append(batch_id)
+        if job_action:
+            clauses.append("(payload_json LIKE ? OR payload_json LIKE ?)")
+            values.extend([f'%"job_action":"{job_action}"%', f'%"job_action": "{job_action}"%'])
         if search:
             clauses.append("payload_json LIKE ?")
             values.append(f"%{search}%")
@@ -421,6 +425,16 @@ class JobStore:
                 [*values, max(1, min(limit, 200)), max(0, offset)],
             ).fetchall()
         return [self._job_row(row) for row in rows], total
+
+    def status_counts(self, *, owner_user_id: str | None = None) -> dict[str, int]:
+        where = " WHERE owner_user_id = ?" if owner_user_id is not None else ""
+        values: list[Any] = [owner_user_id] if owner_user_id is not None else []
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT status, COUNT(*) count FROM jobs{where} GROUP BY status",
+                values,
+            ).fetchall()
+        return {str(row["status"]): int(row["count"]) for row in rows}
 
     def list_batches(self, *, limit: int = 50, offset: int = 0, owner_user_id: str | None = None) -> tuple[list[dict[str, Any]], int]:
         with self._connection() as connection:
