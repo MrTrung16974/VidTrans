@@ -145,7 +145,7 @@ from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layou
 from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, segment_subtitle_cues
 from pipeline.caption_alignment import CaptionAlignmentConfig, align_speech_to_burned_captions
 from pipeline.subtitle_timing import subtitle_render_window
-from pipeline.tiktok import LocalExtractiveTikTokProvider, write_tiktok_artifacts
+from pipeline.tiktok import LocalExtractiveTikTokProvider, TikTokPost, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
 from pipeline.translation import (
     ensure_translation_complete,
@@ -3117,6 +3117,7 @@ def process_video(
                 }
             )
 
+        tiktok_description = tiktok_post_description(tiktok_post)
         if auto_publish_tiktok and tiktok_publish_at and tiktok_post is not None:
             publish_at = datetime.fromisoformat(tiktok_publish_at.replace("Z", "+00:00"))
             if publish_at > datetime.now(timezone.utc):
@@ -3129,12 +3130,12 @@ def process_video(
                     processing_finished_at=utc_now(),
                     tiktok_publish_at=publish_at.astimezone(timezone.utc).isoformat(),
                     tiktok_publish_status="SCHEDULED",
-                    tiktok_publish_title=tiktok_post.title,
+                    tiktok_publish_title=tiktok_description,
                     tiktok_publish_privacy_level=tiktok_privacy_level,
                     job_action="publish_tiktok",
                     publish_request={
                         "video_path": str(output_video),
-                        "title": tiktok_post.title,
+                        "title": tiktok_description,
                         "privacy_level": tiktok_privacy_level,
                     },
                     **artifact_fields,
@@ -3154,11 +3155,11 @@ def process_video(
             try:
                 if tiktok_post is None:
                     raise TikTokPublisherError(
-                        "Không có tiêu đề đã tạo nên chưa thể tự động đăng TikTok"
+                        "Không có caption đã tạo nên chưa thể tự động đăng TikTok"
                     )
                 publish_result = tenant_tiktok_publisher(owner_user_id).publish(
                     output_video,
-                    tiktok_post.title,
+                    tiktok_description,
                     privacy_level=tiktok_privacy_level,
                 )
                 tiktok_publish_fields = {
@@ -3525,6 +3526,14 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
 
 def comic_project_root(owner_user_id: str, job_id: str) -> Path:
     return tenant_job_dir(WORK_DIR, owner_user_id, job_id) / "comic"
+
+
+def tiktok_post_description(post: TikTokPost | None) -> str:
+    """TikTok's post_info.title is the post description: the full caption (body, CTA and
+    hashtags), not the 80-character title that only labels the artifact."""
+    if post is None:
+        return ""
+    return (post.caption or post.title).strip()
 
 
 def synthesize_comic_speech(
