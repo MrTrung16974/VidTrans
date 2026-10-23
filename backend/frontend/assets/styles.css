@@ -199,6 +199,8 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
   white-space: nowrap;
   display: inline-block;
 }
+.nav-label-full { display: inline !important; }
+.nav-label-short { display: none !important; }
 .dock-footer .nav-tabs a:hover,
 .nav-tabs.mac-dock a:hover,
 .nav-tabs a:hover {
@@ -1059,7 +1061,6 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
 @media (max-width: 374px) {
   .app-shell { padding-left: max(10px,env(safe-area-inset-left)); padding-right: max(10px,env(safe-area-inset-right)); }
   .brand small { display: none; }
-  .dock-footer .nav-tabs a { padding: 0 7px 0 5px; font-size: .74rem; }
   .page-heading h1 { font-size: 2rem; }
   .step-card { padding: 14px; }
 }
@@ -3664,32 +3665,152 @@ body:has(#authGate:not(.is-hidden)) .dock-footer {
     border-radius: 16px;
   }
   .nav-toggle { display: none !important; }
+  .nav-label-full { display: none !important; }
+  .nav-label-short { display: inline !important; }
+
+  /* Only show essential features on phone dock: create, comic, jobs, tiktok */
+  .dock-footer .nav-tabs a[data-admin-only] {
+    display: none !important;
+  }
+
+  /* Netflix Floating Pill Bar */
   .dock-footer {
-    padding: 0 8px max(10px, env(safe-area-inset-bottom));
+    padding: 0 12px max(14px, env(safe-area-inset-bottom)) !important;
   }
-  .dock-footer .nav-tabs {
-    gap: 3px;
-    padding: 4px 6px;
-    border-radius: 18px;
-    max-width: calc(100vw - 16px);
+
+  .dock-footer .nav-tabs,
+  .nav-tabs.mac-dock {
+    width: min(390px, calc(100vw - 24px)) !important;
+    max-width: 390px !important;
+    background: rgba(22, 27, 34, 0.94) !important;
+    backdrop-filter: blur(28px) saturate(200%) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(200%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 36px !important;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.15) !important;
+    padding: 5px 6px !important;
+    display: flex !important;
+    justify-content: space-around !important;
+    align-items: center !important;
+    gap: 3px !important;
+    overflow: visible !important;
   }
-  .dock-footer .nav-tabs a {
-    height: 36px;
-    min-height: 36px;
-    padding: 0 9px 0 7px;
-    font-size: 0.76rem;
-    gap: 6px;
-    border-radius: 10px;
+
+  .dock-footer .nav-tabs a,
+  .nav-tabs.mac-dock a {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 50px !important;
+    min-height: 50px !important;
+    padding: 4px 2px !important;
+    border-radius: 20px !important;
+    color: #94a3b8 !important;
+    gap: 2px !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    transform: none !important;
+    position: relative !important;
   }
+
+  .dock-footer .nav-tabs a:hover {
+    transform: none !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #cbd5e1 !important;
+    box-shadow: none !important;
+  }
+
   .dock-footer .nav-tabs a > i {
-    width: 22px;
-    height: 22px;
-    flex: 0 0 22px;
-    border-radius: 6px;
+    width: 24px !important;
+    height: 24px !important;
+    flex: 0 0 24px !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: #94a3b8 !important;
+    display: grid !important;
+    place-items: center !important;
+    border-radius: 0 !important;
+    position: relative !important;
   }
+
   .dock-footer .nav-tabs a > i svg {
-    width: 13px;
-    height: 13px;
+    width: 20px !important;
+    height: 20px !important;
+    stroke: currentColor !important;
+    stroke-width: 2.1 !important;
+  }
+
+  .dock-footer .nav-tabs a span {
+    font-size: 0.67rem !important;
+    font-weight: 600 !important;
+    line-height: 1 !important;
+    letter-spacing: -0.01em !important;
+    color: #94a3b8 !important;
+    text-align: center !important;
+    white-space: nowrap !important;
+  }
+
+  /* Netflix active item highlight */
+  .dock-footer .nav-tabs a.active,
+  .nav-tabs.mac-dock a.active {
+    background: rgba(255, 255, 255, 0.14) !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+  }
+
+  .dock-footer .nav-tabs a.active:hover {
+    transform: none !important;
+  }
+
+  .dock-footer .nav-tabs a.active > i {
+    color: #ffffff !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .dock-footer .nav-tabs a.active > i svg {
+    stroke: #ffffff !important;
+  }
+
+  .dock-footer .nav-tabs a.active span {
+    color: #ffffff !important;
+    font-weight: 750 !important;
+  }
+
+  /* Hide Mac dock indicator dot on Netflix mobile layout */
+  .dock-footer .nav-tabs a.active::after,
+  .nav-tabs.mac-dock a.active::after {
+    display: none !important;
+  }
+
+  /* Notification badge Netflix-style */
+  .dock-footer .nav-tabs a .nav-badge {
+    position: absolute !important;
+    top: 3px !important;
+    right: calc(50% - 17px) !important;
+    min-width: 15px !important;
+    height: 15px !important;
+    padding: 0 4px !important;
+    font-size: 0.62rem !important;
+    font-weight: 850 !important;
+    line-height: 15px !important;
+    border-radius: 999px !important;
+    margin: 0 !important;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4) !important;
+    z-index: 2 !important;
+  }
+
+  .dock-footer .nav-tabs a .nav-badge.is-zero {
+    display: none !important;
+  }
+
+  .dock-footer .nav-tabs a .nav-badge.has-active {
+    display: inline-grid !important;
+    background: #ea580c !important;
+    color: #ffffff !important;
   }
   .page-heading {
     padding: 22px 0 14px;
