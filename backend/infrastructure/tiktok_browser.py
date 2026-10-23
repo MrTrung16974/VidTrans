@@ -36,6 +36,13 @@ BROWSER_AVAILABILITY_GRACE_SECONDS = 20.0
 # backend had already reported success), so keep ownership of the browser long
 # enough to observe the late post-processing render before asking for review.
 CAPTION_STABLE_CHECKS = 15
+# TikTok Studio's Description is a DraftJS editor. Its role has changed between
+# builds (textbox -> combobox), so anchor on the caption container instead.
+CAPTION_EDITOR_SELECTOR = (
+    '[data-e2e="caption_container"] [contenteditable="true"]:visible, '
+    '.caption-editor [contenteditable="true"]:visible, '
+    '[contenteditable="true"][role="textbox"]:visible'
+)
 # Reads TikTok Studio's upload card. The Post button stays disabled until the
 # file is processed, so an enabled button (or an "Uploaded" label) means done.
 UPLOAD_PROGRESS_JS = """() => {
@@ -488,7 +495,7 @@ class TikTokBrowserManager:
         )
         # Both containers mount outputs at the same absolute path; no public file URL.
         inputs.first.set_input_files(str(video_path), timeout=120_000)
-        editor = page.locator('[contenteditable="true"][role="textbox"]:visible')
+        editor = page.locator(CAPTION_EDITOR_SELECTOR)
         editor.first.wait_for(state="visible", timeout=60_000)
         if not is_tiktok_url(page.url) or editor.count() != 1:
             raise TikTokBrowserError("Không nhận diện được ô caption duy nhất")
@@ -540,7 +547,7 @@ class TikTokBrowserManager:
     @staticmethod
     def _fill_caption(page, caption: str) -> None:
         expected = " ".join(caption.split())
-        selector = '[contenteditable="true"][role="textbox"]:visible'
+        selector = CAPTION_EDITOR_SELECTOR
         for _ in range(CAPTION_FILL_ATTEMPTS):
             editor = page.locator(selector)
             if not is_tiktok_url(page.url) or editor.count() != 1:
