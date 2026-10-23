@@ -5170,8 +5170,4 @@ input[type="file"]::-webkit-file-upload-button:active {
   .comic-shot-camera { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Short public introduction on the login screen (also what search engines read). */
-.auth-intro { margin: 4px 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--surface-soft); border: 1px solid var(--line); text-align: left; }
-.auth-intro h2 { margin: 0 0 6px; font-size: .9rem; color: var(--ink); }
-.auth-intro ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: .8rem; line-height: 1.5; }
 
