@@ -382,6 +382,31 @@ class TikTokBrowserRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 202)
             prepare.assert_called_once_with('good', (self.output / 'video.mp4').resolve(), 'caption')
 
+    def test_owner_role_can_open_another_users_video_but_regular_user_cannot(self):
+        class ScopedJobs(dict):
+            def get_for_user(self, job_id, user_id):
+                job = self.get(job_id)
+                return job if job and job.get('owner_user_id') == user_id else None
+
+        jobs = ScopedJobs({
+            'foreign': {'status': 'completed', 'output_video': 'video.mp4', 'owner_user_id': 'user-b'},
+        })
+        app = FastAPI()
+        app.include_router(create_tiktok_browser_router(
+            self.manager,
+            jobs,
+            self.output,
+            owner_resolver=lambda request: request.headers.get('x-user-id', ''),
+            can_manage_all_resolver=lambda request: request.headers.get('x-role') == 'owner',
+        ))
+        client = TestClient(app)
+
+        regular = client.get('/api/v1/jobs/foreign/tiktok-draft', headers={'x-user-id': 'user-a', 'x-role': 'user'})
+        owner = client.get('/api/v1/jobs/foreign/tiktok-draft', headers={'x-user-id': 'admin', 'x-role': 'owner'})
+
+        self.assertEqual(regular.status_code, 404)
+        self.assertEqual(owner.status_code, 200)
+
     def test_publish_requires_review_and_delegates_to_manager(self):
         with patch.object(self.manager, 'publish', return_value={'attempt': {'state': 'publish_submitted'}}) as publish:
             rejected = self.client.post('/api/v1/tiktok-browser/attempts/a/publish', data={'reviewed': 'false'})

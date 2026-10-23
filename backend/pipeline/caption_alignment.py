@@ -42,6 +42,10 @@ class CaptionAlignmentConfig:
     # Speech usually leads its caption; search this far for the lag.
     max_speech_lead: float = 0.6
     word_snap_seconds: float = 0.3
+    # Whisper stretches the first word after a pause back over the silence. A word
+    # longer than this many times the typical per-character duration is placed by
+    # its spoken tail, so "肯" of "肯定" is not pulled into the previous caption.
+    stretched_word_ratio: float = 2.0
     # Below this share of words inside captions the video is treated as
     # having no burned-in captions and Whisper timing is kept.
     min_word_coverage: float = 0.6
@@ -236,6 +240,26 @@ def _words(segments: Sequence[dict[str, Any]]) -> list[tuple[int, dict[str, Any]
     ]
 
 
+def _spoken_spans(
+    words: Sequence[tuple[int, dict[str, Any]]], config: CaptionAlignmentConfig
+) -> list[tuple[float, float]]:
+    """Word spans with silence absorbed into stretched words removed from their start."""
+
+    def characters(word: dict[str, Any]) -> int:
+        return max(1, len(str(word.get("word") or "").strip()))
+
+    spans = [(float(word["start"]), float(word["end"])) for _, word in words]
+    rates = sorted((end - start) / characters(word) for (start, end), (_, word) in zip(spans, words) if end > start)
+    if not rates:
+        return spans
+    typical = rates[len(rates) // 2]
+    result = []
+    for (start, end), (_, word) in zip(spans, words):
+        expected = config.stretched_word_ratio * typical * characters(word)
+        result.append((max(start, end - expected), end) if end - start > expected else (start, end))
+    return result
+
+
 def _speech_lead(
     words: Sequence[tuple[int, dict[str, Any]]],
     intervals: Sequence[tuple[float, float]],
@@ -247,7 +271,7 @@ def _speech_lead(
 
     starts = np.asarray([interval[0] for interval in intervals])
     ends = np.asarray([interval[1] for interval in intervals])
-    midpoints = np.asarray([(float(word["start"]) + float(word["end"])) / 2 for _, word in words])
+    midpoints = np.asarray([(start + end) / 2 for start, end in _spoken_spans(words, config)])
     best_offset, best_count = 0.0, -1
     steps = int(round(config.max_speech_lead / 0.02))
     # Smaller lags first so ties keep the timing closest to Whisper.
@@ -282,10 +306,9 @@ def align_words_to_captions(
 
     assigned: dict[int, list[tuple[int, dict[str, Any]]]] = {}
     leftovers: list[tuple[int, dict[str, Any]]] = []
-    for item in words:
-        word = item[1]
-        start = float(word["start"]) + offset
-        end = float(word["end"]) + offset
+    for item, (spoken_start, spoken_end) in zip(words, _spoken_spans(words, config)):
+        start = spoken_start + offset
+        end = spoken_end + offset
         overlap, slot = max(
             (min(end, last) - max(start, first), index)
             for index, (first, last) in enumerate(intervals)

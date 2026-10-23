@@ -2,11 +2,11 @@ import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?
 import { createInstagramWorkspace } from "./instagram.js?v=20261018-5";
 import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261018-4";
 import { unconfiguredStatus, unconfiguredTitle } from "./connection-copy.js?v=20261018-3";
-export function createTikTokWorkspace({ requestJson, toast }) {
+export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = () => null, canManageAllVideos = () => false }) {
   const $ = selector => document.querySelector(selector);
   let status = null, apiStatus = null, draft = null, timer = null, apiTimer = null, refreshing = false, loading = false, submitting = false;
   let suggestion = null, suggesting = false;
-  let requestVersion = 0, locked = false, attemptId = null;
+  let requestVersion = 0, locked = false, attemptId = null, activeJobId = null;
   let publishAttempt = null, publishTimer = null, publishSubmitting = false, publishKey = null;
   const edits = new Map();
   let checkedFrameUrl = null, frameProblem = null, frameChecking = false, lastBrowserUrl = null;
@@ -161,17 +161,25 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       const data = await requestJson('/api/v1/jobs?status=completed&limit=200');
       if (locked) return;
       const select = $('#tiktokJobSelect');
-      const selected = draft?.job_id || select.value;
+      const selected = activeJobId || draft?.job_id || select.value;
+      const currentUserId = String(getCurrentUserId() || '');
+      const canManageAll = canManageAllVideos();
       select.replaceChildren(new Option('Chọn video đã hoàn tất…', ''));
       for (const job of data.items || []) {
-        if (job.video_url) select.add(new Option(job.filename || job.output_video || job.job_id, job.job_id));
+        const belongsToCurrentUser = canManageAll || !currentUserId || String(job.owner_user_id || '') === currentUserId;
+        if (job.video_url && belongsToCurrentUser) {
+          select.add(new Option(job.filename || job.output_video || job.job_id, job.job_id));
+        }
       }
       if (draft && ![...select.options].some(o => o.value === selected)) select.add(new Option(draft.filename, selected));
-      select.value = selected;
+      const canSelect = selected && [...select.options].some(option => option.value === selected);
+      select.value = canSelect ? selected : '';
+      if (canSelect && draft?.job_id !== selected && !loading) await openDraft(selected);
     } catch (error) { toast(error.message, true); }
   }
 
   async function openDraft(jobId) {
+    activeJobId = jobId;
     if (draft) edits.set(draft.job_id, $('#tiktokCaption').value);
     const version = ++requestVersion;
     suggestion = null;
@@ -206,7 +214,9 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       extraSocial.forEach(workspace => workspace.setDraft());
     } catch (error) {
       if (version !== requestVersion) return;
+      activeJobId = null;
       draft = null;
+      $('#tiktokJobSelect').value = '';
       $('#tiktokDraftEmpty').classList.remove('is-hidden');
       $('#tiktokDraftEditor').classList.add('is-hidden');
       instagram.setDraft();
@@ -368,7 +378,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
     else {
       ++requestVersion;
       if (draft) edits.set(draft.job_id, $('#tiktokCaption').value);
-      draft = null; loading = false;
+      activeJobId = null; draft = null; loading = false;
       instagram.setDraft();
       extraSocial.forEach(workspace => workspace.setDraft());
       $('#tiktokVideoPreview').pause();
@@ -520,7 +530,7 @@ export function createTikTokWorkspace({ requestJson, toast }) {
       instagram.leave(); extraSocial.forEach(workspace => workspace.leave());
     },
     lock() {
-      locked = true; ++requestVersion; draft = null; status = null; edits.clear();
+      locked = true; ++requestVersion; activeJobId = null; draft = null; status = null; edits.clear();
       publishAttempt = null; publishKey = null;
       clearTimeout(timer); timer = null;
       clearTimeout(publishTimer); publishTimer = null;

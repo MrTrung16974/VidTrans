@@ -195,6 +195,41 @@ class SocialPublishingTests(unittest.TestCase):
         self.assertNotIn("options", payload)
         self.assertEqual(payload["status"], "SCHEDULED_LOCAL")
 
+    def test_owner_role_can_publish_another_users_video(self):
+        foreign_job = {"status": "completed", "output_video": self.video.name, "owner_user_id": "user-b"}
+
+        class ScopedJobs:
+            def get(self, job_id):
+                return foreign_job if job_id == "foreign-job" else None
+
+            def get_for_user(self, job_id, owner_user_id):
+                job = self.get(job_id)
+                return job if job and job["owner_user_id"] == owner_user_id else None
+
+        app = FastAPI()
+        app.include_router(create_social_publish_router(
+            self.service,
+            ScopedJobs(),
+            self.video.parent,
+            owner_resolver=lambda request: request.headers.get("x-user-id", ""),
+            can_manage_all_resolver=lambda request: request.headers.get("x-role") == "owner",
+            connection_resolver=lambda _user, _connection, _platform: {"provider_account_id": "creator-one"},
+        ))
+        client = TestClient(app)
+        payload = {
+            "platform": "INSTAGRAM", "connection_id": "connection-one",
+            "mode": "SCHEDULE_LOCAL", "caption": "Caption",
+            "scheduled_for": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+            "timezone": "Asia/Ho_Chi_Minh", "options": {}, "reviewed": True,
+            "idempotency_key": "owner-foreign-video-key",
+        }
+
+        regular = client.post("/api/v1/jobs/foreign-job/social-publishes", headers={"x-user-id": "user-a", "x-role": "user"}, json=payload)
+        owner = client.post("/api/v1/jobs/foreign-job/social-publishes", headers={"x-user-id": "admin", "x-role": "owner"}, json=payload)
+
+        self.assertEqual(regular.status_code, 404)
+        self.assertEqual(owner.status_code, 202)
+
     def test_routes_do_not_expose_another_users_publish_attempt(self):
         jobs = type("Jobs", (), {"get_for_user": lambda _self, job_id, owner: (
             {"status": "completed", "output_video": self.video.name}

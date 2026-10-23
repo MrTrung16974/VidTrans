@@ -89,6 +89,26 @@ class WordAlignmentTests(unittest.TestCase):
         self.assertEqual([(cue["start"], cue["end"]) for cue in aligned], intervals)
         self.assertTrue(all(cue["timing_source"] == "caption" for cue in aligned))
 
+    def test_word_stretched_over_a_pause_follows_its_spoken_tail(self) -> None:
+        # Timings from a real job: Whisper stretched "肯" back over the pause before
+        # "肯定不是他", so most of its span sat in the previous caption.
+        segments = [{
+            "start": 108.2,
+            "end": 110.5,
+            "text": "会不会是他肯定不是他哎",
+            "words": [
+                _word("会", 108.2, 108.5), _word("不会", 108.5, 108.64), _word("是", 108.64, 108.8),
+                _word("他", 108.8, 108.94), _word("肯", 108.94, 109.58), _word("定", 109.58, 109.7),
+                _word("不是", 109.7, 109.9), _word("他", 109.9, 110.2), _word("哎", 110.2, 110.5),
+            ],
+        }]
+        # The real job measured no speech lead; pin it so the lead search cannot mask the stretch.
+        aligned = align_words_to_captions(
+            segments, [(108.33, 109.13), (109.4, 110.6)], CaptionAlignmentConfig(max_speech_lead=0.0)
+        )
+
+        self.assertEqual([cue["text"] for cue in aligned], ["会不会是他", "肯定不是他哎"])
+
     def test_keeps_whisper_timing_for_speech_without_caption(self) -> None:
         segments = [
             {"start": 1.0, "end": 2.0, "text": "你好", "words": [_word("你好", 1.0, 2.0)]},

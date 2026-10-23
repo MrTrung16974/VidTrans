@@ -40,12 +40,16 @@ def create_social_publish_router(
     output_dir: Path,
     owner_resolver=None,
     connection_resolver=None,
+    can_manage_all_resolver=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["Social Publishing"])
     output_dir = output_dir.resolve()
     owner_resolver = owner_resolver or (lambda _request: "__legacy__")
+    can_manage_all_resolver = can_manage_all_resolver or (lambda _request: False)
 
     def owned_job(request: Request, job_id: str):
+        if can_manage_all_resolver(request):
+            return jobs.get(job_id)
         return jobs.get_for_user(job_id, owner_resolver(request)) if hasattr(jobs, "get_for_user") else jobs.get(job_id)
 
     def public_attempt(attempt: dict[str, Any]) -> dict[str, Any]:

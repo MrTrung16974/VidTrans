@@ -1,4 +1,4 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20261023-publish-cta";
+import { createTikTokWorkspace } from "./tiktok.js?v=20261023-owner-publish-fix";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
@@ -1574,9 +1574,10 @@ function jobActions(job) {
     ? `<button type="button" class="btn-job-action btn-tiktok-status" data-action="tiktok-status" data-job="${job.job_id}" title="Cập nhật trạng thái TikTok"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.49 6.27 6.27 0 0 0 1.86-4.49v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-.86-.09z"/></svg><span>TikTok</span></button>`
     : "";
   const review = job.status === "completed" && job.video_url
-    ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Duyệt bài và đăng video lên TikTok"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.49 6.27 6.27 0 0 0 1.86-4.49v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-.86-.09z"/></svg><span>Duyệt đăng</span></button>`
+    && (state.auth.role === "owner" || !state.auth.user_id || job.owner_user_id === state.auth.user_id)
+    ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Mở trang chuẩn bị và đăng bài"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4Z"></path></svg><span>Đăng bài</span></button>`
     : "";
-  return review + downloads + refreshTikTok + cancel + retry + remove;
+  return downloads + refreshTikTok + cancel + retry + remove + review;
 }
 
 function eligibleJobs(action) {
@@ -2496,7 +2497,12 @@ window.addEventListener("beforeunload", event => {
   event.preventDefault();
   event.returnValue = "";
 });
-const tiktokWorkspace = createTikTokWorkspace({ requestJson, toast });
+const tiktokWorkspace = createTikTokWorkspace({
+  requestJson,
+  toast,
+  getCurrentUserId: () => state.auth.user_id,
+  canManageAllVideos: () => state.auth.role === "owner",
+});
 const comicWorkspace = createComicWorkspace({ requestJson, toast, escapeHtml });
 const platformAppsSettings = createPlatformAppsSettings({
   requestJson, toast, escapeHtml, onChange: () => tiktokWorkspace.enter(),

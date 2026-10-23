@@ -14,13 +14,16 @@ from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherErro
 
 def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir: Path,
                                  publisher: TikTokPublisher | None = None, owner_resolver=None,
-                                 publisher_resolver=None) -> APIRouter:
+                                 publisher_resolver=None, can_manage_all_resolver=None) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["TikTok Browser"])
     output_dir = output_dir.resolve()
     enforce_ownership = owner_resolver is not None
     owner_resolver = owner_resolver or (lambda _request: "__legacy__")
+    can_manage_all_resolver = can_manage_all_resolver or (lambda _request: False)
 
     def owned_job(request: Request, job_id: str):
+        if can_manage_all_resolver(request):
+            return jobs.get(job_id)
         return jobs.get_for_user(job_id, owner_resolver(request)) if hasattr(jobs, "get_for_user") else jobs.get(job_id)
 
     def call(operation):

@@ -452,6 +452,7 @@ app.include_router(create_tiktok_browser_router(
     TIKTOK_PUBLISHER,
     owner_resolver=lambda request: str(current_account(request)["user_id"]),
     publisher_resolver=lambda request: tenant_tiktok_publisher(str(current_account(request)["user_id"])),
+    can_manage_all_resolver=lambda request: str(current_account(request).get("role") or "") == "owner",
 ))
 SOCIAL_PUBLISH_STORE = SocialPublishStore(DATABASE_TARGET)
 SIGNED_MEDIA_URLS = SignedMediaUrlService(
@@ -488,6 +489,7 @@ app.include_router(create_social_publish_router(
     connection_resolver=lambda user_id, connection_id, platform: resolve_social_connection(
         user_id, connection_id, platform
     ),
+    can_manage_all_resolver=lambda request: str(current_account(request).get("role") or "") == "owner",
 ))
 app.include_router(create_instagram_router(
     INSTAGRAM_PUBLISHER, SIGNED_MEDIA_URLS,
