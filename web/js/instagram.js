@@ -58,7 +58,10 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
 
   function renderAttempt(value) {
     attempt = value?.status ? value : null;
-    $('#instagramPublishStatus').classList.toggle('is-hidden', !attempt);
+    const panel = $('#instagramPublishStatus');
+    panel.classList.toggle('is-hidden', !attempt);
+    panel.classList.toggle('is-publishing', Boolean(attempt && ACTIVE_STATUSES.has(attempt.status) && attempt.status !== 'SCHEDULED_LOCAL'));
+    panel.setAttribute('aria-busy', String(Boolean(attempt && ACTIVE_STATUSES.has(attempt.status) && attempt.status !== 'SCHEDULED_LOCAL')));
     if (!attempt) return controls();
     $('#instagramPublishStatusTitle').textContent = STATUS_LABELS[attempt.status] || attempt.status;
     let message = attempt.error_message || '';
@@ -93,6 +96,11 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
     if ($('#instagramPublish').disabled) return;
     const draft = getDraft(); submitting = true; controls(); key ||= crypto.randomUUID();
     const mode = $('#instagramPublishMode').value;
+    renderAttempt({
+      status: mode === 'SCHEDULE_LOCAL' ? 'SCHEDULED_LOCAL' : 'UPLOADING',
+      scheduled_for: mode === 'SCHEDULE_LOCAL' ? $('#instagramScheduleAt').value : null,
+      status_detail: mode === 'SCHEDULE_LOCAL' ? null : { percent: 0 },
+    });
     const payload = {
       platform: 'INSTAGRAM', connection_id: selectedConnection(), mode, caption: getCaption(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -106,7 +114,10 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
       }));
       $('#instagramReviewConsent').checked = false;
       toast(mode === 'SCHEDULE_LOCAL' ? 'Đã lưu lịch đăng Instagram.' : 'Đang gửi Reel lên Instagram.');
-    } catch (error) { toast(error.message, true); }
+    } catch (error) {
+      renderAttempt({ status: 'FAILED', error_message: error.message });
+      toast(error.message, true);
+    }
     finally { submitting = false; controls(); }
   }
 

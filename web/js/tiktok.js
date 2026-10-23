@@ -1,6 +1,6 @@
 import { resolveTikTokFrameUrl, frameResponseProblem } from "./browser-frame.js?v=20261015-2";
-import { createInstagramWorkspace } from "./instagram.js?v=20261018-5";
-import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261018-4";
+import { createInstagramWorkspace } from "./instagram.js?v=20261024-social-publish-loading";
+import { createExtraSocialWorkspaces } from "./social-extra.js?v=20261024-social-publish-loading";
 import { unconfiguredStatus, unconfiguredTitle } from "./connection-copy.js?v=20261018-3";
 export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = () => null, canManageAllVideos = () => false }) {
   const $ = selector => document.querySelector(selector);
@@ -233,6 +233,9 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
     publishAttempt = attempt?.status ? attempt : null;
     const panel = $('#tiktokPublishStatus');
     panel.classList.toggle('is-hidden', !publishAttempt);
+    const publishing = Boolean(publishAttempt && publishBusy.has(publishAttempt.status) && publishAttempt.status !== 'SCHEDULED_LOCAL');
+    panel.classList.toggle('is-publishing', publishing);
+    panel.setAttribute('aria-busy', String(publishing));
     if (!publishAttempt) { controls(); return; }
     $('#tiktokPublishStatusTitle').textContent = publishLabels[publishAttempt.status] || publishAttempt.status;
     let message = publishAttempt.error_message || '';
@@ -294,12 +297,20 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
       idempotency_key: publishKey,
       connection_id: selectedAccount?.dataset.connectionId || apiStatus?.connection_id || null,
     };
+    renderPublish({
+      status: mode === 'SCHEDULE' ? 'SCHEDULED_LOCAL' : 'UPLOADING',
+      scheduled_for: body.scheduled_for,
+      status_detail: mode === 'SCHEDULE' ? null : { percent: 0 },
+    });
     try {
       const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}/social-publishes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       renderPublish(result);
       $('#tiktokReviewConsent').checked = false;
       toast(mode === 'SCHEDULE' ? 'Đã lưu lịch đăng TikTok.' : mode === 'INBOX_DRAFT' ? 'Đang gửi bản nháp tới TikTok.' : 'Đang đăng video lên TikTok.');
-    } catch (error) { toast(error.message, true); }
+    } catch (error) {
+      renderPublish({ status: 'FAILED', error_message: error.message });
+      toast(error.message, true);
+    }
     finally { publishSubmitting = false; controls(); }
   }
 
