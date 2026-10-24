@@ -276,12 +276,10 @@ async function startProtectedApplication() {
   clearInterval(state.pollTimer);
   state.pollTimer = null;
   jobEvents.start();
-  if (location.hash === "#douyin") startDouyinBrowserPolling();
-  if (location.hash === "#tiktok") tiktokWorkspace.enter();
-  // The first showView ran before the role was known and fell back to #jobs.
-  if (location.hash.startsWith("#comic")) showView();
-  if (location.hash === "#admin") loadAdminAccounts();
-  if (location.hash === "#billing") loadBilling();
+  // The first showView ran before the role was known, so role-gated views such as
+  // #admin fell back to another view while the hash stayed put; clicking the same
+  // link then fires no hashchange. Re-render now that the role is known.
+  showView();
 }
 
 async function bootstrapApplication() {
