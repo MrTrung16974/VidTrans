@@ -125,6 +125,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         main = (backend / "main.py").read_text(encoding="utf-8")
 
         self.assertIn('href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden', html)
+        self.assertEqual(html.count('href="#douyin" data-view-link="douyin" data-admin-only'), 1)
         self.assertIn('href="#admin" data-view-link="admin" data-admin-only class="is-hidden" hidden', html)
         self.assertIn('class="source-auth-row is-hidden" data-admin-only hidden', html)
         self.assertIn('role: "viewer"', javascript)
