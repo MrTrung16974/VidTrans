@@ -32,6 +32,7 @@ class AppSettings:
     worker_concurrency: int
     whisper_concurrency: int
     ocr_concurrency: int
+    max_job_restarts: int
 
     @classmethod
     def load(cls, base_dir: Path) -> "AppSettings":
@@ -57,6 +58,9 @@ class AppSettings:
             worker_concurrency=cls._worker_concurrency(),
             whisper_concurrency=cls._positive_int("VIDTRANS_WHISPER_CONCURRENCY", 1),
             ocr_concurrency=cls._positive_int("VIDTRANS_OCR_CONCURRENCY", 1),
+            # A job that keeps crashing the worker (usually an OOM kill) must not
+            # be restarted forever on every container restart.
+            max_job_restarts=cls._positive_int("VIDTRANS_MAX_JOB_RESTARTS", 3),
         )
         settings.ensure_directories()
         return settings

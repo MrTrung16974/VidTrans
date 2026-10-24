@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261024-social-publish-loading" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261024-process-monitor" />
   </head>
   <body>
     <div class="app-shell">
@@ -1536,6 +1536,7 @@
             <button class="admin-subtab active" type="button" data-admin-subtab="accounts">👥 Tài khoản<span class="subtab-text-extra"> & Phân quyền</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="jobs">🔍 Giám sát Jobs<span class="subtab-text-extra"> toàn hệ thống</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="billing">💳 Đối soát<span class="subtab-text-extra"> thanh toán</span></button>
+            <button class="admin-subtab" type="button" data-admin-subtab="system">📊 Hệ thống<span class="subtab-text-extra"> &amp; tài nguyên</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="audit">🛡️ Nhật ký kiểm toán<span class="subtab-text-extra"> (Audit)</span></button>
           </div>
 
@@ -1757,6 +1758,99 @@
             </section>
           </div>
 
+          <div id="adminSubtabSystem" class="admin-subtab-pane is-hidden">
+            <section class="admin-metrics" aria-label="Tài nguyên máy chủ">
+              <article class="card admin-metric sys-metric" data-sys-card="cpu">
+                <div class="metric-info">
+                  <span>CPU máy chủ</span>
+                  <strong id="sysCpuValue">—</strong>
+                  <small id="sysCpuDetail" class="sys-metric-detail">&nbsp;</small>
+                </div>
+                <div class="admin-metric-icon" aria-hidden="true">⚙️</div>
+              </article>
+              <article class="card admin-metric sys-metric" data-sys-card="memory">
+                <div class="metric-info">
+                  <span>RAM máy chủ</span>
+                  <strong id="sysMemoryValue">—</strong>
+                  <small id="sysMemoryDetail" class="sys-metric-detail">&nbsp;</small>
+                </div>
+                <div class="admin-metric-icon" aria-hidden="true">🧠</div>
+              </article>
+              <article class="card admin-metric sys-metric" data-sys-card="swap">
+                <div class="metric-info">
+                  <span>Swap</span>
+                  <strong id="sysSwapValue">—</strong>
+                  <small id="sysSwapDetail" class="sys-metric-detail">&nbsp;</small>
+                </div>
+                <div class="admin-metric-icon" aria-hidden="true">💾</div>
+              </article>
+              <article class="card admin-metric sys-metric" data-sys-card="load">
+                <div class="metric-info">
+                  <span>Tải hệ thống (1 phút)</span>
+                  <strong id="sysLoadValue">—</strong>
+                  <small id="sysLoadDetail" class="sys-metric-detail">&nbsp;</small>
+                </div>
+                <div class="admin-metric-icon" aria-hidden="true">📈</div>
+              </article>
+            </section>
+
+            <div class="admin-toolbar sys-toolbar">
+              <div class="admin-list-title">
+                <strong>Giám sát tài nguyên hệ thống</strong>
+                <small id="sysUpdatedAt">Đang tải…</small>
+              </div>
+              <label class="sys-auto-refresh">
+                <input id="sysAutoRefresh" type="checkbox" checked />
+                <span>Tự làm mới mỗi 5 giây</span>
+              </label>
+              <button id="refreshAdminSystem" class="button secondary" type="button" title="Làm mới">
+                <span class="refresh-symbol">↻</span> Làm mới
+              </button>
+            </div>
+
+            <div id="sysAlerts" class="sys-alerts" aria-live="polite"></div>
+
+            <div class="sys-grid">
+              <section class="card sys-panel">
+                <h3>Bộ nhớ &amp; áp lực tài nguyên</h3>
+                <div id="sysMemoryPanel" class="sys-rows"></div>
+              </section>
+              <section class="card sys-panel">
+                <h3>Container backend</h3>
+                <div id="sysContainerPanel" class="sys-rows"></div>
+              </section>
+              <section class="card sys-panel">
+                <h3>Ổ đĩa</h3>
+                <div id="sysDiskPanel" class="sys-rows"></div>
+              </section>
+              <section class="card sys-panel">
+                <h3>Ollama (model dịch)</h3>
+                <div id="sysOllamaPanel" class="sys-rows"></div>
+              </section>
+              <section class="card sys-panel sys-panel-wide">
+                <div class="sys-panel-head">
+                  <h3>Tiến trình đang chiếm tài nguyên</h3>
+                  <div class="sys-sort" role="group" aria-label="Sắp xếp tiến trình">
+                    <button class="sys-sort-btn active" type="button" data-sys-sort="memory">Theo RAM</button>
+                    <button class="sys-sort-btn" type="button" data-sys-sort="cpu">Theo CPU</button>
+                  </div>
+                </div>
+                <small id="sysProcessScope" class="sys-note"></small>
+                <div id="sysProcessGroups" class="sys-chips"></div>
+                <div class="admin-table-container sys-process-table">
+                  <div class="sys-process-head" aria-hidden="true">
+                    <span>Tiến trình</span><span>Nhóm</span><span>RAM</span><span>% RAM</span><span>CPU</span><span>Đã chạy</span>
+                  </div>
+                  <div id="sysProcessList" class="sys-process-list"></div>
+                </div>
+              </section>
+              <section class="card sys-panel sys-panel-wide">
+                <h3>Hàng đợi jobs</h3>
+                <div id="sysJobsPanel" class="sys-rows"></div>
+              </section>
+            </div>
+          </div>
+
           <div id="adminSubtabAudit" class="admin-subtab-pane is-hidden">
             <section class="card admin-audit-panel">
               <div class="admin-toolbar admin-audit-toolbar">
@@ -1776,6 +1870,7 @@
                     <option value="billing.order_confirm">billing.order_confirm (Duyệt nạp tiền)</option>
                     <option value="billing.order_reject">billing.order_reject (Từ chối đơn)</option>
                     <option value="admin.billing.orders.list">admin.billing.orders.list (Xem đơn thanh toán)</option>
+                    <option value="admin.system.processes.view">admin.system.processes.view (Xem tiến trình máy chủ)</option>
                   </select>
                 </div>
                 <button id="refreshAdminAudit" class="button secondary" type="button" title="Làm mới">
@@ -2017,6 +2112,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261024-social-publish-loading"></script>
+    <script type="module" src="/js/app.js?v=20261024-process-monitor"></script>
   </body>
 </html>

@@ -5,6 +5,10 @@ services:
       VIDTRANS_AUTH_COOKIE_SECURE: "1"
       VIDTRANS_TRUST_PROXY_HEADERS: "1"
       VIDTRANS_SOURCE_BROWSER_PUBLIC_URL: "/source-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=source-browser/websockify"
+    volumes:
+      # Read-only host process table for the admin system monitor
+      # (GET /api/v1/admin/system-processes, owner/admin only).
+      - /proc:/host/proc:ro
 
   nginx:
     image: vidtrans-nginx

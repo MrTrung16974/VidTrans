@@ -122,8 +122,10 @@ class JobService:
             self._changed("*")
         return recovered
 
-    def requeue_interrupted(self) -> list[tuple[str, dict[str, Any]]]:
-        requeued = self._store.requeue_interrupted()
+    def requeue_interrupted(
+        self, max_restarts: int | None = None
+    ) -> list[tuple[str, dict[str, Any]]]:
+        requeued = self._store.requeue_interrupted(max_restarts)
         for job_id, _job in requeued:
             self._changed(job_id)
         return requeued

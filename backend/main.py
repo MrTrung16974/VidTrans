@@ -132,8 +132,10 @@ from infrastructure.translation_providers import (
     create_translation_provider,
     default_translation_provider,
     ensure_translation_provider_configured,
+    ollama_url,
     translation_provider_statuses,
 )
+from infrastructure.system_metrics import HostProcessCollector, SystemMetricsCollector
 from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherConfig, TikTokPublisherError
 from pipeline.ocr import (
     OCRConfig,
@@ -3733,9 +3735,18 @@ async def start_job_scheduler() -> None:
     apply_retention_policy()
     app.state.retention_task = asyncio.create_task(run_retention_loop())
     if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() in {"1", "true", "yes"}:
-        requeued = JOB_SERVICE.requeue_interrupted()
+        interrupted = JOB_SERVICE.requeue_interrupted(SETTINGS.max_job_restarts)
+        requeued = [job_id for job_id, job in interrupted if job["status"] == "queued"]
         if requeued:
             logger.info("Requeued %d interrupted jobs after server restart", len(requeued))
+        for job_id, job in interrupted:
+            if job["status"] == "failed":
+                logger.warning(
+                    "Job %s failed after %d server restarts; not requeuing it",
+                    job_id,
+                    job["restart_count"],
+                )
+                TENANT_GOVERNANCE.release(job_id)
         offset = 0
         while True:
             cancelled_jobs, total = JOB_SERVICE.list_jobs(
@@ -4117,6 +4128,89 @@ def admin_list_audit_events(
         offset=offset,
     )
     return JSONResponse({"items": items, "total": total, "limit": limit, "offset": offset}, headers={"Cache-Control": "no-store"})
+
+
+SYSTEM_METRICS = SystemMetricsCollector(
+    disk_paths={"Dữ liệu (work)": WORK_DIR, "Kết quả (outputs)": OUTPUT_DIR},
+    ollama_url=ollama_url,
+)
+
+
+# The production compose file mounts the host /proc read-only here so the
+# monitor can see Ollama, browsers and databases outside this container.
+_HOST_PROC = Path(os.environ.get("VIDTRANS_HOST_PROC", "/host/proc"))
+PROCESS_METRICS = HostProcessCollector(
+    proc_root=_HOST_PROC if (_HOST_PROC / "meminfo").exists() else Path("/proc"),
+)
+PROCESS_AUDIT_INTERVAL_SECONDS = 600
+_process_audit_lock = threading.Lock()
+_process_audit_last: dict[str, float] = {}
+
+
+def require_signed_in_admin(request: Request) -> dict[str, Any]:
+    """Admin role from a verified session, never the auth-disabled fallback.
+
+    Host metrics describe the whole server, so unlike other admin pages they
+    are refused when authentication is turned off instead of being served to
+    whoever can reach the port.
+    """
+
+    if getattr(request.state, "account", None) is None:
+        raise HTTPException(status_code=403, detail="Cần đăng nhập bằng tài khoản quản trị để xem thông tin máy chủ")
+    return require_roles(request, "owner", "admin")
+
+
+@app.get("/api/v1/admin/system-metrics")
+async def admin_system_metrics(request: Request) -> JSONResponse:
+    require_signed_in_admin(request)
+    metrics = await asyncio.to_thread(SYSTEM_METRICS.collect)
+    active_jobs, _total = await asyncio.to_thread(
+        JOB_SERVICE.list_jobs, status="processing", limit=20
+    )
+    metrics["jobs"] = {
+        "counts": await asyncio.to_thread(JOB_SERVICE.status_counts),
+        "worker_concurrency": SETTINGS.worker_concurrency,
+        "max_job_restarts": SETTINGS.max_job_restarts,
+        "active": [
+            {
+                "job_id": job.get("job_id"),
+                "filename": job.get("filename"),
+                "step": job.get("step"),
+                "step_detail": job.get("step_detail"),
+                "progress": job.get("progress"),
+                "restart_count": job.get("restart_count", 0),
+                "started_at": job.get("started_at"),
+            }
+            for job in active_jobs
+        ],
+    }
+    return JSONResponse(metrics, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/admin/system-processes")
+async def admin_system_processes(
+    request: Request,
+    limit: int = Query(default=15, ge=1, le=50),
+) -> JSONResponse:
+    actor = require_signed_in_admin(request)
+    actor_id = str(actor["user_id"])
+    now = time.monotonic()
+    with _process_audit_lock:
+        should_audit = now - _process_audit_last.get(actor_id, float("-inf")) >= PROCESS_AUDIT_INTERVAL_SECONDS
+        if should_audit:
+            _process_audit_last[actor_id] = now
+    if should_audit:
+        # The page polls every few seconds; one audit row per viewing session
+        # is enough to know who looked at the server's process table.
+        await asyncio.to_thread(
+            TENANT_GOVERNANCE.audit,
+            actor_user_id=actor_id,
+            action="admin.system.processes.view",
+            resource_type="system",
+            resource_id="processes",
+        )
+    result = await asyncio.to_thread(PROCESS_METRICS.collect, limit)
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/v1/admin/users/{user_id}/quota")

@@ -110,6 +110,24 @@ class SQLiteJobStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get("running")["restart_count"], 1)
         self.assertEqual(self.store.get("done")["status"], "completed")
 
+    def test_requeue_fails_job_that_keeps_interrupting_the_worker(self) -> None:
+        self.store.create("crashy", {"status": "processing", "progress": 0.4, "restart_count": 3})
+        self.store.create("waiting", {"status": "queued", "progress": 0.0, "restart_count": 3})
+        self.store.create("fresh", {"status": "processing", "progress": 0.4, "restart_count": 2})
+
+        interrupted = dict(self.store.requeue_interrupted(max_restarts=3))
+
+        self.assertEqual(interrupted["crashy"]["status"], "failed")
+        crashy = self.store.get("crashy")
+        self.assertEqual(crashy["status"], "failed")
+        self.assertEqual(crashy["restart_count"], 4)
+        self.assertIsNotNone(crashy["finished_at"])
+        # A job that was only waiting in the queue did not cause the crash.
+        self.assertEqual(self.store.get("waiting")["status"], "queued")
+        self.assertEqual(self.store.get("waiting")["restart_count"], 3)
+        self.assertEqual(self.store.get("fresh")["status"], "queued")
+        self.assertEqual(self.store.get("fresh")["restart_count"], 3)
+
     def test_requeue_finalizes_cancelling_job_instead_of_running_it_again(self) -> None:
         self.store.create(
             "stopping",

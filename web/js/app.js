@@ -1445,6 +1445,211 @@ function renderAdminBilling(orders) {
   }).join("");
 }
 
+const SYSTEM_REFRESH_MS = 5000;
+
+function usageLevel(percent, warn = 70, danger = 85) {
+  if (!Number.isFinite(percent)) return "";
+  return percent >= danger ? "level-danger" : percent >= warn ? "level-warn" : "level-ok";
+}
+
+function formatPercent(value) {
+  return Number.isFinite(value) ? `${value.toFixed(1)}%` : "—";
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds)) return "—";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return days ? `${days} ngày ${hours} giờ` : hours ? `${hours} giờ ${minutes} phút` : `${minutes} phút`;
+}
+
+function systemBar(label, percent, detail, warn, danger) {
+  const width = Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0;
+  return `
+    <div class="sys-row">
+      <div class="sys-row-head"><span>${escapeHtml(label)}</span><strong>${escapeHtml(detail)}</strong></div>
+      <div class="sys-bar ${usageLevel(percent, warn, danger)}"><span style="width:${width}%"></span></div>
+    </div>`;
+}
+
+function systemValues(items) {
+  return `<div class="sys-kv">${items.map(([label, value, level = ""]) => `
+    <div class="${level}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>`;
+}
+
+function setSystemCard(name, value, detail, percent, warn, danger) {
+  const card = document.querySelector(`[data-sys-card="${name}"]`);
+  if (!card) return;
+  card.classList.remove("level-ok", "level-warn", "level-danger");
+  const level = usageLevel(percent, warn, danger);
+  if (level) card.classList.add(level);
+  card.querySelector("strong").textContent = value;
+  card.querySelector(".sys-metric-detail").textContent = detail;
+}
+
+function renderAdminSystem(data) {
+  const host = data.host || {};
+  const cpu = data.cpu || {};
+  const memory = data.memory || {};
+  const pressure = data.pressure || {};
+  const container = data.container;
+  const jobs = data.jobs || {};
+  const cpuCount = host.cpu_count || 1;
+  const load = host.load_average || [];
+  const loadPercent = Number.isFinite(load[0]) ? (load[0] / cpuCount) * 100 : NaN;
+
+  setSystemCard("cpu", formatPercent(cpu.usage_percent),
+    `${cpuCount} nhân · iowait ${formatPercent(cpu.iowait_percent)} · steal ${formatPercent(cpu.steal_percent)}`,
+    cpu.usage_percent, 75, 90);
+  setSystemCard("memory", formatPercent(memory.used_percent),
+    memory.total_bytes ? `${formatBytes(memory.used_bytes)} / ${formatBytes(memory.total_bytes)} · còn ${formatBytes(memory.available_bytes)}` : "Không có dữ liệu",
+    memory.used_percent, 75, 90);
+  setSystemCard("swap", memory.swap_total_bytes ? formatPercent(memory.swap_used_percent) : "Tắt",
+    memory.swap_total_bytes ? `${formatBytes(memory.swap_used_bytes)} / ${formatBytes(memory.swap_total_bytes)}` : "Không có swap",
+    memory.swap_used_percent, 50, 80);
+  setSystemCard("load", Number.isFinite(load[0]) ? load[0].toFixed(2) : "—",
+    load.length ? `5 phút ${load[1].toFixed(2)} · 15 phút ${load[2].toFixed(2)} · ${cpuCount} nhân` : "Không có dữ liệu",
+    loadPercent, 80, 120);
+
+  const alerts = [];
+  if (memory.available_bytes && memory.available_bytes < 1024 ** 3) alerts.push(["danger", `RAM trống chỉ còn ${formatBytes(memory.available_bytes)} — nguy cơ OOM-kill.`]);
+  if (memory.swap_used_percent >= 80) alerts.push(["danger", `Swap đã dùng ${formatPercent(memory.swap_used_percent)} — máy đang thiếu RAM.`]);
+  if (pressure.memory >= 10) alerts.push(["warn", `Áp lực bộ nhớ cao: tiến trình bị chờ RAM ${pressure.memory.toFixed(1)}% thời gian (10 giây gần nhất).`]);
+  if (container?.oom_kill_count) alerts.push(["danger", `Container backend đã bị OOM-kill ${container.oom_kill_count} lần kể từ khi khởi động.`]);
+  const restartLimit = jobs.max_job_restarts || 0;
+  (jobs.active || []).filter(job => job.restart_count > 0).forEach(job => {
+    alerts.push([restartLimit && job.restart_count >= restartLimit ? "danger" : "warn",
+      `Job ${job.job_id} đã bị chạy lại ${job.restart_count}/${restartLimit} lần do server khởi động lại.`]);
+  });
+  if (data.ollama && !data.ollama.reachable) alerts.push(["warn", "Không kết nối được Ollama — model dịch nội bộ không khả dụng."]);
+  $("#sysAlerts").innerHTML = alerts.map(([level, text]) => `<div class="sys-alert ${level === "warn" ? "warn" : ""}">⚠️ ${escapeHtml(text)}</div>`).join("");
+
+  $("#sysMemoryPanel").innerHTML = memory.total_bytes ? [
+    systemBar("RAM đã dùng", memory.used_percent, `${formatBytes(memory.used_bytes)} / ${formatBytes(memory.total_bytes)}`, 75, 90),
+    memory.swap_total_bytes ? systemBar("Swap đã dùng", memory.swap_used_percent, `${formatBytes(memory.swap_used_bytes)} / ${formatBytes(memory.swap_total_bytes)}`, 50, 80) : "",
+    systemValues([
+      ["RAM còn trống", formatBytes(memory.available_bytes), memory.available_bytes < 1024 ** 3 ? "level-danger" : ""],
+      ["Cache / buffer", formatBytes(memory.cached_bytes)],
+      ["Chờ RAM (PSI)", formatPercent(pressure.memory), pressure.memory >= 10 ? "level-danger" : ""],
+      ["Chờ CPU (PSI)", formatPercent(pressure.cpu)],
+      ["Chờ I/O (PSI)", formatPercent(pressure.io)],
+      ["Uptime máy chủ", formatDuration(host.uptime_seconds)],
+    ]),
+  ].join("") : '<div class="sys-empty">Không đọc được thông tin bộ nhớ (máy chủ không phải Linux).</div>';
+
+  const process = data.process || {};
+  $("#sysContainerPanel").innerHTML = (container ? [
+    container.memory_limit_bytes
+      ? systemBar("RAM container / giới hạn", container.memory_used_percent, `${formatBytes(container.memory_bytes)} / ${formatBytes(container.memory_limit_bytes)}`, 75, 90)
+      : "",
+  ].join("") : "") + systemValues([
+    ["RAM container", container ? formatBytes(container.memory_bytes) : "—"],
+    ["Giới hạn RAM", container ? (container.memory_limit_bytes ? formatBytes(container.memory_limit_bytes) : "Không giới hạn") : "—"],
+    ["CPU container", container && Number.isFinite(container.cpu_percent) ? `${container.cpu_percent.toFixed(1)}%` : "—"],
+    ["Swap container", container && Number.isFinite(container.swap_bytes) ? formatBytes(container.swap_bytes) : "—"],
+    ["OOM-kill", container ? String(container.oom_kill_count) : "—", container?.oom_kill_count ? "level-danger" : ""],
+    ["RSS API (uvicorn)", Number.isFinite(process.rss_bytes) ? formatBytes(process.rss_bytes) : "—"],
+    ["Số luồng", process.threads != null ? String(process.threads) : "—"],
+    ["ID container", host.hostname || "—"],
+  ]);
+
+  const disks = data.disks || [];
+  $("#sysDiskPanel").innerHTML = disks.length
+    ? disks.map(disk => systemBar(disk.label, disk.used_percent, `${formatBytes(disk.used_bytes)} / ${formatBytes(disk.total_bytes)} · trống ${formatBytes(disk.free_bytes)}`, 80, 92)).join("")
+    : '<div class="sys-empty">Không có dữ liệu ổ đĩa.</div>';
+
+  const ollama = data.ollama;
+  const models = ollama?.models || [];
+  $("#sysOllamaPanel").innerHTML = !ollama
+    ? '<div class="sys-empty">Ollama chưa được cấu hình.</div>'
+    : !ollama.reachable
+      ? '<div class="sys-empty">Không kết nối được Ollama.</div>'
+      : models.length
+        ? systemValues(models.map(model => [
+            model.name,
+            `${formatBytes(model.size_bytes)}${model.vram_bytes ? ` · VRAM ${formatBytes(model.vram_bytes)}` : " · CPU"}${model.expires_at ? ` · nhả lúc ${new Date(model.expires_at).toLocaleTimeString("vi-VN")}` : ""}`,
+          ]))
+        : '<div class="sys-empty">Không có model nào đang nạp trong RAM.</div>';
+
+  const counts = jobs.counts || {};
+  const active = jobs.active || [];
+  $("#sysJobsPanel").innerHTML = systemValues([
+    ["Đang xử lý", `${counts.processing || 0} / ${jobs.worker_concurrency || "—"} luồng`],
+    ["Đang chờ", String((counts.queued || 0) + (counts.scheduled || 0))],
+    ["Hoàn tất", String(counts.completed || 0)],
+    ["Thất bại", String(counts.failed || 0), counts.failed ? "level-danger" : ""],
+    ["Giới hạn chạy lại", jobs.max_job_restarts ? `${jobs.max_job_restarts} lần` : "—"],
+  ]) + (active.length ? active.map(job => {
+    const progress = Math.round((job.progress || 0) * 100);
+    const started = job.started_at ? new Date(job.started_at).toLocaleString("vi-VN") : "—";
+    return `
+      <div class="sys-job">
+        <strong>${escapeHtml(job.job_id)} · ${escapeHtml(job.step || "")}</strong>
+        <strong>${progress}%</strong>
+        <small>${escapeHtml(job.filename || "")}</small>
+        <small>${escapeHtml(job.step_detail || "")} · bắt đầu ${escapeHtml(started)}${job.restart_count ? ` · chạy lại ${job.restart_count} lần` : ""}</small>
+      </div>`;
+  }).join("") : '<div class="sys-empty">Không có job nào đang xử lý.</div>');
+
+  const collected = data.collected_at ? new Date(data.collected_at * 1000) : new Date();
+  $("#sysUpdatedAt").textContent = `Cập nhật lúc ${collected.toLocaleTimeString("vi-VN")} · số liệu RAM/CPU/tải là của toàn máy chủ`;
+}
+
+function renderAdminProcesses(data) {
+  state.adminProcesses = data;
+  const sortBy = state.adminProcessSort || "memory";
+  $$("[data-sys-sort]").forEach(btn => btn.classList.toggle("active", btn.dataset.sysSort === sortBy));
+  $("#sysProcessScope").textContent = data.host_wide
+    ? `Toàn máy chủ · ${data.process_count} tiến trình · CPU 100% = 1 nhân · chỉ hiện tên tiến trình, không hiện dòng lệnh`
+    : `Chỉ trong container backend (${data.process_count} tiến trình) — chưa mount /proc của máy chủ`;
+  $("#sysProcessGroups").innerHTML = (data.groups || []).map(group => `
+    <span class="sys-chip"><strong>${escapeHtml(group.name)}</strong> · ${formatBytes(group.rss_bytes)} · CPU ${group.cpu_percent.toFixed(1)}% · ${group.count} tiến trình</span>`).join("");
+  const rows = sortBy === "cpu" ? data.by_cpu : data.by_memory;
+  $("#sysProcessList").innerHTML = (rows || []).length ? rows.map(item => `
+    <div class="sys-process-row">
+      <strong title="PID ${item.pid}">${escapeHtml(item.name)} <small>#${item.pid}</small></strong>
+      <span data-label="Nhóm:">${escapeHtml(item.group)}</span>
+      <span data-label="RAM:" class="${usageLevel(item.memory_percent, 15, 30)}">${formatBytes(item.rss_bytes)}</span>
+      <span data-label="% RAM:">${formatPercent(item.memory_percent)}</span>
+      <span data-label="CPU:" class="${usageLevel(item.cpu_percent, 80, 150)}">${formatPercent(item.cpu_percent)}</span>
+      <span data-label="Đã chạy:">${formatDuration(item.uptime_seconds)}</span>
+    </div>`).join("") : '<div class="sys-empty">Không đọc được danh sách tiến trình.</div>';
+}
+
+function adminSystemVisible() {
+  return !document.hidden
+    && !$("#adminView")?.classList.contains("is-hidden")
+    && !$("#adminSubtabSystem")?.classList.contains("is-hidden");
+}
+
+async function loadAdminSystem() {
+  if (state.adminSystemLoading) return;
+  state.adminSystemLoading = true;
+  try {
+    const [metrics, processes] = await Promise.allSettled([
+      requestJson("/api/v1/admin/system-metrics"),
+      requestJson("/api/v1/admin/system-processes?limit=15"),
+    ]);
+    if (metrics.status === "fulfilled") renderAdminSystem(metrics.value);
+    else $("#sysUpdatedAt").textContent = metrics.reason?.message || "Không tải được số liệu";
+    if (processes.status === "fulfilled") renderAdminProcesses(processes.value);
+    else $("#sysProcessList").innerHTML = `<div class="sys-empty">${escapeHtml(processes.reason?.message || "Không tải được tiến trình")}</div>`;
+  } finally {
+    state.adminSystemLoading = false;
+  }
+}
+
+function startAdminSystemRefresh() {
+  clearInterval(state.adminSystemTimer);
+  loadAdminSystem();
+  if (!$("#sysAutoRefresh")?.checked) return;
+  state.adminSystemTimer = setInterval(() => {
+    if (adminSystemVisible()) loadAdminSystem();
+    else if ($("#adminSubtabSystem")?.classList.contains("is-hidden")) clearInterval(state.adminSystemTimer);
+  }, SYSTEM_REFRESH_MS);
+}
+
 async function loadAdminAudit() {
   const list = $("#adminAuditList");
   if (!list) return;
@@ -2453,6 +2658,9 @@ $$("[data-admin-subtab]").forEach(tabBtn => {
     } else if (tabName === "billing") {
       $("#adminSubtabBilling")?.classList.remove("is-hidden");
       loadAdminBilling();
+    } else if (tabName === "system") {
+      $("#adminSubtabSystem")?.classList.remove("is-hidden");
+      startAdminSystemRefresh();
     } else if (tabName === "audit") {
       $("#adminSubtabAudit")?.classList.remove("is-hidden");
       loadAdminAudit();
@@ -2460,6 +2668,12 @@ $$("[data-admin-subtab]").forEach(tabBtn => {
   });
 });
 $("#refreshAdminJobs")?.addEventListener("click", loadAdminJobs);
+$("#refreshAdminSystem")?.addEventListener("click", loadAdminSystem);
+$("#sysAutoRefresh")?.addEventListener("change", startAdminSystemRefresh);
+$$("[data-sys-sort]").forEach(btn => btn.addEventListener("click", () => {
+  state.adminProcessSort = btn.dataset.sysSort;
+  if (state.adminProcesses) renderAdminProcesses(state.adminProcesses);
+}));
 $("#adminJobUserFilter")?.addEventListener("change", loadAdminJobs);
 $("#adminJobStatusFilter")?.addEventListener("change", loadAdminJobs);
 $("#adminJobSearch")?.addEventListener("input", () => {

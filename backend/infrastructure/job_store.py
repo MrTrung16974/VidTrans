@@ -891,12 +891,17 @@ class JobStore:
                 recovered += 1
         return recovered
 
-    def requeue_interrupted(self) -> list[tuple[str, dict[str, Any]]]:
+    def requeue_interrupted(
+        self, max_restarts: int | None = None
+    ) -> list[tuple[str, dict[str, Any]]]:
         """Atomically return unfinished jobs to the queue after a process restart.
 
         The caller owns actual task scheduling.  Keeping this operation in the
         store prevents a concurrent status request from observing a half-updated
-        job payload.
+        job payload.  Only jobs that were running count as restarted; one that
+        has already been restarted ``max_restarts`` times is marked failed
+        instead, so a job that crashes the worker cannot loop forever.  The
+        returned payloads carry either ``queued`` or ``failed`` status.
         """
 
         now = _utc_now()
@@ -924,22 +929,39 @@ class JobStore:
                         (self._encode(payload), now, row["job_id"]),
                     )
                     continue
-                payload.update(
-                    {
-                        "status": "queued",
-                        "step": "queued",
-                        "progress": 0.0,
-                        "step_detail": "Server restarted; restarting the job from the beginning",
-                        "restart_count": int(payload.get("restart_count", 0)) + 1,
-                    }
-                )
+                restart_count = int(payload.get("restart_count", 0))
+                if payload.get("status") == "processing":
+                    restart_count += 1
+                if max_restarts is not None and restart_count > max_restarts:
+                    payload.update(
+                        {
+                            "status": "failed",
+                            "step": "failed",
+                            "restart_count": restart_count,
+                            "error": (
+                                f"Server stopped while running this job {restart_count} times "
+                                "(possibly out of memory); not restarting it again"
+                            ),
+                            "finished_at": now,
+                        }
+                    )
+                else:
+                    payload.update(
+                        {
+                            "status": "queued",
+                            "step": "queued",
+                            "progress": 0.0,
+                            "step_detail": "Server restarted; restarting the job from the beginning",
+                            "restart_count": restart_count,
+                        }
+                    )
                 connection.execute(
                     """
                     UPDATE jobs
-                    SET status = 'queued', payload_json = ?, updated_at = ?
+                    SET status = ?, payload_json = ?, updated_at = ?
                     WHERE job_id = ?
                     """,
-                    (self._encode(payload), now, row["job_id"]),
+                    (str(payload["status"]), self._encode(payload), now, row["job_id"]),
                 )
                 requeued.append((str(row["job_id"]), payload))
         return requeued
