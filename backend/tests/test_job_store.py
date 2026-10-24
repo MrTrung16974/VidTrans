@@ -404,12 +404,35 @@ class SQLiteJobStoreTests(unittest.TestCase):
         self.assertEqual(outcomes.count(True), 1)
         self.assertEqual(self.store.get("again")["status"], "queued")
 
-    def test_terminal_delete_removes_job(self) -> None:
-        self.store.create("old", {"status": "cancelled"})
+    def test_terminal_delete_hides_job_but_keeps_row(self) -> None:
+        self.store.create("old", {"status": "cancelled", "output_video": "old.mp4"}, owner_user_id="user-a")
+        self.store.create("kept", {"status": "completed"}, owner_user_id="user-a")
 
         self.store.delete("old", require_terminal=True)
 
         self.assertIsNone(self.store.get("old"))
+        self.assertIsNone(self.store.get_for_user("old", "user-a"))
+        self.assertFalse(self.store.owns_artifact("user-a", "old.mp4"))
+        jobs, total = self.store.list_jobs(owner_user_id="user-a")
+        self.assertEqual([job["job_id"] for job in jobs], ["kept"])
+        self.assertEqual(total, 1)
+        self.assertEqual(self.store.status_counts(owner_user_id="user-a"), {"completed": 1})
+        with self.assertRaises(JobNotFoundError):
+            self.store.delete("old", require_terminal=True)
+        with sqlite3.connect(self.database_path) as connection:
+            deleted_at = connection.execute(
+                "SELECT deleted_at FROM jobs WHERE job_id='old'"
+            ).fetchone()[0]
+        self.assertIsNotNone(deleted_at)
+
+    def test_prune_terminal_purges_soft_deleted_jobs(self) -> None:
+        self.store.create("old", {"status": "failed"})
+        self.store.delete("old", require_terminal=True)
+
+        future = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+        removed = self.store.prune_terminal(future)
+
+        self.assertEqual([job["job_id"] for job in removed["jobs"]], ["old"])
 
     def test_claims_due_schedule_before_regular_queue(self) -> None:
         self.store.create("regular", {"status": "queued"})

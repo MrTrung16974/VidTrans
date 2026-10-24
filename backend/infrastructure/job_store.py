@@ -97,6 +97,7 @@ class JobStore:
                 "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
                 "worker_id": "TEXT",
                 "scheduled_for": "TEXT",
+                "deleted_at": "TEXT",
             }.items():
                 if name not in columns:
                     connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
@@ -330,7 +331,7 @@ class JobStore:
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT payload_json,owner_user_id FROM jobs WHERE job_id = ?",
+                "SELECT payload_json,owner_user_id FROM jobs WHERE job_id = ? AND deleted_at IS NULL",
                 (job_id,),
             ).fetchone()
         if row is None:
@@ -343,7 +344,7 @@ class JobStore:
     def get_for_user(self, job_id: str, owner_user_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT payload_json,owner_user_id FROM jobs WHERE job_id=? AND owner_user_id=?",
+                "SELECT payload_json,owner_user_id FROM jobs WHERE job_id=? AND owner_user_id=? AND deleted_at IS NULL",
                 (job_id, owner_user_id),
             ).fetchone()
         if row is None:
@@ -359,7 +360,7 @@ class JobStore:
         )
         with self._connection() as connection:
             rows = connection.execute(
-                "SELECT payload_json FROM jobs WHERE owner_user_id=? AND payload_json LIKE ?",
+                "SELECT payload_json FROM jobs WHERE owner_user_id=? AND deleted_at IS NULL AND payload_json LIKE ?",
                 (owner_user_id, f"%{filename}%"),
             ).fetchall()
         return any(
@@ -398,7 +399,7 @@ class JobStore:
         offset: int = 0,
         owner_user_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        clauses: list[str] = []
+        clauses: list[str] = ["deleted_at IS NULL"]
         values: list[Any] = []
         if owner_user_id is not None:
             clauses.append("owner_user_id = ?")
@@ -415,7 +416,7 @@ class JobStore:
         if search:
             clauses.append("payload_json LIKE ?")
             values.append(f"%{search}%")
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        where = f" WHERE {' AND '.join(clauses)}"
         with self._connection() as connection:
             total = int(
                 connection.execute(f"SELECT COUNT(*) FROM jobs{where}", values).fetchone()[0]
@@ -427,7 +428,7 @@ class JobStore:
         return [self._job_row(row) for row in rows], total
 
     def status_counts(self, *, owner_user_id: str | None = None) -> dict[str, int]:
-        where = " WHERE owner_user_id = ?" if owner_user_id is not None else ""
+        where = " WHERE deleted_at IS NULL" + (" AND owner_user_id = ?" if owner_user_id is not None else "")
         values: list[Any] = [owner_user_id] if owner_user_id is not None else []
         with self._connection() as connection:
             rows = connection.execute(
@@ -448,7 +449,8 @@ class JobStore:
             batches = [self._batch_row(row) for row in rows]
             for batch in batches:
                 counts = connection.execute(
-                    "SELECT status, COUNT(*) count FROM jobs WHERE batch_id=? AND owner_user_id=? GROUP BY status",
+                    "SELECT status, COUNT(*) count FROM jobs "
+                    "WHERE batch_id=? AND owner_user_id=? AND deleted_at IS NULL GROUP BY status",
                     (batch["batch_id"], batch["owner_user_id"]),
                 ).fetchall()
                 batch["counts"] = {str(row["status"]): int(row["count"]) for row in counts}
@@ -577,6 +579,7 @@ class JobStore:
                 SELECT job_id, payload_json
                 FROM jobs
                 WHERE cancel_requested = 0
+                  AND deleted_at IS NULL
                   AND (
                     status = 'queued'
                     OR (status = 'scheduled' AND scheduled_for IS NOT NULL AND scheduled_for <= ?)
@@ -680,17 +683,23 @@ class JobStore:
             rows = connection.execute(
                 """
                 SELECT job_id FROM jobs
-                WHERE status = 'queued' AND cancel_requested = 0
+                WHERE status = 'queued' AND cancel_requested = 0 AND deleted_at IS NULL
                 ORDER BY priority DESC, created_at ASC
                 """
             ).fetchall()
         return {str(row["job_id"]): index for index, row in enumerate(rows, start=1)}
 
     def delete(self, job_id: str, *, require_terminal: bool = False) -> dict[str, Any]:
+        """Soft-delete a job: hide it from every read but keep its row and files.
+
+        The row is purged, together with its storage, by ``prune_terminal`` once
+        the retention window counted from the deletion has passed.
+        """
+        now = _utc_now()
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT status, payload_json FROM jobs WHERE job_id = ?",
+                "SELECT status, payload_json FROM jobs WHERE job_id = ? AND deleted_at IS NULL",
                 (job_id,),
             ).fetchone()
             if row is None:
@@ -698,7 +707,10 @@ class JobStore:
             if require_terminal and str(row["status"]) not in TERMINAL_STATUSES:
                 raise JobStateConflictError(f"Job is still active: {job_id}")
             payload = self._decode(row["payload_json"])
-            connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            connection.execute(
+                "UPDATE jobs SET deleted_at = ?, updated_at = ? WHERE job_id = ?",
+                (now, now, job_id),
+            )
         return payload
 
     def retry(self, job_id: str, **fields: Any) -> dict[str, Any]:

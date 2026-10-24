@@ -6256,32 +6256,15 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         raise HTTPException(status_code=409, detail="Hãy kết thúc lượt chuẩn bị TikTok trước khi xóa video")
     if job.get("status") in {"queued", "processing", "scheduled", "cancelling"}:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa")
-    # Remove the row first, atomically requiring a terminal status, so files are
-    # only deleted once no worker can still be using them.
+    # Soft delete: the job disappears from the user's views, but its row and
+    # files are kept until the retention policy purges them. The store
+    # atomically re-checks the terminal status.
     try:
         JOB_SERVICE.delete(job_id, require_terminal=True)
     except JobNotFoundError:
         raise HTTPException(status_code=404, detail="job not found") from None
     except JobStateConflictError:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa") from None
-    for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
-        filename = job.get(key)
-        if filename:
-            target = stored_artifact_path(str(filename))
-            if target.is_relative_to(OUTPUT_DIR.resolve()):
-                target.unlink(missing_ok=True)
-    resume_request = job.get("resume_request")
-    if isinstance(resume_request, dict):
-        for source_key in ("video_path", "source_cookie_path", "music_path"):
-            source_value = resume_request.get(source_key)
-            if not source_value:
-                continue
-            source_path = Path(str(source_value)).resolve()
-            if source_path.is_relative_to(UPLOAD_DIR.resolve()):
-                source_path.unlink(missing_ok=True)
-    job_work_dir = tenant_job_dir(WORK_DIR, str(job.get("owner_user_id") or _bootstrap_owner["user_id"]), job_id)
-    if job_work_dir.is_relative_to(WORK_DIR.resolve()) and job_work_dir.exists():
-        shutil.rmtree(job_work_dir)
     TENANT_GOVERNANCE.release(job_id)
     return JSONResponse({"job_id": job_id, "deleted": True})
 

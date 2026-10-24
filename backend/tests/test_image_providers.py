@@ -2,11 +2,12 @@ import io
 import json
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 from PIL import Image
 
-from infrastructure.image_providers import ComfyUIImageProvider, ImageRequest
+from infrastructure.image_providers import ComfyUIImageProvider, ImageGenerationError, ImageRequest
 
 
 class _Response:
@@ -24,6 +25,10 @@ class _Response:
 
 
 class ComfyUIImageProviderTests(unittest.TestCase):
+    def test_requires_url_and_checkpoint(self) -> None:
+        with self.assertRaisesRegex(ImageGenerationError, "VIDTRANS_COMFYUI_URL"):
+            ComfyUIImageProvider(base_url="", checkpoint="")
+
     def test_generates_and_downloads_comfyui_result(self) -> None:
         png = io.BytesIO()
         Image.new("RGB", (128, 128), "navy").save(png, "PNG")
@@ -62,6 +67,53 @@ class ComfyUIImageProviderTests(unittest.TestCase):
         second = provider._workflow(request)
         self.assertEqual(first["5"]["inputs"]["seed"], second["5"]["inputs"]["seed"])
         self.assertEqual((first["4"]["inputs"]["width"], first["4"]["inputs"]["height"]), (1024, 576))
+
+    def test_connection_error_marks_provider_unavailable(self) -> None:
+        def opener(_request, timeout):
+            del timeout
+            raise urllib.error.URLError("offline")
+
+        provider = ComfyUIImageProvider(
+            base_url="http://comfy", checkpoint="model.safetensors", opener=opener
+        )
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(ImageGenerationError) as raised:
+            provider.generate(ImageRequest(prompt="forest", width=512, height=512), Path(folder) / "scene.png")
+        self.assertTrue(raised.exception.unavailable)
+        self.assertIn("Không kết nối được ComfyUI", str(raised.exception))
+
+    def test_history_error_is_reported_without_downloading(self) -> None:
+        calls = []
+
+        def opener(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            if request.full_url.endswith("/prompt"):
+                return _Response(b'{"prompt_id":"job-error"}')
+            return _Response(json.dumps({
+                "job-error": {"status": {"status_str": "error", "messages": [["execution_error", "bad model"]]}}
+            }).encode())
+
+        provider = ComfyUIImageProvider(
+            base_url="http://comfy", checkpoint="bad.safetensors", opener=opener, sleeper=lambda _: None
+        )
+        with tempfile.TemporaryDirectory() as folder, self.assertRaisesRegex(
+            ImageGenerationError, "sinh ảnh thất bại"
+        ):
+            provider.generate(ImageRequest(prompt="forest", width=512, height=512), Path(folder) / "scene.png")
+        self.assertEqual(len(calls), 2)
+
+    def test_poll_timeout_is_bounded(self) -> None:
+        def opener(request, timeout):
+            del timeout
+            if request.full_url.endswith("/prompt"):
+                return _Response(b'{"prompt_id":"job-slow"}')
+            raise AssertionError("history must not be polled after a zero-second deadline")
+
+        provider = ComfyUIImageProvider(
+            base_url="http://comfy", checkpoint="model.safetensors", timeout=0, opener=opener
+        )
+        with tempfile.TemporaryDirectory() as folder, self.assertRaisesRegex(ImageGenerationError, "quá thời gian"):
+            provider.generate(ImageRequest(prompt="forest", width=512, height=512), Path(folder) / "scene.png")
 
 
 if __name__ == "__main__":
