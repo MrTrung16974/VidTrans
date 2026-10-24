@@ -5,9 +5,13 @@
 const FALLBACK_POLL_MS = 15000;
 const MAX_RECONNECT_MS = 30000;
 
-export function jobEventsUrl(locationLike = location) {
+export function eventsUrl(path, locationLike = location) {
   const scheme = locationLike.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${locationLike.host}/api/v1/jobs/events`;
+  return `${scheme}//${locationLike.host}${path}`;
+}
+
+export function jobEventsUrl(locationLike = location) {
+  return eventsUrl("/api/v1/jobs/events", locationLike);
 }
 
 // Patch the visible list in place. Returns true when the change can affect
@@ -41,7 +45,15 @@ export function applyJobChanges(jobs, message, { statusFilter = "" } = {}) {
   return { jobs: next, reload };
 }
 
-export function createJobEvents({ onChanges, onReconnected, poll, isActive }) {
+export function createJobEvents({ onChanges, ...options }) {
+  return createLiveEvents({ ...options, path: "/api/v1/jobs/events", messageType: "jobs", onMessage: onChanges });
+}
+
+// One server-push socket with reconnect backoff; `poll` keeps the page fresh
+// over HTTP every `fallbackPollMs` only while the socket is down.
+export function createLiveEvents({
+  path, messageType, onMessage, onReconnected = () => {}, poll, isActive, fallbackPollMs = FALLBACK_POLL_MS,
+}) {
   let socket = null;
   let attempts = 0;
   let reconnectTimer = null;
@@ -49,7 +61,7 @@ export function createJobEvents({ onChanges, onReconnected, poll, isActive }) {
   let stopped = true;
 
   function startPolling() {
-    if (!pollTimer) pollTimer = setInterval(poll, FALLBACK_POLL_MS);
+    if (!pollTimer) pollTimer = setInterval(poll, fallbackPollMs);
   }
 
   function stopPolling() {
@@ -72,7 +84,7 @@ export function createJobEvents({ onChanges, onReconnected, poll, isActive }) {
     }
     let current;
     try {
-      current = new WebSocket(jobEventsUrl());
+      current = new WebSocket(eventsUrl(path));
     } catch {
       startPolling();
       scheduleReconnect();
@@ -87,8 +99,8 @@ export function createJobEvents({ onChanges, onReconnected, poll, isActive }) {
         stopPolling();
         // Anything that changed while disconnected is picked up here once.
         onReconnected();
-      } else if (message.type === "jobs") {
-        onChanges(message);
+      } else if (message.type === messageType) {
+        onMessage(message);
       }
     };
     current.onclose = () => {

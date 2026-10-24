@@ -135,6 +135,7 @@ from infrastructure.translation_providers import (
     ollama_url,
     translation_provider_statuses,
 )
+from infrastructure.system_events import SystemMetricsHub
 from infrastructure.system_metrics import HostProcessCollector, SystemMetricsCollector
 from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherConfig, TikTokPublisherError
 from pipeline.ocr import (
@@ -3765,6 +3766,7 @@ async def run_retention_loop() -> None:
 @app.on_event("startup")
 async def start_job_scheduler() -> None:
     await JOB_EVENTS.start()
+    await SYSTEM_EVENTS.start()
     apply_retention_policy()
     app.state.retention_task = asyncio.create_task(run_retention_loop())
     if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() in {"1", "true", "yes"}:
@@ -3809,6 +3811,7 @@ async def start_job_scheduler() -> None:
 @app.on_event("shutdown")
 async def stop_job_scheduler() -> None:
     await JOB_EVENTS.stop()
+    await SYSTEM_EVENTS.stop()
     retention_task = getattr(app.state, "retention_task", None)
     if retention_task is not None:
         retention_task.cancel()
@@ -4193,15 +4196,11 @@ def require_signed_in_admin(request: Request) -> dict[str, Any]:
     return require_roles(request, "owner", "admin")
 
 
-@app.get("/api/v1/admin/system-metrics")
-async def admin_system_metrics(request: Request) -> JSONResponse:
-    require_signed_in_admin(request)
-    metrics = await asyncio.to_thread(SYSTEM_METRICS.collect)
-    active_jobs, _total = await asyncio.to_thread(
-        JOB_SERVICE.list_jobs, status="processing", limit=20
-    )
+def collect_system_metrics() -> dict[str, Any]:
+    metrics = SYSTEM_METRICS.collect()
+    active_jobs, _total = JOB_SERVICE.list_jobs(status="processing", limit=20)
     metrics["jobs"] = {
-        "counts": await asyncio.to_thread(JOB_SERVICE.status_counts),
+        "counts": JOB_SERVICE.status_counts(),
         "worker_concurrency": SETTINGS.worker_concurrency,
         "max_job_restarts": SETTINGS.max_job_restarts,
         "active": [
@@ -4217,6 +4216,42 @@ async def admin_system_metrics(request: Request) -> JSONResponse:
             for job in active_jobs
         ],
     }
+    return metrics
+
+
+SYSTEM_PROCESS_LIMIT = 15
+SYSTEM_EVENTS = SystemMetricsHub(
+    lambda: {
+        "type": "system",
+        "metrics": collect_system_metrics(),
+        "processes": PROCESS_METRICS.collect(SYSTEM_PROCESS_LIMIT),
+    },
+    interval=5.0,
+)
+
+
+async def audit_process_view(actor_id: str) -> None:
+    now = time.monotonic()
+    with _process_audit_lock:
+        should_audit = now - _process_audit_last.get(actor_id, float("-inf")) >= PROCESS_AUDIT_INTERVAL_SECONDS
+        if should_audit:
+            _process_audit_last[actor_id] = now
+    if should_audit:
+        # The page refreshes every few seconds; one audit row per viewing session
+        # is enough to know who looked at the server's process table.
+        await asyncio.to_thread(
+            TENANT_GOVERNANCE.audit,
+            actor_user_id=actor_id,
+            action="admin.system.processes.view",
+            resource_type="system",
+            resource_id="processes",
+        )
+
+
+@app.get("/api/v1/admin/system-metrics")
+async def admin_system_metrics(request: Request) -> JSONResponse:
+    require_signed_in_admin(request)
+    metrics = await asyncio.to_thread(collect_system_metrics)
     return JSONResponse(metrics, headers={"Cache-Control": "no-store"})
 
 
@@ -4226,22 +4261,7 @@ async def admin_system_processes(
     limit: int = Query(default=15, ge=1, le=50),
 ) -> JSONResponse:
     actor = require_signed_in_admin(request)
-    actor_id = str(actor["user_id"])
-    now = time.monotonic()
-    with _process_audit_lock:
-        should_audit = now - _process_audit_last.get(actor_id, float("-inf")) >= PROCESS_AUDIT_INTERVAL_SECONDS
-        if should_audit:
-            _process_audit_last[actor_id] = now
-    if should_audit:
-        # The page polls every few seconds; one audit row per viewing session
-        # is enough to know who looked at the server's process table.
-        await asyncio.to_thread(
-            TENANT_GOVERNANCE.audit,
-            actor_user_id=actor_id,
-            action="admin.system.processes.view",
-            resource_type="system",
-            resource_id="processes",
-        )
+    await audit_process_view(str(actor["user_id"]))
     result = await asyncio.to_thread(PROCESS_METRICS.collect, limit)
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
@@ -5966,6 +5986,56 @@ async def job_events_socket(websocket: WebSocket) -> None:
         pass
     finally:
         JOB_EVENTS.unsubscribe(queue)
+        reader.cancel()
+
+
+@app.websocket("/api/v1/admin/system/events")
+async def admin_system_events_socket(websocket: WebSocket) -> None:
+    """Push server metrics and the process table to the admin monitor page."""
+
+    claims = await asyncio.to_thread(websocket_auth_claims, websocket)
+    # Like the HTTP routes, refuse the auth-disabled fallback: host metrics
+    # describe the whole server.
+    account = None
+    if claims and claims.get("user_id"):
+        try:
+            account = await asyncio.to_thread(ADMIN_ACCOUNTS.get, str(claims["user_id"]))
+        except AdminAccountError:
+            account = None
+    if account is None or account.get("role") not in {"owner", "admin"}:
+        await websocket.close(code=4403 if account is not None else 4401)
+        return
+    await websocket.accept()
+    await audit_process_view(str(account["user_id"]))
+    expires_at = float(claims.get("exp") or 0)
+    queue = SYSTEM_EVENTS.subscribe()
+
+    async def read_until_closed() -> None:
+        while True:
+            await websocket.receive_text()
+
+    reader = asyncio.create_task(read_until_closed())
+    try:
+        await websocket.send_json({"type": "ready"})
+        while True:
+            getter = asyncio.create_task(queue.get())
+            done, _pending = await asyncio.wait({getter, reader}, timeout=25, return_when=asyncio.FIRST_COMPLETED)
+            if reader in done:
+                getter.cancel()
+                break
+            if expires_at and time.time() >= expires_at:
+                getter.cancel()
+                await websocket.close(code=4401)
+                break
+            if getter in done:
+                await websocket.send_json(getter.result())
+            else:
+                getter.cancel()
+                await websocket.send_json({"type": "ping"})
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        SYSTEM_EVENTS.unsubscribe(queue)
         reader.cancel()
 
 

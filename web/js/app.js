@@ -1,6 +1,6 @@
 import { createTikTokWorkspace } from "./tiktok.js?v=20261024-social-publish-loading";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
-import { applyJobChanges, createJobEvents } from "./job-events.js?v=20261016-1";
+import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261024-system-ws";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261023-plan-entitlements";
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -168,6 +168,7 @@ async function saveDownload(url, suggestedName, trigger) {
 function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", isError = true) {
   tiktokWorkspace.lock();
   jobEvents.stop();
+  systemEvents.stop();
   clearInterval(state.pollTimer);
   clearInterval(state.douyinBrowserPollTimer);
   clearInterval(state.sessionRefreshTimer);
@@ -877,6 +878,7 @@ function showView() {
   if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
   else stopDouyinBrowserPolling();
   if (view === "admin" && state.appStarted) loadAdminAccounts();
+  syncAdminSystemEvents();
   if (view === "billing" && state.appStarted) loadBilling();
   $("#mainNavigation").classList.remove("open");
   $("#navToggle").setAttribute("aria-expanded", "false");
@@ -1645,14 +1647,33 @@ async function loadAdminSystem() {
   }
 }
 
+// The server pushes a metrics + process snapshot every few seconds while the
+// page is open; HTTP polling only covers the time the socket is down.
+const systemEvents = createLiveEvents({
+  path: "/api/v1/admin/system/events",
+  messageType: "system",
+  isActive: () => state.appStarted && adminSystemVisible(),
+  poll: () => { if (adminSystemVisible()) loadAdminSystem(); },
+  fallbackPollMs: SYSTEM_REFRESH_MS,
+  onMessage(message) {
+    if (message.error) {
+      $("#sysUpdatedAt").textContent = message.error;
+      return;
+    }
+    if (message.metrics) renderAdminSystem(message.metrics);
+    if (message.processes) renderAdminProcesses(message.processes);
+  },
+});
+
+function syncAdminSystemEvents() {
+  if (state.appStarted && adminSystemVisible() && $("#sysAutoRefresh")?.checked) systemEvents.start();
+  else systemEvents.stop();
+}
+
 function startAdminSystemRefresh() {
-  clearInterval(state.adminSystemTimer);
-  loadAdminSystem();
-  if (!$("#sysAutoRefresh")?.checked) return;
-  state.adminSystemTimer = setInterval(() => {
-    if (adminSystemVisible()) loadAdminSystem();
-    else if ($("#adminSubtabSystem")?.classList.contains("is-hidden")) clearInterval(state.adminSystemTimer);
-  }, SYSTEM_REFRESH_MS);
+  syncAdminSystemEvents();
+  // The socket sends a snapshot as soon as it opens; without it load once.
+  if (!$("#sysAutoRefresh")?.checked) loadAdminSystem();
 }
 
 async function loadAdminAudit() {
@@ -2670,11 +2691,13 @@ $$("[data-admin-subtab]").forEach(tabBtn => {
       $("#adminSubtabAudit")?.classList.remove("is-hidden");
       loadAdminAudit();
     }
+    if (tabName !== "system") systemEvents.stop();
   });
 });
 $("#refreshAdminJobs")?.addEventListener("click", loadAdminJobs);
 $("#refreshAdminSystem")?.addEventListener("click", loadAdminSystem);
 $("#sysAutoRefresh")?.addEventListener("change", startAdminSystemRefresh);
+document.addEventListener("visibilitychange", syncAdminSystemEvents);
 $$("[data-sys-sort]").forEach(btn => btn.addEventListener("click", () => {
   state.adminProcessSort = btn.dataset.sysSort;
   if (state.adminProcesses) renderAdminProcesses(state.adminProcesses);
