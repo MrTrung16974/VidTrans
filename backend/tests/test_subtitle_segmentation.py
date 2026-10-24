@@ -1,6 +1,6 @@
 import unittest
 
-from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, segment_subtitle_cues
+from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, merge_fragment_cues, segment_subtitle_cues
 
 
 class SubtitleSegmentationTests(unittest.TestCase):
@@ -76,6 +76,55 @@ class SubtitleSegmentationTests(unittest.TestCase):
         )
         self.assertGreaterEqual(len(result), 2)
         self.assertTrue(all(cue["end"] - cue["start"] <= 3.3 for cue in result))
+
+
+class FragmentMergeTests(unittest.TestCase):
+    def test_name_split_across_segments_is_rejoined(self) -> None:
+        # Regression: job d3455785 failed on "森" alone, a syllable of 海森堡 (Heisenberg).
+        cues = [
+            {"start": 3402.6, "end": 3404.9, "text": "他给自己起了名字叫海", "cue_id": "a"},
+            {"start": 3405.18, "end": 3405.44, "text": "森", "cue_id": "b",
+             "words": [{"word": "森", "start": 3405.18, "end": 3405.44}]},
+            {"start": 3405.83, "end": 3407.7, "text": "堡灵感来自德国物理学家", "cue_id": "c"},
+        ]
+        result = merge_fragment_cues(cues)
+        self.assertEqual([cue["text"] for cue in result], ["他给自己起了名字叫海森", "堡灵感来自德国物理学家"])
+        self.assertEqual((result[0]["start"], result[0]["end"]), (3402.6, 3405.44))
+        self.assertEqual(result[0]["cue_id"], "a")
+
+    def test_fragment_after_finished_sentence_joins_next_cue(self) -> None:
+        cues = [
+            {"start": 0.0, "end": 1.0, "text": "说完了。"},
+            {"start": 1.1, "end": 1.3, "text": "海"},
+            {"start": 1.6, "end": 2.5, "text": "森堡来了"},
+        ]
+        result = merge_fragment_cues(cues)
+        self.assertEqual([cue["text"] for cue in result], ["说完了。", "海森堡来了"])
+        self.assertEqual(result[1]["start"], 1.1)
+
+    def test_isolated_or_skipped_cues_are_kept(self) -> None:
+        cues = [
+            {"start": 0.0, "end": 1.0, "text": "第一句"},
+            {"start": 3.0, "end": 3.3, "text": "好"},
+            {"start": 6.0, "end": 7.0, "text": "嗯", "skip_subtitle": True},
+            {"start": 7.1, "end": 8.0, "text": "最后一句"},
+        ]
+        self.assertEqual([cue["text"] for cue in merge_fragment_cues(cues)], ["第一句", "好", "嗯", "最后一句"])
+
+    def test_caption_cue_absorbs_leftover_syllable_but_keeps_its_timing(self) -> None:
+        cues = [
+            {"start": 0.0, "end": 2.3, "text": "名号海", "timing_source": "caption"},
+            {"start": 2.55, "end": 2.8, "text": "森"},
+            {"start": 3.2, "end": 5.0, "text": "堡灵感来自", "timing_source": "caption"},
+            {"start": 5.0, "end": 5.2, "text": "好", "timing_source": "caption"},
+        ]
+        result = merge_fragment_cues(cues)
+        self.assertEqual([cue["text"] for cue in result], ["名号海森", "堡灵感来自", "好"])
+        self.assertEqual((result[0]["start"], result[0]["end"]), (0.0, 2.3))
+
+    def test_latin_fragment_keeps_spacing(self) -> None:
+        cues = [{"start": 0.0, "end": 0.3, "text": "Hi"}, {"start": 0.4, "end": 1.0, "text": "there friend"}]
+        self.assertEqual(merge_fragment_cues(cues)[0]["text"], "Hi there friend")
 
 
 if __name__ == "__main__":

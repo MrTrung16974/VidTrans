@@ -54,6 +54,10 @@ _MIN_HAN_CHARS: int = 1
 # Attempts (5s, 10s, 20s, 40s backoff) before giving up on an HTTP 429 provider.
 _RATE_LIMIT_RETRIES: int = 5
 
+# A single-letter cue that a translator echoes back is a word fragment (one syllable of
+# a name), not untranslated dialogue; it is hidden for review instead of failing the job.
+_MAX_FRAGMENT_LETTERS: int = 1
+
 class TextTranslator(Protocol):
     def translate(self, text: str) -> str | None: ...
 
@@ -454,7 +458,11 @@ def translate_segments(
                     cause = exc.__cause__ or exc
                     from infrastructure.translator import TranslationServiceError
                     reason = str(cause) if isinstance(cause, (ValueError, TranslationServiceError)) else type(cause).__name__
-                    cache[source] = (source, "source_fallback", reason[:160])
+                    fragment = (
+                        reason == "unchanged_translation"
+                        and sum(1 for character in source if character.isalpha()) <= _MAX_FRAGMENT_LETTERS
+                    )
+                    cache[source] = (source, "dropped_fragment" if fragment else "source_fallback", reason[:160])
                     if _provider_blocked(cause):
                         rate_limit_reason = reason[:160]
                     logger.warning("Translation failed at %.2fs (%s)", float(segments[index]["start"]), reason[:160])
@@ -481,8 +489,11 @@ def translate_segments(
             "translation_fallback": bool(used_fallback and used_fallback(sources[index])),
             "source_language": source_language,
             "target_language": target_language,
-            "needs_review": bool(segment.get("needs_review")) or status == "source_fallback",
+            "needs_review": bool(segment.get("needs_review")) or status in {"source_fallback", "dropped_fragment"},
         }
+        if status == "dropped_fragment":
+            # Never show or speak the source-language fragment.
+            result.update(skip_subtitle=True, skip_tts=True, review_reason="untranslated_fragment")
         # An imported/retried JSON must not keep the old render_text.
         result.pop("subtitle_layout", None)
         result.pop("translation_error", None)

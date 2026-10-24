@@ -157,7 +157,7 @@ from pipeline.checkpoint_payloads import (
 from pipeline.parallel import collect_indexed_futures
 from pipeline.stage_metrics import StageMeasurement, measure_stage
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
-from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, segment_subtitle_cues
+from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, merge_fragment_cues, segment_subtitle_cues
 from pipeline.caption_alignment import CaptionAlignmentConfig, align_speech_to_burned_captions
 from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, TikTokPost, write_tiktok_artifacts
@@ -2677,7 +2677,10 @@ def process_video(
             compute=compute_transcript_checkpoint,
         )
         transcript_payload = transcript_checkpoint.payload
-        segments = list(transcript_payload["segments"])
+        # Applied after the checkpoint so cached transcripts benefit without re-running ASR.
+        segments = merge_fragment_cues(
+            transcript_payload["segments"], max_gap_seconds=float(subtitle_style["cue_pause_seconds"])
+        )
         detected_language = transcript_payload.get("detected_language")
         detected_language_probability = transcript_payload.get("detected_language_probability")
         source_method = str(transcript_payload["source_method"])
@@ -2712,7 +2715,7 @@ def process_video(
                 "source_language": effective_source_language,
                 "target_language": target_language,
                 "translation_provider": translation_provider,
-                "translation_pipeline_version": 4,
+                "translation_pipeline_version": 5,
                 "max_batch_chars": 1200,
             }
         )

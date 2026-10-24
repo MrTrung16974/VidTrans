@@ -129,3 +129,87 @@ def segment_subtitle_cues(
             cue["cue_id"] = f"cue-{source_index:06d}-{split_index:03d}"
             output.append(cue)
     return output
+
+
+_UNSPACED_SCRIPT_RE = re.compile(r"[぀-ヿ㐀-鿿豈-﫿฀-๿]")
+
+
+def _letters(text: str) -> int:
+    return sum(1 for character in text if character.isalpha())
+
+
+def _join_cue_texts(left: str, right: str) -> str:
+    left, right = left.strip(), right.strip()
+    if not left or not right:
+        return left or right
+    unspaced = _UNSPACED_SCRIPT_RE.match(left[-1]) and _UNSPACED_SCRIPT_RE.match(right[0])
+    return f"{left}{right}" if unspaced else f"{left} {right}"
+
+
+def _can_absorb(cue: dict[str, Any]) -> bool:
+    return not cue.get("skip_subtitle")
+
+
+def _absorb(target: dict[str, Any], fragment: dict[str, Any], *, fragment_first: bool) -> dict[str, Any]:
+    first, second = (fragment, target) if fragment_first else (target, fragment)
+    merged = dict(target)
+    # Caption alignment leaves unmatched syllables between captions; the caption's
+    # own timing stays authoritative so it remains in sync with the burned-in text.
+    if target.get("timing_source") != "caption":
+        merged["start"] = min(float(first["start"]), float(second["start"]))
+        merged["end"] = max(float(first["end"]), float(second["end"]))
+    merged["text"] = _join_cue_texts(str(first.get("text") or ""), str(second.get("text") or ""))
+    if first.get("source_text") or second.get("source_text"):
+        merged["source_text"] = _join_cue_texts(
+            str(first.get("source_text") or first.get("text") or ""),
+            str(second.get("source_text") or second.get("text") or ""),
+        )
+    if first.get("words") or second.get("words"):
+        merged["words"] = [*(first.get("words") or []), *(second.get("words") or [])]
+    if fragment.get("needs_review"):
+        merged["needs_review"] = True
+        merged.setdefault("review_reason", fragment.get("review_reason"))
+    return merged
+
+
+def merge_fragment_cues(
+    cues: Sequence[dict[str, Any]],
+    *,
+    max_letters: int = 2,
+    max_gap_seconds: float = 0.65,
+) -> list[dict[str, Any]]:
+    """Fold one- or two-letter cues into the closest neighbouring cue.
+
+    Whisper sometimes splits a word across segments (海 / 森 / 堡 for
+    Heisenberg). Alone, such a fragment means nothing to a translator, which
+    echoes it back and fails the whole job; with its neighbour it translates.
+    """
+
+    output: list[dict[str, Any]] = []
+    pending = [dict(cue) for cue in cues]
+    for index, cue in enumerate(pending):
+        text = str(cue.get("source_text") or cue.get("text") or "")
+        fragment = _can_absorb(cue) and cue.get("timing_source") != "caption"
+        if not fragment or not 1 <= _letters(text) <= max_letters:
+            output.append(cue)
+            continue
+        previous = output[-1] if output and _can_absorb(output[-1]) else None
+        following = pending[index + 1] if index + 1 < len(pending) and _can_absorb(pending[index + 1]) else None
+        # A finished sentence does not continue into the fragment.
+        if previous is not None and _SENTENCE_END_RE.search(str(previous.get("text") or "").strip()):
+            previous = None
+        gap_before = float(cue["start"]) - float(previous["end"]) if previous is not None else None
+        gap_after = float(following["start"]) - float(cue["end"]) if following is not None else None
+        candidates = [
+            (gap, side) for gap, side in ((gap_before, "previous"), (gap_after, "following"))
+            if gap is not None and gap <= max_gap_seconds
+        ]
+        if not candidates:
+            output.append(cue)
+            continue
+        _, side = min(candidates, key=lambda item: item[0])
+        if side == "previous":
+            output[-1] = _absorb(previous, cue, fragment_first=False)
+        else:
+            pending[index + 1] = _absorb(following, cue, fragment_first=True)
+    return output
