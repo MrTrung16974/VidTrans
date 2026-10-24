@@ -1033,10 +1033,79 @@ def ff_escape_text(value: str) -> str:
     return escaped
 
 
+# Linux rejects any single argv entry above 128 KiB with E2BIG ("Argument list too long").
+# Long filter graphs (drawtext subtitles, many-segment voice mixes) are moved into files.
+FFMPEG_INLINE_FILTER_LIMIT = 16 * 1024
+_FFMPEG_FILTER_OPTIONS = {
+    "-filter_complex": "filter_complex",
+    "-lavfi": "filter_complex",
+    "-vf": "filter:v",
+    "-af": "filter:a",
+    "-filter:v": "filter:v",
+    "-filter:a": "filter:a",
+}
+_ffmpeg_major_version_cache: dict[str, int] = {}
+
+
+def _ffmpeg_major_version(binary: str) -> int:
+    if binary not in _ffmpeg_major_version_cache:
+        major = 0
+        try:
+            output = subprocess.run([binary, "-version"], capture_output=True, text=True, timeout=10).stdout
+            match = re.search(r"ffmpeg version n?(\d+)\.", output)
+            major = int(match.group(1)) if match else 0
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _ffmpeg_major_version_cache[binary] = major
+    return _ffmpeg_major_version_cache[binary]
+
+
+def _externalize_long_ffmpeg_filters(args: list[str]) -> tuple[list[str], list[Path]]:
+    """Replace oversized filter arguments with script files so exec() never hits E2BIG."""
+    rewritten: list[str] = []
+    script_files: list[Path] = []
+    index = 0
+    while index < len(args):
+        option = args[index]
+        target = _FFMPEG_FILTER_OPTIONS.get(option)
+        if target and index + 1 < len(args) and len(args[index + 1].encode("utf-8")) > FFMPEG_INLINE_FILTER_LIMIT:
+            handle = tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", suffix=".ffscript", prefix="vidtrans-filter-", delete=False
+            )
+            with handle:
+                handle.write(args[index + 1])
+            script_path = Path(handle.name)
+            script_files.append(script_path)
+            if _ffmpeg_major_version(args[0]) >= 7:
+                rewritten.extend([f"-/{target}", str(script_path)])
+            elif target == "filter_complex":
+                rewritten.extend(["-filter_complex_script", str(script_path)])
+            else:
+                rewritten.extend([f"-filter_script:{target[-1]}", str(script_path)])
+            index += 2
+            continue
+        rewritten.append(option)
+        index += 1
+    return rewritten, script_files
+
+
 def run_ffmpeg(
     args: list[str], *, check: bool = True, job_id: str | None = None
 ) -> subprocess.CompletedProcess[str]:
-    logger.info("Running ffmpeg command: %s", " ".join(args))
+    original_args = args
+    args, script_files = _externalize_long_ffmpeg_filters(list(args))
+    try:
+        return _run_ffmpeg_process(args, original_args, check=check, job_id=job_id)
+    finally:
+        for script_file in script_files:
+            script_file.unlink(missing_ok=True)
+
+
+def _run_ffmpeg_process(
+    args: list[str], original_args: list[str], *, check: bool, job_id: str | None
+) -> subprocess.CompletedProcess[str]:
+    logged = " ".join(args)
+    logger.info("Running ffmpeg command: %s", logged if len(logged) < 4000 else logged[:4000] + " …")
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     while True:
         try:
@@ -1052,9 +1121,9 @@ def run_ffmpeg(
                     process.kill()
                     process.communicate()
                 raise JobCancelled("FFmpeg đã dừng theo yêu cầu hủy")
-    result = subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+    result = subprocess.CompletedProcess(original_args, process.returncode, stdout, stderr)
     if check and process.returncode:
-        exc = subprocess.CalledProcessError(process.returncode, args, stdout, stderr)
+        exc = subprocess.CalledProcessError(process.returncode, original_args, stdout, stderr)
         logger.error("ffmpeg failed with stderr:\n%s", stderr)
         raise exc
     return result
