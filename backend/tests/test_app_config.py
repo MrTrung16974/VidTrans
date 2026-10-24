@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from app.config import GIB, AppSettings, auto_worker_concurrency
+from app.config import GIB, AppSettings, auto_worker_concurrency, available_memory_bytes
 
 
 class AppSettingsTests(unittest.TestCase):
@@ -50,3 +50,26 @@ class AppSettingsTests(unittest.TestCase):
         with patch.dict(os.environ, {"VIDTRANS_WORKER_CONCURRENCY": "-1"}, clear=True):
             with self.assertRaisesRegex(ValueError, "at least 1"):
                 AppSettings._worker_concurrency()
+
+    def test_asr_and_ocr_slots_follow_worker_concurrency_by_default(self) -> None:
+        for value in ("auto", "", "0"):
+            with patch.dict(os.environ, {"VIDTRANS_WHISPER_CONCURRENCY": value}, clear=True):
+                self.assertEqual(AppSettings._stage_concurrency("VIDTRANS_WHISPER_CONCURRENCY", 3), 3)
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(AppSettings._stage_concurrency("VIDTRANS_OCR_CONCURRENCY", 2), 2)
+        with patch.dict(os.environ, {"VIDTRANS_OCR_CONCURRENCY": "1"}, clear=True):
+            self.assertEqual(AppSettings._stage_concurrency("VIDTRANS_OCR_CONCURRENCY", 4), 1)
+        with patch.dict(os.environ, {"VIDTRANS_OCR_CONCURRENCY": "-2"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "at least 1"):
+                AppSettings._stage_concurrency("VIDTRANS_OCR_CONCURRENCY", 4)
+
+    def test_memory_used_by_co_located_services_is_not_counted_as_free(self) -> None:
+        # 8 GB VPS where the TTS server and browser containers hold ~4 GB: one job, not two.
+        with patch("app.config.os.sysconf", side_effect=lambda name: 4096 if name == "SC_PAGE_SIZE" else 2 * GIB // 1024), \
+                patch("app.config.Path.read_text", side_effect=OSError), \
+                patch("app.config._memory_used_by_other_processes", return_value=4 * GIB):
+            memory = available_memory_bytes()
+        self.assertEqual(memory, 4 * GIB)
+        self.assertEqual(auto_worker_concurrency(memory, 4), 1)
+        self.assertEqual(auto_worker_concurrency(32 * GIB - 4 * GIB, 16), 6)
+

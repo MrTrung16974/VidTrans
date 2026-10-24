@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 GIB = 1024**3
-# A long video peaked at ~3.5 GB RSS in Whisper; the reserve covers the OS, PostgreSQL
-# and the browser containers that share the host.
+# A long video peaked at ~3.5 GB RSS in Whisper (~1.6 GB since features are chunked);
+# the budget also covers rendering. The reserve is headroom on top of what the OS and
+# co-located services (TTS server, browser containers) already use at startup.
 JOB_MEMORY_BYTES = 4 * GIB
 RESERVED_MEMORY_BYTES = 2 * GIB
 CPUS_PER_JOB = 2
@@ -43,6 +44,7 @@ class AppSettings:
             os.environ["PATH"] = f"{homebrew_bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
         ocr_backend = cls._ocr_backend()
+        worker_concurrency = cls._worker_concurrency()
         settings = cls(
             base_dir=base_dir,
             # The web client is its own app (repo-root web/, served by the vidtrans-web
@@ -55,9 +57,12 @@ class AppSettings:
             ffprobe=cls._resolve_binary(base_dir, "ffprobe"),
             ocr_backend=ocr_backend,
             ocr_model=cls._ocr_model(),
-            worker_concurrency=cls._worker_concurrency(),
-            whisper_concurrency=cls._positive_int("VIDTRANS_WHISPER_CONCURRENCY", 1),
-            ocr_concurrency=cls._positive_int("VIDTRANS_OCR_CONCURRENCY", 1),
+            worker_concurrency=worker_concurrency,
+            # Each job's memory budget already covers its own ASR/OCR pass, so by
+            # default every running job may transcribe at once; upgrading the server
+            # raises worker_concurrency and these follow.
+            whisper_concurrency=cls._stage_concurrency("VIDTRANS_WHISPER_CONCURRENCY", worker_concurrency),
+            ocr_concurrency=cls._stage_concurrency("VIDTRANS_OCR_CONCURRENCY", worker_concurrency),
             # A job that keeps crashing the worker (usually an OOM kill) must not
             # be restarted forever on every container restart.
             max_job_restarts=cls._positive_int("VIDTRANS_MAX_JOB_RESTARTS", 3),
@@ -108,6 +113,12 @@ class AppSettings:
             return cls._positive_int("VIDTRANS_WORKER_CONCURRENCY", 1)
         return auto_worker_concurrency(available_memory_bytes(), available_cpu_count())
 
+    @classmethod
+    def _stage_concurrency(cls, name: str, worker_concurrency: int) -> int:
+        if os.environ.get(name, "auto").strip().lower() in {"", "auto", "0"}:
+            return worker_concurrency
+        return cls._positive_int(name, 1)
+
     @staticmethod
     def _positive_int(name: str, default: int) -> int:
         raw_value = os.environ.get(name, str(default))
@@ -141,7 +152,12 @@ def available_cpu_count() -> int:
 
 
 def available_memory_bytes() -> int | None:
-    """Physical RAM, lowered to the container's cgroup limit when one is set."""
+    """RAM this process may use: the container's cgroup limit when one is set, otherwise
+    physical RAM minus what other processes on the host already hold.
+
+    The VPS runs the TTS server and two Chromium containers next to VidTrans (~3-4 GB);
+    counting them as free sized the worker pool for RAM that was not there.
+    """
     try:
         total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     except (AttributeError, OSError, ValueError):
@@ -152,8 +168,32 @@ def available_memory_bytes() -> int | None:
         except (OSError, ValueError):  # missing file, or "max" for no limit
             continue
         if total is None or limit < total:
-            total = limit
+            return limit
+    others = _memory_used_by_other_processes()
+    if total is not None and others is not None:
+        total = max(0, total - others)
     return total
+
+
+def _memory_used_by_other_processes() -> int | None:
+    """Host memory in use outside this process, from /proc/meminfo (host-wide in Docker)."""
+    try:
+        fields = {
+            line.split(":")[0]: int(line.split()[1]) * 1024
+            for line in Path("/proc/meminfo").read_text().splitlines()
+            if line.split(":")[0] in {"MemTotal", "MemAvailable"}
+        }
+        used = fields["MemTotal"] - fields["MemAvailable"]
+    except (OSError, KeyError, ValueError, IndexError):
+        return None
+    own = 0
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                own = int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return max(0, used - own)
 
 
 def _cgroup_cpu_quota() -> int | None:
