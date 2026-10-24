@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from app.config import AppSettings
+from app.config import GIB, AppSettings, auto_worker_concurrency
 
 
 class AppSettingsTests(unittest.TestCase):
@@ -31,3 +31,22 @@ class AppSettingsTests(unittest.TestCase):
         with patch.dict(os.environ, {"VIDTRANS_WORKER_CONCURRENCY": "0"}, clear=True):
             with self.assertRaisesRegex(ValueError, "at least 1"):
                 AppSettings._positive_int("VIDTRANS_WORKER_CONCURRENCY", 2)
+
+    def test_worker_concurrency_auto_scales_with_server(self) -> None:
+        self.assertEqual(auto_worker_concurrency(int(7.8 * GIB), 4), 1)
+        self.assertEqual(auto_worker_concurrency(16 * GIB, 8), 3)
+        self.assertEqual(auto_worker_concurrency(64 * GIB, 6), 3)
+        self.assertEqual(auto_worker_concurrency(2 * GIB, 1), 1)
+        self.assertEqual(auto_worker_concurrency(None, 8), 4)
+        self.assertEqual(auto_worker_concurrency(512 * GIB, 64), 8)
+
+    def test_worker_concurrency_explicit_value_overrides_auto(self) -> None:
+        with patch.dict(os.environ, {"VIDTRANS_WORKER_CONCURRENCY": "3"}, clear=True):
+            self.assertEqual(AppSettings._worker_concurrency(), 3)
+        with patch.dict(os.environ, {"VIDTRANS_WORKER_CONCURRENCY": "auto"}, clear=True), patch(
+            "app.config.available_memory_bytes", return_value=16 * GIB
+        ), patch("app.config.available_cpu_count", return_value=8):
+            self.assertEqual(AppSettings._worker_concurrency(), 3)
+        with patch.dict(os.environ, {"VIDTRANS_WORKER_CONCURRENCY": "-1"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "at least 1"):
+                AppSettings._worker_concurrency()

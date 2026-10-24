@@ -7,6 +7,14 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+GIB = 1024**3
+# A long video peaked at ~3.5 GB RSS in Whisper; the reserve covers the OS, PostgreSQL
+# and the browser containers that share the host.
+JOB_MEMORY_BYTES = 4 * GIB
+RESERVED_MEMORY_BYTES = 2 * GIB
+CPUS_PER_JOB = 2
+MAX_AUTO_WORKERS = 8
+
 
 @dataclass(frozen=True)
 class AppSettings:
@@ -46,7 +54,7 @@ class AppSettings:
             ffprobe=cls._resolve_binary(base_dir, "ffprobe"),
             ocr_backend=ocr_backend,
             ocr_model=cls._ocr_model(),
-            worker_concurrency=cls._positive_int("VIDTRANS_WORKER_CONCURRENCY", 2),
+            worker_concurrency=cls._worker_concurrency(),
             whisper_concurrency=cls._positive_int("VIDTRANS_WHISPER_CONCURRENCY", 1),
             ocr_concurrency=cls._positive_int("VIDTRANS_OCR_CONCURRENCY", 1),
         )
@@ -89,6 +97,13 @@ class AppSettings:
             raise ValueError("VIDTRANS_OCR_MODEL must be medium or mobile")
         return model
 
+    @classmethod
+    def _worker_concurrency(cls) -> int:
+        raw_value = os.environ.get("VIDTRANS_WORKER_CONCURRENCY", "auto").strip().lower()
+        if raw_value not in {"", "auto", "0"}:
+            return cls._positive_int("VIDTRANS_WORKER_CONCURRENCY", 1)
+        return auto_worker_concurrency(available_memory_bytes(), available_cpu_count())
+
     @staticmethod
     def _positive_int(name: str, default: int) -> int:
         raw_value = os.environ.get(name, str(default))
@@ -103,3 +118,43 @@ class AppSettings:
     def ensure_directories(self) -> None:
         for path in (self.upload_dir, self.output_dir, self.work_dir):
             path.mkdir(parents=True, exist_ok=True)
+
+
+def auto_worker_concurrency(memory_bytes: int | None, cpu_count: int) -> int:
+    """Run as many jobs as both RAM and CPU can carry; one always runs."""
+    by_cpu = cpu_count // CPUS_PER_JOB
+    by_memory = by_cpu if memory_bytes is None else (memory_bytes - RESERVED_MEMORY_BYTES) // JOB_MEMORY_BYTES
+    return max(1, min(by_cpu, by_memory, MAX_AUTO_WORKERS))
+
+
+def available_cpu_count() -> int:
+    try:
+        cpus = len(os.sched_getaffinity(0))
+    except AttributeError:  # macOS has no CPU affinity API
+        cpus = os.cpu_count() or 1
+    quota = _cgroup_cpu_quota()
+    return max(1, min(cpus, quota) if quota else cpus)
+
+
+def available_memory_bytes() -> int | None:
+    """Physical RAM, lowered to the container's cgroup limit when one is set."""
+    try:
+        total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, OSError, ValueError):
+        total = None
+    for path in (Path("/sys/fs/cgroup/memory.max"), Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")):
+        try:
+            limit = int(path.read_text().strip())
+        except (OSError, ValueError):  # missing file, or "max" for no limit
+            continue
+        if total is None or limit < total:
+            total = limit
+    return total
+
+
+def _cgroup_cpu_quota() -> int | None:
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        return max(1, int(quota) // int(period))
+    except (OSError, ValueError):  # missing file, or "max" for no quota
+        return None

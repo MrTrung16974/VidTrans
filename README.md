@@ -259,7 +259,7 @@ vẫn tái sử dụng layer Torch/Paddle lớn nếu `requirements.txt` không 
 ## Cấu hình chạy nền
 
 ```env
-VIDTRANS_WORKER_CONCURRENCY=2
+VIDTRANS_WORKER_CONCURRENCY=auto
 VIDTRANS_WHISPER_CONCURRENCY=1
 VIDTRANS_OCR_CONCURRENCY=1
 VIDTRANS_RECOVER_INTERRUPTED_JOBS=1
@@ -333,7 +333,9 @@ Xem [hướng dẫn tích hợp n8n](docs/n8n-integration.md) để cấu hình 
 deduplicate event và workflow đề xuất. File video không đi qua n8n; webhook chỉ nhận metadata.
 Stack n8n + PostgreSQL dành cho local/dev nằm tại [deploy/n8n/README.md](deploy/n8n/README.md).
 
-Tăng `VIDTRANS_WORKER_CONCURRENCY` chỉ khi máy đủ CPU/RAM. Trên GPU hoặc máy có RAM hạn chế,
+`VIDTRANS_WORKER_CONCURRENCY=auto` tự tính số job song song theo RAM (mỗi job ~4 GB, chừa 2 GB,
+tính cả giới hạn RAM/CPU của container) và CPU (2 nhân/job), tối đa 8; VPS 8 GB/4 nhân chạy 1 job.
+Đặt số cụ thể để ghi đè; chỉ tăng khi máy đủ CPU/RAM. Trên GPU hoặc máy có RAM hạn chế,
 nên giữ Whisper/OCR ở một slot.
 
 ## API quản lý

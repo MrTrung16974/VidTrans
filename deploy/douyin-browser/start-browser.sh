@@ -87,6 +87,13 @@ if [ -n "${BROWSER_PROXY_SERVER:-}" ]; then
     proxy_args="--proxy-server=${BROWSER_PROXY_SERVER}"
 fi
 
+# Chromium's own user agent matches its real version and client hints; a fixed
+# override drifts out of date and makes the browser fingerprint inconsistent.
+user_agent_args=""
+if [ -n "${BROWSER_USER_AGENT:-}" ]; then
+    user_agent_args="--user-agent=${BROWSER_USER_AGENT}"
+fi
+
 chromium \
     --no-sandbox \
     --disable-setuid-sandbox \
@@ -101,7 +108,7 @@ chromium \
     --force-device-scale-factor=1 \
     --window-size=1024,720 \
     --window-position=0,0 \
-    --user-agent="${BROWSER_USER_AGENT:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36}" \
+    ${user_agent_args:+"$user_agent_args"} \
     --disable-extensions-except= \
     --disable-component-extensions-with-background-pages \
     --disable-background-networking \

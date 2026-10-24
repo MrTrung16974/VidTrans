@@ -3746,6 +3746,7 @@ async def start_job_scheduler() -> None:
             offset += len(cancelled_jobs)
             if not cancelled_jobs or offset >= total:
                 break
+    logger.info("Running up to %d translation job(s) at once", SETTINGS.worker_concurrency)
     scheduler = JobScheduler(
         JOB_SERVICE,
         resume_process_video,
