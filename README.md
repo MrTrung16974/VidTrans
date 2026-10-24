@@ -260,8 +260,8 @@ vẫn tái sử dụng layer Torch/Paddle lớn nếu `requirements.txt` không 
 
 ```env
 VIDTRANS_WORKER_CONCURRENCY=auto
-VIDTRANS_WHISPER_CONCURRENCY=1
-VIDTRANS_OCR_CONCURRENCY=1
+VIDTRANS_WHISPER_CONCURRENCY=auto
+VIDTRANS_OCR_CONCURRENCY=auto
 VIDTRANS_RECOVER_INTERRUPTED_JOBS=1
 VIDTRANS_DATABASE_URL=postgresql://vidtrans:change-me@postgres:5432/vidtrans
 # Đặt 0.0.0.0 nếu cần kết nối trực tiếp từ ngoài VPS; giới hạn IP bằng firewall.
@@ -333,10 +333,13 @@ Xem [hướng dẫn tích hợp n8n](docs/n8n-integration.md) để cấu hình 
 deduplicate event và workflow đề xuất. File video không đi qua n8n; webhook chỉ nhận metadata.
 Stack n8n + PostgreSQL dành cho local/dev nằm tại [deploy/n8n/README.md](deploy/n8n/README.md).
 
-`VIDTRANS_WORKER_CONCURRENCY=auto` tự tính số job song song theo RAM (mỗi job ~4 GB, chừa 2 GB,
-tính cả giới hạn RAM/CPU của container) và CPU (2 nhân/job), tối đa 8; VPS 8 GB/4 nhân chạy 1 job.
-Đặt số cụ thể để ghi đè; chỉ tăng khi máy đủ CPU/RAM. Trên GPU hoặc máy có RAM hạn chế,
-nên giữ Whisper/OCR ở một slot.
+`VIDTRANS_WORKER_CONCURRENCY=auto` tự tính số job song song khi container khởi động, theo RAM
+(mỗi job ~4 GB, chừa 2 GB) và CPU (2 nhân/job), tối đa 8. RAM được tính là phần còn trống sau khi
+trừ các tiến trình khác trên host (CIT Voice Studio, Chromium…) hoặc theo giới hạn RAM/CPU của
+container nếu có; VPS 8 GB/4 nhân chạy 1 job. `VIDTRANS_WHISPER_CONCURRENCY` và
+`VIDTRANS_OCR_CONCURRENCY` mặc định `auto` = bằng số job, số luồng CPU của ASR tự chia theo đó.
+Sau khi nâng cấp server chỉ cần chạy lại `bash docker-rebuild.sh` để hệ thống tính lại; đặt số cụ thể
+để ghi đè.
 
 ## API quản lý
 

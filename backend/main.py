@@ -1912,13 +1912,59 @@ def build_atempo_filter(speed_factor: float) -> str:
     return ",".join(f"atempo={part:.5f}" for part in parts)
 
 
+# One ffmpeg process opens every input at once; the container allows ~1024 file
+# descriptors, so long videos (1000+ voice clips) failed with "Too many open files".
+# Clips are summed in batches into float intermediates; summing is linear, so the
+# result matches a single-pass mix.
+VOICE_MIX_BATCH_SIZE = 128
+
+
+def _mix_delayed_clips(
+    clips: list[tuple[Path, int, str, str]], output: Path, work_dir: Path, *, final_chain: str, depth: int = 0
+) -> None:
+    """Mix (path, delay_ms, pre_filters, post_filters) clips with adelay + amix in bounded batches."""
+    intermediates: list[Path] = []
+    try:
+        if len(clips) > VOICE_MIX_BATCH_SIZE:
+            batched: list[tuple[Path, int, str, str]] = []
+            for batch_index, offset in enumerate(range(0, len(clips), VOICE_MIX_BATCH_SIZE)):
+                batch = clips[offset : offset + VOICE_MIX_BATCH_SIZE]
+                batch_delay = min(delay for _, delay, _, _ in batch)
+                partial = work_dir / f"voice_mix_{depth}_{batch_index:04d}.wav"
+                intermediates.append(partial)
+                _mix_delayed_clips(
+                    [(path, delay - batch_delay, pre, post) for path, delay, pre, post in batch],
+                    partial,
+                    work_dir,
+                    final_chain="",
+                    depth=depth + 1,
+                )
+                batched.append((partial, batch_delay, "", ""))
+            _mix_delayed_clips(batched, output, work_dir, final_chain=final_chain, depth=depth + 1)
+            return
+        input_args: list[str] = []
+        filter_parts: list[str] = []
+        labels: list[str] = []
+        for index, (path, delay_ms, pre, post) in enumerate(clips):
+            input_args.extend(["-i", str(path)])
+            chain = ",".join(part for part in (pre, f"adelay={delay_ms}|{delay_ms}", post) if part)
+            filter_parts.append(f"[{index}:a]{chain}[a{index}]")
+            labels.append(f"[a{index}]")
+        mix = f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0"
+        filter_parts.append(f"{mix},{final_chain}[out]" if final_chain else f"{mix}[out]")
+        # Intermediates stay float so partial sums above 0 dBFS are not clipped
+        # before the final limiter.
+        codec_args = [] if final_chain else ["-c:a", "pcm_f32le"]
+        run_ffmpeg([FFMPEG, "-y", *input_args, "-filter_complex", ";".join(filter_parts), "-map", "[out]", *codec_args, str(output)])
+    finally:
+        for partial in intermediates:
+            partial.unlink(missing_ok=True)
+
+
 def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_duration: float) -> Path:
     voice_track = work_dir / "voice_track.wav"
-    input_args: list[str] = []
-    filter_parts = []
-    labels = []
+    clips: list[tuple[Path, int, str, str]] = []
     schedule_voice_segments(segments, video_duration=video_duration)
-    input_index = 0
     for segment in segments:
         tts_path = segment.get("tts_path")
         if not tts_path:
@@ -1927,7 +1973,6 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
         if tts_start >= video_duration:
             continue
         delay_ms = max(0, int(tts_start * 1000))
-        input_args.extend(["-i", str(tts_path)])
         gain = voice_clip_gain(Path(tts_path))
         segment["tts_level_gain"] = round(gain, 3)
         duration = float(segment.get("tts_duration") or 0.0)
@@ -1935,12 +1980,8 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
         fades = f"afade=t=in:d={VOICE_FADE_IN_SECONDS}"
         if duration > VOICE_FADE_OUT_SECONDS * 2:
             fades += f",afade=t=out:st={duration - VOICE_FADE_OUT_SECONDS:.3f}:d={VOICE_FADE_OUT_SECONDS}"
-        filter_parts.append(
-            f"[{input_index}:a]{fades},adelay={delay_ms}|{delay_ms},volume={DEFAULT_VOICE_MIX_GAIN * gain:.3f}[a{input_index}]"
-        )
-        labels.append(f"[a{input_index}]")
-        input_index += 1
-    if not labels:
+        clips.append((Path(tts_path), delay_ms, fades, f"volume={DEFAULT_VOICE_MIX_GAIN * gain:.3f}"))
+    if not clips:
         run_ffmpeg(
             [
                 FFMPEG,
@@ -1955,24 +1996,14 @@ def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_dura
             ]
         )
         return voice_track
-    filter_parts.append(
-        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0,"
-        f"alimiter=limit=0.95,apad=whole_dur={video_duration:.3f},"
-        f"atrim=duration={video_duration:.3f}[out]"
-    )
-    run_ffmpeg(
-        [
-            FFMPEG,
-            "-y",
-            *input_args,
-            "-filter_complex",
-            ";".join(filter_parts),
-            "-map",
-            "[out]",
-            "-t",
-            f"{video_duration:.3f}",
-            str(voice_track),
-        ]
+    _mix_delayed_clips(
+        clips,
+        voice_track,
+        work_dir,
+        final_chain=(
+            f"alimiter=limit=0.95,apad=whole_dur={video_duration:.3f},"
+            f"atrim=duration={video_duration:.3f}"
+        ),
     )
     return voice_track
 

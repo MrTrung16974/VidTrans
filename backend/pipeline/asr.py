@@ -138,6 +138,59 @@ def resolve_cpu_threads(configured: int, concurrency: int) -> int:
     return max(1, available_cpu_count() // max(1, concurrency))
 
 
+# faster-whisper computes the log-mel spectrogram of the whole file in one numpy pass,
+# whose complex STFT intermediates cost ~46 MB per minute of audio (~3 GB for an hour),
+# which got the worker OOM-killed on long videos. The STFT is done in chunks into one
+# float32 power array (~5 MB per minute); the mel projection and the global clamp still
+# run once over the whole file, so the features stay bit-identical to the reference.
+MEL_CHUNK_FRAMES = 30_000  # 5 minutes at 10 ms per frame
+
+
+def chunked_log_mel(extractor: Any, waveform: Any, padding: int = 160, chunk_length: int | None = None) -> Any:
+    """Bit-exact equivalent of faster_whisper FeatureExtractor.__call__ with bounded peak memory."""
+    import numpy as np
+    from faster_whisper.feature_extractor import FeatureExtractor
+
+    if chunk_length is not None:
+        extractor.n_samples = chunk_length * extractor.sampling_rate
+        extractor.nb_max_frames = extractor.n_samples // extractor.hop_length
+    waveform = np.asarray(waveform, dtype=np.float32)
+    if padding:
+        waveform = np.pad(waveform, (0, padding))
+    n_fft, hop = extractor.n_fft, extractor.hop_length
+    if len(waveform) <= n_fft // 2 or len(waveform) // hop <= MEL_CHUNK_FRAMES:
+        return FeatureExtractor.__call__(extractor, waveform, padding=0)
+    padded = np.pad(waveform, (n_fft // 2, n_fft // 2), mode="reflect")
+    del waveform
+    window = np.hanning(n_fft + 1)[:-1].astype("float32")
+    # The reference STFT yields 1 + (len - n_fft) // hop frames and drops the last one.
+    frame_count = (len(padded) - n_fft) // hop
+    magnitudes = np.empty((n_fft // 2 + 1, frame_count), dtype=np.float32)
+    for first in range(0, frame_count, MEL_CHUNK_FRAMES):
+        count = min(MEL_CHUNK_FRAMES, frame_count - first)
+        piece = padded[first * hop : first * hop + (count - 1) * hop + n_fft]
+        stft = extractor.stft(piece, n_fft, hop, window=window, center=False, return_complex=True).astype("complex64")
+        magnitudes[:, first : first + count] = np.abs(stft) ** 2
+        del stft
+    del padded
+    mel_spec = extractor.mel_filters @ magnitudes
+    del magnitudes
+    log_spec = np.log10(np.clip(mel_spec, a_min=1e-10, a_max=None))
+    log_spec = np.maximum(log_spec, log_spec.max() - 8.0)
+    return (log_spec + 4.0) / 4.0
+
+
+def bound_feature_memory(model: Any) -> None:
+    """Swap the model's extractor class in place so every feature call is chunked."""
+    from faster_whisper.feature_extractor import FeatureExtractor
+
+    class ChunkedFeatureExtractor(FeatureExtractor):
+        def __call__(self, waveform, padding=160, chunk_length=None):
+            return chunked_log_mel(self, waveform, padding, chunk_length)
+
+    model.feature_extractor.__class__ = ChunkedFeatureExtractor
+
+
 @dataclass
 class ASRService:
     config: ASRConfig = field(default_factory=ASRConfig)
@@ -162,10 +215,12 @@ class ASRService:
                 if self.config.engine == "faster":
                     from faster_whisper import WhisperModel
 
-                    self._models[key] = WhisperModel(
+                    model = WhisperModel(
                         model_name, device="cpu", compute_type=self.config.compute_type,
                         cpu_threads=self.cpu_threads,
                     )
+                    bound_feature_memory(model)
+                    self._models[key] = model
                 else:
                     import whisper
 

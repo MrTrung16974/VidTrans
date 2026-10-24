@@ -179,5 +179,37 @@ class AudioDurationIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(get_media_duration(Path(output)), source_probe.duration, delta=0.05)
 
 
+    def test_voice_track_mixes_many_clips_in_batches(self) -> None:
+        # Production jobs with 1000+ cues hit "Too many open files" when every clip
+        # was an input of one ffmpeg process; batching must give the same audio.
+        with tempfile.TemporaryDirectory(prefix="vidtrans-voice-batch-") as directory:
+            root = Path(directory)
+            segments = []
+            for index in range(10):
+                clip = root / f"{index:04d}_trimmed.wav"
+                subprocess.run(
+                    [
+                        FFMPEG, "-y", "-f", "lavfi", "-i",
+                        f"sine=frequency={300 + index * 20}:sample_rate=24000:duration=0.4", str(clip),
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                segments.append({
+                    "start": index * 0.5, "end": index * 0.5 + 0.4, "text": "x",
+                    "tts_path": str(clip), "tts_start": index * 0.5, "tts_duration": 0.4,
+                })
+
+            def render(batch_size: int, name: str) -> bytes:
+                with patch("main.VOICE_MIX_BATCH_SIZE", batch_size):
+                    track = build_voice_track([dict(item) for item in segments], root, video_duration=5.5)
+                self.assertAlmostEqual(get_media_duration(track), 5.5, places=2)
+                return track.replace(root / name).read_bytes()
+
+            single = render(1000, "single.wav")
+            batched = render(3, "batched.wav")
+            self.assertEqual(list(root.glob("voice_mix_*")), [])
+        self.assertEqual(single, batched)
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,10 @@
+import importlib.util
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
+from pipeline.asr import ASRConfig, ASRService, bound_feature_memory, resolve_cpu_threads
 
 
 def _segment(start, end, text):
@@ -170,3 +171,25 @@ class ASRServiceTests(unittest.TestCase):
         with patch.dict("os.environ", {"VIDTRANS_ASR_BEAM_SIZE": "1", "VIDTRANS_ASR_VAD": "0"}):
             config = ASRConfig.from_env()
         self.assertEqual((config.beam_size, config.vad), (1, False))
+
+
+@unittest.skipUnless(importlib.util.find_spec("faster_whisper"), "faster-whisper required")
+class ChunkedFeatureTests(unittest.TestCase):
+    def test_chunked_log_mel_matches_whole_file_features(self):
+        # Whole-file features of a 65-minute video needed ~3 GB of STFT scratch and got
+        # the worker OOM-killed; chunking must not change what the model hears.
+        import numpy as np
+        from faster_whisper.feature_extractor import FeatureExtractor
+
+        rng = np.random.default_rng(7)
+        reference = FeatureExtractor()
+        model = SimpleNamespace(feature_extractor=FeatureExtractor())
+        bound_feature_memory(model)
+        with patch("pipeline.asr.MEL_CHUNK_FRAMES", 700):
+            for samples in (300, 16000 * 5, 700 * 160 - 160, 700 * 160 + 7, 16000 * 23 + 321):
+                waveform = (rng.standard_normal(samples) * 0.1).astype(np.float32)
+                expected = reference(waveform, chunk_length=30)
+                actual = model.feature_extractor(waveform, chunk_length=30)
+                self.assertEqual(actual.shape, expected.shape)
+                np.testing.assert_array_equal(actual, expected)
+
