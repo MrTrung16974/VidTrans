@@ -85,9 +85,17 @@ class HelperTests(unittest.TestCase):
     def test_scene_prompt_carries_style_cast_and_no_text_rule(self) -> None:
         board = storyboard()
         prompt = scene_image_prompt(board.scenes[1], board, "9:16")
-        self.assertIn("anime comic", prompt)
+        self.assertIn("semi-realistic Chinese manhua", prompt)
         self.assertIn("long white hair", prompt)
         self.assertIn("no text", prompt)
+
+    def test_manhua_prompt_targets_soft_semi_realistic_style(self) -> None:
+        board = storyboard()
+        board.style = "manhua"
+        prompt = scene_image_prompt(board.scenes[1], board, "9:16")
+        self.assertIn("semi-realistic Chinese manhua", prompt)
+        self.assertIn("soft pastel palette", prompt)
+        self.assertIn("not cartoonish", prompt)
 
     def test_asset_paths_cannot_escape_the_project(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

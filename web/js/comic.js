@@ -72,7 +72,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   async function loadOptions() {
     if (options) return;
     options = await api("/options");
-    fillSelect(form.elements.style, options.styles, "anime_comic");
+    fillSelect(form.elements.style, options.styles, "manhua");
     fillSelect(form.elements.language, options.languages, "vi");
     fillSelect(form.elements.llm_provider, options.llm_providers, "auto");
     const comfyui = options.image_providers.find(item => item.key === "comfyui");

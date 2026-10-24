@@ -4,7 +4,23 @@ VidTrans có thể gửi prompt của từng cảnh tới một ComfyUI chạy l
 định chỉ dùng node lõi của ComfyUI (`CheckpointLoaderSimple`, `KSampler`,
 `SaveImage`) nên không cần cài custom node.
 
-## Chuẩn bị
+## Chạy cùng Docker Compose (Windows + NVIDIA)
+
+Repo đã có service `comfyui`, dùng GPU NVIDIA và kết nối trực tiếp với backend
+qua `http://comfyui:8188`. Tải checkpoint FP16 vào đúng thư mục rồi build:
+
+```powershell
+curl.exe -L --retry 5 -C - -o comfyui/models/checkpoints/v1-5-pruned-emaonly-fp16.safetensors `
+  https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly-fp16.safetensors
+docker compose up -d --build comfyui vidtrans web
+```
+
+Giao diện ComfyUI chỉ mở trên máy local tại `http://127.0.0.1:8188`. Cấu hình
+mặc định dùng `--lowvram`, cạnh dài 640 px, 24 bước và sampler DPM++ 2M Karras.
+Đây là mức tăng vừa phải trên GTX 1650 4 GB; ảnh dọc sinh ở khoảng 360×640 rồi
+được upscale khi dựng video.
+
+## Kết nối ComfyUI chạy ngoài Compose
 
 1. Cài và chạy ComfyUI với API có thể truy cập từ backend. Nếu VidTrans chạy
    bằng Docker, khởi động ComfyUI với `--listen 0.0.0.0`; không mở cổng 8188 ra
@@ -16,9 +32,11 @@ VidTrans có thể gửi prompt của từng cảnh tới một ComfyUI chạy l
 ```dotenv
 VIDTRANS_COMFYUI_URL=http://host.docker.internal:8188
 VIDTRANS_COMFYUI_CHECKPOINT=ten-model-chinh-xac.safetensors
-VIDTRANS_COMFYUI_STEPS=20
-VIDTRANS_COMFYUI_CFG=7
-VIDTRANS_COMFYUI_MAX_SIDE=1024
+VIDTRANS_COMFYUI_STEPS=24
+VIDTRANS_COMFYUI_CFG=6.5
+VIDTRANS_COMFYUI_SAMPLER=dpmpp_2m
+VIDTRANS_COMFYUI_SCHEDULER=karras
+VIDTRANS_COMFYUI_MAX_SIDE=640
 ```
 
 Nếu chạy backend trực tiếp trên máy thay vì Docker, dùng
@@ -30,8 +48,8 @@ pipeline vẫn hoàn thành bằng ảnh minh họa tạm và ghi cảnh báo v�
 
 ## Tinh chỉnh bộ nhớ
 
-`VIDTRANS_COMFYUI_MAX_SIDE` mặc định là 1024. Giảm xuống 768 hoặc 512 nếu GPU
-thiếu VRAM. VidTrans tự upscale/crop ảnh về đúng kích thước video khi dựng.
+`VIDTRANS_COMFYUI_MAX_SIDE` mặc định trong Compose là 640. Có thể tăng lên 768
+nếu GPU đủ VRAM; VidTrans tự upscale/crop ảnh về đúng kích thước video khi dựng.
 
 Provider mặc định chưa nhận ảnh tham chiếu nhân vật. Cùng seed và mô tả nhân vật
 giúp hình ổn định hơn, nhưng độ nhất quán sẽ kém Gemini cho tới khi có workflow

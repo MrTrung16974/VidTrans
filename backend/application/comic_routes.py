@@ -341,7 +341,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         file: UploadFile | None = File(default=None),
         background_music: UploadFile | None = File(default=None),
         language: str = Form("vi"),
-        style: str = Form("anime_comic"),
+        style: str = Form("manhua"),
         aspect_ratio: str = Form("9:16"),
         llm_provider: str = Form("auto"),
         image_provider: str = Form("placeholder"),

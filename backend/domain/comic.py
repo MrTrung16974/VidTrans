@@ -29,7 +29,7 @@ ASPECT_RATIOS: dict[str, tuple[int, int]] = {"9:16": (1080, 1920), "16:9": (1920
 COMIC_STYLES: dict[str, tuple[str, str]] = {
     "anime_comic": ("Anime / truyện tranh Nhật", "anime comic illustration, clean line art, cel shading, vibrant colors"),
     "manhwa": ("Manhwa / webtoon Hàn", "korean webtoon manhwa illustration, soft cel shading, detailed eyes, cinematic lighting"),
-    "manhua": ("Manhua cổ trang", "chinese manhua illustration, wuxia fantasy, flowing robes, painterly lighting"),
+    "manhua": ("Manhua cổ trang bán thực", "high-quality semi-realistic Chinese manhua illustration, elegant adult characters, refined delicate linework, soft painterly shading, expressive realistic eyes, natural facial proportions, detailed flowing historical hanfu, intricate embroidery, subtle skin texture, romantic composition, warm diffused cinematic light, muted pastel colors, atmospheric depth, delicate flowers and drifting petals"),
     "western_comic": ("Comic Âu Mỹ", "western comic book illustration, bold ink outlines, halftone shading, dramatic colors"),
     "storybook": ("Tranh truyện thiếu nhi", "children's storybook watercolor illustration, soft pastel palette, gentle textures"),
     "realistic": ("Điện ảnh bán thực", "semi-realistic digital painting, cinematic composition, volumetric lighting"),
@@ -233,7 +233,7 @@ class Storyboard(_Model):
     revision: int = Field(default=1, ge=1)
     title: str = Field(default="", max_length=200)
     language: str = "vi"
-    style: str = "anime_comic"
+    style: str = "manhua"
     mode: Literal["comic", "animated"] = "comic"
     analysis_method: str = "heuristic"
     characters: list[ComicCharacter] = Field(default_factory=list)
@@ -277,7 +277,7 @@ class Storyboard(_Model):
 class ComicSettings(_Model):
     title: str = Field(default="Truyện chưa đặt tên", min_length=1, max_length=200)
     language: str = "vi"
-    style: str = "anime_comic"
+    style: str = "manhua"
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"
     llm_provider: Literal["auto", "gemini", "qwen3", "heuristic"] = "auto"
     image_provider: Literal["placeholder", "comfyui", "gemini"] = "placeholder"

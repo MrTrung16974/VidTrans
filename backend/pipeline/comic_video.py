@@ -47,7 +47,7 @@ PART_GAP_SECONDS = 0.3
 SCENE_TAIL_SECONDS = 0.45
 MIN_SCENE_SECONDS = 2.5
 REFERENCE_SIZE = 1024
-PIPELINE_VERSION = "comic-v1"
+PIPELINE_VERSION = "comic-v2-manhua-style"
 DEFAULT_SCENE_WORKERS = 3
 
 
@@ -104,6 +104,8 @@ def character_prompt(character: ComicCharacter) -> str:
 def scene_image_prompt(scene: ComicScene, storyboard: Storyboard, aspect_ratio: str) -> str:
     style = COMIC_STYLES.get(storyboard.style, COMIC_STYLES["anime_comic"])[1]
     lines = [f"{style}.", scene.visual_prompt.rstrip(".") + "."]
+    if storyboard.style == "manhua":
+        lines.append("Premium romantic historical manhua illustration, soft pastel palette, delicate painterly detail, natural adult proportions, fine facial features, soft warm light, visually rich but not cartoonish, not chibi, not 3D.")
     cast = [storyboard.character(cid) for cid in scene.characters]
     described = [character_prompt(c) for c in cast if c is not None]
     if described:
