@@ -563,6 +563,7 @@ function renderSourceLinks() {
 }
 
 function subtitleStyle() {
+  const backgroundStyle = $("#subtitleBackgroundStyle").value;
   return {
     font_name: "Noto Sans",
     font_size: 36,
@@ -576,7 +577,8 @@ function subtitleStyle() {
     text_color_css: $("#subtitleTextColor").value,
     background_color_css: $("#subtitleBackgroundColor").value,
     background_opacity: 0.82,
-    background_box: $("#subtitleBackgroundBox").checked,
+    background_style: backgroundStyle,
+    background_box: backgroundStyle === "box",
   };
 }
 
@@ -651,7 +653,10 @@ function updateFormSummary() {
   $("#previewVietnamese").style.color = $("#subtitleTextColor").value;
   const previewBackground = $("#subtitleBackgroundColor").value;
   const previewOpacity = 0.82;
-  $("#previewVietnamese").style.backgroundColor = $("#subtitleBackgroundBox").checked
+  const backgroundStyle = $("#subtitleBackgroundStyle").value;
+  preview.classList.toggle("background-blurred-bottom", backgroundStyle === "blurred_bottom");
+  preview.style.setProperty("--subtitle-background", previewBackground);
+  $("#previewVietnamese").style.backgroundColor = backgroundStyle === "box"
     ? `${previewBackground}${Math.round(previewOpacity * 255).toString(16).padStart(2, "0")}`
     : "transparent";
 }
@@ -2610,7 +2615,7 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
   } catch (error) { toast(error.message, true); }
 });
 [$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), $("#translationProvider"), document.querySelector('[name="voice_mode"]')].forEach(element => element.addEventListener("change", updateFormSummary));
-[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundBox")].forEach(element => element.addEventListener("change", updateFormSummary));
+[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundStyle")].forEach(element => element.addEventListener("change", updateFormSummary));
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#refreshAdminAccounts").addEventListener("click", loadAdminAccounts);
 $("#adminApprovalFilter").addEventListener("change", loadAdminAccounts);

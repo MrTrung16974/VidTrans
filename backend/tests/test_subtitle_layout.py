@@ -4,6 +4,24 @@ from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layou
 
 
 class SubtitleLayoutTests(unittest.TestCase):
+    def test_blurred_bottom_forces_subtitle_into_full_width_lower_band(self) -> None:
+        result = apply_subtitle_layout(
+            [{
+                "start": 0.0,
+                "end": 1.0,
+                "text": "Phụ đề mới",
+                "source_bbox": {"x": 0.2, "y": 0.75, "width": 0.6, "height": 0.08},
+            }],
+            video_width=1280,
+            video_height=720,
+            style={"background_style": "blurred_bottom"},
+        )[0]["subtitle_layout"]
+
+        self.assertEqual(result["placement_mode"], "bottom_safe")
+        self.assertEqual(result["position_source"], "fallback")
+        self.assertFalse(result["mask_original"])
+        self.assertGreater(result["y"], 720 * 0.68)
+
     def test_matches_ocr_position_and_visual_height(self) -> None:
         result = apply_subtitle_layout(
             [

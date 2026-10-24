@@ -16,6 +16,7 @@ class SubtitleLayoutOptions:
     max_font_size: int = 72
     position_gap: int = 14
     mask_original: bool = True
+    background_style: str = "box"
 
     @classmethod
     def from_style(cls, style: dict[str, Any]) -> "SubtitleLayoutOptions":
@@ -26,6 +27,7 @@ class SubtitleLayoutOptions:
             max_font_size=int(style.get("max_font_size", 72)),
             position_gap=int(style.get("position_gap", 14)),
             mask_original=bool(style.get("mask_original", True)),
+            background_style=str(style.get("background_style", "box")),
         )
         options.validate()
         return options
@@ -37,6 +39,8 @@ class SubtitleLayoutOptions:
             raise ValueError("subtitle font limits must satisfy 8 <= min <= max <= 200")
         if not 0 <= self.position_gap <= 300:
             raise ValueError("position_gap must be between 0 and 300")
+        if self.background_style not in {"box", "blurred_bottom", "none"}:
+            raise ValueError("background_style must be box, blurred_bottom, or none")
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -90,8 +94,10 @@ def apply_subtitle_layout(
             key in source_bbox for key in ("x", "y", "width", "height")
         )
         placement_mode = options.placement_mode if has_bbox else "bottom_safe"
+        if options.background_style == "blurred_bottom":
+            placement_mode = "bottom_safe"
 
-        if has_bbox:
+        if has_bbox and options.background_style != "blurred_bottom":
             box_x = float(source_bbox["x"]) * video_width
             box_y = float(source_bbox["y"]) * video_height
             box_w = float(source_bbox["width"]) * video_width

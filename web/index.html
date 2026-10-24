@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261024-process-monitor" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261024-blurred-subtitle" />
   </head>
   <body>
     <div class="app-shell">
@@ -522,13 +522,21 @@
                     <label class="field checkbox-field"><input id="maskOriginal" type="checkbox" checked /><span>Che chữ nguồn khi thay thế</span></label>
                     <label class="field"><span>Màu chữ vietsub</span><input id="subtitleTextColor" type="color" value="#ffffff" /></label>
                     <label class="field"><span>Màu nền vietsub</span><input id="subtitleBackgroundColor" type="color" value="#000000" /></label>
-                    <label class="field checkbox-field"><input id="subtitleBackgroundBox" type="checkbox" checked /><span>Nền hộp như ảnh mẫu</span></label>
+                    <label class="field wide">
+                      <span>Kiểu nền vietsub</span>
+                      <select id="subtitleBackgroundStyle">
+                        <option value="box">Hộp nền theo nội dung</option>
+                        <option value="blurred_bottom">Dải mờ toàn chiều ngang phía dưới</option>
+                        <option value="none">Không dùng nền</option>
+                      </select>
+                    </label>
                   </div>
 
                   <div class="subtitle-preview-shell">
                     <div class="subtitle-preview" aria-label="Minh họa vị trí phụ đề">
                       <div class="preview-glow"></div>
                       <div class="preview-person"></div>
+                      <div class="preview-bottom-blur" aria-hidden="true"></div>
                       <div class="preview-badge-pill">16:9 Live Preview</div>
                       <div id="previewVietnamese" class="preview-vietnamese">Tôi muốn trở thành phiên bản tốt nhất</div>
                       <div id="previewChinese" class="preview-chinese">我愿意把自己变成什么样子</div>
@@ -2112,6 +2120,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261024-process-monitor"></script>
+    <script type="module" src="/js/app.js?v=20261024-blurred-subtitle"></script>
   </body>
 </html>

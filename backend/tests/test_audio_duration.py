@@ -90,6 +90,14 @@ class AudioDurationIntegrationTests(unittest.TestCase):
         self.assertEqual(style["back_color"], "&H33302010")
         self.assertEqual(style["border_style"], 3)
 
+    def test_blurred_bottom_disables_per_line_ass_box(self) -> None:
+        style = normalize_subtitle_style(
+            {"background_style": "blurred_bottom", "background_box": True}
+        )
+        self.assertEqual(style["background_style"], "blurred_bottom")
+        self.assertFalse(style["background_box"])
+        self.assertEqual(style["border_style"], 1)
+
     def test_ass_writes_opaque_box_style_from_css_colors(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vidtrans-ass-color-") as directory:
             output = Path(directory) / "sample.ass"

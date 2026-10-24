@@ -308,12 +308,17 @@ def normalize_subtitle_style(style: dict[str, Any]) -> dict[str, Any]:
     text_color = _validated_css_color(style.get("text_color_css"), "#FFFFFF")
     background_color = _validated_css_color(style.get("background_color_css"), "#000000")
     background_opacity = max(0.0, min(1.0, float(style.get("background_opacity", 0.82))))
-    background_box = bool(style.get("background_box", True))
+    fallback_background_style = "box" if bool(style.get("background_box", True)) else "none"
+    background_style = str(style.get("background_style", fallback_background_style))
+    if background_style not in {"box", "blurred_bottom", "none"}:
+        background_style = fallback_background_style
+    background_box = background_style == "box"
     normalized.update(
         text_color_css=text_color,
         background_color_css=background_color,
         background_opacity=background_opacity,
         background_box=background_box,
+        background_style=background_style,
         primary_color=_css_color_to_ass(text_color),
         back_color=_css_color_to_ass(background_color, background_opacity),
         border_style=3 if background_box else 1,
@@ -2171,12 +2176,21 @@ def burn_subtitles_with_pillow(
             ),
             None,
         )
+        image = Image.open(frame_path).convert("RGBA")
+        if subtitle_style.get("background_style") == "blurred_bottom":
+            from PIL import ImageFilter
+
+            band_top = int(image.height * 0.68)
+            blurred_band = image.crop((0, band_top, image.width, image.height)).filter(
+                ImageFilter.GaussianBlur(radius=max(8, image.height // 45))
+            )
+            tint = Image.new("RGBA", blurred_band.size, (*background_rgb, 140))
+            blurred_band = Image.alpha_composite(blurred_band, tint)
+            image.paste(blurred_band, (0, band_top))
         output_frame = rendered_dir / frame_path.name
         if not active:
-            shutil.copy2(frame_path, output_frame)
+            image.convert("RGB").save(output_frame)
             continue
-
-        image = Image.open(frame_path).convert("RGBA")
         overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
         layout = active.get("subtitle_layout") if isinstance(active.get("subtitle_layout"), dict) else {}
@@ -2276,6 +2290,14 @@ def burn_subtitles(
         # the FontName written in the ASS file. Forcing CJK here breaks all
         # Vietnamese glyphs even when the chosen style supports them.
         subtitle_filter += f":fontsdir='{ff_escape_path(FONT_DIR)}'"
+    if subtitle_style.get("background_style") == "blurred_bottom":
+        tint = subtitle_style.get("background_color_css", "#000000")
+        subtitle_filter = (
+            "split[subtitle_base][subtitle_blur];"
+            "[subtitle_blur]crop=iw:trunc(ih*0.32):0:trunc(ih*0.68),"
+            f"boxblur=16:2,drawbox=color={tint}@0.55:t=fill[subtitle_band];"
+            f"[subtitle_base][subtitle_band]overlay=0:H-h,{subtitle_filter}"
+        )
     cmd = [
         FFMPEG,
         "-y",
@@ -2308,6 +2330,14 @@ def burn_subtitles(
             raise
         logger.warning("ffmpeg subtitles filter is unavailable, falling back to drawtext rendering")
         fallback_filter = build_drawtext_filter(segments, subtitle_style)
+        if subtitle_style.get("background_style") == "blurred_bottom":
+            tint = subtitle_style.get("background_color_css", "#000000")
+            fallback_filter = (
+                "split[subtitle_base][subtitle_blur];"
+                "[subtitle_blur]crop=iw:trunc(ih*0.32):0:trunc(ih*0.68),"
+                f"boxblur=16:2,drawbox=color={tint}@0.55:t=fill[subtitle_band];"
+                f"[subtitle_base][subtitle_band]overlay=0:H-h,{fallback_filter}"
+            )
         fallback_cmd = [
             FFMPEG,
             "-y",
