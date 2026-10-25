@@ -202,11 +202,14 @@ def build_storyboard(
     *,
     progress: Callable[[int, int], None] = lambda done, total: None,
     check_active: Callable[[], None] = lambda: None,
+    known_characters: list[ComicCharacter] = (),
 ) -> Storyboard:
+    """``known_characters`` (a series' character bible) seed the registry, so the LLM reuses their
+    ids and looks and an episode never redraws a character introduced earlier in the story."""
     if not text.strip():
         raise ValueError("Truyện không có nội dung")
     chunks = chunk_story(text, CHUNK_CHARS)
-    registry: dict[str, ComicCharacter] = {}
+    registry: dict[str, ComicCharacter] = {c.id: c.model_copy() for c in known_characters}
     scenes: list[ComicScene] = []
     warnings: list[str] = []
     methods: set[str] = set()

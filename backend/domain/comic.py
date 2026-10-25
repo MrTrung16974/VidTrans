@@ -33,11 +33,22 @@ COMIC_STYLES: dict[str, tuple[str, str]] = {
     "western_comic": ("Comic Âu Mỹ", "western comic book illustration, bold ink outlines, halftone shading, dramatic colors"),
     "storybook": ("Tranh truyện thiếu nhi", "children's storybook watercolor illustration, soft pastel palette, gentle textures"),
     "realistic": ("Điện ảnh bán thực", "semi-realistic digital painting, cinematic composition, volumetric lighting"),
+    "xianxia": ("Phim tiên hiệp Trung Quốc (điện ảnh)", "cinematic film still from a high-budget Chinese xianxia fantasy drama, live-action, photorealistic, real actors, ethereal immortal cultivators in flowing layered silk hanfu robes, long black hair with jade hairpins and silver crowns, misty floating mountains, ancient sect palaces, glowing spiritual qi energy, drifting clouds, volumetric god rays, shallow depth of field, anamorphic lens, natural cinematic color grading, highly detailed skin and fabric"),
 }
+# Live-action styles render as film frames rather than drawn animation keyframes.
+LIVE_ACTION_STYLES = frozenset({"xianxia"})
 DEFAULT_NEGATIVE_PROMPT = (
     "text, letters, speech bubble, watermark, signature, logo, blurry, low quality, "
     "distorted face, deformed hands, extra fingers, extra limbs"
 )
+LIVE_ACTION_NEGATIVE_PROMPT = "anime, cartoon, manga, illustration, drawing, painting, cel shading, 3d render, cgi, doll"
+
+
+def style_negative_prompt(style: str, negative: str) -> str:
+    """Steer checkpoints such as SDXL away from drawn looks when the style is live-action."""
+    if style not in LIVE_ACTION_STYLES:
+        return negative
+    return f"{negative}, {LIVE_ACTION_NEGATIVE_PROMPT}" if negative else LIVE_ACTION_NEGATIVE_PROMPT
 
 ShotType = Literal["establishing", "wide", "medium", "close_up", "extreme_close_up", "over_shoulder"]
 ShotMovement = Literal["static", "push_in", "pull_out", "pan_left", "pan_right", "tilt_up", "tilt_down",

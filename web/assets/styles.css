@@ -5352,6 +5352,23 @@ input[type="file"]::-webkit-file-upload-button:active {
 .comic-project-page-info small { color: #94a3b8; font-size: 0.72rem; }
 .comic-scenes-pagination { border: 1px solid rgba(218, 225, 232, 0.9); border-radius: 16px; box-shadow: 0 6px 20px rgba(31, 45, 61, 0.05); margin-top: 4px; flex-wrap: wrap; }
 .comic-empty { margin: 0; color: var(--muted); font-size: .86rem; }
+.comic-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 12px; border-radius: 12px; background: #f1f5f9; }
+.comic-tab { min-height: 32px; border: 0; border-radius: 9px; background: transparent; color: #475569; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.comic-tab.is-active { background: #fff; color: var(--brand-dark); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12); }
+.comic-breadcrumb { justify-self: start; color: var(--brand); font-size: .84rem; font-weight: 700; text-decoration: none; }
+.comic-breadcrumb:hover { text-decoration: underline; }
+.comic-episodes { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.comic-episode { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; min-width: 0; }
+.comic-episode-number { display: grid; place-items: center; min-width: 64px; height: 64px; padding: 0 8px; border-radius: 14px; background: var(--brand-light); color: var(--brand-dark); font-weight: 800; font-size: .9rem; white-space: nowrap; }
+.comic-episode-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; min-width: 0; }
+.comic-episode-body strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .95rem; color: #0f172a; }
+.comic-episode-body small, .comic-episode-body .progress-track { grid-column: 1 / -1; }
+.comic-episode-body small { color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
+.comic-episode-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .comic-episode { grid-template-columns: auto minmax(0, 1fr); }
+  .comic-episode-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}
 .comic-form, .comic-editor { scroll-margin-top: 76px; }
 .comic-editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; }
 .comic-editor-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 22px 24px; min-width: 0; }

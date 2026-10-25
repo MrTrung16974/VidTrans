@@ -6,7 +6,7 @@ import zipfile
 
 from pydantic import ValidationError
 
-from domain.comic import ComicScene, ComicSettings, Storyboard, slugify_id
+from domain.comic import ComicCharacter, ComicScene, ComicSettings, Storyboard, slugify_id
 from infrastructure.story_text import StoryTextError, chunk_story, decode_text, read_story_upload, split_sentences
 from pipeline.comic_storyboard import MAX_REPAIR_ROUNDS, build_storyboard, extract_json, heuristic_scenes
 
@@ -146,6 +146,18 @@ class StoryboardTests(unittest.TestCase):
         self.assertEqual(board.character("minh").appearance, MINH["appearance"])
         self.assertIn("KNOWN CHARACTERS", llm.prompts[1])
         self.assertIn("short black hair", llm.prompts[1])
+
+    def test_series_characters_seed_the_next_episode(self) -> None:
+        bible = [ComicCharacter(**MINH, approved_reference="minh-upload-abc.png"),
+                 ComicCharacter(id="lan", name="Lan", gender="female", appearance="long white hair")]
+        redrawn = {**MINH, "appearance": "old man with a beard"}
+        llm = FakeLLM([{"characters": [redrawn], "scenes": [scene()]}])
+        board = build_storyboard(STORY, self.settings(), llm, known_characters=bible)
+        self.assertIn("long white hair", llm.prompts[0])
+        minh = board.character("minh")
+        self.assertEqual((minh.appearance, minh.approved_reference), (MINH["appearance"], "minh-upload-abc.png"))
+        # Characters absent from this episode are not copied into its storyboard.
+        self.assertIsNone(board.character("lan"))
 
     def test_excerpt_not_in_source_is_flagged(self) -> None:
         llm = FakeLLM([{"characters": [MINH], "scenes": [scene(source_excerpt="Minh cưỡi rồng bay lên trời")]}])

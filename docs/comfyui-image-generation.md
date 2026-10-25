@@ -82,3 +82,48 @@ mục `comfyui/`; không cài package vào Python hệ thống:
 
 ComfyUI chạy native qua Metal/MPS. Khi VidTrans chạy trong Docker Desktop, dùng
 `VIDTRANS_COMFYUI_URL=http://host.docker.internal:8188`.
+
+## Phim tiên hiệp Trung Quốc + hoạt hình AI (macOS Apple Silicon)
+
+Thiết lập đã kiểm chứng trên M2 Pro 32 GB, chạy hoàn toàn local:
+
+| Việc | Model | Thư mục |
+| --- | --- | --- |
+| Ảnh cảnh/keyframe phong cách phim cổ trang người thật | Juggernaut XL v9 | `models/checkpoints` |
+| Giữ khuôn mặt/trang phục nhân vật | IP-Adapter SDXL ViT-H + CLIP ViT-H | `models/ipadapter`, `models/clip_vision` |
+| Ảnh → video | LTX-Video 2B 0.9.8 distilled + T5-XXL | `models/checkpoints`, `models/text_encoders` |
+
+```bash
+./deploy/comfyui-local.sh install   # ComfyUI + IP-Adapter node, torch 2.12.1
+./deploy/comfyui-local.sh models    # ~26 GB model
+./deploy/comfyui-local.sh start     # ComfyUI :8188 + animation worker :9000
+```
+
+`start` chạy kèm `deploy/comfyui-integration/animation_worker.py`, worker cài
+hợp đồng `docs/animation-worker-api.md` và chuyển từng shot sang workflow
+LTX-Video image-to-video của ComfyUI.
+
+Cấu hình VidTrans (`.env`, backend chạy Docker Desktop):
+
+```dotenv
+VIDTRANS_COMFYUI_URL=http://host.docker.internal:8188
+VIDTRANS_COMFYUI_CHECKPOINT=Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors
+VIDTRANS_COMFYUI_STEPS=28
+VIDTRANS_COMFYUI_CFG=5
+VIDTRANS_COMFYUI_SAMPLER=dpmpp_2m
+VIDTRANS_COMFYUI_SCHEDULER=karras
+VIDTRANS_COMFYUI_MAX_SIDE=1024
+VIDTRANS_ANIMATION_WORKER_URL=http://host.docker.internal:9000
+VIDTRANS_ANIMATION_WORKER_MODEL=comfyui-ltxv-2b-0.9.8-distilled
+VIDTRANS_ANIMATION_WORKER_MAX_SECONDS=4
+```
+
+Trong **Truyện → Video** chọn phong cách **Phim tiên hiệp Trung Quốc (điện ảnh)**,
+AI vẽ ảnh **ComfyUI local**, và chế độ hoạt hình **GPU worker riêng**.
+
+Lưu ý trên Mac:
+
+- PyTorch 2.14.x cho ra khung nhiễu/vỡ với LTX-Video trên MPS; script ghim
+  `torch==2.12.1` (đổi bằng `VIDTRANS_TORCH_VERSION`).
+- ComfyUI chạy với `--fp32-vae` (mặc định của `VIDTRANS_COMFYUI_EXTRA_ARGS`); VAE
+  bf16 trên MPS trả về ảnh đen.

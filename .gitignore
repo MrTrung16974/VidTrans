@@ -18,3 +18,5 @@ __pycache__/
 !/comfyui/models/checkpoints/
 /comfyui/models/checkpoints/*
 !/comfyui/models/checkpoints/.gitkeep
+/comfyui/animation-worker.log
+/comfyui/animation-worker.pid

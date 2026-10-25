@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 import main
+from domain.comic import ComicCharacter
 from application.job_service import JobService
 from infrastructure.job_store import SQLiteJobStore
 
@@ -247,6 +248,67 @@ class ComicApiTests(unittest.TestCase):
         self.assertEqual(len(s_page1["storyboard"]["scenes"]), 2)
         self.assertEqual([s["scene_index"] for s in s_page1["storyboard"]["scenes"]], [1, 2])
         self.assertEqual([s["scene_index"] for s in s_page2["storyboard"]["scenes"]], [3, 4])
+
+    def test_series_holds_many_episode_videos_with_shared_settings(self) -> None:
+        created = self.client.post("/api/v1/comic/series", data={
+            "title": "Tiên Nghịch", "description": "Truyện tu tiên", "text": STORY, "style": "xianxia",
+            "llm_provider": "heuristic", "image_provider": "placeholder", "aspect_ratio": "16:9",
+            "target_scene_duration": "4", "episode_title": "Nhập môn"})
+        self.assertEqual(created.status_code, 201, created.text)
+        series_id, first = created.json()["series_id"], created.json()["job_id"]
+        self.assertEqual(created.json()["episode_number"], 1)
+        self.assertEqual(self.run_job(first)["status"], "completed")
+
+        # The next episode only sends its story; style, aspect ratio and providers come from the series.
+        second = self.create(series_id=series_id, title="", aspect_ratio="9:16", style="anime_comic",
+                             auto_render="false")
+        self.assertEqual(second.status_code, 202, second.text)
+        self.assertEqual(second.json()["episode_number"], 2)
+        job = self.run_job(second.json()["job_id"])
+        settings = job["resume_request"]["settings"]
+        self.assertEqual((settings["style"], settings["aspect_ratio"], settings["title"]), ("xianxia", "16:9", "Tập 2"))
+        self.assertEqual((job["comic"]["series_id"], job["comic"]["episode_number"]), (series_id, 2))
+
+        payload = self.client.get(f"/api/v1/comic/series/{series_id}").json()
+        self.assertEqual([e["episode_number"] for e in payload["episode_list"]], [1, 2])
+        self.assertEqual(payload["episode_list"][0]["comic"]["title"], "Nhập môn")
+        self.assertEqual(payload["next_episode_number"], 3)
+        listed = self.client.get("/api/v1/comic/series").json()
+        self.assertEqual([(s["series_id"], s["episodes"]) for s in listed["items"]], [(series_id, 2)])
+
+        # Another user can neither see nor extend the series.
+        other = {"x-test-user": "b"}
+        self.assertEqual(self.client.get(f"/api/v1/comic/series/{series_id}", headers=other).status_code, 404)
+        self.assertEqual(self.client.post("/api/v1/comic/projects", headers=other, data={
+            "text": STORY, "series_id": series_id}).status_code, 404)
+
+        renamed = self.client.patch(f"/api/v1/comic/series/{series_id}", json={"title": "Tiên Nghịch (bản mới)"})
+        self.assertEqual(renamed.json()["title"], "Tiên Nghịch (bản mới)")
+
+        # Deleting the series keeps its episode videos.
+        self.assertTrue(self.client.delete(f"/api/v1/comic/series/{series_id}").json()["deleted"])
+        self.assertEqual(self.client.get(f"/api/v1/comic/series/{series_id}").status_code, 404)
+        self.assertEqual(self.project(first).status_code, 200)
+
+    def test_series_character_reference_is_shared(self) -> None:
+        from PIL import Image
+
+        series_id = self.client.post("/api/v1/comic/series", data={
+            "title": "Truyện", "llm_provider": "heuristic", "image_provider": "placeholder"}).json()["series_id"]
+        main.COMIC_SERIES.update("user-a", series_id, lambda s: s.set_characters([
+            ComicCharacter(id="minh", name="Minh", appearance="young man")]))
+        png = io.BytesIO()
+        Image.new("RGB", (8, 8), "red").save(png, format="PNG")
+        uploaded = self.client.post(f"/api/v1/comic/series/{series_id}/characters/minh/reference",
+                                    files={"file": ("minh.png", png.getvalue(), "image/png")})
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        minh = uploaded.json()["characters"][0]
+        self.assertTrue(minh["approved_reference"].startswith("minh-upload-"))
+        self.assertEqual(self.client.get(minh["reference_url"]).headers["content-type"], "image/png")
+        patched = self.client.patch(f"/api/v1/comic/series/{series_id}/characters/minh", json={"outfit": "white robe"})
+        self.assertEqual(patched.json()["characters"][0]["outfit"], "white robe")
+        cleared = self.client.delete(f"/api/v1/comic/series/{series_id}/characters/minh/reference")
+        self.assertIsNone(cleared.json()["characters"][0]["reference_url"])
 
 
 if __name__ == "__main__":

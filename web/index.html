@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261024-blurred-subtitle" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261025-comic-series" />
   </head>
   <body>
     <div class="app-shell">
@@ -656,34 +656,44 @@
                 <span class="eyebrow-note">AI chia cảnh · Vẽ minh họa · Lồng tiếng</span>
               </div>
               <h1>Biến truyện chữ thành video truyện tranh</h1>
-              <p>Hệ thống tự chia cảnh, giữ ngoại hình nhân vật nhất quán, lồng tiếng, tạo phụ đề và dựng MP4. Sửa từng cảnh rồi render lại — chỉ phần đã đổi được tạo lại.</p>
+              <p>Mỗi truyện là một dự án gồm nhiều tập: nhân vật, phong cách và giọng đọc được dùng chung, nên mọi tập giữ đúng ngoại hình nhân vật. Sửa từng cảnh rồi render lại — chỉ phần đã đổi được tạo lại.</p>
             </div>
           </div>
 
           <div class="comic-layout">
-            <aside class="card comic-projects" aria-label="Dự án truyện">
+            <aside class="card comic-projects" aria-label="Truyện của tôi">
               <div class="comic-projects-head">
-                <h2>Dự án truyện</h2>
-                <a id="comicNewButton" class="button primary small-btn" href="#comic/new">+ Tạo truyện mới</a>
+                <h2>Truyện của tôi</h2>
+                <a id="comicNewButton" class="button primary small-btn" href="#comic/new">+ Truyện mới</a>
               </div>
-              <div id="comicProjectList" class="comic-project-list"><p class="comic-empty">Đang tải…</p></div>
-              <div id="comicProjectPagination" class="comic-project-pagination is-hidden"></div>
+              <div class="comic-tabs" role="tablist" aria-label="Danh sách">
+                <button type="button" class="comic-tab is-active" role="tab" aria-selected="true" data-comic-tab="series">Truyện</button>
+                <button type="button" class="comic-tab" role="tab" aria-selected="false" data-comic-tab="videos">Tất cả video</button>
+              </div>
+              <div id="comicSeriesList" class="comic-project-list" data-comic-pane="series"><p class="comic-empty">Đang tải…</p></div>
+              <div class="is-hidden" data-comic-pane="videos">
+                <div id="comicProjectList" class="comic-project-list"><p class="comic-empty">Đang tải…</p></div>
+                <div id="comicProjectPagination" class="comic-project-pagination is-hidden"></div>
+              </div>
             </aside>
 
             <div class="comic-main">
             <form id="comicForm" class="card comic-form" novalidate>
               <div class="step-heading">
                 <span class="step-badge">1</span>
-                <div><h2>Dự án truyện mới</h2><p>Dán một chương truyện hoặc tải file TXT/DOCX.</p></div>
+                <div><h2>Truyện mới</h2><p>Cài đặt bên dưới áp dụng cho mọi tập của truyện. Có thể dán ngay nội dung tập 1 hoặc thêm tập sau.</p></div>
               </div>
-              <label class="field"><span>Tên truyện / tập</span><input name="title" value="Truyện mới" maxlength="200" required /></label>
+              <label class="field"><span>Tên truyện</span><input name="title" value="Truyện mới" maxlength="200" required /></label>
+              <label class="field"><span>Giới thiệu truyện (tùy chọn)</span><textarea name="description" rows="2" maxlength="2000" placeholder="Bối cảnh, thể loại, ghi chú cho cả bộ truyện"></textarea></label>
+              <div class="field-grid">
+                <label class="field"><span>Tên tập 1</span><input name="episode_title" maxlength="200" placeholder="Để trống: Tập 1" /></label>
+                <label class="field">
+                  <span>Tiêu đề video YouTube tập 1</span>
+                  <input name="youtube_title" maxlength="100" placeholder="Để trống để AI đề xuất từ nội dung" />
+                </label>
+              </div>
               <label class="field">
-                <span>Tiêu đề video YouTube (tiếng Việt)</span>
-                <input name="youtube_title" maxlength="100" placeholder="Để trống để AI dịch và đề xuất từ nội dung truyện" />
-                <small class="field-hint">Tên này sẽ tự điền khi bạn chọn video ở trang Đăng bài.</small>
-              </label>
-              <label class="field">
-                <span class="field-label-group"><span>Nội dung truyện</span><small id="comicStoryCount" class="field-hint">0 ký tự</small></span>
+                <span class="field-label-group"><span>Nội dung tập 1 (có thể để trống, thêm sau)</span><small id="comicStoryCount" class="field-hint">0 ký tự</small></span>
                 <textarea name="text" rows="9" placeholder="Đêm hôm đó, Minh bước vào khu rừng…"></textarea>
                 <small id="comicStoryLimit" class="field-hint"></small>
               </label>
@@ -726,11 +736,56 @@
               </div>
               <label class="comic-check"><input name="burn_subtitles" type="checkbox" checked /> Ghép phụ đề vào video</label>
               <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước khi lồng tiếng</small></label>
-              <button class="button primary full" type="submit">Tạo video truyện</button>
+              <button class="button primary full" type="submit">Tạo truyện</button>
             </form>
+
+          <section id="comicSeries" class="comic-editor is-hidden" aria-live="polite">
+            <div class="card comic-editor-head">
+              <div class="comic-editor-title">
+                <h2 id="comicSeriesTitle"></h2>
+                <span id="comicSeriesCount" class="status-pill status-completed"></span>
+              </div>
+              <p id="comicSeriesDescription" class="comic-detail"></p>
+              <p id="comicSeriesMeta" class="comic-meta"></p>
+              <div class="comic-actions">
+                <button class="button secondary" type="button" data-series-op="rename">Đổi tên / giới thiệu</button>
+                <button class="button secondary comic-danger" type="button" data-series-op="delete">Xóa truyện</button>
+              </div>
+            </div>
+            <form id="comicEpisodeForm" class="card comic-form" novalidate>
+              <div class="step-heading">
+                <span class="step-badge">+</span>
+                <div><h2 id="comicEpisodeHeading">Thêm tập mới</h2><p>Dán chương tiếp theo. Tập mới dùng lại nhân vật, phong cách và giọng đọc của truyện.</p></div>
+              </div>
+              <div class="field-grid">
+                <label class="field"><span>Tên tập</span><input name="title" maxlength="200" placeholder="Để trống: Tập N" /></label>
+                <label class="field"><span>Tiêu đề video YouTube</span><input name="youtube_title" maxlength="100" placeholder="Để trống để AI đề xuất" /></label>
+              </div>
+              <label class="field">
+                <span class="field-label-group"><span>Nội dung tập</span><small id="comicEpisodeCount" class="field-hint">0 ký tự</small></span>
+                <textarea name="text" rows="8" placeholder="Ba ngày sau, Minh trở lại khu rừng…"></textarea>
+              </label>
+              <div class="field-grid">
+                <label class="field"><span>Hoặc tải file (.txt, .docx)</span><input name="file" type="file" accept=".txt,.md,.docx" /></label>
+                <label class="field"><span>Nhạc nền (tùy chọn)</span><input name="background_music" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg" /></label>
+              </div>
+              <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước</small></label>
+              <button class="button primary full" type="submit">Tạo tập</button>
+            </form>
+            <div class="comic-block">
+              <div class="comic-block-head"><h3>Các tập</h3></div>
+              <div id="comicEpisodes" class="comic-episodes"></div>
+            </div>
+            <div class="comic-block">
+              <div class="comic-block-head"><h3>Nhân vật chung của truyện</h3></div>
+              <p class="comic-meta">Nhân vật được tự thêm sau khi mỗi tập được phân tích. Ảnh tham chiếu ghim ở đây được dùng cho mọi tập dựng từ nay về sau (trừ khi một tập ghim ảnh riêng).</p>
+              <div id="comicSeriesCharacters" class="comic-characters"></div>
+            </div>
+          </section>
 
           <section id="comicEditor" class="comic-editor is-hidden" aria-live="polite">
             <div class="card comic-editor-head">
+              <a id="comicBreadcrumb" class="comic-breadcrumb is-hidden" href="#comic"></a>
               <div class="comic-editor-title">
                 <h2 id="comicEditorTitle"></h2>
                 <span id="comicEditorStatus" class="status-pill"></span>

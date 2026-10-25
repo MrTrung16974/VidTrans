@@ -28,7 +28,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from domain.comic import COMIC_STYLES, ComicCharacter, ComicScene, ComicSettings, Storyboard
+from domain.comic import (
+    COMIC_STYLES,
+    ComicCharacter,
+    ComicScene,
+    ComicSettings,
+    Storyboard,
+    style_negative_prompt,
+)
 from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import (
     ImageGenerationError,
@@ -281,7 +288,8 @@ class ComicVideoProducer:
                            f"Ảnh tham chiếu nhân vật {position}/{len(cast)}: {character.name}")
             generated, fallback = self._ensure_image(path, ImageRequest(
                 prompt=reference_prompt(character, storyboard.style), width=REFERENCE_SIZE, height=REFERENCE_SIZE,
-                negative_prompt="multiple people, text, watermark, cropped body", seed=self.settings.seed,
+                negative_prompt=style_negative_prompt(storyboard.style, "multiple people, text, watermark, cropped body"),
+                seed=self.settings.seed,
                 aspect_ratio="1:1", caption=character.name, display_text=character_prompt(character),
             ), allow_fallback=False)
             if generated is not None and not fallback:
@@ -351,13 +359,14 @@ class ComicVideoProducer:
                     save_png_atomic(fit_cover(image, self.width, self.height), path)
             return path, key
         prompt = scene_image_prompt(scene, storyboard, self.settings.aspect_ratio)
+        negative = style_negative_prompt(storyboard.style, scene.negative_prompt)
         scene_refs = [refs[cid] for cid in scene.characters if cid in refs]
         seed = self.settings.seed + scene.scene_index if self.settings.seed else 0
-        key = content_hash(PIPELINE_VERSION, "scene", self.images.cache_key, prompt, scene.negative_prompt,
+        key = content_hash(PIPELINE_VERSION, "scene", self.images.cache_key, prompt, negative,
                            [ref_key for _path, ref_key in scene_refs], seed, self.width, self.height)
         path = self.project.dir("images") / f"s{scene.scene_index:03d}-{key[:16]}.png"
         image, fallback = self._ensure_image(path, ImageRequest(
-            prompt=prompt, width=self.width, height=self.height, negative_prompt=scene.negative_prompt,
+            prompt=prompt, width=self.width, height=self.height, negative_prompt=negative,
             seed=seed, references=tuple(ref_path for ref_path, _key in scene_refs[:3]),
             caption=f"Cảnh {scene.scene_index}", aspect_ratio=self.settings.aspect_ratio,
             display_text=scene.narration or scene.visual_prompt,

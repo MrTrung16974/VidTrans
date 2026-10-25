@@ -1,5 +1,5 @@
-// Story -> comic / animated video workspace: create projects, review the storyboard, edit scenes or shots
-// and re-render only what changed.
+// Story -> comic / animated video workspace: a story (series) holds many episode videos that share its
+// settings and character bible; each episode is a project whose storyboard can be edited and re-rendered.
 import { renderAnimatedScenes, renderReferenceGallery, shotPatchFromForm } from "./animation-editor.js?v=20261023-smooth";
 
 const ACTIVE = new Set(["queued", "scheduled", "processing", "cancelling"]);
@@ -15,10 +15,12 @@ const MOTION_LABELS = {
   pan_up: "Lia lên", pan_down: "Lia xuống", static: "Đứng yên",
 };
 const POLL_MS = 2500;
-// #comic/new shows the "new story" form, #comic/<job id> one project; both go through the
-// hash so the browser's Back button moves between them.
+// #comic/new shows the "new story" form, #comic/s/<series id> one story and its episodes, #comic/<job id>
+// one episode's editor; all go through the hash so the browser's Back button moves between them.
 const NEW_ROUTE = "#comic/new";
 const projectRoute = jobId => `#comic/${encodeURIComponent(jobId)}`;
+const seriesRoute = seriesId => `#comic/s/${encodeURIComponent(seriesId)}`;
+const SERIES_ROUTE = /^#comic\/s\/([0-9a-f]{12})$/;
 const narrowLayout = () => window.matchMedia("(max-width: 960px)").matches;
 
 export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
@@ -27,8 +29,15 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   const view = $("#comicView");
   const form = $("#comicForm");
   const editor = $("#comicEditor");
+  const seriesView = $("#comicSeries");
+  const episodeForm = $("#comicEpisodeForm");
   let options = null;
   let current = null;
+  let currentSeries = null;
+  let sidebarTab = "series";
+  try {
+    if (localStorage.getItem("vidtrans_comic_sidebar_tab") === "videos") sidebarTab = "videos";
+  } catch (_) {}
   let pollTimer = null;
   let entered = false;
   let projectPage = 1;
@@ -137,13 +146,14 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       }
       list.innerHTML = projects.map(job => {
         const comic = job.comic || {};
+        const series = comic.series_id ? `${comic.series_title || "Truyện"} · Tập ${comic.episode_number}` : "Video lẻ";
         const meta = [comic.video_mode === "animated" ? "Hoạt hình" : "Truyện tranh", comic.scenes ? `${comic.scenes} cảnh` : "",
           comic.shots ? `${comic.shots} shot` : "", comic.aspect_ratio || ""].filter(Boolean).join(" · ");
         const active = current?.job?.job_id === job.job_id;
         return `<button type="button" class="comic-project${active ? " is-active" : ""}"${active ? ' aria-current="true"' : ""} data-job="${escapeHtml(job.job_id)}">
           <strong>${escapeHtml(comic.title || job.filename || job.job_id)}</strong>
           <span class="status-pill status-${statusClass(job)}">${escapeHtml(STEP_LABELS[job.step] || job.status)}</span>
-          <small>${escapeHtml(meta)}</small></button>`;
+          <small>${escapeHtml(series)}<br>${escapeHtml(meta)}</small></button>`;
       }).join("");
       renderProjectPagination();
     } catch (error) {
@@ -152,15 +162,73 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     }
   }
 
+  const styleLabel = key => options?.styles?.find(style => style.key === key)?.label || key || "";
+  const episodeTitle = comic => {
+    const name = comic?.title || "";
+    if (!comic?.series_id) return name;
+    const number = `Tập ${comic.episode_number}`;
+    return name && name !== number ? `${number} · ${name}` : number;
+  };
+  const seriesActive = () => (currentSeries?.episode_list || []).some(isActive);
+
+  function refreshLists() {
+    loadSeriesList();
+    loadProjects();
+  }
+
+  function showSidebarTab(tab) {
+    sidebarTab = tab;
+    $$("[data-comic-tab]").forEach(button => {
+      const selected = button.dataset.comicTab === tab;
+      button.classList.toggle("is-active", selected);
+      button.setAttribute("aria-selected", String(selected));
+    });
+    $$("[data-comic-pane]").forEach(pane => pane.classList.toggle("is-hidden", pane.dataset.comicPane !== tab));
+    try { localStorage.setItem("vidtrans_comic_sidebar_tab", tab); } catch (_) {}
+  }
+
+  async function loadSeriesList() {
+    const list = $("#comicSeriesList");
+    try {
+      const items = (await api("/series")).items || [];
+      if (!items.length) {
+        list.innerHTML = '<p class="comic-empty">Chưa có truyện nào. Bấm "Truyện mới" để bắt đầu.</p>';
+        return;
+      }
+      const activeId = currentSeries?.series_id || current?.job?.comic?.series_id;
+      list.innerHTML = items.map(series => {
+        const active = series.series_id === activeId;
+        const meta = [`${series.episodes} tập`, `${series.characters} nhân vật`, styleLabel(series.style),
+          series.video_mode === "animated" ? "Hoạt hình" : "Truyện tranh"].filter(Boolean).join(" · ");
+        return `<button type="button" class="comic-project${active ? " is-active" : ""}"${active ? ' aria-current="true"' : ""} data-series="${escapeHtml(series.series_id)}">
+          <strong>${escapeHtml(series.title)}</strong>
+          <small>${escapeHtml(meta)}</small></button>`;
+      }).join("");
+    } catch (error) {
+      list.innerHTML = `<p class="comic-empty">${escapeHtml(error.message)}</p>`;
+    }
+  }
+
+  async function openSeries(seriesId, { reveal = false } = {}) {
+    currentSeries = await api(`/series/${encodeURIComponent(seriesId)}`);
+    current = null;
+    if (location.hash !== seriesRoute(seriesId)) history.replaceState(null, "", seriesRoute(seriesId));
+    render();
+    schedulePoll();
+    refreshLists();
+    if (reveal && narrowLayout()) seriesView.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   async function open(jobId, { reveal = false, keepPage = false, scrollScenes = false } = {}) {
     if (!keepPage && current?.job?.job_id !== jobId) scenePage = 1;
     current = await api(withSceneQuery(`/projects/${encodeURIComponent(jobId)}`));
+    currentSeries = null;
     if (current?.scenes_pagination?.page) scenePage = current.scenes_pagination.page;
     // A shareable link straight to this project.
     if (location.hash !== projectRoute(jobId)) history.replaceState(null, "", projectRoute(jobId));
     render();
     schedulePoll();
-    loadProjects();
+    refreshLists();
     // On one-column layouts the project opens below the list; bring it into view.
     if (reveal && narrowLayout()) editor.scrollIntoView({ behavior: "smooth", block: "start" });
     if (scrollScenes) $("#comicScenes")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -168,14 +236,29 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
 
   function showNew() {
     current = null;
+    currentSeries = null;
     clearTimeout(pollTimer);
     render();
-    loadProjects();
+    refreshLists();
     if (narrowLayout()) form.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function schedulePoll() {
     clearTimeout(pollTimer);
+    if (entered && !current && currentSeries && seriesActive()) {
+      pollTimer = setTimeout(async () => {
+        try {
+          currentSeries = await api(`/series/${encodeURIComponent(currentSeries.series_id)}`);
+          render();
+          if (!seriesActive()) {
+            refreshLists();
+            toast("Các tập truyện đã xử lý xong");
+          }
+        } catch (_) { /* Keep polling through transient errors. */ }
+        schedulePoll();
+      }, POLL_MS);
+      return;
+    }
     if (!entered || !current || !isActive(current.job)) return;
     pollTimer = setTimeout(async () => {
       try {
@@ -184,7 +267,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         if (current?.scenes_pagination?.page) scenePage = current.scenes_pagination.page;
         render();
         if (wasActive && !isActive(current.job)) {
-          loadProjects();
+          refreshLists();
           toast(current.job.status === "failed" ? "Dự án truyện gặp lỗi" : "Dự án truyện đã xử lý xong", current.job.status === "failed");
         }
       } catch (_) { /* Keep polling through transient errors. */ }
@@ -193,16 +276,28 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   }
 
   function render() {
-    // The main column shows either the new-story form or the selected project, never both.
-    form.classList.toggle("is-hidden", Boolean(current));
-    $("#comicNewButton")?.classList.toggle("is-current", !current);
-    if (!current) { editor.classList.add("is-hidden"); return; }
+    // The main column shows the new-story form, one story, or one episode's editor — never two.
+    form.classList.toggle("is-hidden", Boolean(current || currentSeries));
+    seriesView.classList.toggle("is-hidden", Boolean(current) || !currentSeries);
+    $("#comicNewButton")?.classList.toggle("is-current", !current && !currentSeries);
+    if (!current) {
+      editor.classList.add("is-hidden");
+      if (currentSeries) renderSeries();
+      return;
+    }
     editor.classList.remove("is-hidden");
     const { job, storyboard, media } = current;
+    const comic = job.comic || {};
+    const crumb = $("#comicBreadcrumb");
+    crumb.classList.toggle("is-hidden", !comic.series_id);
+    if (comic.series_id) {
+      crumb.href = seriesRoute(comic.series_id);
+      crumb.textContent = `← ${comic.series_title || "Truyện"} · tất cả các tập`;
+    }
     const locked = isActive(job);
     const progress = Math.round((job.progress || 0) * 100);
     const stale = storyboard && current.rendered_revision !== storyboard.revision;
-    $("#comicEditorTitle").textContent = job.comic?.title || job.filename || job.job_id;
+    $("#comicEditorTitle").textContent = episodeTitle(comic) || job.filename || job.job_id;
     $("#comicEditorStatus").className = `status-pill status-${statusClass(job)}`;
     $("#comicEditorStatus").textContent = STEP_LABELS[job.step] || job.status;
     $("#comicEditorDetail").textContent = job.error || job.step_detail || "";
@@ -302,6 +397,69 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     `;
   }
 
+  function renderSeries() {
+    const series = currentSeries;
+    $("#comicSeriesTitle").textContent = series.title;
+    $("#comicSeriesCount").textContent = `${series.episodes} tập`;
+    $("#comicSeriesDescription").textContent = series.description || "";
+    const settings = series.settings || {};
+    $("#comicSeriesMeta").textContent = [styleLabel(settings.style),
+      settings.video_mode === "animated" ? "Hoạt hình AI" : "Truyện tranh", settings.aspect_ratio,
+      `${series.characters.length} nhân vật`].filter(Boolean).join(" · ");
+    $("#comicEpisodeHeading").textContent = `Thêm tập ${series.next_episode_number}`;
+    episodeForm.querySelector('[type="submit"]').textContent = `Tạo tập ${series.next_episode_number}`;
+    const episodes = [...(series.episode_list || [])].sort((a, b) => a.episode_number - b.episode_number);
+    $("#comicEpisodes").innerHTML = episodes.length ? episodes.map(job => {
+      const comic = job.comic || {};
+      const active = isActive(job);
+      const meta = [comic.scenes ? `${comic.scenes} cảnh` : "", comic.shots ? `${comic.shots} shot` : "",
+        comic.duration ? `${Math.round(comic.duration)} giây` : ""].filter(Boolean).join(" · ");
+      const name = comic.title && comic.title !== `Tập ${job.episode_number}` ? comic.title : "";
+      return `<article class="comic-episode card" data-job="${escapeHtml(job.job_id)}">
+        <span class="comic-episode-number">Tập ${job.episode_number}</span>
+        <div class="comic-episode-body">
+          <strong>${escapeHtml(name || comic.youtube_title || `Tập ${job.episode_number}`)}</strong>
+          <span class="status-pill status-${statusClass(job)}">${escapeHtml(STEP_LABELS[job.step] || job.status)}</span>
+          <small>${escapeHtml(job.error || meta || job.step_detail || "")}</small>
+          ${active ? `<div class="progress-track"><span style="width:${Math.round((job.progress || 0) * 100)}%"></span></div>` : ""}
+        </div>
+        <div class="comic-episode-actions">
+          <button class="button secondary" type="button" data-episode-open>Mở biên tập</button>
+          ${job.video_url ? `<a class="button secondary" href="${escapeHtml(job.video_url)}" download>Tải MP4</a>` : ""}
+        </div></article>`;
+    }).join("") : '<p class="comic-empty">Chưa có tập nào. Dán nội dung tập 1 vào form phía trên.</p>';
+    const locked = seriesActive();
+    $("#comicSeriesCharacters").innerHTML = series.characters.length ? series.characters.map(c => `
+      <form class="comic-character" data-series-character="${escapeHtml(c.id)}">
+        <div class="comic-character-ref">${c.reference_url ? `<img src="${escapeHtml(c.reference_url)}" alt="${escapeHtml(c.name)}" loading="lazy">` : `<span>${escapeHtml(c.name.slice(0, 1))}</span>`}</div>
+        <div class="comic-character-fields">
+          <div class="comic-inline">
+            <label class="field"><span>Tên</span><input name="name" value="${escapeHtml(c.name)}" maxlength="120"></label>
+            <label class="field"><span>Giới tính</span><select name="gender">${["female", "male", "unknown"].map(g => `<option value="${g}"${c.gender === g ? " selected" : ""}>${{ female: "Nữ", male: "Nam", unknown: "Không rõ" }[g]}</option>`).join("")}</select></label>
+          </div>
+          <label class="field"><span>Ngoại hình cố định (tiếng Anh)</span><textarea name="appearance" rows="2" maxlength="600">${escapeHtml(c.appearance)}</textarea></label>
+          <label class="field"><span>Trang phục</span><input name="outfit" value="${escapeHtml(c.outfit)}" maxlength="400"></label>
+          <small class="field-hint">id: ${escapeHtml(c.id)} · ${c.reference_url ? "ảnh tham chiếu đang ghim cho các tập" : "chưa có ảnh tham chiếu — sẽ lấy ảnh của tập đầu tiên vẽ nhân vật này"}</small>
+          <div class="comic-scene-actions">
+            <button class="button secondary" type="submit">Lưu nhân vật</button>
+            <label class="button secondary comic-upload">Tải ảnh tham chiếu<input type="file" accept="image/png,image/jpeg,image/webp" data-series-ref-upload hidden></label>
+            ${c.reference_url ? '<button class="button secondary" type="button" data-series-op="clear-ref">Bỏ ghim ảnh</button>' : ""}
+          </div>
+        </div></form>`).join("") : '<p class="comic-empty">Nhân vật sẽ xuất hiện ở đây sau khi tập đầu tiên được phân tích.</p>';
+    $("#comicEpisodes").classList.toggle("is-busy", locked);
+  }
+
+  async function seriesMutate(promise, message) {
+    try {
+      currentSeries = await promise;
+      render();
+      loadSeriesList();
+      if (message) toast(message);
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
   async function refreshGallery(characterId) {
     const box = editor.querySelector(`[data-ref-box="${CSS.escape(characterId)}"]`);
     if (!box || !current) return;
@@ -390,7 +548,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       current = await promise;
       if (current?.scenes_pagination?.page) scenePage = current.scenes_pagination.page;
       render();
-      loadProjects();
+      refreshLists();
       if (message) toast(message);
     } catch (error) {
       toast(error.message, true);
@@ -404,21 +562,18 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     for (const name of ["file", "background_music"]) {
       if (!form.elements[name].files.length) data.delete(name);
     }
-    if (!data.get("file") && !String(data.get("text") || "").trim()) {
-      toast("Hãy dán nội dung truyện hoặc chọn file TXT/DOCX", true);
-      return;
-    }
     const submit = form.querySelector('[type="submit"]');
     submit.disabled = true;
     try {
-      const created = await api("/projects", { method: "POST", body: data });
-      toast("Đã tạo dự án, hệ thống đang chia cảnh…");
+      const created = await api("/series", { method: "POST", body: data });
+      toast(created.job_id ? "Đã tạo truyện và tập 1, hệ thống đang chia cảnh…" : "Đã tạo truyện — hãy thêm tập 1");
       form.elements.text.value = "";
       form.elements.file.value = "";
-      // Push the project's route so Back returns to the form.
-      history.pushState(null, "", projectRoute(created.job_id));
-      await open(created.job_id);
-      editor.scrollIntoView({ behavior: "smooth", block: "start" });
+      form.elements.episode_title.value = "";
+      // Push the story's route so Back returns to the form.
+      history.pushState(null, "", seriesRoute(created.series_id));
+      await openSeries(created.series_id);
+      seriesView.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (error) {
       toast(error.message, true);
     } finally {
@@ -437,6 +592,97 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   form.elements.text.addEventListener("input", () => {
     $("#comicStoryCount").textContent = `${form.elements.text.value.length.toLocaleString("vi-VN")} ký tự`;
   });
+
+  episodeForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!currentSeries) return;
+    const data = new FormData(episodeForm);
+    data.set("auto_render", episodeForm.elements.auto_render.checked ? "true" : "false");
+    data.set("series_id", currentSeries.series_id);
+    for (const name of ["file", "background_music"]) {
+      if (!episodeForm.elements[name].files.length) data.delete(name);
+    }
+    if (!data.get("file") && !String(data.get("text") || "").trim()) {
+      toast("Hãy dán nội dung tập hoặc chọn file TXT/DOCX", true);
+      return;
+    }
+    const submit = episodeForm.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const created = await api("/projects", { method: "POST", body: data });
+      toast(`Đã tạo tập ${created.episode_number}, hệ thống đang chia cảnh…`);
+      episodeForm.reset();
+      $("#comicEpisodeCount").textContent = "0 ký tự";
+      await openSeries(currentSeries.series_id);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  episodeForm.elements.text.addEventListener("input", () => {
+    $("#comicEpisodeCount").textContent = `${episodeForm.elements.text.value.length.toLocaleString("vi-VN")} ký tự`;
+  });
+
+  seriesView.addEventListener("click", async event => {
+    if (!currentSeries) return;
+    const seriesPath = `/series/${encodeURIComponent(currentSeries.series_id)}`;
+    const episode = event.target.closest("[data-episode-open]")?.closest("[data-job]");
+    if (episode) {
+      location.hash = projectRoute(episode.dataset.job);
+      return;
+    }
+    const op = event.target.closest("[data-series-op]")?.dataset.seriesOp;
+    if (op === "rename") {
+      const title = prompt("Tên truyện:", currentSeries.title);
+      if (!title?.trim()) return;
+      const description = prompt("Giới thiệu truyện:", currentSeries.description || "") ?? currentSeries.description;
+      await seriesMutate(api(seriesPath, json("PATCH", { title, description })), "Đã cập nhật truyện");
+    } else if (op === "delete") {
+      if (!confirm(`Xóa truyện "${currentSeries.title}"? Các video tập đã tạo vẫn được giữ trong mục Tất cả video.`)) return;
+      try {
+        await api(seriesPath, { method: "DELETE" });
+        toast("Đã xóa truyện");
+        location.hash = NEW_ROUTE;
+      } catch (error) { toast(error.message, true); }
+    } else if (op === "clear-ref") {
+      const characterId = event.target.closest("[data-series-character]").dataset.seriesCharacter;
+      await seriesMutate(api(`${seriesPath}/characters/${encodeURIComponent(characterId)}/reference`, { method: "DELETE" }),
+        "Đã bỏ ghim ảnh tham chiếu");
+    }
+  });
+
+  seriesView.addEventListener("change", async event => {
+    const upload = event.target.closest("[data-series-ref-upload]");
+    if (!upload?.files.length || !currentSeries) return;
+    const data = new FormData();
+    data.append("file", upload.files[0]);
+    const characterId = upload.closest("[data-series-character]").dataset.seriesCharacter;
+    await seriesMutate(api(`/series/${encodeURIComponent(currentSeries.series_id)}/characters/${encodeURIComponent(characterId)}/reference`,
+      { method: "POST", body: data }), "Đã ghim ảnh tham chiếu cho các tập");
+  });
+
+  seriesView.addEventListener("submit", async event => {
+    const target = event.target.closest("[data-series-character]");
+    if (!target || !currentSeries) return;
+    event.preventDefault();
+    const { name, gender, appearance, outfit } = Object.fromEntries(new FormData(target));
+    await seriesMutate(api(`/series/${encodeURIComponent(currentSeries.series_id)}/characters/${encodeURIComponent(target.dataset.seriesCharacter)}`,
+      json("PATCH", { name, gender, appearance, outfit })), "Đã lưu nhân vật của truyện");
+  });
+
+  $("#comicSeriesList").addEventListener("click", event => {
+    const button = event.target.closest("[data-series]");
+    if (!button) return;
+    if (location.hash === seriesRoute(button.dataset.series)) {
+      openSeries(button.dataset.series, { reveal: true }).catch(error => toast(error.message, true));
+    } else {
+      location.hash = seriesRoute(button.dataset.series);  // hashchange -> enter() opens it
+    }
+  });
+
+  $$("[data-comic-tab]").forEach(button => button.addEventListener("click", () => showSidebarTab(button.dataset.comicTab)));
 
   $("#comicProjectList").addEventListener("click", event => {
     const button = event.target.closest("[data-job]");
@@ -649,8 +895,23 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       } catch (error) {
         toast(error.message, true);
       }
+      showSidebarTab(sidebarTab);
       if (location.hash === NEW_ROUTE) {
         showNew();
+        return;
+      }
+      const linkedSeries = location.hash.match(SERIES_ROUTE)?.[1];
+      if (linkedSeries) {
+        if (linkedSeries !== currentSeries?.series_id || current) {
+          await openSeries(linkedSeries, { reveal: true }).catch(error => {
+            toast(error.message, true);
+            showNew();
+          });
+        } else {
+          render();
+          refreshLists();
+          schedulePoll();
+        }
         return;
       }
       const linked = location.hash.match(/^#comic\/([A-Za-z0-9_-]{1,64})$/)?.[1];
@@ -660,10 +921,10 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
           showNew();
         });
       } else {
-        // Plain #comic (the nav link) keeps the last opened project, or shows the form.
+        // Plain #comic (the nav link) keeps the last opened story or episode, or shows the form.
         render();
-        await loadProjects();
-        if (current) schedulePoll();
+        refreshLists();
+        if (current || currentSeries) schedulePoll();
       }
     },
     leave() {

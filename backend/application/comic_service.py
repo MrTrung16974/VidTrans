@@ -5,6 +5,10 @@ it inherits the persistent queue, cancellation, progress events, quota and
 ownership checks. The editable storyboard and asset caches live in the job's
 work directory; re-rendering requeues the same job and reuses every asset whose
 inputs did not change.
+
+A project may be one episode of a series (``resume_request["series"]``): it then
+shares the series' character bible and pinned references with its sibling
+episodes (see ``infrastructure.comic_series``).
 """
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ from typing import Any, Callable
 
 from domain.comic import ComicSettings
 from infrastructure.comic_project import ComicProject
+from infrastructure.comic_series import ComicSeriesStore
 from infrastructure.image_providers import create_image_provider
 from infrastructure.llm_providers import create_story_llm
 from infrastructure.video_providers import Camera25DProvider, create_video_provider
@@ -50,7 +55,8 @@ def is_comic_job(job: dict[str, Any] | None) -> bool:
     return bool(job) and job.get("job_action") == COMIC_JOB_ACTION
 
 
-def comic_summary(settings: ComicSettings, storyboard=None, manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+def comic_summary(settings: ComicSettings, storyboard=None, manifest: dict[str, Any] | None = None,
+                  series: dict[str, Any] | None = None) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "title": settings.title,
         "youtube_title": ((getattr(storyboard, "youtube_title", "") if storyboard is not None else "")
@@ -67,6 +73,9 @@ def comic_summary(settings: ComicSettings, storyboard=None, manifest: dict[str, 
                        cache=manifest.get("cache"), metrics=manifest.get("metrics"),
                        image_fallback=manifest.get("image_fallback"))
     summary["video_mode"] = settings.video_mode
+    if series:
+        summary.update(series_id=series.get("series_id"), series_title=series.get("series_title"),
+                       episode_number=series.get("episode_number"))
     if settings.video_mode == "animated":
         summary["animation_provider"] = settings.animation_provider
         if storyboard is not None:
@@ -85,6 +94,7 @@ class ComicJobRunner:
     make_runtime: Callable[[str, Callable[[str, float, str], None]], ComicRuntime]
     font_path: Path | None
     utc_now: Callable[[], str]
+    series_store: ComicSeriesStore | None = None
 
     def run(self, job_id: str, request: dict[str, Any]) -> None:
         job = self.get_job(job_id) or {}
@@ -92,6 +102,15 @@ class ComicJobRunner:
         settings = ComicSettings.model_validate(request["settings"])
         render = bool(request.get("render", settings.auto_render))
         preview_shot = request.get("preview_shot")
+        series = request.get("series") if self.series_store is not None else None
+        series_id = str(series["series_id"]) if series else ""
+
+        def summary(storyboard=None, manifest=None) -> dict[str, Any]:
+            return comic_summary(settings, storyboard, manifest, series)
+
+        def absorb(storyboard, manifest=None) -> None:
+            if series_id:
+                self.series_store.absorb_episode(owner, series_id, project, storyboard, manifest)
         animated = settings.video_mode == "animated"
         stages = PREVIEW_STAGES if not render else ANIMATED_STAGES if animated else RENDER_STAGES
         project = ComicProject(self.project_root(owner, job_id))
@@ -114,11 +133,15 @@ class ComicJobRunner:
                 progress=lambda done, total: report("comic_storyboard", done / total,
                                                     f"Chia cảnh đoạn {done}/{total}"),
                 check_active=lambda: self.ensure_active(job_id),
+                known_characters=self.series_store.known_characters(owner, series_id) if series_id else [],
             )
             project.save_storyboard(storyboard, bump=False)
         storyboard = project.load_storyboard()
+        if series_id:
+            storyboard = self.series_store.sync_into_episode(owner, series_id, project, storyboard)
+            absorb(storyboard)
         self.update_job(job_id, filename=storyboard.youtube_title or settings.title,
-                        comic=comic_summary(settings, storyboard))
+                        comic=summary(storyboard))
 
         runtime = self.make_runtime(job_id, report)
         images = create_image_provider(settings.image_provider, font_path=self.font_path)
@@ -134,15 +157,17 @@ class ComicJobRunner:
             producer = ComicVideoProducer(project, settings, images, runtime)
         if animated and preview_shot:
             manifest = producer.preview_shot(storyboard, str(preview_shot))
+            absorb(storyboard, manifest)
             self.update_job(job_id, status="completed", step="shot_preview_ready", progress=1.0,
                             step_detail=f"Đã dựng xem trước shot {preview_shot}",
-                            comic=comic_summary(settings, storyboard, manifest), finished_at=self.utc_now())
+                            comic=summary(storyboard, manifest), finished_at=self.utc_now())
             return
         if not render:
             manifest = producer.preview_images(storyboard)
+            absorb(storyboard, manifest)
             self.update_job(job_id, status="completed", step="storyboard_ready", progress=1.0,
                             step_detail="Storyboard và ảnh đã sẵn sàng để duyệt",
-                            comic=comic_summary(settings, storyboard, manifest), finished_at=self.utc_now())
+                            comic=summary(storyboard, manifest), finished_at=self.utc_now())
             return
 
         output_dir = self.output_dir(owner, job_id)
@@ -150,11 +175,12 @@ class ComicJobRunner:
         srt = output_dir / f"comic_{job_id}.srt"
         manifest = producer.produce(storyboard, video, srt, music)
         remove_stale_assets(project, manifest)
+        absorb(storyboard, manifest)
         self.update_job(
             job_id, status="completed", step="completed", progress=1.0,
             step_detail=_completion_detail(storyboard, manifest),
             output_video=self.artifact_name(video), subtitle_file=self.artifact_name(srt),
-            comic=comic_summary(settings, storyboard, manifest), finished_at=self.utc_now(),
+            comic=summary(storyboard, manifest), finished_at=self.utc_now(),
         )
 
 

@@ -484,13 +484,18 @@
             "title": "Seed",
             "type": "integer"
           },
+          "series_id": {
+            "default": "",
+            "title": "Series Id",
+            "type": "string"
+          },
           "speech_rate": {
             "default": 1.0,
             "title": "Speech Rate",
             "type": "number"
           },
           "style": {
-            "default": "anime_comic",
+            "default": "manhua",
             "title": "Style",
             "type": "string"
           },
@@ -505,7 +510,7 @@
             "type": "string"
           },
           "title": {
-            "default": "Truyện chưa đặt tên",
+            "default": "",
             "title": "Title",
             "type": "string"
           },
@@ -518,9 +523,190 @@
             "default": "comic",
             "title": "Video Mode",
             "type": "string"
+          },
+          "youtube_title": {
+            "default": "",
+            "title": "Youtube Title",
+            "type": "string"
           }
         },
         "title": "Body_create_project_api_v1_comic_projects_post",
+        "type": "object"
+      },
+      "Body_create_series_api_v1_comic_series_post": {
+        "properties": {
+          "animation_budget_seconds": {
+            "default": 240.0,
+            "title": "Animation Budget Seconds",
+            "type": "number"
+          },
+          "animation_provider": {
+            "default": "camera_2_5d",
+            "title": "Animation Provider",
+            "type": "string"
+          },
+          "aspect_ratio": {
+            "default": "9:16",
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
+          "auto_render": {
+            "default": "true",
+            "title": "Auto Render",
+            "type": "string"
+          },
+          "background_music": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Music"
+          },
+          "burn_subtitles": {
+            "default": "true",
+            "title": "Burn Subtitles",
+            "type": "string"
+          },
+          "cit_female_voice": {
+            "default": "",
+            "title": "Cit Female Voice",
+            "type": "string"
+          },
+          "cit_male_voice": {
+            "default": "",
+            "title": "Cit Male Voice",
+            "type": "string"
+          },
+          "cit_narrator_voice": {
+            "default": "",
+            "title": "Cit Narrator Voice",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "episode_title": {
+            "default": "",
+            "title": "Episode Title",
+            "type": "string"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "fps": {
+            "default": 30,
+            "title": "Fps",
+            "type": "integer"
+          },
+          "image_provider": {
+            "default": "placeholder",
+            "title": "Image Provider",
+            "type": "string"
+          },
+          "language": {
+            "default": "vi",
+            "title": "Language",
+            "type": "string"
+          },
+          "llm_provider": {
+            "default": "auto",
+            "title": "Llm Provider",
+            "type": "string"
+          },
+          "max_animation_attempts": {
+            "default": 2,
+            "title": "Max Animation Attempts",
+            "type": "integer"
+          },
+          "max_scenes": {
+            "default": 40,
+            "title": "Max Scenes",
+            "type": "integer"
+          },
+          "motion_strength": {
+            "default": 0.45,
+            "title": "Motion Strength",
+            "type": "number"
+          },
+          "music_volume": {
+            "default": 0.15,
+            "title": "Music Volume",
+            "type": "number"
+          },
+          "narrator_voice": {
+            "default": "female",
+            "title": "Narrator Voice",
+            "type": "string"
+          },
+          "quality": {
+            "default": "final",
+            "title": "Quality",
+            "type": "string"
+          },
+          "seed": {
+            "default": 0,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "speech_rate": {
+            "default": 1.0,
+            "title": "Speech Rate",
+            "type": "number"
+          },
+          "style": {
+            "default": "manhua",
+            "title": "Style",
+            "type": "string"
+          },
+          "target_scene_duration": {
+            "default": 7.0,
+            "title": "Target Scene Duration",
+            "type": "number"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "tts_provider": {
+            "default": "",
+            "title": "Tts Provider",
+            "type": "string"
+          },
+          "video_mode": {
+            "default": "comic",
+            "title": "Video Mode",
+            "type": "string"
+          },
+          "youtube_title": {
+            "default": "",
+            "title": "Youtube Title",
+            "type": "string"
+          }
+        },
+        "title": "Body_create_series_api_v1_comic_series_post",
         "type": "object"
       },
       "Body_prepare_api_v1_jobs__job_id__tiktok_browser_prepare_post": {
@@ -1131,6 +1317,20 @@
         "title": "Body_upload_scene_image_api_v1_comic_projects__job_id__scenes__scene_index__image_post",
         "type": "object"
       },
+      "Body_upload_series_reference_api_v1_comic_series__series_id__characters__character_id__reference_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_series_reference_api_v1_comic_series__series_id__characters__character_id__reference_post",
+        "type": "object"
+      },
       "CharacterPatch": {
         "additionalProperties": false,
         "properties": {
@@ -1478,6 +1678,38 @@
           }
         },
         "title": "ScenePatch",
+        "type": "object"
+      },
+      "SeriesPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "SeriesPatch",
         "type": "object"
       },
       "ShotInsert": {
@@ -2463,6 +2695,82 @@
           }
         ],
         "summary": "Admin Get Job"
+      }
+    },
+    "/api/v1/admin/system-metrics": {
+      "get": {
+        "operationId": "admin_system_metrics_api_v1_admin_system_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Admin System Metrics"
+      }
+    },
+    "/api/v1/admin/system-processes": {
+      "get": {
+        "operationId": "admin_system_processes_api_v1_admin_system_processes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 15,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Admin System Processes"
       }
     },
     "/api/v1/admin/users/{user_id}/quota": {
@@ -4898,6 +5206,494 @@
           }
         ],
         "summary": "Get Story",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/series": {
+      "get": {
+        "operationId": "list_series_api_v1_comic_series_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Series",
+        "tags": [
+          "Comic Video"
+        ]
+      },
+      "post": {
+        "description": "Create a series with the settings every episode shares; story text queues episode 1.",
+        "operationId": "create_series_api_v1_comic_series_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_series_api_v1_comic_series_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create Series",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/series/{series_id}": {
+      "delete": {
+        "description": "Delete the series record only; its episode videos stay available as standalone projects.",
+        "operationId": "delete_series_api_v1_comic_series__series_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete Series",
+        "tags": [
+          "Comic Video"
+        ]
+      },
+      "get": {
+        "operationId": "get_series_api_v1_comic_series__series_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Series",
+        "tags": [
+          "Comic Video"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_series_api_v1_comic_series__series_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeriesPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Patch Series",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/series/{series_id}/characters/{character_id}": {
+      "patch": {
+        "operationId": "patch_series_character_api_v1_comic_series__series_id__characters__character_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Patch Series Character",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/series/{series_id}/characters/{character_id}/reference": {
+      "delete": {
+        "operationId": "clear_series_reference_api_v1_comic_series__series_id__characters__character_id__reference_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Clear Series Reference",
+        "tags": [
+          "Comic Video"
+        ]
+      },
+      "post": {
+        "description": "Pin a reference for every episode rendered from now on (episodes keep their own uploads).",
+        "operationId": "upload_series_reference_api_v1_comic_series__series_id__characters__character_id__reference_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_series_reference_api_v1_comic_series__series_id__characters__character_id__reference_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Upload Series Reference",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/series/{series_id}/media/refs/{name}": {
+      "get": {
+        "operationId": "series_media_api_v1_comic_series__series_id__media_refs__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Series Media",
         "tags": [
           "Comic Video"
         ]

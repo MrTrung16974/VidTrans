@@ -77,6 +77,7 @@ from infrastructure.publishers.facebook import FacebookPublisher, FacebookPublis
 from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisherConfig, YouTubePublisherError
 from infrastructure.platform_apps import PLATFORM_APPS, PlatformAppError, PlatformAppStore, load_or_create_key
 from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
+from infrastructure.comic_series import ComicSeriesStore
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SocialPublishStore
@@ -3701,6 +3702,10 @@ def comic_project_root(owner_user_id: str, job_id: str) -> Path:
     return tenant_job_dir(WORK_DIR, owner_user_id, job_id) / "comic"
 
 
+# Job ids are 8 hex characters, so this per-owner folder can never collide with a job's.
+COMIC_SERIES = ComicSeriesStore(lambda owner_user_id: tenant_job_dir(WORK_DIR, owner_user_id, "comic-series"))
+
+
 def tiktok_post_description(post: TikTokPost | None) -> str:
     """TikTok's post_info.title is the post description: the full caption (body, CTA and
     hashtags), not the 80-character title that only labels the artifact."""
@@ -3757,6 +3762,7 @@ COMIC_RUNNER = ComicJobRunner(
     make_runtime=comic_runtime,
     font_path=BUNDLED_FONT if BUNDLED_FONT.is_file() else None,
     utc_now=utc_now,
+    series_store=COMIC_SERIES,
 )
 
 
@@ -6464,6 +6470,7 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     project_root=comic_project_root,
     upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
     list_projects=list_comic_projects_for_request,
+    series_store=COMIC_SERIES,
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
 

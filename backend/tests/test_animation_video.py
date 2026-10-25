@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from domain.comic import ComicCharacter, ComicScene, ComicSettings, Shot, Storyboard
+from domain.comic import ComicCharacter, ComicScene, ComicSettings, Shot, Storyboard, style_negative_prompt
 from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import PlaceholderImageProvider
 from infrastructure.video_providers import (
@@ -136,6 +136,17 @@ class StoryboardTests(unittest.TestCase):
         motion = motion_prompt(scene, shot, board)
         self.assertIn("tracking", motion)
         self.assertIn("identical to the first frame", motion)
+
+    def test_xianxia_style_renders_live_action_film_frames(self) -> None:
+        board = animated_storyboard()
+        board.style = "xianxia"
+        scene, shot = board.scenes[0], board.scenes[0].shots[1]
+        keyframe = keyframe_prompt(scene, shot, board, "16:9")
+        self.assertIn("Cinematic film keyframe", keyframe)
+        self.assertNotIn("2D animation", keyframe)
+        self.assertIn("live-action shot", motion_prompt(scene, shot, board))
+        self.assertIn("anime", style_negative_prompt("xianxia", "text"))
+        self.assertEqual(style_negative_prompt("manhua", "text"), "text")
 
     def test_camera_moves_scale_with_motion_strength(self) -> None:
         gentle = camera_expressions("push_in", 100, 0.0)[0]

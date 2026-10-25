@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -36,6 +36,7 @@ from domain.plan_entitlements import (
     has_paid_features,
 )
 from infrastructure.comic_project import ComicProject
+from infrastructure.comic_series import ComicSeries, ComicSeriesStore
 from infrastructure.image_providers import image_provider_statuses
 from infrastructure.llm_providers import llm_provider_statuses
 from infrastructure.story_text import StoryTextError, normalize_story_text, read_story_upload
@@ -66,6 +67,7 @@ class ComicRouteDependencies:
     project_root: Callable[[str, str], Path]
     upload_dir: Callable[[str, str], Path]
     list_projects: Callable[..., tuple[list[dict[str, Any]], int]] | None = None
+    series_store: ComicSeriesStore | None = None
 
 
 class ScenePatch(BaseModel):
@@ -95,6 +97,12 @@ class CharacterPatch(BaseModel):
     appearance: str | None = None
     outfit: str | None = None
     voice: str | None = None
+
+
+class SeriesPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class ShotPatch(BaseModel):
@@ -174,6 +182,40 @@ def requeue_comic_job(deps: ComicRouteDependencies, request: Request, job_id: st
         raise
     deps.notify_scheduler()
     return {"job_id": job_id, "status": "queued", "render": render, "preview_shot": preview_shot}
+
+
+def settings_form(
+    # Empty: "Truyện chưa đặt tên" for a story, "Tập N" for an episode.
+    title: str = Form(""),
+    youtube_title: str = Form(""),
+    language: str = Form("vi"),
+    style: str = Form("manhua"),
+    aspect_ratio: str = Form("9:16"),
+    llm_provider: str = Form("auto"),
+    image_provider: str = Form("placeholder"),
+    narrator_voice: str = Form("female"),
+    # Empty means CIT Voice Studio when its app is running, otherwise Edge TTS.
+    tts_provider: str = Form(""),
+    cit_narrator_voice: str = Form(""),
+    cit_female_voice: str = Form(""),
+    cit_male_voice: str = Form(""),
+    speech_rate: float = Form(1.0),
+    target_scene_duration: float = Form(7.0),
+    max_scenes: int = Form(40),
+    burn_subtitles: str = Form("true"),
+    music_volume: float = Form(0.15),
+    seed: int = Form(0),
+    auto_render: str = Form("true"),
+    video_mode: str = Form("comic"),
+    animation_provider: str = Form("camera_2_5d"),
+    quality: str = Form("final"),
+    fps: int = Form(30),
+    motion_strength: float = Form(0.45),
+    max_animation_attempts: int = Form(2),
+    animation_budget_seconds: float = Form(240.0),
+) -> dict[str, Any]:
+    """Creation-form fields shared by standalone projects and series."""
+    return dict(locals())
 
 
 def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
@@ -333,74 +375,49 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             "max_story_chars": MAX_STORY_CHARS,
         })
 
-    @router.post("/projects", status_code=202)
-    async def create_project(
-        request: Request,
-        title: str = Form("Truyện chưa đặt tên"),
-        youtube_title: str = Form(""),
-        text: str = Form(""),
-        file: UploadFile | None = File(default=None),
-        background_music: UploadFile | None = File(default=None),
-        language: str = Form("vi"),
-        style: str = Form("manhua"),
-        aspect_ratio: str = Form("9:16"),
-        llm_provider: str = Form("auto"),
-        image_provider: str = Form("placeholder"),
-        narrator_voice: str = Form("female"),
-        # Empty means CIT Voice Studio when its app is running, otherwise Edge TTS.
-        tts_provider: str = Form(""),
-        cit_narrator_voice: str = Form(""),
-        cit_female_voice: str = Form(""),
-        cit_male_voice: str = Form(""),
-        speech_rate: float = Form(1.0),
-        target_scene_duration: float = Form(7.0),
-        max_scenes: int = Form(40),
-        burn_subtitles: str = Form("true"),
-        music_volume: float = Form(0.15),
-        seed: int = Form(0),
-        auto_render: str = Form("true"),
-        video_mode: str = Form("comic"),
-        animation_provider: str = Form("camera_2_5d"),
-        quality: str = Form("final"),
-        fps: int = Form(30),
-        motion_strength: float = Form(0.45),
-        max_animation_attempts: int = Form(2),
-        animation_budget_seconds: float = Form(240.0),
-    ) -> JSONResponse:
-        account = deps.current_account(request)
-        owner = str(account["user_id"])
+    def build_settings(account: dict[str, Any], fields: dict[str, Any]) -> ComicSettings:
+        """Validate the creation form into settings the account may use with configured providers."""
+        llm_provider = fields["llm_provider"]
         if llm_provider == "auto" and not has_paid_features(account):
             # "Auto" prefers Gemini; free plans fall back to the next engine in its chain.
             qwen3 = next((s for s in llm_provider_statuses() if s["key"] == "qwen3"), None)
             llm_provider = "qwen3" if qwen3 and qwen3["configured"] else "heuristic"
-        tts_provider = tts_provider.strip() or default_tts_provider()
+        tts_provider = fields["tts_provider"].strip() or default_tts_provider()
+        narrator_voice = fields["narrator_voice"]
         tts_voices: dict[str, str] = {}
         if tts_provider == "cit":
             try:
                 ensure_provider_configured("cit")
-                tts_voices = resolve_tts_voice_selection("cit", cit_female_voice, cit_male_voice)
+                tts_voices = resolve_tts_voice_selection("cit", fields["cit_female_voice"], fields["cit_male_voice"])
                 narrator_gender = "male" if narrator_voice == "male" else "female"
                 narrator = resolve_tts_voice_selection(
-                    "cit", *((cit_narrator_voice, "") if narrator_gender == "female" else ("", cit_narrator_voice))
+                    "cit", *((fields["cit_narrator_voice"], "") if narrator_gender == "female"
+                             else ("", fields["cit_narrator_voice"]))
                 )
                 tts_voices["narrator"] = narrator.get(narrator_gender, "")
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
         try:
             settings = ComicSettings(
-                title=title.strip() or "Truyện chưa đặt tên", youtube_title=youtube_title.strip(),
-                language=language, style=style,
-                aspect_ratio=aspect_ratio, llm_provider=llm_provider, image_provider=image_provider,
+                title=fields["title"].strip() or "Truyện chưa đặt tên", youtube_title=fields["youtube_title"].strip(),
+                language=fields["language"], style=fields["style"],
+                aspect_ratio=fields["aspect_ratio"], llm_provider=llm_provider,
+                image_provider=fields["image_provider"],
                 narrator_voice=narrator_voice, tts_provider=tts_provider, tts_voices=tts_voices,
-                speech_rate=speech_rate,
-                target_scene_duration=target_scene_duration, max_scenes=max_scenes,
-                burn_subtitles=form_flag(burn_subtitles), music_volume=music_volume, seed=seed,
-                auto_render=form_flag(auto_render), video_mode=video_mode, animation_provider=animation_provider,
-                quality=quality, fps=fps, motion_strength=motion_strength,
-                max_animation_attempts=max_animation_attempts, animation_budget_seconds=animation_budget_seconds,
+                speech_rate=fields["speech_rate"],
+                target_scene_duration=fields["target_scene_duration"], max_scenes=fields["max_scenes"],
+                burn_subtitles=form_flag(fields["burn_subtitles"]), music_volume=fields["music_volume"],
+                seed=fields["seed"], auto_render=form_flag(fields["auto_render"]), video_mode=fields["video_mode"],
+                animation_provider=fields["animation_provider"], quality=fields["quality"], fps=fields["fps"],
+                motion_strength=fields["motion_strength"], max_animation_attempts=fields["max_animation_attempts"],
+                animation_budget_seconds=fields["animation_budget_seconds"],
             )
         except ValidationError as exc:
             raise HTTPException(400, _validation_detail(exc)) from exc
+        ensure_settings_usable(account, settings)
+        return settings
+
+    def ensure_settings_usable(account: dict[str, Any], settings: ComicSettings) -> None:
         chosen = {settings.llm_provider, settings.image_provider}
         statuses = [*llm_provider_statuses(), *image_provider_statuses()]
         if settings.video_mode == "animated":
@@ -413,6 +430,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             ensure_comic_settings_allowed(account, settings.model_dump(mode="json"))
         except PlanEntitlementError as exc:
             raise HTTPException(403, str(exc)) from exc
+
+    async def read_story_input(text: str, file: UploadFile | None, *, required: bool = True) -> str:
         try:
             if file is not None and file.filename:
                 story = read_story_upload(file.filename, await file.read(5 * 1024 * 1024 + 1))
@@ -421,21 +440,30 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         except StoryTextError as exc:
             raise HTTPException(400, str(exc)) from exc
         if not story.strip():
+            if not required:
+                return ""
             raise HTTPException(400, "Hãy nhập nội dung truyện hoặc tải file TXT/DOCX")
         if len(story) > MAX_STORY_CHARS:
             raise HTTPException(400, f"Truyện dài {len(story):,} ký tự; giới hạn mỗi dự án là {MAX_STORY_CHARS:,}")
+        return story
 
-        music_data = b""
-        music_ext = ""
-        if background_music is not None and background_music.filename:
-            music_ext = Path(background_music.filename).suffix.lower()
-            if music_ext not in MUSIC_EXTENSIONS:
-                raise HTTPException(400, "Nhạc nền phải là mp3, m4a, aac, wav hoặc ogg")
-            music_data = await background_music.read(MAX_MUSIC_UPLOAD_BYTES + 1)
-            if len(music_data) > MAX_MUSIC_UPLOAD_BYTES:
-                raise HTTPException(400, "Nhạc nền vượt quá 30 MB")
+    async def read_music(background_music: UploadFile | None) -> tuple[bytes, str]:
+        if background_music is None or not background_music.filename:
+            return b"", ""
+        music_ext = Path(background_music.filename).suffix.lower()
+        if music_ext not in MUSIC_EXTENSIONS:
+            raise HTTPException(400, "Nhạc nền phải là mp3, m4a, aac, wav hoặc ogg")
+        music_data = await background_music.read(MAX_MUSIC_UPLOAD_BYTES + 1)
+        if len(music_data) > MAX_MUSIC_UPLOAD_BYTES:
+            raise HTTPException(400, "Nhạc nền vượt quá 30 MB")
+        return music_data, music_ext
 
-        job_id = uuid.uuid4().hex[:8]
+    def queue_project(account: dict[str, Any], settings: ComicSettings, story: str,
+                      music: tuple[bytes, str], series: dict[str, Any] | None = None,
+                      job_id: str | None = None) -> str:
+        owner = str(account["user_id"])
+        music_data, music_ext = music
+        job_id = job_id or uuid.uuid4().hex[:8]
         deps.reserve_quota(job_id, account)
         try:
             project = ComicProject(deps.project_root(owner, job_id))
@@ -449,18 +477,226 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 "music_path": str(music_path) if music_path else None,
                 "render": settings.auto_render,
             }
+            if series:
+                resume_request["series"] = series
             deps.create_job(job_id, {
                 "status": "queued", "step": "queued", "progress": 0.0,
                 "job_action": COMIC_JOB_ACTION, "job_type": COMIC_JOB_ACTION,
                 "filename": settings.title, "target_language": settings.language,
-                "comic": comic_summary(settings), "resume_request": resume_request,
+                "comic": comic_summary(settings, series=series), "resume_request": resume_request,
             }, owner)
         except Exception:
             deps.release_quota(job_id)
             shutil.rmtree(deps.project_root(owner, job_id), ignore_errors=True)
             raise
         deps.notify_scheduler()
+        return job_id
+
+    def queue_episode(account: dict[str, Any], series_id: str, story: str, music: tuple[bytes, str], *,
+                      title: str, youtube_title: str, auto_render: bool) -> tuple[str, int]:
+        """Queue the next episode of a series with the series' settings and character bible."""
+        store = series_store()
+        owner = str(account["user_id"])
+        series = store.load(owner, series_id)
+        if series is None:
+            raise HTTPException(404, "Không tìm thấy truyện")
+        try:
+            settings = ComicSettings.model_validate({
+                **series.data.get("settings", {}), "title": title.strip() or "Tập mới",
+                "youtube_title": youtube_title.strip(), "auto_render": auto_render,
+            })
+        except ValidationError as exc:
+            raise HTTPException(400, _validation_detail(exc)) from exc
+        ensure_settings_usable(account, settings)
+        job_id = uuid.uuid4().hex[:8]
+        number = store.add_episode(owner, series.id, job_id)
+        if not title.strip():
+            settings.title = f"Tập {number}"
+        info = {"series_id": series.id, "series_title": series.data.get("title", ""), "episode_number": number}
+        try:
+            queue_project(account, settings, story, music, info, job_id)
+        except Exception:
+            store.remove_episode(owner, series.id, job_id)
+            raise
+        return job_id, number
+
+    @router.post("/projects", status_code=202)
+    async def create_project(
+        request: Request,
+        fields: dict[str, Any] = Depends(settings_form),
+        text: str = Form(""),
+        file: UploadFile | None = File(default=None),
+        background_music: UploadFile | None = File(default=None),
+        # Set to add the project as the next episode of that series; its settings then apply.
+        series_id: str = Form(""),
+    ) -> JSONResponse:
+        account = deps.current_account(request)
+        story = await read_story_input(text, file)
+        music = await read_music(background_music)
+        if series_id.strip():
+            job_id, number = queue_episode(account, series_id.strip(), story, music, title=fields["title"],
+                                           youtube_title=fields["youtube_title"],
+                                           auto_render=form_flag(fields["auto_render"]))
+            return JSONResponse({"job_id": job_id, "status": "queued", "story_chars": len(story),
+                                 "series_id": series_id.strip(), "episode_number": number}, status_code=202)
+        settings = build_settings(account, fields)
+        job_id = queue_project(account, settings, story, music)
         return JSONResponse({"job_id": job_id, "status": "queued", "story_chars": len(story)}, status_code=202)
+
+    # ----------------------------------------------------------------- series
+    def series_store() -> ComicSeriesStore:
+        if deps.series_store is None:
+            raise HTTPException(404, "Tính năng truyện nhiều tập chưa được bật")
+        return deps.series_store
+
+    def owned_series(request: Request, series_id: str) -> tuple[dict[str, Any], ComicSeries]:
+        account = deps.current_account(request)
+        series = series_store().load(str(account["user_id"]), series_id)
+        if series is None:
+            raise HTTPException(404, "Không tìm thấy truyện")
+        return account, series
+
+    def series_summary(series: ComicSeries) -> dict[str, Any]:
+        settings = series.data.get("settings", {})
+        return {
+            "series_id": series.id, "title": series.data.get("title", ""),
+            "description": series.data.get("description", ""),
+            "episodes": len(series.data.get("episodes", [])), "characters": len(series.data.get("characters", [])),
+            "style": settings.get("style"), "video_mode": settings.get("video_mode"),
+            "aspect_ratio": settings.get("aspect_ratio"),
+            "created_at": series.data.get("created_at"), "updated_at": series.data.get("updated_at"),
+        }
+
+    def series_payload(request: Request, series: ComicSeries) -> dict[str, Any]:
+        base = f"/api/v1/comic/series/{series.id}/media/refs"
+        episodes = []
+        for entry in series.data.get("episodes", []):
+            job = deps.job_for_request(request, str(entry["job_id"]))
+            if not is_comic_job(job):
+                continue  # Removed by retention or deleted; the series keeps its numbering.
+            episodes.append({**deps.job_response(str(entry["job_id"]), job), "episode_number": entry["number"]})
+        characters = []
+        for character in series.characters:
+            ref = series.ref_path(character.approved_reference)
+            characters.append({**character.model_dump(mode="json"),
+                               "reference_url": f"{base}/{ref.name}" if ref else None})
+        return {**series_summary(series), "settings": series.data.get("settings", {}),
+                "characters": characters, "episode_list": episodes,
+                "next_episode_number": series.next_episode_number()}
+
+    @router.post("/series", status_code=201)
+    async def create_series(
+        request: Request,
+        fields: dict[str, Any] = Depends(settings_form),
+        description: str = Form("", max_length=2000),
+        text: str = Form(""),
+        file: UploadFile | None = File(default=None),
+        background_music: UploadFile | None = File(default=None),
+        episode_title: str = Form(""),
+    ) -> JSONResponse:
+        """Create a series with the settings every episode shares; story text queues episode 1."""
+        account = deps.current_account(request)
+        store = series_store()
+        settings = build_settings(account, fields)
+        story = await read_story_input(text, file, required=False)
+        music = await read_music(background_music)
+        stored = settings.model_dump(mode="json", exclude={"title", "youtube_title", "auto_render"})
+        series = store.create(str(account["user_id"]), title=settings.title, description=description.strip(),
+                              settings=stored)
+        result: dict[str, Any] = {"series_id": series.id, "job_id": None}
+        if story:
+            result["job_id"], result["episode_number"] = queue_episode(
+                account, series.id, story, music, title=episode_title, youtube_title=settings.youtube_title,
+                auto_render=settings.auto_render)
+        return JSONResponse(result, status_code=201)
+
+    @router.get("/series")
+    def list_series(request: Request) -> JSONResponse:
+        account = deps.current_account(request)
+        items = [series_summary(s) for s in series_store().list(str(account["user_id"]))]
+        return JSONResponse({"items": items, "total": len(items)})
+
+    @router.get("/series/{series_id}")
+    def get_series(request: Request, series_id: str) -> JSONResponse:
+        _account, series = owned_series(request, series_id)
+        return JSONResponse(series_payload(request, series))
+
+    @router.patch("/series/{series_id}")
+    def patch_series(request: Request, series_id: str, patch: SeriesPatch) -> JSONResponse:
+        account, series = owned_series(request, series_id)
+        changes = patch.model_dump(exclude_none=True)
+        if changes:
+            series = series_store().update(str(account["user_id"]), series.id, lambda s: s.data.update(changes))
+        return JSONResponse(series_payload(request, series))
+
+    @router.delete("/series/{series_id}")
+    def delete_series(request: Request, series_id: str) -> JSONResponse:
+        """Delete the series record only; its episode videos stay available as standalone projects."""
+        account, series = owned_series(request, series_id)
+        series_store().delete(str(account["user_id"]), series.id)
+        return JSONResponse({"deleted": True, "series_id": series.id})
+
+    def update_series_character(request: Request, series_id: str, character_id: str,
+                                change: Callable[[ComicCharacter, ComicSeries], None]) -> dict[str, Any]:
+        account, series = owned_series(request, series_id)
+        if series.character(character_id) is None:
+            raise HTTPException(404, "Không có nhân vật này")
+
+        def apply(target: ComicSeries) -> None:
+            characters = target.characters
+            for character in characters:
+                if character.id == character_id:
+                    change(character, target)
+            target.set_characters(characters)
+
+        return series_payload(request, series_store().update(str(account["user_id"]), series.id, apply))
+
+    @router.patch("/series/{series_id}/characters/{character_id}")
+    def patch_series_character(request: Request, series_id: str, character_id: str,
+                               patch: CharacterPatch) -> JSONResponse:
+        changes = patch.model_dump(exclude_none=True)
+
+        def change(character: ComicCharacter, _series: ComicSeries) -> None:
+            try:
+                updated = ComicCharacter.model_validate({**character.model_dump(mode="json"), **changes,
+                                                         "id": character.id})
+            except ValidationError as exc:
+                raise HTTPException(422, _validation_detail(exc)) from exc
+            for key in changes:
+                setattr(character, key, getattr(updated, key))
+
+        return JSONResponse(update_series_character(request, series_id, character_id, change))
+
+    @router.post("/series/{series_id}/characters/{character_id}/reference")
+    async def upload_series_reference(request: Request, series_id: str, character_id: str,
+                                      file: UploadFile = File(...)) -> JSONResponse:
+        """Pin a reference for every episode rendered from now on (episodes keep their own uploads)."""
+        _account, series = owned_series(request, series_id)
+        data = await file.read(MAX_IMAGE_UPLOAD_BYTES + 1)
+        if series.character(character_id) is None:
+            raise HTTPException(404, "Không có nhân vật này")
+        name = read_upload_png(data, series.refs_dir, f"{character_id}-upload")
+
+        def change(character: ComicCharacter, _series: ComicSeries) -> None:
+            character.approved_reference = name
+
+        return JSONResponse(update_series_character(request, series_id, character_id, change))
+
+    @router.delete("/series/{series_id}/characters/{character_id}/reference")
+    def clear_series_reference(request: Request, series_id: str, character_id: str) -> JSONResponse:
+        def change(character: ComicCharacter, _series: ComicSeries) -> None:
+            character.approved_reference = None
+
+        return JSONResponse(update_series_character(request, series_id, character_id, change))
+
+    @router.get("/series/{series_id}/media/refs/{name}")
+    def series_media(request: Request, series_id: str, name: str) -> FileResponse:
+        _account, series = owned_series(request, series_id)
+        path = series.ref_path(name)
+        if path is None:
+            raise HTTPException(404, "Không tìm thấy tài nguyên")
+        return FileResponse(path, media_type="image/png",
+                            headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
 
     @router.get("/projects")
     def list_projects_endpoint(

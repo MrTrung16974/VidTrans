@@ -21,7 +21,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from domain.comic import COMIC_STYLES, ComicScene, ComicSettings, Shot, Storyboard
+from domain.comic import (
+    COMIC_STYLES,
+    LIVE_ACTION_STYLES,
+    ComicScene,
+    ComicSettings,
+    Shot,
+    Storyboard,
+    style_negative_prompt,
+)
 from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import ImageProvider, ImageRequest, fit_cover, save_png_atomic
 from infrastructure.video_providers import VideoGenerationError, VideoProvider, VideoRequest, animation_slot
@@ -64,7 +72,9 @@ def shot_label(scene: ComicScene, shot: Shot) -> str:
 
 def keyframe_prompt(scene: ComicScene, shot: Shot, storyboard: Storyboard, aspect_ratio: str) -> str:
     style = COMIC_STYLES.get(storyboard.style, COMIC_STYLES["anime_comic"])[1]
-    parts = [f"2D animation keyframe, {style}.", shot.keyframe_prompt.rstrip(".") + ".",
+    live_action = storyboard.style in LIVE_ACTION_STYLES
+    medium = "Cinematic film keyframe" if live_action else "2D animation keyframe"
+    parts = [f"{medium}, {style}.", shot.keyframe_prompt.rstrip(".") + ".",
              f"{SHOT_FRAMING[shot.camera.shot_type]}, {SHOT_ANGLE[shot.camera.angle]}."]
     cast = [storyboard.character(cid) for cid in shot.characters]
     described = [character_prompt(c) for c in cast if c is not None]
@@ -75,7 +85,8 @@ def keyframe_prompt(scene: ComicScene, shot: Shot, storyboard: Storyboard, aspec
         parts.append(f"Setting: {setting[:300]}.")
     if shot.emotion or scene.emotion:
         parts.append(f"Mood: {shot.emotion or scene.emotion}.")
-    parts.append(f"{aspect_ratio} composition, clean animation-ready frame, no text, no speech bubbles, no watermark.")
+    frame = "clean film frame" if live_action else "clean animation-ready frame"
+    parts.append(f"{aspect_ratio} composition, {frame}, no text, no speech bubbles, no watermark.")
     return " ".join(parts)
 
 
@@ -85,9 +96,11 @@ def motion_prompt(scene: ComicScene, shot: Shot, storyboard: Storyboard) -> str:
     energy = "very subtle, minimal motion" if strength < 0.3 else "dynamic, energetic motion" if strength > 0.7 \
         else "natural, moderate motion"
     action = shot.motion_prompt or shot.action or "subtle natural motion"
-    return (f"{style} animation. {action.rstrip('.')}. {CAMERA_MOVES[shot.camera.movement]}, {energy}. "
+    medium, smooth = (("live-action shot", "smooth natural cinematic motion") if storyboard.style in LIVE_ACTION_STYLES
+                      else ("animation", "smooth fluid animation"))
+    return (f"{style} {medium}. {action.rstrip('.')}. {CAMERA_MOVES[shot.camera.movement]}, {energy}. "
             "Keep every character's face, hair and outfit identical to the first frame; stable anatomy; "
-            "smooth fluid animation; no text, no scene cut.")
+            f"{smooth}; no text, no scene cut.")
 
 
 @dataclass
@@ -138,11 +151,12 @@ class AnimatedVideoProducer(ComicVideoProducer):
         prompt = keyframe_prompt(scene, shot, storyboard, self.settings.aspect_ratio)
         shot_refs = [refs[cid] for cid in shot.characters if cid in refs]
         seed = self._seed(shot, f"{scene.scene_index}.{shot.shot_index}") if self.settings.seed else 0
-        key = content_hash(ANIMATION_VERSION, "keyframe", self.images.cache_key, prompt, shot.negative_prompt,
+        negative = style_negative_prompt(storyboard.style, shot.negative_prompt)
+        key = content_hash(ANIMATION_VERSION, "keyframe", self.images.cache_key, prompt, negative,
                            [ref_key for _p, ref_key in shot_refs], seed, self.width, self.height)
         path = self.project.dir("keyframes") / f"{stem}-{key[:16]}.png"
         image, fallback = self._ensure_image(path, ImageRequest(
-            prompt=prompt, width=self.width, height=self.height, negative_prompt=shot.negative_prompt, seed=seed,
+            prompt=prompt, width=self.width, height=self.height, negative_prompt=negative, seed=seed,
             references=tuple(ref_path for ref_path, _k in shot_refs[:3]), aspect_ratio=self.settings.aspect_ratio,
             caption=f"Shot {shot_label(scene, shot)}", display_text=shot.narration or shot.action or shot.keyframe_prompt,
         ))
