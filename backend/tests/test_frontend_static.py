@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -96,7 +97,7 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'data-source-browser-tab="{platform}"', html)
         self.assertIn("/api/v1/source-browser/${platform}/sync", javascript)
         self.assertIn("/api/v1/source-browser/${platform}/activate", javascript)
-        self.assertIn("/js/app.js?v=20261023-", html)
+        self.assertRegex(html, r"/js/app\.js\?v=\d{8}-")
         self.assertIn('data-voice-preview="#voiceTypeSelect"', html)
         self.assertIn("/api/v1/tts-providers/${encodeURIComponent(provider)}/voices/", javascript)
         self.assertNotIn("URL.createObjectURL(await response.blob())", javascript)
@@ -166,13 +167,18 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
             Path(directory, "index.html").write_text("VidTrans", encoding="utf-8")
             app = FrontendStaticFiles(directory=directory, html=True)
             sent = []
+            done = asyncio.Event()
             async def receive():
-                return {"type": "http.request"}
+                # Newer Starlette listens for a disconnect while streaming; only hang up once the body is sent.
+                await done.wait()
+                return {"type": "http.disconnect"}
             async def send(message):
                 sent.append(message)
+                if message["type"] == "http.response.body" and not message.get("more_body"):
+                    done.set()
             await app({"type": "http", "path": "/", "root_path": "", "method": "GET", "headers": []}, receive, send)
             self.assertEqual(sent[0]["status"], 200)
-            self.assertEqual(sent[-1]["body"], b"VidTrans")
+            self.assertEqual(b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body"), b"VidTrans")
 
     async def test_vietnamese_font_stack_and_csp_prevent_glyph_fallback_mismatch(self):
         root = Path(__file__).resolve().parents[2]

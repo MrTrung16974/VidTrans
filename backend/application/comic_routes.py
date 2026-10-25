@@ -102,7 +102,7 @@ class CharacterPatch(BaseModel):
 class SeriesPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = Field(default=None, max_length=2000)
+    description: str | None = Field(default=None, max_length=20000)
 
 
 class ShotPatch(BaseModel):
@@ -588,7 +588,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
     async def create_series(
         request: Request,
         fields: dict[str, Any] = Depends(settings_form),
-        description: str = Form("", max_length=2000),
+        description: str = Form("", max_length=20000),
         text: str = Form(""),
         file: UploadFile | None = File(default=None),
         background_music: UploadFile | None = File(default=None),
@@ -763,6 +763,10 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         data = storyboard.model_dump(mode="json")
         position = min(body.after, len(data["scenes"]))
         new_scene = ComicScene(scene_index=position + 1, narration=body.narration, visual_prompt=body.visual_prompt)
+        if storyboard.mode == "animated":
+            # Animated scenes need at least one shot; start with one covering the whole scene.
+            new_scene.shots = [Shot(shot_index=1, keyframe_prompt=body.visual_prompt, narration=body.narration,
+                                    motion_prompt="subtle natural motion, smooth camera")]
         data["scenes"].insert(position, new_scene.model_dump(mode="json"))
         save(project, data)
         return JSONResponse(project_payload(job_id, job, project, request, focus_scene=position + 1))

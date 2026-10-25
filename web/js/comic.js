@@ -14,7 +14,8 @@ const MOTION_LABELS = {
   slow_zoom_in: "Zoom vào chậm", slow_zoom_out: "Zoom ra chậm", pan_left: "Lia sang trái", pan_right: "Lia sang phải",
   pan_up: "Lia lên", pan_down: "Lia xuống", static: "Đứng yên",
 };
-const POLL_MS = 2500;
+const LIVE_REFRESH_MS = 800;
+const COMIC_JOB_ACTION = "comic_video";
 // #comic/new shows the "new story" form, #comic/s/<series id> one story and its episodes, #comic/<job id>
 // one episode's editor; all go through the hash so the browser's Back button moves between them.
 const NEW_ROUTE = "#comic/new";
@@ -38,7 +39,6 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   try {
     if (localStorage.getItem("vidtrans_comic_sidebar_tab") === "videos") sidebarTab = "videos";
   } catch (_) {}
-  let pollTimer = null;
   let entered = false;
   let projectPage = 1;
   let projectPageSize = 6;
@@ -214,7 +214,6 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     current = null;
     if (location.hash !== seriesRoute(seriesId)) history.replaceState(null, "", seriesRoute(seriesId));
     render();
-    schedulePoll();
     refreshLists();
     if (reveal && narrowLayout()) seriesView.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -227,7 +226,6 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     // A shareable link straight to this project.
     if (location.hash !== projectRoute(jobId)) history.replaceState(null, "", projectRoute(jobId));
     render();
-    schedulePoll();
     refreshLists();
     // On one-column layouts the project opens below the list; bring it into view.
     if (reveal && narrowLayout()) editor.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -237,42 +235,81 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   function showNew() {
     current = null;
     currentSeries = null;
-    clearTimeout(pollTimer);
     render();
     refreshLists();
     if (narrowLayout()) form.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function schedulePoll() {
-    clearTimeout(pollTimer);
-    if (entered && !current && currentSeries && seriesActive()) {
-      pollTimer = setTimeout(async () => {
-        try {
-          currentSeries = await api(`/series/${encodeURIComponent(currentSeries.series_id)}`);
-          render();
-          if (!seriesActive()) {
-            refreshLists();
-            toast("Các tập truyện đã xử lý xong");
-          }
-        } catch (_) { /* Keep polling through transient errors. */ }
-        schedulePoll();
-      }, POLL_MS);
+  // Live progress arrives over the shared job WebSocket (app.js forwards each message
+  // here); the open project or story is reloaded only when one of its own jobs changed.
+  let liveTimer = null;
+  let liveLists = false;
+
+  function watchedJobs() {
+    if (current) return [current.job];
+    return currentSeries?.episode_list || [];
+  }
+
+  function onJobChanges(message) {
+    if (!entered) return;
+    if (message.resync) {
+      scheduleLiveRefresh({ project: true, lists: true });
       return;
     }
-    if (!entered || !current || !isActive(current.job)) return;
-    pollTimer = setTimeout(async () => {
-      try {
+    const watched = new Map(watchedJobs().map(job => [job.job_id, job]));
+    let project = false;
+    let lists = false;
+    for (const item of message.items || []) {
+      const known = watched.get(item.job_id);
+      if (known && (isActive(item) || item.status !== known.status)) project = true;
+      // A comic job finished or appeared: the sidebar counts and statuses may have changed.
+      if (item.job_action === COMIC_JOB_ACTION && (!isActive(item) || !known)) lists = true;
+      // A new episode of the open story starts after the story was loaded.
+      if (!known && currentSeries && item.comic?.series_id === currentSeries.series_id) project = true;
+    }
+    if (project || lists) scheduleLiveRefresh({ project, lists });
+  }
+
+  function scheduleLiveRefresh({ project = true, lists = false } = {}) {
+    liveLists ||= lists;
+    if (!project && !liveLists) return;
+    if (liveTimer) return;
+    // Coalesce bursts of progress messages into one reload.
+    liveTimer = setTimeout(() => refreshLive(project), LIVE_REFRESH_MS);
+  }
+
+  async function refreshLive(project = true) {
+    liveTimer = null;
+    let lists = liveLists;
+    liveLists = false;
+    if (!entered) return;
+    try {
+      if (project && current) {
+        const jobId = current.job.job_id;
         const wasActive = isActive(current.job);
-        current = await api(withSceneQuery(`/projects/${encodeURIComponent(current.job.job_id)}`));
+        const next = await api(withSceneQuery(`/projects/${encodeURIComponent(jobId)}`));
+        if (current?.job?.job_id !== jobId) return;  // The user opened something else meanwhile.
+        current = next;
         if (current?.scenes_pagination?.page) scenePage = current.scenes_pagination.page;
         render();
         if (wasActive && !isActive(current.job)) {
-          refreshLists();
+          lists = true;
           toast(current.job.status === "failed" ? "Dự án truyện gặp lỗi" : "Dự án truyện đã xử lý xong", current.job.status === "failed");
         }
-      } catch (_) { /* Keep polling through transient errors. */ }
-      schedulePoll();
-    }, POLL_MS);
+      } else if (project && currentSeries) {
+        const seriesId = currentSeries.series_id;
+        const wasActive = seriesActive();
+        const next = await api(`/series/${encodeURIComponent(seriesId)}`);
+        if (current || currentSeries?.series_id !== seriesId) return;
+        currentSeries = next;
+        render();
+        if (wasActive && !seriesActive()) {
+          lists = true;
+          toast("Các tập truyện đã xử lý xong");
+        }
+      }
+    } catch (_) { /* The next change or the fallback poll retries. */ }
+    if (lists) refreshLists();
   }
 
   function render() {
@@ -910,7 +947,6 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         } else {
           render();
           refreshLists();
-          schedulePoll();
         }
         return;
       }
@@ -924,13 +960,16 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         // Plain #comic (the nav link) keeps the last opened story or episode, or shows the form.
         render();
         refreshLists();
-        if (current || currentSeries) schedulePoll();
       }
     },
     leave() {
       entered = false;
-      clearTimeout(pollTimer);
+      clearTimeout(liveTimer);
+      liveTimer = null;
     },
+    onJobChanges,
+    // Reload what is on screen; used when the job socket reconnects or falls back to polling.
+    refreshLive: () => scheduleLiveRefresh({ project: watchedJobs().some(isActive), lists: true }),
     isVisible: () => !view.classList.contains("is-hidden"),
   };
 }

@@ -81,7 +81,7 @@ class ApiTenantIsolationTests(unittest.TestCase):
             (self.admin, {"job-a", "job-b"}),
         ):
             payload = response_json(main.list_jobs_endpoint(
-                request_for(identity), status=None, batch_id=None, search=None, limit=50, offset=0
+                request_for(identity), status=None, batch_id=None, search=None, job_action=None, page=None, limit=50, offset=0
             ))
             self.assertEqual({item["job_id"] for item in payload["items"]}, expected_jobs)
             self.assertTrue(all(item.get("owner_user_id") for item in payload["items"]))

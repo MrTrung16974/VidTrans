@@ -2,7 +2,7 @@ import { createTikTokWorkspace } from "./tiktok.js?v=20261025-youtube-title-vi";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261024-system-ws";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
-import { createComicWorkspace } from "./comic.js?v=20261025-comic-series";
+import { createComicWorkspace } from "./comic.js?v=20261025-comic-live";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -204,8 +204,27 @@ async function requestJson(url, options = {}) {
   const response = await apiFetch(url, options);
   const payload = await response.json().catch(() => ({}));
   if (response.status === 401 && !url.startsWith("/api/v1/auth/")) lockApplication();
-  if (!response.ok) throw new Error(payload.detail || "Yêu cầu thất bại");
+  if (!response.ok) throw new Error(errorDetail(payload.detail) || "Yêu cầu thất bại");
   return payload;
+}
+
+const FIELD_LABELS = {
+  title: "Tên truyện", description: "Giới thiệu", text: "Nội dung truyện", episode_title: "Tên tập",
+  narration: "Lời kể", visual_prompt: "Prompt hình ảnh", appearance: "Ngoại hình", name: "Tên",
+};
+
+// FastAPI validation errors arrive as a list of {loc, msg, type, ctx}; turn them into readable Vietnamese.
+function errorDetail(detail) {
+  if (!Array.isArray(detail)) return typeof detail === "string" ? detail : "";
+  return detail.map(item => {
+    const field = [...(item.loc || [])].reverse().find(part => typeof part === "string" && !["body", "query", "path"].includes(part));
+    const label = FIELD_LABELS[field] || field || "Dữ liệu";
+    const ctx = item.ctx || {};
+    if (item.type === "string_too_long") return `${label}: tối đa ${ctx.max_length} ký tự`;
+    if (item.type === "string_too_short") return `${label}: cần ít nhất ${ctx.min_length} ký tự`;
+    if (item.type === "missing") return `${label}: bắt buộc nhập`;
+    return `${label}: ${item.msg}`;
+  }).join("; ");
 }
 
 async function refreshApplicationAuth() {
@@ -1759,7 +1778,7 @@ function uploadBatch(formData, { onProgress, onRequest } = {}) {
       if (request.status >= 200 && request.status < 300) resolve(payload);
       else {
         if (request.status === 401) lockApplication();
-        reject(new Error(payload.detail || "Không thể tạo batch"));
+        reject(new Error(errorDetail(payload.detail) || "Không thể tạo batch"));
       }
     });
     request.addEventListener("error", () => reject(new Error("Mất kết nối khi tải video")));
@@ -2158,13 +2177,20 @@ function scheduleJobsReload() {
 
 const jobEvents = createJobEvents({
   isActive: () => state.appStarted,
-  poll: () => loadJobs(),
-  onReconnected: () => loadJobs(),
+  poll: () => {
+    loadJobs();
+    comicWorkspace.refreshLive();
+  },
+  onReconnected: () => {
+    loadJobs();
+    comicWorkspace.refreshLive();
+  },
   onChanges(message) {
     const { jobs, reload } = applyJobChanges(state.jobs, message, { statusFilter: $("#statusFilter").value });
     state.jobs = jobs;
     scheduleJobRender();
     if (reload) scheduleJobsReload();
+    comicWorkspace.onJobChanges(message);
   },
 });
 
@@ -2228,7 +2254,7 @@ async function jobAction(action, jobId) {
     const response = await apiFetch(endpoint, { method });
     if (response.status === 401) lockApplication();
     const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || `Không thể ${action} job`);
+    if (!response.ok) throw new Error(errorDetail(data.detail) || `Không thể ${action} job`);
     toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "cancel" ? (data.status === "cancelling" ? "Đang dừng job an toàn…" : "Đã hủy job") : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
     await loadJobs();
   } catch (error) { toast(error.message, true); }
@@ -2246,7 +2272,7 @@ async function bulkJobAction(action) {
       const response = await apiFetch(endpoint, { method });
       if (response.status === 401) lockApplication();
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.detail || "Thao tác thất bại");
+      if (!response.ok) throw new Error(errorDetail(payload.detail) || "Thao tác thất bại");
       return { ok: true, jobId: job.job_id };
     } catch (error) {
       return { ok: false, jobId: job.job_id, error };
