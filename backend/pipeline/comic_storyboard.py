@@ -174,6 +174,26 @@ def heuristic_scenes(chunk: str, settings: ComicSettings, start_index: int = 1) 
     return scenes
 
 
+def translate_heuristic_visuals(scenes: list[ComicScene], translator) -> bool:
+    """Convert fallback narration into English prompts without external APIs."""
+    if translator is None or not scenes:
+        return False
+    sources = [scene.narration.replace("\n", " ").strip()[:1400] for scene in scenes]
+    try:
+        translated = translator.translate_lines(sources)
+        if len(translated) != len(scenes) or not all(str(value).strip() for value in translated):
+            return False
+    except Exception as exc:
+        logger.warning("Could not translate local visual prompts (%s: %s)", type(exc).__name__, str(exc)[:160])
+        return False
+    for scene, english in zip(scenes, translated):
+        scene.visual_prompt = (
+            "Depict this exact story event, including the described people, action and setting: "
+            + str(english).strip()
+        )
+    return True
+
+
 def _comparable(text: str) -> str:
     text = unicodedata.normalize("NFC", text).casefold()
     return re.sub(r"[\W_]+", " ", text).strip()
@@ -203,6 +223,7 @@ def build_storyboard(
     progress: Callable[[int, int], None] = lambda done, total: None,
     check_active: Callable[[], None] = lambda: None,
     known_characters: list[ComicCharacter] = (),
+    prompt_translator=None,
 ) -> Storyboard:
     """``known_characters`` (a series' character bible) seed the registry, so the LLM reuses their
     ids and looks and an episode never redraws a character introduced earlier in the story."""
@@ -238,6 +259,8 @@ def build_storyboard(
             else:
                 draft_scenes = heuristic_scenes(chunk, settings, len(scenes) + 1)
             methods.add("heuristic")
+            if translate_heuristic_visuals(draft_scenes, prompt_translator):
+                methods.add("visual-en-local")
         scenes.extend(draft_scenes)
         progress(position, len(chunks))
 

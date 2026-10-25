@@ -176,6 +176,20 @@ class StoryboardTests(unittest.TestCase):
         self.assertGreater(len(board.scenes), 40)
         self.assertNotIn("chỉ giữ", " ".join(board.warnings))
 
+    def test_heuristic_visual_prompt_is_translated_for_image_model(self) -> None:
+        class Translator:
+            def translate_lines(self, lines):
+                self.lines = lines
+                return ["In the afternoon, Doan Than drinks tea with a male friend in a tea room."]
+
+        translator = Translator()
+        board = build_storyboard(
+            "Buổi chiều Doãn Thần uống trà cùng một người bạn trong phòng trà.",
+            self.settings(llm_provider="heuristic"), None, prompt_translator=translator,
+        )
+        self.assertIn("drinks tea", board.scenes[0].visual_prompt)
+        self.assertIn("visual-en-local", board.analysis_method)
+
     def test_extract_json_ignores_thinking_and_fences(self) -> None:
         self.assertEqual(extract_json('<think>hmm {"a": 0}</think> ```json\n{"a": 1}\n```'), {"a": 1})
 

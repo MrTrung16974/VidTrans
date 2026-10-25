@@ -992,6 +992,13 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             locate_shot(project.load_storyboard(), scene_index, shot_index)
         if body.reanalyze:
             project.reset_storyboard()
+            # Clear the old UI's implicit 40-scene cap while rebuilding legacy projects.
+            resume = dict(job.get("resume_request") or {})
+            settings_data = dict(resume.get("settings") or {})
+            if settings_data.get("max_scenes") == 40:
+                settings_data["max_scenes"] = None
+                resume["settings"] = settings_data
+                job = {**job, "resume_request": resume}
         return JSONResponse(requeue_comic_job(deps, request, job_id, job, render=not body.images_only,
                                               preview_shot=body.shot, idempotency_key=idempotency_key),
                             status_code=202)

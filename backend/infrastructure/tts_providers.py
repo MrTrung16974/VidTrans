@@ -50,6 +50,8 @@ CIT_STATUS_TTL_SECONDS = 15.0
 CIT_VOICES_TIMEOUT_SECONDS = 5
 CIT_STALE_SECONDS = 120.0
 CIT_GENERATE_TIMEOUT_SECONDS = 600
+CIT_GENERATE_ATTEMPTS = 2
+CIT_RETRY_BASE_SECONDS = 0.5
 _cit_cache: dict[str, tuple[float, object]] = {}
 _cit_cache_lock = threading.Lock()
 _cit_semaphore: threading.BoundedSemaphore | None = None
@@ -581,24 +583,40 @@ def synthesize_cit(
         "text": text,
         "voice_id": voice_id,
         "speed": round(max(CIT_SPEED_RANGE[0], min(CIT_SPEED_RANGE[1], speed)), 3),
+        # Be explicit: CIT otherwise derives the format from UI state in some releases.
+        # Every downstream VidTrans step accepts WAV and the cue files use a .wav suffix.
+        "format": "wav",
         # VieNeu ignores it; the optional Supertonic model needs a bare ISO code.
         "language": (language or "vi").split("-")[0].lower(),
     }
-    request = _cit_request("/api/tts/generate", payload)
     # The model runs on the server's CPU: parallel cues would only thrash it.
     with _cit_slot():
-        try:
-            with urlopen(request, timeout=CIT_GENERATE_TIMEOUT_SECONDS) as response:
-                audio = response.read()
-                content_type = response.headers.get_content_type() or ""
-        except HTTPError as exc:
-            detail = exc.read(400).decode("utf-8", errors="replace")
-            raise TTSProviderHTTPError("CIT Voice Studio", exc.code, detail) from exc
-        except (URLError, OSError) as exc:
-            with _cit_cache_lock:
-                _cit_cache.clear()
-            reason = getattr(exc, "reason", exc)
-            raise TTSProviderUnavailable(f"Không kết nối được CIT Voice Studio: {reason}") from exc
+        for attempt in range(1, CIT_GENERATE_ATTEMPTS + 1):
+            # Request objects are rebuilt because urllib requests with a body are not
+            # guaranteed to be reusable after an HTTPError.
+            request = _cit_request("/api/tts/generate", payload)
+            try:
+                with urlopen(request, timeout=CIT_GENERATE_TIMEOUT_SECONDS) as response:
+                    audio = response.read()
+                    content_type = response.headers.get_content_type() or ""
+                break
+            except HTTPError as exc:
+                detail = exc.read(400).decode("utf-8", errors="replace")
+                # CIT can briefly answer 500 while its local model is loading or being
+                # switched. Retry once; validation/authentication failures must surface
+                # immediately so a bad request is never repeated.
+                if exc.code < 500 or attempt == CIT_GENERATE_ATTEMPTS:
+                    raise TTSProviderHTTPError("CIT Voice Studio", exc.code, detail) from exc
+                logger.warning(
+                    "CIT Voice Studio generation failed with HTTP %s; retrying once",
+                    exc.code,
+                )
+                time.sleep(CIT_RETRY_BASE_SECONDS)
+            except (URLError, OSError) as exc:
+                with _cit_cache_lock:
+                    _cit_cache.clear()
+                reason = getattr(exc, "reason", exc)
+                raise TTSProviderUnavailable(f"Không kết nối được CIT Voice Studio: {reason}") from exc
     if not audio or content_type.startswith(("application/json", "text/")):
         raise RuntimeError("CIT Voice Studio không trả về dữ liệu âm thanh")
     output_path.write_bytes(audio)

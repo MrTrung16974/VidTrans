@@ -122,7 +122,10 @@ class CITVoiceStudioProviderTest(unittest.TestCase):
             synthesize_cit("Xin chào", output, voice_key="Minh Đức", speed=2.0, language="zh-CN")
         request = calls[-1]
         payload = json.loads(request.data)
-        self.assertEqual(payload, {"text": "Xin chào", "voice_id": "Minh Đức", "speed": 1.5, "language": "zh"})
+        self.assertEqual(
+            payload,
+            {"text": "Xin chào", "voice_id": "Minh Đức", "speed": 1.5, "format": "wav", "language": "zh"},
+        )
         self.assertEqual(request.get_header("X-api-key"), "lan-key")
         self.assertEqual(output.read_bytes(), b"RIFF0000WAVE")
 
@@ -148,6 +151,52 @@ class CITVoiceStudioProviderTest(unittest.TestCase):
                 synthesize_cit("Chào", Path(self.temp.name) / "a.wav", voice_key="Minh Đức")
         self.assertEqual(raised.exception.status, 401)
         self.assertIsNotNone(tts_account_blocked(raised.exception))
+
+    @patch.dict(os.environ, CIT_ENV, clear=True)
+    def test_transient_server_error_is_retried_once(self) -> None:
+        error = HTTPError(
+            "http://cit.local/api/tts/generate",
+            500,
+            "server error",
+            {"Content-Type": "application/json"},
+            BytesIO('{"detail":"Không tạo được dữ liệu âm thanh"}'.encode()),
+        )
+        opener, calls = fake_cit()
+        attempts = [error]
+
+        def flaky_open(request, timeout=None):
+            if attempts:
+                raise attempts.pop()
+            return opener(request, timeout)
+
+        output = Path(self.temp.name) / "retry.wav"
+        with patch("infrastructure.tts_providers.time.sleep") as sleep, \
+                patch("infrastructure.tts_providers.urlopen", side_effect=flaky_open):
+            synthesize_cit("Chào", output, voice_key="Minh Đức")
+
+        sleep.assert_called_once_with(tts_providers.CIT_RETRY_BASE_SECONDS)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(output.read_bytes(), b"RIFF0000WAVE")
+
+    @patch.dict(os.environ, CIT_ENV, clear=True)
+    def test_persistent_server_error_is_reported_after_one_retry(self) -> None:
+        def server_error(*args, **kwargs):
+            return HTTPError(
+                "http://cit.local/api/tts/generate",
+                500,
+                "server error",
+                {"Content-Type": "application/json"},
+                BytesIO('{"detail":"Không tạo được dữ liệu âm thanh"}'.encode()),
+            )
+
+        with patch("infrastructure.tts_providers.time.sleep"), \
+                patch("infrastructure.tts_providers.urlopen", side_effect=server_error()) as opened:
+            with self.assertRaises(TTSProviderHTTPError) as raised:
+                synthesize_cit("Chào", Path(self.temp.name) / "failed.wav", voice_key="Minh Đức")
+
+        self.assertEqual(opened.call_count, 2)
+        self.assertEqual(raised.exception.status, 500)
+        self.assertIn("Không tạo được dữ liệu âm thanh", raised.exception.detail)
 
     @patch.dict(os.environ, CIT_ENV, clear=True)
     def test_json_body_is_not_saved_as_audio(self) -> None:
