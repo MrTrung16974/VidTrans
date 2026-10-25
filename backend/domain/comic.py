@@ -224,6 +224,7 @@ class ComicScene(_Model):
 class StoryboardDraft(_Model):
     """What the LLM returns for one chunk of the story."""
 
+    youtube_title: str = Field(default="", max_length=100)
     characters: list[ComicCharacter] = Field(default_factory=list, max_length=30)
     scenes: list[ComicScene] = Field(min_length=1, max_length=120)
 
@@ -232,6 +233,7 @@ class Storyboard(_Model):
     schema_version: int = STORYBOARD_SCHEMA_VERSION
     revision: int = Field(default=1, ge=1)
     title: str = Field(default="", max_length=200)
+    youtube_title: str = Field(default="", max_length=100)
     language: str = "vi"
     style: str = "manhua"
     mode: Literal["comic", "animated"] = "comic"
@@ -276,6 +278,7 @@ class Storyboard(_Model):
 
 class ComicSettings(_Model):
     title: str = Field(default="Truyện chưa đặt tên", min_length=1, max_length=200)
+    youtube_title: str = Field(default="", max_length=100)
     language: str = "vi"
     style: str = "manhua"
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"

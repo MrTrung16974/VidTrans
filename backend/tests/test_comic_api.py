@@ -85,6 +85,8 @@ class ComicApiTests(unittest.TestCase):
 
         payload = self.project(job_id).json()
         board = payload["storyboard"]
+        self.assertEqual(board["youtube_title"], "Rừng đêm")
+        self.assertEqual(job["comic"]["youtube_title"], "Rừng đêm")
         self.assertGreaterEqual(len(board["scenes"]), 2)
         image_url = payload["media"]["scenes"]["1"]
         image = self.client.get(image_url)

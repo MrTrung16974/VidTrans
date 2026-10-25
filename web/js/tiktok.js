@@ -198,6 +198,7 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
       $('#tiktokVideoPreview').src = data.video_url;
       $('#tiktokDraftName').textContent = data.filename;
       $('#tiktokCaption').value = edits.get(jobId) ?? data.caption;
+      $('#youtubeTitle').value = data.youtube_title || data.filename || '';
       $('#tiktokDraftEmpty').classList.add('is-hidden');
       $('#tiktokDraftEditor').classList.remove('is-hidden');
       // Warn only when an earlier, finished attempt actually handed the file to TikTok;

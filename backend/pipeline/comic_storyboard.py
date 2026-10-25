@@ -46,6 +46,7 @@ _HEURISTIC_MOTIONS = ("slow_zoom_in", "pan_right", "slow_zoom_out", "pan_left", 
 DRAFT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "youtube_title": {"type": "string"},
         "characters": {"type": "array", "items": {"type": "object", "properties": {
             "id": {"type": "string"}, "name": {"type": "string"},
             "gender": {"type": "string", "enum": ["female", "male", "unknown"]},
@@ -71,10 +72,13 @@ def system_prompt(settings: ComicSettings) -> str:
     max_chars = int(settings.target_scene_duration * CHARS_PER_SECOND * 1.3)
     return f"""You are a storyboard director turning prose into a narrated comic video.
 Answer with ONE JSON object only, no markdown:
-{{"characters": [{{"id", "name", "gender": "female|male|unknown", "age", "appearance", "outfit"}}],
+{{"youtube_title": "Vietnamese YouTube video title", "characters": [{{"id", "name", "gender": "female|male|unknown", "age", "appearance", "outfit"}}],
  "scenes": [{{"narration", "dialogue": [{{"character": "<character id>", "text"}}], "characters": ["<id>"],
    "location", "emotion", "visual_prompt", "negative_prompt", "camera_motion", "estimated_duration", "source_excerpt"}}]}}
 Rules:
+0. "youtube_title" is a natural, attractive Vietnamese title summarizing this story for YouTube. Keep it under 100
+   characters, preserve character names, use no hashtags and no clickbait claims. Return it for the first chunk;
+   later chunks may return an empty string.
 1. Cover the story chunk in order. Never skip, reorder or invent events, names or outcomes.
 2. Separate narration from dialogue. "narration" keeps the author's wording in {language} (you may drop filler);
    spoken lines go to "dialogue" in {language}, attributed to the speaker's character id. Use "narrator" never.
@@ -206,12 +210,15 @@ def build_storyboard(
     scenes: list[ComicScene] = []
     warnings: list[str] = []
     methods: set[str] = set()
+    generated_youtube_title = ""
     for position, chunk in enumerate(chunks, 1):
         check_active()
         draft_scenes: list[ComicScene] | None = None
         if llm is not None:
             try:
                 draft = analyze_chunk(llm, settings, chunk, list(registry.values()), position, len(chunks))
+                if not generated_youtube_title and draft.youtube_title.strip():
+                    generated_youtube_title = draft.youtube_title.strip()[:100]
                 _merge_characters(registry, draft)
                 draft_scenes = draft.scenes
                 methods.add(llm.name)
@@ -249,6 +256,7 @@ def build_storyboard(
     characters = [c for c in registry.values() if c.id in used]
     return Storyboard(
         title=settings.title,
+        youtube_title=(settings.youtube_title.strip() or generated_youtube_title or settings.title)[:100],
         language=settings.language,
         style=settings.style,
         mode=settings.video_mode,

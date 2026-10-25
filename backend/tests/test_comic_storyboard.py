@@ -99,6 +99,17 @@ class StoryboardTests(unittest.TestCase):
         self.assertEqual(joined.split(), " ".join(split_sentences(STORY)).split())
         self.assertGreater(len(board.scenes), 1)
         self.assertEqual(board.analysis_method, "heuristic")
+        self.assertEqual(board.youtube_title, "T")
+
+    def test_llm_generates_vietnamese_youtube_title_unless_user_supplies_one(self) -> None:
+        answer = {"youtube_title": "Bí Ẩn Trong Khu Rừng Đêm", "characters": [MINH], "scenes": [scene()]}
+        generated = build_storyboard(STORY, self.settings(), FakeLLM([answer]))
+        supplied = build_storyboard(
+            STORY, self.settings(youtube_title="Minh Gặp Nữ Tu Bí Ẩn"), FakeLLM([answer]),
+        )
+
+        self.assertEqual(generated.youtube_title, "Bí Ẩn Trong Khu Rừng Đêm")
+        self.assertEqual(supplied.youtube_title, "Minh Gặp Nữ Tu Bí Ẩn")
 
     def test_llm_answer_is_validated_and_repaired(self) -> None:
         invalid = {"characters": [MINH], "scenes": [{"narration": "", "visual_prompt": "x"}]}

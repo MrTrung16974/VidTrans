@@ -337,6 +337,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
     async def create_project(
         request: Request,
         title: str = Form("Truyện chưa đặt tên"),
+        youtube_title: str = Form(""),
         text: str = Form(""),
         file: UploadFile | None = File(default=None),
         background_music: UploadFile | None = File(default=None),
@@ -387,7 +388,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 raise HTTPException(400, str(exc)) from exc
         try:
             settings = ComicSettings(
-                title=title.strip() or "Truyện chưa đặt tên", language=language, style=style,
+                title=title.strip() or "Truyện chưa đặt tên", youtube_title=youtube_title.strip(),
+                language=language, style=style,
                 aspect_ratio=aspect_ratio, llm_provider=llm_provider, image_provider=image_provider,
                 narrator_voice=narrator_voice, tts_provider=tts_provider, tts_voices=tts_voices,
                 speech_rate=speech_rate,

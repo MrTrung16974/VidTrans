@@ -11,18 +11,21 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import os
 import textwrap
 import time
 import urllib.error
 import urllib.request
 import urllib.parse
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+logger = logging.getLogger(__name__)
 
 
 class ImageGenerationError(RuntimeError):
@@ -137,12 +140,14 @@ class PlaceholderImageProvider:
 class ComfyUIImageProvider:
     """Generate images through ComfyUI's built-in HTTP API.
 
-    The bundled workflow deliberately uses only core ComfyUI nodes so it works
-    with ordinary checkpoint models without installing custom nodes.
+    The base workflow uses core nodes. When reference images are supplied it
+    applies the first one through the pinned official IP-Adapter custom node.
+    A plain-checkpoint retry keeps renders working if IP-Adapter is unavailable
+    or the local GPU cannot fit it in VRAM.
     """
 
     key = "comfyui"
-    supports_references = False
+    supports_references = True
     timeout: float = 300.0
     poll_interval: float = 1.0
     opener: Callable[..., Any] | None = None
@@ -154,6 +159,15 @@ class ComfyUIImageProvider:
     sampler: str = field(default_factory=lambda: os.environ.get("VIDTRANS_COMFYUI_SAMPLER", "euler").strip())
     scheduler: str = field(default_factory=lambda: os.environ.get("VIDTRANS_COMFYUI_SCHEDULER", "normal").strip())
     max_side: int = field(default_factory=lambda: int(os.environ.get("VIDTRANS_COMFYUI_MAX_SIDE", "1024")))
+    ipadapter_enabled: bool = field(default_factory=lambda: os.environ.get(
+        "VIDTRANS_COMFYUI_IPADAPTER_ENABLED", "true"
+    ).strip().lower() not in {"0", "false", "no", "off"})
+    ipadapter_preset: str = field(default_factory=lambda: os.environ.get(
+        "VIDTRANS_COMFYUI_IPADAPTER_PRESET", "STANDARD (medium strength)"
+    ).strip())
+    ipadapter_weight: float = field(default_factory=lambda: float(os.environ.get(
+        "VIDTRANS_COMFYUI_IPADAPTER_WEIGHT", "0.7"
+    )))
 
     def __post_init__(self) -> None:
         if not self.base_url or not self.checkpoint:
@@ -164,16 +178,17 @@ class ComfyUIImageProvider:
 
     @property
     def cache_key(self) -> str:
-        return f"comfyui-{self.checkpoint}-{self.steps}-{self.cfg}-{self.sampler}-{self.scheduler}-{self.max_side}"
+        return (f"comfyui-{self.checkpoint}-{self.steps}-{self.cfg}-{self.sampler}-{self.scheduler}-"
+                f"{self.max_side}-ipadapter-{self.ipadapter_enabled}-{self.ipadapter_preset}-{self.ipadapter_weight}")
 
-    def _workflow(self, request: ImageRequest) -> dict[str, Any]:
+    def _workflow(self, request: ImageRequest, reference_name: str = "") -> dict[str, Any]:
         # Avoid exhausting consumer VRAM on a 1080x1920 final video. The result
         # is upscaled by fit_cover after generation. Latent dimensions use /8.
         scale = min(1.0, self.max_side / max(request.width, request.height))
         width = max(64, round(request.width * scale) // 8 * 8)
         height = max(64, round(request.height * scale) // 8 * 8)
         negative = request.negative_prompt or "text, watermark, logo, blurry, low quality, malformed anatomy"
-        return {
+        workflow: dict[str, Any] = {
             "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": self.checkpoint}},
             "2": {"class_type": "CLIPTextEncode", "inputs": {"text": request.prompt, "clip": ["1", 1]}},
             "3": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["1", 1]}},
@@ -187,6 +202,47 @@ class ComfyUIImageProvider:
             "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
             "7": {"class_type": "SaveImage", "inputs": {"filename_prefix": "VidTrans", "images": ["6", 0]}},
         }
+        if reference_name and self.ipadapter_enabled:
+            workflow["8"] = {"class_type": "IPAdapterUnifiedLoader", "inputs": {
+                "model": ["1", 0], "preset": self.ipadapter_preset,
+            }}
+            workflow["9"] = {"class_type": "LoadImage", "inputs": {"image": reference_name}}
+            workflow["10"] = {"class_type": "IPAdapter", "inputs": {
+                "model": ["8", 0], "ipadapter": ["8", 1], "image": ["9", 0],
+                "weight": self.ipadapter_weight, "start_at": 0.0, "end_at": 0.8,
+                "weight_type": "prompt is more important",
+            }}
+            workflow["5"]["inputs"]["model"] = ["10", 0]
+        return workflow
+
+    def _upload_reference(self, path: Path) -> str:
+        """Upload one local reference to ComfyUI's input directory."""
+        path = Path(path)
+        suffix = path.suffix.lower() if path.suffix else ".png"
+        name = f"vidtrans-{hashlib.sha256(path.read_bytes()).hexdigest()[:20]}{suffix}"
+        boundary = f"----VidTrans{uuid.uuid4().hex}"
+        parts = [
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"overwrite\"\r\n\r\ntrue\r\n".encode(),
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"type\"\r\n\r\ninput\r\n".encode(),
+            (f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{name}\"\r\n"
+             "Content-Type: image/png\r\n\r\n").encode(),
+            path.read_bytes(),
+            f"\r\n--{boundary}--\r\n".encode(),
+        ]
+        request = urllib.request.Request(
+            self.base_url + "/upload/image", data=b"".join(parts),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST",
+        )
+        try:
+            with self._open(request, timeout=min(self.timeout, 60.0)) as response:
+                uploaded = json.loads(response.read(1024 * 1024).decode("utf-8"))
+        except (TimeoutError, urllib.error.URLError, ConnectionError, OSError, ValueError) as exc:
+            raise ImageGenerationError("Không tải được ảnh tham chiếu lên ComfyUI") from exc
+        uploaded_name = str(uploaded.get("name") or "")
+        if not uploaded_name:
+            raise ImageGenerationError(f"ComfyUI không nhận ảnh tham chiếu: {uploaded}")
+        subfolder = str(uploaded.get("subfolder") or "").strip("/\\")
+        return f"{subfolder}/{uploaded_name}" if subfolder else uploaded_name
 
     def _json(self, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
         data = json.dumps(body).encode() if body is not None else None
@@ -210,10 +266,10 @@ class ComfyUIImageProvider:
             error.unavailable = True
             raise error from exc
 
-    def generate(self, request: ImageRequest, output_path: Path) -> None:
+    def _generate_workflow(self, request: ImageRequest, output_path: Path, reference_name: str = "") -> None:
         from PIL import Image
 
-        queued = self._json("/prompt", body={"prompt": self._workflow(request)})
+        queued = self._json("/prompt", body={"prompt": self._workflow(request, reference_name)})
         prompt_id = queued.get("prompt_id")
         if not prompt_id:
             raise ImageGenerationError(f"ComfyUI không nhận workflow: {queued.get('error', 'thiếu prompt_id')}")
@@ -247,6 +303,17 @@ class ComfyUIImageProvider:
                 save_png_atomic(fit_cover(image, request.width, request.height), output_path)
         except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
             raise ImageGenerationError("ComfyUI đã sinh ảnh nhưng VidTrans không tải được ảnh kết quả") from exc
+
+    def generate(self, request: ImageRequest, output_path: Path) -> None:
+        reference_name = ""
+        if self.ipadapter_enabled and request.references:
+            try:
+                reference_name = self._upload_reference(request.references[0])
+                self._generate_workflow(request, output_path, reference_name)
+                return
+            except ImageGenerationError as exc:
+                logger.warning("IP-Adapter failed; retrying the scene with the base checkpoint: %s", exc)
+        self._generate_workflow(request, output_path)
 
 
 @dataclass

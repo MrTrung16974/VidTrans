@@ -51,7 +51,8 @@ class ComfyUIImageProviderTests(unittest.TestCase):
             raise AssertionError(request.full_url)
 
         provider = ComfyUIImageProvider(
-            base_url="http://comfy:8188", checkpoint="model.safetensors", opener=opener, sleeper=lambda _: None
+            base_url="http://comfy:8188", checkpoint="model.safetensors", max_side=1024,
+            opener=opener, sleeper=lambda _: None
         )
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "scene.png"
@@ -61,12 +62,56 @@ class ComfyUIImageProviderTests(unittest.TestCase):
         self.assertEqual(len(requests), 3)
 
     def test_workflow_uses_deterministic_seed_when_zero(self) -> None:
-        provider = ComfyUIImageProvider(base_url="http://comfy", checkpoint="x.safetensors")
+        provider = ComfyUIImageProvider(base_url="http://comfy", checkpoint="x.safetensors", max_side=1024)
         request = ImageRequest(prompt="same prompt", width=1280, height=720)
         first = provider._workflow(request)
         second = provider._workflow(request)
         self.assertEqual(first["5"]["inputs"]["seed"], second["5"]["inputs"]["seed"])
         self.assertEqual((first["4"]["inputs"]["width"], first["4"]["inputs"]["height"]), (1024, 576))
+
+    def test_reference_uses_ipadapter_workflow(self) -> None:
+        provider = ComfyUIImageProvider(base_url="http://comfy", checkpoint="x.safetensors")
+        workflow = provider._workflow(
+            ImageRequest(prompt="xianxia swordswoman", width=1080, height=1920),
+            "vidtrans-hero.png",
+        )
+        self.assertEqual(workflow["8"]["class_type"], "IPAdapterUnifiedLoader")
+        self.assertEqual(workflow["8"]["inputs"]["preset"], "STANDARD (medium strength)")
+        self.assertEqual(workflow["9"]["inputs"]["image"], "vidtrans-hero.png")
+        self.assertEqual(workflow["5"]["inputs"]["model"], ["10", 0])
+
+    def test_uploads_first_reference_before_queueing(self) -> None:
+        png = io.BytesIO()
+        Image.new("RGB", (64, 64), "purple").save(png, "PNG")
+        prompt_payloads = []
+
+        def opener(request, timeout):
+            del timeout
+            if request.full_url.endswith("/upload/image"):
+                self.assertIn(b'filename="vidtrans-', request.data)
+                return _Response(b'{"name":"uploaded.png","subfolder":"","type":"input"}')
+            if request.full_url.endswith("/prompt"):
+                prompt_payloads.append(json.loads(request.data))
+                return _Response(b'{"prompt_id":"job-ref"}')
+            if "/history/job-ref" in request.full_url:
+                return _Response(json.dumps({"job-ref": {"outputs": {"7": {"images": [{
+                    "filename": "result.png", "subfolder": "", "type": "output"
+                }]}}}}).encode())
+            if "/view?" in request.full_url:
+                return _Response(png.getvalue())
+            raise AssertionError(request.full_url)
+
+        provider = ComfyUIImageProvider(
+            base_url="http://comfy", checkpoint="x.safetensors", opener=opener, sleeper=lambda _: None
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            reference = Path(folder) / "hero.png"
+            reference.write_bytes(png.getvalue())
+            provider.generate(
+                ImageRequest(prompt="hero", width=512, height=512, references=(reference,)),
+                Path(folder) / "scene.png",
+            )
+        self.assertEqual(prompt_payloads[0]["prompt"]["9"]["inputs"]["image"], "uploaded.png")
 
     def test_connection_error_marks_provider_unavailable(self) -> None:
         def opener(_request, timeout):

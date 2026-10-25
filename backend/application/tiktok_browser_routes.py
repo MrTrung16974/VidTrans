@@ -120,7 +120,10 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
         latest = manager.latest_attempt(job_id)
         if latest:
             caption = latest["caption"]
+        comic = job.get("comic") if isinstance(job.get("comic"), dict) else {}
+        youtube_title = str(comic.get("youtube_title") or job.get("filename") or video.stem).strip()[:100]
         return {"job_id": job_id, "filename": job.get("filename") or video.name,
+                "youtube_title": youtube_title,
                 "video_url": f"/api/v1/jobs/{job_id}/artifacts/video", "caption": caption, "latest_attempt": latest}
 
     @router.post("/jobs/{job_id}/tiktok-caption")

@@ -52,7 +52,10 @@ def is_comic_job(job: dict[str, Any] | None) -> bool:
 
 def comic_summary(settings: ComicSettings, storyboard=None, manifest: dict[str, Any] | None = None) -> dict[str, Any]:
     summary: dict[str, Any] = {
-        "title": settings.title, "style": settings.style, "aspect_ratio": settings.aspect_ratio,
+        "title": settings.title,
+        "youtube_title": ((getattr(storyboard, "youtube_title", "") if storyboard is not None else "")
+                          or settings.youtube_title or settings.title)[:100],
+        "style": settings.style, "aspect_ratio": settings.aspect_ratio,
         "image_provider": settings.image_provider, "llm_provider": settings.llm_provider,
     }
     if storyboard is not None:
@@ -114,7 +117,8 @@ class ComicJobRunner:
             )
             project.save_storyboard(storyboard, bump=False)
         storyboard = project.load_storyboard()
-        self.update_job(job_id, comic=comic_summary(settings, storyboard))
+        self.update_job(job_id, filename=storyboard.youtube_title or settings.title,
+                        comic=comic_summary(settings, storyboard))
 
         runtime = self.make_runtime(job_id, report)
         images = create_image_provider(settings.image_provider, font_path=self.font_path)
