@@ -1,4 +1,29 @@
 services:
+  comfyui:
+    image: vidtrans-comfyui
+    build:
+      context: ./comfyui
+      dockerfile: Dockerfile
+      args:
+        COMFYUI_VERSION: "${VIDTRANS_COMFYUI_VERSION:-v0.36.0}"
+    container_name: vidtrans-comfyui
+    ports:
+      # Chỉ mở local để có thể xem giao diện ComfyUI tại http://127.0.0.1:8188.
+      - "127.0.0.1:${VIDTRANS_COMFYUI_PORT:-8188}:8188"
+    volumes:
+      - ./comfyui/models:/data/models
+      - ./comfyui/input:/data/input
+      - ./comfyui/output:/data/output
+      - ./comfyui/user:/data/user
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     container_name: vidtrans-postgres
@@ -105,6 +130,8 @@ services:
       # Lets the container reach Ollama on the host (needed on Linux; built in on Docker Desktop).
       - "host.docker.internal:host-gateway"
     depends_on:
+      comfyui:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       social-browser:
@@ -141,14 +168,17 @@ services:
       # Truyện → Video: model chia cảnh (mặc định theo GEMINI_TRANSLATION_MODEL) và model vẽ ảnh.
       VIDTRANS_COMIC_LLM_MODEL: "${VIDTRANS_COMIC_LLM_MODEL:-}"
       VIDTRANS_COMIC_IMAGE_MODEL: "${VIDTRANS_COMIC_IMAGE_MODEL:-gemini-2.5-flash-image}"
-      VIDTRANS_COMFYUI_URL: "${VIDTRANS_COMFYUI_URL:-}"
-      VIDTRANS_COMFYUI_CHECKPOINT: "${VIDTRANS_COMFYUI_CHECKPOINT:-}"
-      VIDTRANS_COMFYUI_STEPS: "${VIDTRANS_COMFYUI_STEPS:-20}"
-      VIDTRANS_COMFYUI_CFG: "${VIDTRANS_COMFYUI_CFG:-7}"
-      VIDTRANS_COMFYUI_SAMPLER: "${VIDTRANS_COMFYUI_SAMPLER:-euler}"
-      VIDTRANS_COMFYUI_SCHEDULER: "${VIDTRANS_COMFYUI_SCHEDULER:-normal}"
-      VIDTRANS_COMFYUI_MAX_SIDE: "${VIDTRANS_COMFYUI_MAX_SIDE:-1024}"
-      VIDTRANS_COMIC_CONCURRENCY: "${VIDTRANS_COMIC_CONCURRENCY:-3}"
+      VIDTRANS_COMFYUI_URL: "${VIDTRANS_COMFYUI_URL:-http://comfyui:8188}"
+      VIDTRANS_COMFYUI_CHECKPOINT: "${VIDTRANS_COMFYUI_CHECKPOINT:-v1-5-pruned-emaonly-fp16.safetensors}"
+      VIDTRANS_COMFYUI_STEPS: "${VIDTRANS_COMFYUI_STEPS:-24}"
+      VIDTRANS_COMFYUI_CFG: "${VIDTRANS_COMFYUI_CFG:-6.5}"
+      VIDTRANS_COMFYUI_SAMPLER: "${VIDTRANS_COMFYUI_SAMPLER:-dpmpp_2m}"
+      VIDTRANS_COMFYUI_SCHEDULER: "${VIDTRANS_COMFYUI_SCHEDULER:-karras}"
+      VIDTRANS_COMFYUI_MAX_SIDE: "${VIDTRANS_COMFYUI_MAX_SIDE:-640}"
+      VIDTRANS_COMFYUI_IPADAPTER_ENABLED: "${VIDTRANS_COMFYUI_IPADAPTER_ENABLED:-true}"
+      VIDTRANS_COMFYUI_IPADAPTER_PRESET: "${VIDTRANS_COMFYUI_IPADAPTER_PRESET:-STANDARD (medium strength)}"
+      VIDTRANS_COMFYUI_IPADAPTER_WEIGHT: "${VIDTRANS_COMFYUI_IPADAPTER_WEIGHT:-0.7}"
+      VIDTRANS_COMIC_CONCURRENCY: "${VIDTRANS_COMIC_CONCURRENCY:-1}"
       # Hoạt hình AI: Veo (dùng GEMINI_API_KEY) hoặc GPU worker riêng (docs/animation-worker-api.md).
       VIDTRANS_ANIMATION_CONCURRENCY: "${VIDTRANS_ANIMATION_CONCURRENCY:-1}"
       VIDTRANS_VEO_MODEL: "${VIDTRANS_VEO_MODEL:-veo-3.0-fast-generate-001}"

@@ -201,7 +201,7 @@ def settings_form(
     cit_male_voice: str = Form(""),
     speech_rate: float = Form(1.0),
     target_scene_duration: float = Form(7.0),
-    max_scenes: int = Form(40),
+    max_scenes: int | None = Form(None),
     burn_subtitles: str = Form("true"),
     music_volume: float = Form(0.15),
     seed: int = Form(0),

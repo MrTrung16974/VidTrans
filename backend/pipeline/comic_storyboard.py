@@ -241,7 +241,7 @@ def build_storyboard(
         scenes.extend(draft_scenes)
         progress(position, len(chunks))
 
-    if len(scenes) > settings.max_scenes:
+    if settings.max_scenes is not None and len(scenes) > settings.max_scenes:
         warnings.append(f"Truyện dài {len(scenes)} cảnh; chỉ giữ {settings.max_scenes} cảnh đầu theo giới hạn.")
         scenes = scenes[: settings.max_scenes]
 

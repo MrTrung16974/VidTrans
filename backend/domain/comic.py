@@ -301,7 +301,9 @@ class ComicSettings(_Model):
     tts_voices: dict[str, str] = Field(default_factory=dict)
     speech_rate: float = Field(default=1.0, ge=0.7, le=1.5)
     target_scene_duration: float = Field(default=7.0, ge=3.0, le=15.0)
-    max_scenes: int = Field(default=40, ge=1, le=120)
+    # None means the storyboard covers the complete story. A numeric value is
+    # retained for API clients that deliberately want a cost/time ceiling.
+    max_scenes: int | None = Field(default=None, ge=1, le=120)
     burn_subtitles: bool = True
     music_volume: float = Field(default=0.15, ge=0.0, le=1.0)
     seed: int = Field(default=0, ge=0, le=2**31 - 1)

@@ -170,6 +170,12 @@ class StoryboardTests(unittest.TestCase):
         self.assertEqual(len(board.scenes), 1)
         self.assertTrue(board.warnings)
 
+    def test_default_scene_count_covers_complete_story(self) -> None:
+        story = " ".join(f"Sự kiện thứ {index} xảy ra tại một địa điểm hoàn toàn khác biệt." for index in range(50))
+        board = build_storyboard(story, self.settings(llm_provider="heuristic", target_scene_duration=3), None)
+        self.assertGreater(len(board.scenes), 40)
+        self.assertNotIn("chỉ giữ", " ".join(board.warnings))
+
     def test_extract_json_ignores_thinking_and_fences(self) -> None:
         self.assertEqual(extract_json('<think>hmm {"a": 0}</think> ```json\n{"a": 1}\n```'), {"a": 1})
 
