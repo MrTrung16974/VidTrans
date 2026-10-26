@@ -30,7 +30,7 @@ from gtts import gTTS
 from starlette.background import BackgroundTask
 from infrastructure.artifact_archive import build_artifact_archive
 
-from app.config import AppSettings
+from app.config import AppSettings, available_cpu_count
 from application.job_scheduler import JobScheduler
 from application.job_service import JobService
 from application.comic_routes import ComicRouteDependencies, create_comic_router, requeue_comic_job
@@ -121,6 +121,7 @@ from infrastructure.tts_providers import (
     synthesize_azure,
     cit_can_voice,
     synthesize_cit,
+    warm_cit_voice_previews,
     synthesize_elevenlabs,
     tts_account_blocked,
 )
@@ -1661,6 +1662,33 @@ def is_speakable_tts_text(value: Any) -> bool:
     return any(unicodedata.category(character)[0] in {"L", "N"} for character in text)
 
 
+def resolve_tts_worker_count(
+    provider: str,
+    task_count: int,
+    *,
+    configured: str | None = None,
+    cpu_count: int | None = None,
+) -> int:
+    """Size one job's TTS pipeline for its provider and available CPU.
+
+    Network providers benefit from more in-flight requests. CIT itself accepts one
+    synthesis request at a time, but a few workers let FFmpeg trim/fit the previous
+    clips while the next clip is being generated.
+    """
+
+    tasks = max(1, int(task_count))
+    raw = (configured if configured is not None else os.environ.get("VIDTRANS_TTS_CONCURRENCY", "auto"))
+    raw = str(raw).strip().lower()
+    if raw not in {"", "auto", "0"}:
+        try:
+            return min(tasks, max(1, int(raw)))
+        except ValueError:
+            logger.warning("VIDTRANS_TTS_CONCURRENCY=%r is invalid; using auto", raw)
+    cpus = max(1, int(cpu_count or available_cpu_count()))
+    limit = min(4, cpus) if provider == "cit" else min(8, cpus * 2)
+    return min(tasks, max(2, limit))
+
+
 def synthesize_tts_segments(
     segments: list[dict[str, Any]],
     work_dir: Path,
@@ -1888,7 +1916,11 @@ def synthesize_tts_segments(
         return fitted_path
 
     paths: list[Path] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    tts_workers = resolve_tts_worker_count(tts_provider, len(segments))
+    logger.info("TTS pipeline uses %d worker(s) for provider %s", tts_workers, tts_provider)
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=tts_workers, thread_name_prefix=f"tts-{tts_provider}"
+    ) as executor:
         futures = {
             executor.submit(process_segment, index, segment): index
             for index, segment in enumerate(segments)
@@ -2222,6 +2254,53 @@ def build_drawtext_filter(segments: list[dict[str, Any]], subtitle_style: dict[s
     return ",".join(filters)
 
 
+def add_localized_subtitle_blur(
+    terminal_filter: str,
+    segments: list[dict[str, Any]],
+    subtitle_style: dict[str, Any],
+) -> str:
+    """Blur only OCR rectangles occupied by the source subtitles while active."""
+
+    if subtitle_style.get("background_style") != "blurred_bottom":
+        return terminal_filter
+    regions: list[tuple[int, int, int, int, float, float]] = []
+    for index, segment in enumerate(segments):
+        layout = segment.get("subtitle_layout")
+        if not isinstance(layout, dict) or not layout.get("mask_original"):
+            continue
+        mask = layout.get("mask")
+        if not isinstance(mask, dict):
+            continue
+        width = max(2, int(round(float(mask.get("width", 0)))))
+        height = max(2, int(round(float(mask.get("height", 0)))))
+        x = max(0, int(round(float(mask.get("x", 0)))))
+        y = max(0, int(round(float(mask.get("y", 0)))))
+        start, end = subtitle_render_window(segments, index)
+        regions.append((x, y, width, height, start, end))
+    if not regions:
+        return terminal_filter
+
+    tint = subtitle_style.get("background_color_css", "#000000")
+    sources = "".join(f"[subtitle_blur_{index}]" for index in range(len(regions)))
+    filters = [f"split={len(regions) + 1}[subtitle_base]{sources}"]
+    for index, (x, y, width, height, _start, _end) in enumerate(regions):
+        blur_radius = max(1, min(12, (min(width, height) - 1) // 2))
+        filters.append(
+            f"[subtitle_blur_{index}]crop={width}:{height}:{x}:{y},"
+            f"boxblur={blur_radius}:2,drawbox=color={tint}@0.38:t=fill[subtitle_patch_{index}]"
+        )
+    previous = "subtitle_base"
+    for index, (x, y, _width, _height, start, end) in enumerate(regions):
+        output = f"subtitle_blurred_{index}"
+        filters.append(
+            f"[{previous}][subtitle_patch_{index}]overlay={x}:{y}:"
+            f"enable='between(t,{start:.3f},{end:.3f})'[{output}]"
+        )
+        previous = output
+    filters.append(f"[{previous}]{terminal_filter}")
+    return ";".join(filters)
+
+
 def _load_pillow():
     try:
         from PIL import Image, ImageDraw, ImageFont
@@ -2287,16 +2366,6 @@ def burn_subtitles_with_pillow(
             None,
         )
         image = Image.open(frame_path).convert("RGBA")
-        if subtitle_style.get("background_style") == "blurred_bottom":
-            from PIL import ImageFilter
-
-            band_top = int(image.height * 0.68)
-            blurred_band = image.crop((0, band_top, image.width, image.height)).filter(
-                ImageFilter.GaussianBlur(radius=max(8, image.height // 45))
-            )
-            tint = Image.new("RGBA", blurred_band.size, (*background_rgb, 140))
-            blurred_band = Image.alpha_composite(blurred_band, tint)
-            image.paste(blurred_band, (0, band_top))
         output_frame = rendered_dir / frame_path.name
         if not active:
             image.convert("RGB").save(output_frame)
@@ -2318,18 +2387,37 @@ def burn_subtitles_with_pillow(
             y = image.height - text_h - margin_v
         pad_x = 20
         pad_y = 12
+        if (
+            subtitle_style.get("background_style") == "blurred_bottom"
+            and layout.get("mask_original")
+            and isinstance(layout.get("mask"), dict)
+        ):
+            from PIL import ImageFilter
+
+            mask = layout["mask"]
+            left = max(0, int(round(float(mask["x"]))))
+            top = max(0, int(round(float(mask["y"]))))
+            right = min(image.width, int(round(left + float(mask["width"]))))
+            bottom = min(image.height, int(round(top + float(mask["height"]))))
+            if right > left and bottom > top:
+                patch = image.crop((left, top, right, bottom)).filter(
+                    ImageFilter.GaussianBlur(radius=max(5, active_font_size // 3))
+                )
+                tint = Image.new("RGBA", patch.size, (*background_rgb, 96))
+                image.paste(Image.alpha_composite(patch, tint), (left, top))
         if layout.get("mask_original") and isinstance(layout.get("mask"), dict):
             mask = layout["mask"]
-            draw.rounded_rectangle(
-                (
-                    float(mask["x"]),
-                    float(mask["y"]),
-                    float(mask["x"]) + float(mask["width"]),
-                    float(mask["y"]) + float(mask["height"]),
-                ),
-                radius=max(4, active_font_size // 4),
-                fill=(0, 0, 0, 150),
-            )
+            if subtitle_style.get("background_style") != "blurred_bottom":
+                draw.rounded_rectangle(
+                    (
+                        float(mask["x"]),
+                        float(mask["y"]),
+                        float(mask["x"]) + float(mask["width"]),
+                        float(mask["y"]) + float(mask["height"]),
+                    ),
+                    radius=max(4, active_font_size // 4),
+                    fill=(0, 0, 0, 150),
+                )
         if subtitle_style.get("background_box", True):
             draw.rounded_rectangle(
                 (x - pad_x, y - pad_y, x + text_w + pad_x, y + text_h + pad_y),
@@ -2400,14 +2488,7 @@ def burn_subtitles(
         # the FontName written in the ASS file. Forcing CJK here breaks all
         # Vietnamese glyphs even when the chosen style supports them.
         subtitle_filter += f":fontsdir='{ff_escape_path(FONT_DIR)}'"
-    if subtitle_style.get("background_style") == "blurred_bottom":
-        tint = subtitle_style.get("background_color_css", "#000000")
-        subtitle_filter = (
-            "split[subtitle_base][subtitle_blur];"
-            "[subtitle_blur]crop=iw:trunc(ih*0.32):0:trunc(ih*0.68),"
-            f"boxblur=16:2,drawbox=color={tint}@0.55:t=fill[subtitle_band];"
-            f"[subtitle_base][subtitle_band]overlay=0:H-h,{subtitle_filter}"
-        )
+    subtitle_filter = add_localized_subtitle_blur(subtitle_filter, segments, subtitle_style)
     cmd = [
         FFMPEG,
         "-y",
@@ -2440,14 +2521,7 @@ def burn_subtitles(
             raise
         logger.warning("ffmpeg subtitles filter is unavailable, falling back to drawtext rendering")
         fallback_filter = build_drawtext_filter(segments, subtitle_style)
-        if subtitle_style.get("background_style") == "blurred_bottom":
-            tint = subtitle_style.get("background_color_css", "#000000")
-            fallback_filter = (
-                "split[subtitle_base][subtitle_blur];"
-                "[subtitle_blur]crop=iw:trunc(ih*0.32):0:trunc(ih*0.68),"
-                f"boxblur=16:2,drawbox=color={tint}@0.55:t=fill[subtitle_band];"
-                f"[subtitle_base][subtitle_band]overlay=0:H-h,{fallback_filter}"
-            )
+        fallback_filter = add_localized_subtitle_blur(fallback_filter, segments, subtitle_style)
         fallback_cmd = [
             FFMPEG,
             "-y",
@@ -2958,27 +3032,30 @@ def process_video(
         tiktok_json_path: Path | None = None
         tiktok_text_path: Path | None = None
         tiktok_post = None
-        if generate_tiktok_post:
+
+        def generate_social_summary() -> tuple[Any, Path | None, Path | None]:
             ensure_job_active(job_id)
-            update_job(job_id, step="summarizing", progress=0.47, step_detail=None)
             try:
                 with measure_job_stage(job_id, "summary", video_duration=video_duration):
-                    tiktok_post = TIKTOK_SUMMARY_PROVIDER.generate(
-                        translated_segments,
+                    post = TIKTOK_SUMMARY_PROVIDER.generate(
+                        # Voice routing mutates cue metadata; the summary only needs
+                        # a stable text/timeline snapshot and can run alongside it.
+                        [dict(segment) for segment in translated_segments],
                         max_summary_chars=tiktok_max_summary_chars,
                         hashtag_count=tiktok_hashtag_count,
                     )
-                    tiktok_json_path, tiktok_text_path = write_tiktok_artifacts(
-                        tiktok_post,
+                    json_path, text_path = write_tiktok_artifacts(
+                        post,
                         output_dir,
                         job_id,
                     )
+                    return post, json_path, text_path
             except Exception as exc:
                 logger.warning("TikTok summary generation failed for job %s", job_id, exc_info=True)
                 update_job(job_id, tiktok_error=str(exc))
+                return None, None, None
 
-        voice_summary: dict[str, int] | None = None
-        if mode in (2, 3):
+        def prepare_voice_routing() -> dict[str, int] | None:
             ensure_job_active(job_id)
             with measure_job_stage(job_id, "voice_routing", video_duration=video_duration):
                 if voice_mode == "auto":
@@ -2996,7 +3073,7 @@ def process_video(
                                 content_cues,
                                 job_id,
                             )
-                        voice_summary = route_segments_by_pitch(
+                        return route_segments_by_pitch(
                             translated_segments,
                             analysis_audio,
                             fallback_voice=voice_type,
@@ -3009,9 +3086,34 @@ def process_video(
                             "Automatic voice routing failed; using the selected fallback voice",
                             exc_info=True,
                         )
-                        voice_summary = route_segments_manually(translated_segments, voice_type)
-                else:
-                    voice_summary = route_segments_manually(translated_segments, voice_type)
+                        return route_segments_manually(translated_segments, voice_type)
+                return route_segments_manually(translated_segments, voice_type)
+
+        voice_summary: dict[str, int] | None = None
+        wants_voice = mode in (2, 3)
+        if generate_tiktok_post and wants_voice:
+            # Summary generation (usually network/LLM wait) and voice analysis
+            # (FFmpeg + CPU) are independent, so overlap them inside the same job.
+            update_job(job_id, step="preparing-media", progress=0.47, step_detail="Đang tạo nội dung và phân tích giọng song song")
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix=f"prepare-{job_id[:8]}"
+            ) as executor:
+                def run_preparation_task(task: Callable[[], Any]) -> Any:
+                    _job_context.job_id = job_id
+                    try:
+                        return task()
+                    finally:
+                        del _job_context.job_id
+
+                summary_future = executor.submit(run_preparation_task, generate_social_summary)
+                voice_future = executor.submit(run_preparation_task, prepare_voice_routing)
+                tiktok_post, tiktok_json_path, tiktok_text_path = summary_future.result()
+                voice_summary = voice_future.result()
+        elif generate_tiktok_post:
+            update_job(job_id, step="summarizing", progress=0.47, step_detail=None)
+            tiktok_post, tiktok_json_path, tiktok_text_path = generate_social_summary()
+        elif wants_voice:
+            voice_summary = prepare_voice_routing()
 
         style_decision = None
         requested_voice_style = voice_style
@@ -3877,12 +3979,25 @@ async def run_retention_loop() -> None:
             logger.exception("Retention sweep failed")
 
 
+async def prepare_cit_voice_previews() -> None:
+    """Populate static CIT samples without delaying API startup."""
+
+    try:
+        ready, failed = await asyncio.to_thread(warm_cit_voice_previews)
+        if ready or failed:
+            logger.info("CIT voice previews ready: %d; failed: %d", ready, failed)
+    except Exception:
+        # CIT is optional and may not be open when VidTrans starts.
+        logger.exception("CIT voice preview preparation failed")
+
+
 @app.on_event("startup")
 async def start_job_scheduler() -> None:
     await JOB_EVENTS.start()
     await SYSTEM_EVENTS.start()
     apply_retention_policy()
     app.state.retention_task = asyncio.create_task(run_retention_loop())
+    app.state.cit_preview_task = asyncio.create_task(prepare_cit_voice_previews())
     if os.environ.get("VIDTRANS_RECOVER_INTERRUPTED_JOBS", "1").lower() in {"1", "true", "yes"}:
         interrupted = JOB_SERVICE.requeue_interrupted(SETTINGS.max_job_restarts)
         requeued = [job_id for job_id, job in interrupted if job["status"] == "queued"]
@@ -3929,6 +4044,9 @@ async def stop_job_scheduler() -> None:
     retention_task = getattr(app.state, "retention_task", None)
     if retention_task is not None:
         retention_task.cancel()
+    cit_preview_task = getattr(app.state, "cit_preview_task", None)
+    if cit_preview_task is not None:
+        cit_preview_task.cancel()
     scheduler = getattr(app.state, "job_scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
@@ -4316,6 +4434,7 @@ def collect_system_metrics() -> dict[str, Any]:
     metrics["jobs"] = {
         "counts": JOB_SERVICE.status_counts(),
         "worker_concurrency": SETTINGS.worker_concurrency,
+        "tts_concurrency": os.environ.get("VIDTRANS_TTS_CONCURRENCY", "auto"),
         "max_job_restarts": SETTINGS.max_job_restarts,
         "active": [
             {

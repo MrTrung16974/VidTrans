@@ -57,10 +57,33 @@ _cit_cache: dict[str, tuple[float, object]] = {}
 _cit_cache_lock = threading.Lock()
 _cit_semaphore: threading.BoundedSemaphore | None = None
 _cit_semaphore_guard = threading.Lock()
-# Sentence read aloud when a user previews a voice before dubbing.
-VOICE_PREVIEW_TEXT = "Xin chào, đây là giọng đọc thử. Bạn có thể chọn giọng này để lồng tiếng cho video."
+# Keep the on-demand sample deliberately short. VieNeu generates on CPU and does not
+# stream its response, so every extra sentence is added directly to the first-play wait.
+VOICE_PREVIEW_TEXT = "Xin chào, mời bạn nghe thử giọng này."
 _cit_previews: dict[str, tuple[bytes, str]] = {}
 _cit_previews_lock = threading.Lock()
+_cit_preview_voice_locks: dict[str, threading.Lock] = {}
+_cit_preview_locks_guard = threading.Lock()
+
+
+def _cit_preview_lock(voice_key: str) -> threading.Lock:
+    """Serialize cache misses for one voice without blocking other cached voices."""
+
+    with _cit_preview_locks_guard:
+        return _cit_preview_voice_locks.setdefault(voice_key, threading.Lock())
+
+
+def _cit_preview_cache_path(voice_key: str) -> Path:
+    # backend/work is a persistent Docker volume in the standard deployment. The
+    # digest also invalidates old clips whenever the sample sentence changes.
+    cache_root = Path(
+        os.environ.get(
+            "VIDTRANS_TTS_PREVIEW_CACHE_DIR",
+            str(Path(__file__).resolve().parents[1] / "work" / "voice-previews"),
+        )
+    )
+    digest = hashlib.sha256(f"cit\0{voice_key}\0{VOICE_PREVIEW_TEXT}".encode("utf-8")).hexdigest()
+    return cache_root / f"{digest}.audio"
 
 
 class TTSProviderHTTPError(RuntimeError):
@@ -659,11 +682,56 @@ def cit_voice_preview(voice_key: str) -> tuple[bytes, str]:
         cached = _cit_previews.get(voice_key)
     if cached is not None:
         return cached
-    with tempfile.TemporaryDirectory(prefix="vidtrans-preview-") as directory:
-        output_path = Path(directory) / "preview.audio"
-        synthesize_cit(VOICE_PREVIEW_TEXT, output_path, voice_key=voice_key)
-        audio = output_path.read_bytes()
-    result = (audio, audio_content_type(audio))
-    with _cit_previews_lock:
-        _cit_previews[voice_key] = result
-    return result
+
+    # A double check inside the per-voice lock prevents rapid clicks (or multiple
+    # browser tabs) from making the CPU synthesize the same clip concurrently.
+    with _cit_preview_lock(voice_key):
+        with _cit_previews_lock:
+            cached = _cit_previews.get(voice_key)
+        if cached is not None:
+            return cached
+
+        cache_path = _cit_preview_cache_path(voice_key)
+        try:
+            audio = cache_path.read_bytes()
+        except (FileNotFoundError, OSError):
+            audio = b""
+        if not audio:
+            with tempfile.TemporaryDirectory(prefix="vidtrans-preview-") as directory:
+                output_path = Path(directory) / "preview.audio"
+                synthesize_cit(VOICE_PREVIEW_TEXT, output_path, voice_key=voice_key)
+                audio = output_path.read_bytes()
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = cache_path.with_suffix(f".{os.getpid()}.tmp")
+                temporary.write_bytes(audio)
+                temporary.replace(cache_path)
+            except OSError:
+                # Disk cache is an optimisation; a read-only/misconfigured cache
+                # directory must not make an otherwise valid preview fail.
+                logger.warning("Cannot persist CIT voice preview cache at %s", cache_path)
+
+        result = (audio, audio_content_type(audio))
+        with _cit_previews_lock:
+            _cit_previews[voice_key] = result
+        return result
+
+
+def warm_cit_voice_previews() -> tuple[int, int]:
+    """Create persistent preview clips for every currently available CIT voice.
+
+    Intended for a background startup task. Existing disk clips return immediately,
+    while missing clips are generated sequentially through CIT's normal CPU guard.
+    """
+
+    voices = cit_voices()
+    ready = 0
+    failed = 0
+    for voice in voices:
+        try:
+            cit_voice_preview(voice.key)
+            ready += 1
+        except Exception as exc:
+            failed += 1
+            logger.warning("Cannot prepare CIT preview for voice %s: %s", voice.key, exc)
+    return ready, failed

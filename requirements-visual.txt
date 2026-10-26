@@ -1,0 +1,4 @@
+# Offline Vietnamese -> English prompts for SD1.5/ComfyUI.
+transformers>=4.50,<5
+sentencepiece>=0.2,<1
+sacremoses>=0.1,<1

@@ -95,6 +95,9 @@ Kết quả mong đợi là một câu tiếng Việt, ví dụ "Vốn dĩ em r�
 | `VIDTRANS_QWEN3_MODEL` | `qwen3:4b` | Tên model Qwen3; phải trùng **chính xác** tên trong `ollama list` |
 | `VIDTRANS_TRANSLATEGEMMA_MODEL` | `translategemma` | Tên model TranslateGemma |
 | `VIDTRANS_QWEN3_ENABLED` / `VIDTRANS_TRANSLATEGEMMA_ENABLED` | `1` | Đặt `0` để tắt hẳn một model |
+| `VIDTRANS_OLLAMA_KEEP_ALIVE` | `30s` | Nhả model khỏi RAM sau 30 giây không còn request dịch |
+| `VIDTRANS_TRANSLATEGEMMA_NUM_CTX` | `2048` | Context gọn cho mô hình dịch từng câu, giảm KV memory |
+| `VIDTRANS_QWEN3_NUM_CTX` | `8192` | Context an toàn cho batch dài và lịch sử hội thoại của video 2–3 giờ |
 
 ### Chạy VidTrans trực tiếp (uvicorn)
 
@@ -139,7 +142,7 @@ Mở form tạo job, mục **Bộ dịch**:
 
 | Biến | Gợi ý | Tác dụng |
 | --- | --- | --- |
-| `OLLAMA_KEEP_ALIVE` | `30m` | Giữ model trong RAM lâu hơn giữa các job, tránh mất thời gian nạp lại |
+| `OLLAMA_KEEP_ALIVE` | `5m` hoặc thấp hơn | Mức mặc định của Ollama; VidTrans ghi đè mỗi request bằng `VIDTRANS_OLLAMA_KEEP_ALIVE=30s` |
 | `OLLAMA_MAX_LOADED_MODELS` | `1` | Máy ít RAM: chỉ giữ một model trong bộ nhớ |
 | `OLLAMA_FLASH_ATTENTION` | `1` | Giảm bộ nhớ, tăng tốc trên GPU hỗ trợ |
 
@@ -150,7 +153,7 @@ Mở form tạo job, mục **Bộ dịch**:
 | Lựa chọn bị mờ "chưa chạy Ollama" | Ollama chưa chạy (`curl localhost:11434/api/version`), hoặc tên model khác biến cấu hình. Ví dụ đã tải `qwen3:8b` nhưng biến vẫn là `qwen3:4b` |
 | Job báo "Không kết nối được Ollama" | Docker trên Linux: xem mục 5 (`OLLAMA_HOST=0.0.0.0`) |
 | Job báo "Ollama chưa có model …" | Chạy lệnh `ollama pull <tên model>` được ghi trong thông báo |
-| Dịch rất chậm | Máy đang chạy bằng CPU, hoặc thiếu RAM khiến hệ thống dùng swap. Dùng bản 4B, đóng ứng dụng khác, đặt `OLLAMA_KEEP_ALIVE` |
+| Dịch rất chậm / RAM không nhả sau khi dịch | Máy đang chạy bằng CPU hoặc thiếu RAM khiến hệ thống dùng swap. Dùng bản 4B, đóng ứng dụng khác; có thể hạ `VIDTRANS_OLLAMA_KEEP_ALIVE=10s` |
 | Một vài câu Qwen3 dịch lại từng câu | Model nhỏ đôi khi trả sai số câu khi nhóm câu dài; VidTrans tự dịch lại từng câu nên không mất câu nào, chỉ chậm hơn |
 | Xưng hô không nhất quán khi dùng TranslateGemma | TranslateGemma không nhìn câu xung quanh; nên dùng Qwen3 hoặc Gemini cho video hội thoại |
 

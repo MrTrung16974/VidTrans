@@ -50,6 +50,20 @@ TRANSLATEGEMMA_LANGUAGE_NAMES = {
 }
 
 
+def ollama_keep_alive() -> str:
+    """Keep one job fast, then return the model's multi-GB allocation promptly."""
+
+    return os.environ.get("VIDTRANS_OLLAMA_KEEP_ALIVE", "30s").strip() or "30s"
+
+
+def ollama_context_size(name: str, default: int) -> int:
+    try:
+        return max(512, int(os.environ.get(name, str(default))))
+    except ValueError:
+        logger.warning("%s is invalid; using %d", name, default)
+        return default
+
+
 def normalize_translation_provider(value: str | None) -> str:
     provider = str(value or "google").strip().lower()
     if provider not in SUPPORTED_TRANSLATION_PROVIDERS:
@@ -372,7 +386,13 @@ class TranslateGemmaTranslator:
             "model": self.model,
             "messages": [{"role": "user", "content": self._prompt(text)}],
             "stream": False,
-            "options": {"temperature": 0},
+            # One subtitle cue is small; a large model-default context only reserves
+            # extra KV memory and increases swap pressure on 8 GB hosts.
+            "options": {
+                "temperature": 0,
+                "num_ctx": ollama_context_size("VIDTRANS_TRANSLATEGEMMA_NUM_CTX", 2048),
+            },
+            "keep_alive": ollama_keep_alive(),
         }).encode("utf-8")
         request = urllib.request.Request(
             f"{self.url}/api/chat", data=body, headers={"Content-Type": "application/json"}, method="POST"
@@ -454,7 +474,11 @@ class Qwen3Translator:
                 },
                 "required": ["translations"],
             },
-            "options": {"temperature": 0.1, "num_ctx": 8192},
+            "options": {
+                "temperature": 0.1,
+                "num_ctx": ollama_context_size("VIDTRANS_QWEN3_NUM_CTX", 8192),
+            },
+            "keep_alive": ollama_keep_alive(),
         }
 
         def chat(payload: dict) -> dict:

@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261026-delete-files" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261026-concurrent-pipeline" />
   </head>
   <body>
     <div class="app-shell">
@@ -522,10 +522,10 @@
                     <label class="field"><span>Màu chữ vietsub</span><input id="subtitleTextColor" type="color" value="#ffffff" /></label>
                     <label class="field"><span>Màu nền vietsub</span><input id="subtitleBackgroundColor" type="color" value="#000000" /></label>
                     <label class="field wide">
-                      <span>Kiểu nền vietsub</span>
+                      <span>Xử lý nền và chữ nguồn</span>
                       <select id="subtitleBackgroundStyle">
-                        <option value="box">Hộp nền theo nội dung</option>
-                        <option value="blurred_bottom">Dải mờ toàn chiều ngang phía dưới</option>
+                        <option value="box">Hộp nền ôm theo vietsub</option>
+                        <option value="blurred_bottom">Làm mờ vừa vùng chữ nguồn</option>
                         <option value="none">Không dùng nền</option>
                       </select>
                     </label>
@@ -2179,6 +2179,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261026-delete-files"></script>
+    <script type="module" src="/js/app.js?v=20261026-concurrent-pipeline"></script>
   </body>
 </html>

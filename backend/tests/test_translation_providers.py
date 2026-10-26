@@ -154,6 +154,8 @@ class TranslateGemmaTests(unittest.TestCase):
         self.assertIn("Chinese (zh-TW) to Vietnamese (vi) translator", prompt)
         self.assertTrue(prompt.endswith("\n\n\n我愛你"))
         self.assertEqual(sent["body"]["options"]["temperature"], 0)
+        self.assertEqual(sent["body"]["options"]["num_ctx"], 2048)
+        self.assertEqual(sent["body"]["keep_alive"], "30s")
 
     def test_missing_model_is_a_permanent_error(self) -> None:
         def opener(request, **_kwargs):
@@ -208,6 +210,8 @@ class Qwen3Tests(unittest.TestCase):
         )
         self.assertEqual(sent["body"]["model"], "qwen3:4b")
         self.assertIs(sent["body"]["think"], False)
+        self.assertEqual(sent["body"]["options"]["num_ctx"], 8192)
+        self.assertEqual(sent["body"]["keep_alive"], "30s")
         system, user = sent["body"]["messages"]
         self.assertEqual(system["role"], "system")
         self.assertIn("Traditional Chinese to Vietnamese", system["content"])

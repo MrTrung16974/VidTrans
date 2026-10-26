@@ -94,10 +94,7 @@ def apply_subtitle_layout(
             key in source_bbox for key in ("x", "y", "width", "height")
         )
         placement_mode = options.placement_mode if has_bbox else "bottom_safe"
-        if options.background_style == "blurred_bottom":
-            placement_mode = "bottom_safe"
-
-        if has_bbox and options.background_style != "blurred_bottom":
+        if has_bbox:
             box_x = float(source_bbox["x"]) * video_width
             box_y = float(source_bbox["y"]) * video_height
             box_w = float(source_bbox["width"]) * video_width
@@ -125,11 +122,13 @@ def apply_subtitle_layout(
             center_y = _clamp(center_y, rendered_height / 2 + 4, video_height - rendered_height / 2 - 4)
             expand_x = max(8, font_size * 0.3)
             expand_y = max(5, font_size * 0.18)
+            mask_x = _clamp(box_x - expand_x, 0, video_width - 1)
+            mask_y = _clamp(box_y - expand_y, 0, video_height - 1)
             mask = {
-                "x": round(_clamp(box_x - expand_x, 0, video_width), 2),
-                "y": round(_clamp(box_y - expand_y, 0, video_height), 2),
-                "width": round(_clamp(box_w + expand_x * 2, 1, video_width), 2),
-                "height": round(_clamp(box_h + expand_y * 2, 1, video_height), 2),
+                "x": round(mask_x, 2),
+                "y": round(mask_y, 2),
+                "width": round(_clamp(box_w + expand_x * 2, 1, video_width - mask_x), 2),
+                "height": round(_clamp(box_h + expand_y * 2, 1, video_height - mask_y), 2),
             }
             position_source = "ocr"
         else:
@@ -156,7 +155,12 @@ def apply_subtitle_layout(
             "placement_mode": placement_mode,
             "position_source": position_source,
             "mask_original": bool(
-                mask and placement_mode == "replace_original" and options.mask_original
+                mask
+                and options.mask_original
+                and (
+                    placement_mode == "replace_original"
+                    or options.background_style == "blurred_bottom"
+                )
             ),
             "mask": mask,
         }

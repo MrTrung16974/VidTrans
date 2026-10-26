@@ -698,6 +698,7 @@ function renderProviderVoices(provider) {
   select.disabled = voices.length === 0;
   previewButton.classList.toggle("is-hidden", !VOICE_PREVIEW_PROVIDERS.has(provider?.key) || voices.length === 0);
   syncSelectedVoice();
+  scheduleVoicePreviewWarmup();
 }
 
 function syncSelectedVoice() {
@@ -717,6 +718,34 @@ function syncSelectedVoice() {
 const VOICE_PREVIEW_PROVIDERS = new Set(["edge", "elevenlabs", "cit"]);
 let voicePreviewAudio = null;
 let voicePreviewButton = null;
+let voicePreviewWarmupTimer = null;
+const warmedVoicePreviewUrls = new Set();
+
+function voicePreviewUrl() {
+  const voiceKey = $("#voiceTypeSelect")?.value;
+  const provider = $("#ttsProvider")?.value || "edge";
+  if (!voiceKey || !VOICE_PREVIEW_PROVIDERS.has(provider)) return "";
+  return `/api/v1/tts-providers/${encodeURIComponent(provider)}/voices/${encodeURIComponent(voiceKey)}/preview`;
+}
+
+function scheduleVoicePreviewWarmup() {
+  clearTimeout(voicePreviewWarmupTimer);
+  // VieNeu cannot stream and may need to load its model. Start the selected clip
+  // quietly while the user is configuring the form so clicking Preview can use
+  // the browser HTTP cache instead of beginning CPU synthesis at that moment.
+  if ($("#ttsProvider")?.value !== "cit") return;
+  const url = voicePreviewUrl();
+  if (!url || warmedVoicePreviewUrls.has(url)) return;
+  voicePreviewWarmupTimer = setTimeout(() => {
+    warmedVoicePreviewUrls.add(url);
+    fetch(url, { credentials: "same-origin" })
+      .then(response => {
+        if (!response.ok) throw new Error(`Voice preview HTTP ${response.status}`);
+        return response.arrayBuffer(); // Consume fully so the HTTP cache owns the clip.
+      })
+      .catch(() => warmedVoicePreviewUrls.delete(url));
+  }, 300);
+}
 
 function stopVoicePreview() {
   if (voicePreviewAudio) voicePreviewAudio.pause();
@@ -731,7 +760,6 @@ function stopVoicePreview() {
 async function playVoicePreview(button) {
   const voiceSelect = $(button.dataset.voicePreview);
   const voiceKey = voiceSelect?.value;
-  const provider = $("#ttsProvider")?.value || "edge";
   const wasPlaying = voicePreviewButton === button;
   stopVoicePreview();
   if (wasPlaying || !voiceKey) return;
@@ -739,7 +767,7 @@ async function playVoicePreview(button) {
   // Play the same-origin URL directly: the production CSP (default-src 'self')
   // blocks blob: media, and the session cookie authenticates this GET.
   // CIT synthesizes the sample on the server CPU, so the first play can take a while.
-  const url = `/api/v1/tts-providers/${encodeURIComponent(provider)}/voices/${encodeURIComponent(voiceKey)}/preview`;
+  const url = voicePreviewUrl();
   button.textContent = "… Đang tạo";
   const start = async () => {
     const audio = new Audio(url);
@@ -802,7 +830,10 @@ async function loadTtsProviders() {
     };
     applyProviderConfiguration();
     select.addEventListener("change", applyProviderConfiguration);
-    $("#voiceTypeSelect")?.addEventListener("change", () => syncSelectedVoice());
+    $("#voiceTypeSelect")?.addEventListener("change", () => {
+      syncSelectedVoice();
+      scheduleVoicePreviewWarmup();
+    });
   } catch (_) {
     select.value = "edge";
     hint.textContent = "Edge TTS sẵn sàng; không đọc được trạng thái API khác.";
@@ -1635,7 +1666,8 @@ function renderAdminSystem(data) {
   const counts = jobs.counts || {};
   const active = jobs.active || [];
   $("#sysJobsPanel").innerHTML = systemValues([
-    ["Đang xử lý", `${counts.processing || 0} / ${jobs.worker_concurrency || "—"} luồng`],
+    ["Job đang xử lý", `${counts.processing || 0} / ${jobs.worker_concurrency || "—"} job song song`],
+    ["Concurrent trong TTS", jobs.tts_concurrency === "auto" ? "Tự động theo CPU/provider" : `${jobs.tts_concurrency} worker/job`],
     ["Đang chờ", String((counts.queued || 0) + (counts.scheduled || 0))],
     ["Hoàn tất", String(counts.completed || 0)],
     ["Thất bại", String(counts.failed || 0), counts.failed ? "level-danger" : ""],

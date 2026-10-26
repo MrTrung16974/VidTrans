@@ -58,7 +58,9 @@ def fake_cit(audio: bytes = b"RIFF0000WAVE"):
 class CITVoiceStudioProviderTest(unittest.TestCase):
     def setUp(self) -> None:
         tts_providers._cit_cache.clear()
+        tts_providers._cit_previews.clear()
         self.addCleanup(tts_providers._cit_cache.clear)
+        self.addCleanup(tts_providers._cit_previews.clear)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
 
@@ -218,6 +220,36 @@ class CITVoiceStudioProviderTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "không còn trong ứng dụng"):
                 resolve_tts_voice_selection("cit", "Đã xoá", "")
         self.assertEqual(resolve_tts_voice_selection("edge", "x", "y"), {})
+
+    @patch.dict(os.environ, CIT_ENV, clear=True)
+    def test_preview_is_short_and_reused_from_disk_after_memory_cache_reset(self) -> None:
+        opener, calls = fake_cit()
+        cache_dir = Path(self.temp.name) / "preview-cache"
+        with patch.dict(os.environ, {**CIT_ENV, "VIDTRANS_TTS_PREVIEW_CACHE_DIR": str(cache_dir)}, clear=True), \
+                patch("infrastructure.tts_providers.urlopen", side_effect=opener):
+            first = tts_providers.cit_voice_preview("Ngọc Huyền")
+            tts_providers._cit_previews.clear()  # Simulate a backend restart.
+            second = tts_providers.cit_voice_preview("Ngọc Huyền")
+
+        generated = [request for request in calls if request.full_url.endswith("/api/tts/generate")]
+        self.assertEqual(len(generated), 1)
+        self.assertEqual(json.loads(generated[0].data)["text"], "Xin chào, mời bạn nghe thử giọng này.")
+        self.assertEqual(first, second)
+        self.assertEqual(len(list(cache_dir.glob("*.audio"))), 1)
+
+    @patch.dict(os.environ, CIT_ENV, clear=True)
+    def test_startup_warmup_prepares_every_voice_only_once(self) -> None:
+        opener, calls = fake_cit()
+        cache_dir = Path(self.temp.name) / "preview-cache"
+        with patch.dict(os.environ, {**CIT_ENV, "VIDTRANS_TTS_PREVIEW_CACHE_DIR": str(cache_dir)}, clear=True), \
+                patch("infrastructure.tts_providers.urlopen", side_effect=opener):
+            self.assertEqual(tts_providers.warm_cit_voice_previews(), (3, 0))
+            tts_providers._cit_previews.clear()
+            self.assertEqual(tts_providers.warm_cit_voice_previews(), (3, 0))
+
+        generated = [request for request in calls if request.full_url.endswith("/api/tts/generate")]
+        self.assertEqual(len(generated), 3)
+        self.assertEqual(len(list(cache_dir.glob("*.audio"))), 3)
 
 
 if __name__ == "__main__":

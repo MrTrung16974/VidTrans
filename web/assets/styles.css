@@ -359,9 +359,9 @@ a { color: inherit; text-decoration: none; }
 .preview-glow { position: absolute; width: 210px; height: 210px; top: -45px; left: -25px; border-radius: 50%; background: rgba(255,185,123,.42); filter: blur(22px); }
 .preview-person { position: absolute; width: 130px; height: 200px; left: calc(50% - 65px); bottom: -35px; border-radius: 70px 70px 25px 25px; background: linear-gradient(#f5c7af 0 40%,#111c29 41%); box-shadow: 0 0 50px rgba(0,0,0,.25); }
 .preview-chinese, .preview-vietnamese { position: absolute; left: 8%; right: 8%; text-align: center; color: #fff; font-weight: 800; text-shadow: 0 2px 4px #000, 1px 0 2px #000; transition: .2s ease; }
-.preview-bottom-blur { display: none; position: absolute; z-index: 1; left: 0; right: 0; bottom: 0; height: 32%; background: color-mix(in srgb, var(--subtitle-background, #000) 55%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-top: 1px solid rgba(255,255,255,.12); }
+.preview-bottom-blur { display: none; position: absolute; z-index: 1; left: 14%; right: 14%; bottom: 17px; height: 42px; border-radius: 10px; background: color-mix(in srgb, var(--subtitle-background, #000) 38%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 4px 16px rgba(0,0,0,.18); }
 .subtitle-preview.background-blurred-bottom .preview-bottom-blur { display: block; }
-.subtitle-preview.background-blurred-bottom .preview-vietnamese { bottom: 24px; background: transparent !important; }
+.subtitle-preview.background-blurred-bottom .preview-vietnamese { background: transparent !important; }
 .subtitle-preview.background-blurred-bottom .preview-chinese { opacity: 0; }
 .preview-chinese { bottom: 27px; font-size: 17px; }
 .preview-vietnamese { bottom: 27px; z-index: 2; font-size: 17px; background: rgba(0,0,0,.55); border-radius: 5px; padding: 3px 7px; }

@@ -40,7 +40,7 @@ RUN --mount=type=secret,id=corporate_ca,required=false \
         export PIP_CERT=/tmp/vidtrans-build-ca.pem; \
     fi; \
     pip install --upgrade pip; \
-    pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1; \
+    pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0; \
     pip install -r requirements.txt; \
     rm -f /tmp/vidtrans-build-ca.pem
 
@@ -49,6 +49,11 @@ RUN pip install -r requirements-downloader.txt
 
 COPY requirements-asr.txt ./
 RUN pip install -r requirements-asr.txt
+
+# Small CPU-only translator used to turn Vietnamese fallback storyboards into
+# English image prompts. Model weights live in the persistent HF cache volume.
+COPY requirements-visual.txt ./
+RUN pip install -r requirements-visual.txt
 
 # Install the stable CLI OCR fallback after the expensive Python dependency
 # layers so enabling it does not invalidate the cached Torch/Paddle build.

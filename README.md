@@ -262,6 +262,7 @@ vẫn tái sử dụng layer Torch/Paddle lớn nếu `requirements.txt` không 
 VIDTRANS_WORKER_CONCURRENCY=auto
 VIDTRANS_WHISPER_CONCURRENCY=auto
 VIDTRANS_OCR_CONCURRENCY=auto
+VIDTRANS_TTS_CONCURRENCY=auto
 VIDTRANS_RECOVER_INTERRUPTED_JOBS=1
 VIDTRANS_DATABASE_URL=postgresql://vidtrans:change-me@postgres:5432/vidtrans
 # Đặt 0.0.0.0 nếu cần kết nối trực tiếp từ ngoài VPS; giới hạn IP bằng firewall.

@@ -10,6 +10,7 @@ from unittest.mock import patch
 from infrastructure.media_probe import probe_media_file
 from infrastructure.tts_providers import cit_can_voice
 from main import (
+    add_localized_subtitle_blur,
     build_voice_track,
     DEFAULT_ORIGINAL_AUDIO_VOLUME,
     DEFAULT_VOICE_MIX_GAIN,
@@ -19,6 +20,7 @@ from main import (
     is_speakable_tts_text,
     mix_audio,
     normalize_subtitle_style,
+    resolve_tts_worker_count,
     wrap_text,
     write_ass,
     write_srt,
@@ -26,8 +28,35 @@ from main import (
 )
 
 
+class TTSConcurrencyTests(unittest.TestCase):
+    def test_tts_worker_pool_adapts_to_provider_cpu_and_task_count(self) -> None:
+        self.assertEqual(resolve_tts_worker_count("cit", 20, cpu_count=4), 4)
+        self.assertEqual(resolve_tts_worker_count("edge", 20, cpu_count=4), 8)
+        self.assertEqual(resolve_tts_worker_count("edge", 3, cpu_count=8), 3)
+        self.assertEqual(resolve_tts_worker_count("cit", 20, configured="2", cpu_count=8), 2)
+
+
 @unittest.skipUnless(shutil.which(FFMPEG) and shutil.which(FFPROBE), "ffmpeg/ffprobe required")
 class AudioDurationIntegrationTests(unittest.TestCase):
+    def test_localized_blur_filter_uses_ocr_box_not_full_width_band(self) -> None:
+        segments = [{
+            "start": 1.0,
+            "end": 2.0,
+            "text": "Phụ đề",
+            "subtitle_layout": {
+                "mask_original": True,
+                "mask": {"x": 120, "y": 500, "width": 640, "height": 80},
+            },
+        }]
+        value = add_localized_subtitle_blur(
+            "subtitles=sample.ass",
+            segments,
+            {"background_style": "blurred_bottom", "background_color_css": "#000000"},
+        )
+        self.assertIn("crop=640:80:120:500", value)
+        self.assertIn("overlay=120:500", value)
+        self.assertNotIn("ih*0.32", value)
+
     def test_tts_skips_punctuation_only_cue_before_calling_provider(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vidtrans-empty-tts-") as directory:
             work_dir = Path(directory)

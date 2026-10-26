@@ -4,7 +4,7 @@ from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layou
 
 
 class SubtitleLayoutTests(unittest.TestCase):
-    def test_blurred_bottom_forces_subtitle_into_full_width_lower_band(self) -> None:
+    def test_blur_style_uses_only_the_detected_source_region(self) -> None:
         result = apply_subtitle_layout(
             [{
                 "start": 0.0,
@@ -17,10 +17,11 @@ class SubtitleLayoutTests(unittest.TestCase):
             style={"background_style": "blurred_bottom"},
         )[0]["subtitle_layout"]
 
-        self.assertEqual(result["placement_mode"], "bottom_safe")
-        self.assertEqual(result["position_source"], "fallback")
-        self.assertFalse(result["mask_original"])
-        self.assertGreater(result["y"], 720 * 0.68)
+        self.assertEqual(result["placement_mode"], "replace_original")
+        self.assertEqual(result["position_source"], "ocr")
+        self.assertTrue(result["mask_original"])
+        self.assertLess(result["mask"]["width"], 1280)
+        self.assertAlmostEqual(result["y"], 720 * (0.75 + 0.08 / 2), delta=2)
 
     def test_matches_ocr_position_and_visual_height(self) -> None:
         result = apply_subtitle_layout(
