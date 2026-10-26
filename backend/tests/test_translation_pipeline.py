@@ -235,6 +235,17 @@ class PreservedCueTests(unittest.TestCase):
         self.assertEqual(fragment["translation_error"], "unchanged_translation")
         ensure_translation_complete(translated)
 
+    def test_echoed_fragment_with_stray_latin_letter_is_not_fatal(self) -> None:
+        from pipeline.translation import ensure_translation_complete
+
+        translated = translate_segments(
+            self.cues("你好", "A 纪"), EchoLinesTranslator(),
+            retries=1, sleeper=lambda _: None, source_language="zh-CN",
+        )
+
+        self.assertEqual(translated[1]["translation_status"], "dropped_fragment")
+        ensure_translation_complete(translated)
+
     def test_latin_sources_are_still_translated(self) -> None:
         from pipeline.translation import needs_translation
 

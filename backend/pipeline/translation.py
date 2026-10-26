@@ -78,6 +78,14 @@ def needs_translation(text: str, source_language: str) -> bool:
     return script is None or bool(script.search(text))
 
 
+def _source_letter_count(text: str, source_language: str) -> int:
+    """Letters in the source script; stray Latin letters ("A 纪") do not make a fragment a sentence."""
+    script = _SOURCE_SCRIPT_RE.get(source_language)
+    if script is None:
+        return sum(1 for character in text if character.isalpha())
+    return len(script.findall(text))
+
+
 def segment_filter_signature() -> dict[str, float | int]:
     """Return non-sensitive filter inputs that affect transcript checkpoint output."""
 
@@ -460,7 +468,7 @@ def translate_segments(
                     reason = str(cause) if isinstance(cause, (ValueError, TranslationServiceError)) else type(cause).__name__
                     fragment = (
                         reason == "unchanged_translation"
-                        and sum(1 for character in source if character.isalpha()) <= _MAX_FRAGMENT_LETTERS
+                        and _source_letter_count(source, source_language) <= _MAX_FRAGMENT_LETTERS
                     )
                     cache[source] = (source, "dropped_fragment" if fragment else "source_fallback", reason[:160])
                     if _provider_blocked(cause):
