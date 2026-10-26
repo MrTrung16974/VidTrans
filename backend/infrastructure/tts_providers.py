@@ -8,6 +8,7 @@ import random
 import tempfile
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -560,6 +561,19 @@ def _cit_slot() -> threading.BoundedSemaphore:
                 limit = 1
             _cit_semaphore = threading.BoundedSemaphore(limit)
         return _cit_semaphore
+
+
+def cit_can_voice(text: str) -> bool:
+    """VieNeu only reads Latin script and digits.
+
+    A cue left in Chinese, Japanese or Cyrillic (an untranslated ASR hallucination) makes
+    the app answer HTTP 500 "Không tạo được dữ liệu âm thanh"; mixed lines are fine.
+    """
+
+    return any(
+        character.isdigit() or (character.isalpha() and unicodedata.name(character, "").startswith("LATIN"))
+        for character in text or ""
+    )
 
 
 def synthesize_cit(

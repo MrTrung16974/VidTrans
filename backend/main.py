@@ -119,6 +119,7 @@ from infrastructure.tts_providers import (
     provider_statuses,
     resolve_tts_voice_selection,
     synthesize_azure,
+    cit_can_voice,
     synthesize_cit,
     synthesize_elevenlabs,
     tts_account_blocked,
@@ -1686,6 +1687,7 @@ def synthesize_tts_segments(
         1
         for segment in segments
         if not segment.get("skip_tts") and is_speakable_tts_text(segment.get("text"))
+        and (tts_provider != "cit" or cit_can_voice(str(segment.get("text") or "")))
     )
     progress_lock = threading.Lock()
 
@@ -1711,6 +1713,12 @@ def synthesize_tts_segments(
         if not is_speakable_tts_text(raw_text):
             segment["skip_tts"] = True
             segment["tts_skip_reason"] = "no_speakable_text"
+            return None
+        if tts_provider == "cit" and not cit_can_voice(raw_text):
+            # One untranslated cue must not fail the whole job: it stays subtitled, unvoiced.
+            logger.warning("CIT Voice Studio cannot voice cue %d (non-Latin script); skipping TTS", index)
+            segment["skip_tts"] = True
+            segment["tts_skip_reason"] = "unsupported_script"
             return None
 
         # Read the translation exactly as subtitled. Source-language word gaps must not

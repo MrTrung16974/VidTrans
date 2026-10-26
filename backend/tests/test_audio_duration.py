@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from infrastructure.media_probe import probe_media_file
+from infrastructure.tts_providers import cit_can_voice
 from main import (
     build_voice_track,
     DEFAULT_ORIGINAL_AUDIO_VOLUME,
@@ -44,6 +45,17 @@ class AudioDurationIntegrationTests(unittest.TestCase):
         self.assertEqual(segments[0]["tts_skip_reason"], "no_speakable_text")
         self.assertAlmostEqual(duration, 1.0, places=2)
 
+    def test_cit_skips_untranslated_non_latin_cue_instead_of_failing_job(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vidtrans-cit-script-") as directory:
+            segments = [{"start": 0.0, "end": 1.0, "text": "そうですね"}]
+            with patch("main.synthesize_cit") as synthesize:
+                paths = synthesize_tts_segments(
+                    segments, Path(directory), voice_type="female", speech_rate=1.0, tts_provider="cit",
+                )
+        synthesize.assert_not_called()
+        self.assertEqual(paths, [])
+        self.assertEqual(segments[0]["tts_skip_reason"], "unsupported_script")
+
     def test_tts_reads_translation_without_pauses_from_source_word_gaps(self) -> None:
         spoken: list[str] = []
 
@@ -72,6 +84,14 @@ class AudioDurationIntegrationTests(unittest.TestCase):
         self.assertTrue(is_speakable_tts_text("Được rồi"))
         self.assertTrue(is_speakable_tts_text("有这么完美的女人"))
         self.assertFalse(is_speakable_tts_text("  …?! --  "))
+
+    def test_cit_voices_latin_script_and_digits_only(self) -> None:
+        self.assertTrue(cit_can_voice("Được rồi"))
+        self.assertTrue(cit_can_voice("朱惠月 đã đến."))
+        self.assertTrue(cit_can_voice("123"))
+        self.assertFalse(cit_can_voice("そうですね"))
+        self.assertFalse(cit_can_voice("说有人看见"))
+        self.assertFalse(cit_can_voice("Привет"))
 
     def test_balanced_default_voice_and_original_audio_levels(self) -> None:
         self.assertEqual(DEFAULT_VOICE_MIX_GAIN, 1.30)

@@ -190,7 +190,7 @@ class CITVoiceStudioProviderTest(unittest.TestCase):
             )
 
         with patch("infrastructure.tts_providers.time.sleep"), \
-                patch("infrastructure.tts_providers.urlopen", side_effect=server_error()) as opened:
+                patch("infrastructure.tts_providers.urlopen", side_effect=[server_error(), server_error()]) as opened:
             with self.assertRaises(TTSProviderHTTPError) as raised:
                 synthesize_cit("Chào", Path(self.temp.name) / "failed.wav", voice_key="Minh Đức")
 
