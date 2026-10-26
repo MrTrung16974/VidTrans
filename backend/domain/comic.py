@@ -94,6 +94,9 @@ class ComicCharacter(_Model):
     id: str = Field(min_length=1, max_length=60)
     name: str = Field(min_length=1, max_length=120)
     gender: Literal["female", "male", "unknown"] = "unknown"
+    # "human", or the creature in English ("black cat", "fox spirit", "dragon"), so a
+    # non-human character is not drawn as a person.
+    species: str = Field(default="human", max_length=80)
     age: str = Field(default="", max_length=60)
     appearance: str = Field(default="", max_length=600)
     outfit: str = Field(default="", max_length=400)
@@ -106,6 +109,16 @@ class ComicCharacter(_Model):
     @classmethod
     def _slug(cls, value: str) -> str:
         return slugify_id(value)
+
+    @field_validator("species", mode="before")
+    @classmethod
+    def _species(cls, value: object) -> str:
+        text = " ".join(str(value or "").split()).lower()[:80]
+        return "human" if text in {"", "person", "people", "man", "woman", "boy", "girl", "humans"} else text
+
+    @property
+    def is_human(self) -> bool:
+        return self.species == "human"
 
     @property
     def voice_gender(self) -> str | None:
@@ -311,7 +324,7 @@ class ComicSettings(_Model):
     video_mode: Literal["comic", "animated"] = "comic"
     animation_provider: Literal["camera_2_5d", "veo", "gpu_worker"] = "camera_2_5d"
     quality: Literal["draft", "final"] = "final"
-    fps: Literal[24, 30] = 30
+    fps: Literal[24, 30] = 24
     motion_strength: float = Field(default=0.45, ge=0.0, le=1.0)
     # Bounded retries and a per-render budget of AI-generated seconds: video models are expensive.
     max_animation_attempts: int = Field(default=2, ge=1, le=4)

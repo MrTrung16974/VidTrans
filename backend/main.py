@@ -6441,6 +6441,26 @@ def comic_quota_account(request: Request, job: dict[str, Any]) -> dict[str, Any]
     return ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
 
 
+def delete_comic_project_permanently(job_id: str, job: dict[str, Any]) -> None:
+    """Hide the job, then remove its uploads, renders and work files from disk right away."""
+    try:
+        JOB_SERVICE.delete(job_id, require_terminal=True)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    except JobStateConflictError:
+        raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa") from None
+    TENANT_GOVERNANCE.release(job_id)
+    owner = str(job.get("owner_user_id") or "__legacy__")
+    series_id = (job.get("comic") or {}).get("series_id")
+    if series_id:
+        COMIC_SERIES.remove_episode(owner, str(series_id), job_id)
+    for root in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR):
+        path = tenant_storage_path(root, owner, job_id)
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+    logger.info("Comic project %s deleted with its files", job_id)
+
+
 def list_comic_projects_for_request(
     request: Request,
     *,
@@ -6479,6 +6499,7 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
     list_projects=list_comic_projects_for_request,
     series_store=COMIC_SERIES,
+    delete_project=delete_comic_project_permanently,
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
 

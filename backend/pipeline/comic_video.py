@@ -23,6 +23,7 @@ import re
 import shutil
 import textwrap
 import threading
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,7 +49,8 @@ from pipeline.parallel import collect_indexed_futures
 
 logger = logging.getLogger(__name__)
 
-FPS = 30
+# Cinema frame rate; the project's own setting (24 or 30) overrides it.
+FPS = 24
 FADE_SECONDS = 0.35
 PART_GAP_SECONDS = 0.3
 SCENE_TAIL_SECONDS = 0.45
@@ -108,19 +110,105 @@ def character_prompt(character: ComicCharacter) -> str:
     return text + (f", wearing {character.outfit}" if character.outfit else "")
 
 
+_PERSON_BY_AGE = (  # (max age, male, female, unknown)
+    (12, "boy", "girl", "child"),
+    (19, "teenage boy", "teenage girl", "teenager"),
+    (29, "young man", "young woman", "young person"),
+    (59, "man", "woman", "person"),
+    (200, "old man", "old woman", "elderly person"),
+)
+_LIFE_STAGES = {"child": 8, "kid": 8, "teen": 16, "teenager": 16, "young": 22, "adult": 35,
+                "middle": 45, "elderly": 70, "old": 70}
+# Without these the style prompt ("elegant", "romantic", "flowers") lets SDXL draw a woman.
+_NOT_GENDER = {
+    "male": "woman, girl, female, feminine face, makeup, breasts, long eyelashes",
+    "female": "man, boy, male, beard, moustache, masculine jaw",
+}
+
+
+def _age_years(character: ComicCharacter) -> int | None:
+    text = f"{character.age} {character.appearance}".lower()
+    number = re.search(r"\b(\d{1,3})(?:s\b|\b)", text)  # "20", "20s"
+    if number:
+        return int(number.group(1))
+    return next((years for word, years in _LIFE_STAGES.items() if re.search(rf"\b{word}", text)), None)
+
+
+def character_noun(character: ComicCharacter) -> str:
+    """"teenage boy", "old woman", "black cat": the subject an image model must draw."""
+    if not character.is_human:
+        sex = {"male": "male ", "female": "female "}.get(character.gender, "")
+        return f"{sex}{character.species}"
+    years = _age_years(character)
+    column = {"male": 1, "female": 2}.get(character.gender, 3)
+    row = next((r for r in _PERSON_BY_AGE if years is not None and years <= r[0]), _PERSON_BY_AGE[3])
+    return row[column]
+
+
+def character_look(character: ComicCharacter) -> str:
+    """Appearance without the name: an image model reads "Doãn Thần" as noise, not a person."""
+    noun = character_noun(character)
+    text = ("an " if noun[0] in "aeiou" else "a ") + noun
+    if character.is_human and character.gender in _NOT_GENDER:
+        text += f" ({character.gender})"
+    if character.appearance:
+        text += f", {character.appearance}"
+    return text + (f", wearing {character.outfit}" if character.outfit and character.is_human else "")
+
+
+def cast_negative(storyboard: Storyboard, character_ids: list[str], negative: str) -> str:
+    """Exclude the wrong gender / a human body when every character in the frame agrees."""
+    cast = [c for c in (storyboard.character(cid) for cid in character_ids) if c is not None]
+    extra: list[str] = []
+    humans = [c for c in cast if c.is_human]
+    genders = {c.gender for c in humans}
+    if humans and len(genders) == 1 and next(iter(genders)) in _NOT_GENDER:
+        extra.append(_NOT_GENDER[next(iter(genders))])
+    if cast and not humans:
+        extra.append("human, person, humanoid, human face")
+    return ", ".join(part for part in (negative, *extra) if part)
+
+
+def without_names(text: str, storyboard: Storyboard) -> str:
+    """Replace character names in LLM-written prompts with what the character is."""
+    for character in sorted(storyboard.characters, key=lambda c: len(c.name), reverse=True):
+        if len(character.name.strip()) < 2:
+            continue
+        generic = "the " + character_noun(character)
+        # LLMs also write the name without diacritics ("Doan Thanh") or as its id ("doan_thanh").
+        spellings = {character.name.strip(), _ascii_fold(character.name.strip()), character.id.replace("_", " "),
+                     character.id}
+        for spelling in sorted(spellings, key=len, reverse=True):
+            if len(spelling) >= 2:
+                text = re.sub(rf"\b{re.escape(spelling)}\b", generic, text, flags=re.IGNORECASE)
+    return re.sub(r"^[\s,;:.]+", "", text)
+
+
+def _ascii_fold(text: str) -> str:
+    text = text.replace("Đ", "D").replace("đ", "d")
+    return "".join(ch for ch in unicodedata.normalize("NFD", text) if not unicodedata.combining(ch))
+
+
+def cast_description(storyboard: Storyboard, character_ids: list[str]) -> str:
+    cast = [storyboard.character(cid) for cid in character_ids]
+    described = [character_look(c) for c in cast if c is not None]
+    return ("Characters: " + "; ".join(described) + ".") if described else ""
+
+
 def scene_image_prompt(scene: ComicScene, storyboard: Storyboard, aspect_ratio: str) -> str:
+    # SDXL/SD1.5 weigh the first ~77 tokens most: the story content leads, style comes last.
     style = COMIC_STYLES.get(storyboard.style, COMIC_STYLES["anime_comic"])[1]
-    lines = [f"{style}.", scene.visual_prompt.rstrip(".") + "."]
-    if storyboard.style == "manhua":
-        lines.append("Premium romantic historical manhua illustration, soft pastel palette, delicate painterly detail, natural adult proportions, fine facial features, soft warm light, visually rich but not cartoonish, not chibi, not 3D.")
-    cast = [storyboard.character(cid) for cid in scene.characters]
-    described = [character_prompt(c) for c in cast if c is not None]
-    if described:
-        lines.append("Characters: " + "; ".join(described) + ".")
+    lines = [without_names(scene.visual_prompt, storyboard).rstrip(".") + "."]
+    cast = cast_description(storyboard, scene.characters)
+    if cast:
+        lines.append(cast)
     if scene.location:
         lines.append(f"Setting: {scene.location}.")
     if scene.emotion:
         lines.append(f"Mood: {scene.emotion}.")
+    lines.append(f"{style}.")
+    if storyboard.style == "manhua":
+        lines.append("Premium romantic historical manhua illustration, soft pastel palette, delicate painterly detail, natural adult proportions, fine facial features, soft warm light, visually rich but not cartoonish, not chibi, not 3D.")
     lines.append(f"Single full-bleed illustration, {aspect_ratio} composition, keep the lower fifth "
                  "free of important details for subtitles, no text, no speech bubbles, no watermark.")
     return " ".join(lines)
@@ -128,8 +216,9 @@ def scene_image_prompt(scene: ComicScene, storyboard: Storyboard, aspect_ratio: 
 
 def reference_prompt(character: ComicCharacter, style_key: str) -> str:
     style = COMIC_STYLES.get(style_key, COMIC_STYLES["anime_comic"])[1]
-    return (f"{style}. Character reference sheet of {character_prompt(character)}. Full body, front view, "
-            "neutral standing pose, plain light grey background, even lighting, no text.")
+    pose = "front view, neutral standing pose" if character.is_human else "clear full view of the whole body"
+    return (f"Character reference sheet of {character_look(character)}. Full body, {pose}, "
+            f"plain light grey background, even lighting, no text. {style}.")
 
 
 def split_cue_text(text: str, max_chars: int) -> list[str]:
@@ -211,8 +300,10 @@ class ComicVideoProducer:
         self.settings = settings
         self.images = image_provider
         self.rt = runtime
+        if hasattr(image_provider, "check_active"):
+            image_provider.check_active = runtime.check_active
         self.width, self.height = settings.size
-        self.fps = FPS
+        self.fps = settings.fps
         self.cache_hits = 0
         self.cache_misses = 0
         self.workers = scene_workers()
@@ -281,14 +372,17 @@ class ComicVideoProducer:
                 # An approved reference is used verbatim, whatever the profile says now.
                 refs[character.id] = (pinned, content_hash("approved", file_hash(pinned)))
                 continue
+            reference_negative = cast_negative(storyboard, [character.id], style_negative_prompt(
+                storyboard.style, "multiple people, text, watermark, cropped body"))
+            # The prompt (gender, species) is part of the key: fixing a profile redraws its reference.
             key = content_hash(PIPELINE_VERSION, "ref", self.images.cache_key, storyboard.style,
-                               character_prompt(character), self.settings.seed)
+                               reference_prompt(character, storyboard.style), reference_negative, self.settings.seed)
             path = self.project.dir("refs") / f"{character.id}-{key[:16]}.png"
             self.rt.report("comic_references", position / max(1, len(cast)),
                            f"Ảnh tham chiếu nhân vật {position}/{len(cast)}: {character.name}")
             generated, fallback = self._ensure_image(path, ImageRequest(
                 prompt=reference_prompt(character, storyboard.style), width=REFERENCE_SIZE, height=REFERENCE_SIZE,
-                negative_prompt=style_negative_prompt(storyboard.style, "multiple people, text, watermark, cropped body"),
+                negative_prompt=reference_negative,
                 seed=self.settings.seed,
                 aspect_ratio="1:1", caption=character.name, display_text=character_prompt(character),
             ), allow_fallback=False)
@@ -359,7 +453,8 @@ class ComicVideoProducer:
                     save_png_atomic(fit_cover(image, self.width, self.height), path)
             return path, key
         prompt = scene_image_prompt(scene, storyboard, self.settings.aspect_ratio)
-        negative = style_negative_prompt(storyboard.style, scene.negative_prompt)
+        negative = cast_negative(storyboard, scene.characters,
+                                 style_negative_prompt(storyboard.style, scene.negative_prompt))
         scene_refs = [refs[cid] for cid in scene.characters if cid in refs]
         seed = self.settings.seed + scene.scene_index if self.settings.seed else 0
         key = content_hash(PIPELINE_VERSION, "scene", self.images.cache_key, prompt, negative,
@@ -511,17 +606,17 @@ class ComicVideoProducer:
         overlays = [(self.subtitle_overlay(c["text"]), c["start"], c["end"]) for c in cues] \
             if self.settings.burn_subtitles else []
         key = content_hash(PIPELINE_VERSION, "clip", image_key, audio_key, scene.camera_motion, self.width,
-                           self.height, FPS, [(p.name, s, e) for p, s, e in overlays])
+                           self.height, self.fps, [(p.name, s, e) for p, s, e in overlays])
         clip = self.project.dir("clips") / f"s{scene.scene_index:03d}-{key[:16]}.mp4"
         if clip.is_file():
             self._cache(True)
             return clip
         self._cache(False)
-        frames = max(1, round(duration * FPS))
+        frames = max(1, round(duration * self.fps))
         zoom, x, y = motion_expressions(scene.camera_motion, frames)
         inputs = ["-i", str(image), "-i", str(audio)]
         graph = [f"[0:v]scale={self.width * 2}:{self.height * 2},zoompan=z='{zoom}':x='{x}':y='{y}'"
-                 f":d={frames}:s={self.width}x{self.height}:fps={FPS},setsar=1,format=yuv420p[v0]"]
+                 f":d={frames}:s={self.width}x{self.height}:fps={self.fps},setsar=1,format=yuv420p[v0]"]
         current = "v0"
         for index, (overlay, start, end) in enumerate(overlays):
             inputs += ["-i", str(overlay)]
@@ -534,7 +629,7 @@ class ComicVideoProducer:
         temporary = clip.with_suffix(".tmp.mp4")
         self.rt.run_ffmpeg([
             self.rt.ffmpeg, "-y", *inputs, "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
-            "-t", f"{duration:.3f}", "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-t", f"{duration:.3f}", "-r", str(self.fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(temporary),
         ])
         temporary.replace(clip)

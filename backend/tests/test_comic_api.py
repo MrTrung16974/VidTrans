@@ -290,6 +290,36 @@ class ComicApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/v1/comic/series/{series_id}").status_code, 404)
         self.assertEqual(self.project(first).status_code, 200)
 
+    def test_deleting_a_project_removes_its_files(self) -> None:
+        job_id = self.create().json()["job_id"]
+        self.assertEqual(self.run_job(job_id)["status"], "completed")
+        video = main.stored_artifact_path(self.service.get(job_id)["output_video"])
+        rate = subprocess.run([main.FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
+                               "stream=r_frame_rate", "-of", "csv=p=0", str(video)], capture_output=True, text=True)
+        self.assertEqual(rate.stdout.strip(), "24/1")  # cinema frame rate by default
+        owner = self.service.get(job_id)["owner_user_id"]
+        folders = [main.tenant_storage_path(root, owner, job_id) for root in (main.OUTPUT_DIR, main.WORK_DIR)]
+        self.assertTrue(all(folder.is_dir() for folder in folders))
+        self.assertEqual(self.client.delete(f"/api/v1/comic/projects/{job_id}", headers={"x-test-user": "b"}).status_code, 404)
+        deleted = self.client.delete(f"/api/v1/comic/projects/{job_id}")
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertFalse(any(folder.exists() for folder in folders))
+        self.assertEqual(self.project(job_id).status_code, 404)
+
+    def test_deleting_a_series_with_episodes_removes_their_files(self) -> None:
+        created = self.client.post("/api/v1/comic/series", data={
+            "title": "Tiên Nghịch", "text": STORY, "llm_provider": "heuristic", "image_provider": "placeholder",
+            "aspect_ratio": "16:9", "target_scene_duration": "4"})
+        series_id, episode = created.json()["series_id"], created.json()["job_id"]
+        self.assertEqual(self.run_job(episode)["status"], "completed")
+        owner = self.service.get(episode)["owner_user_id"]
+        work = main.tenant_storage_path(main.WORK_DIR, owner, episode)
+        deleted = self.client.delete(f"/api/v1/comic/series/{series_id}?with_episodes=true")
+        self.assertEqual(deleted.json()["deleted_episodes"], 1)
+        self.assertFalse(work.exists())
+        self.assertEqual(self.project(episode).status_code, 404)
+        self.assertEqual(self.client.get(f"/api/v1/comic/series/{series_id}").status_code, 404)
+
     def test_series_character_reference_is_shared(self) -> None:
         from PIL import Image
 

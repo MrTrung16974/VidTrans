@@ -50,8 +50,9 @@ DRAFT_SCHEMA: dict[str, Any] = {
         "characters": {"type": "array", "items": {"type": "object", "properties": {
             "id": {"type": "string"}, "name": {"type": "string"},
             "gender": {"type": "string", "enum": ["female", "male", "unknown"]},
+            "species": {"type": "string"},
             "age": {"type": "string"}, "appearance": {"type": "string"}, "outfit": {"type": "string"},
-        }, "required": ["id", "name", "gender", "appearance"]}},
+        }, "required": ["id", "name", "gender", "species", "appearance"]}},
         "scenes": {"type": "array", "items": {"type": "object", "properties": {
             "narration": {"type": "string"},
             "dialogue": {"type": "array", "items": {"type": "object", "properties": {
@@ -72,7 +73,7 @@ def system_prompt(settings: ComicSettings) -> str:
     max_chars = int(settings.target_scene_duration * CHARS_PER_SECOND * 1.3)
     return f"""You are a storyboard director turning prose into a narrated comic video.
 Answer with ONE JSON object only, no markdown:
-{{"youtube_title": "Vietnamese YouTube video title", "characters": [{{"id", "name", "gender": "female|male|unknown", "age", "appearance", "outfit"}}],
+{{"youtube_title": "Vietnamese YouTube video title", "characters": [{{"id", "name", "gender": "female|male|unknown", "species", "age", "appearance", "outfit"}}],
  "scenes": [{{"narration", "dialogue": [{{"character": "<character id>", "text"}}], "characters": ["<id>"],
    "location", "emotion", "visual_prompt", "negative_prompt", "camera_motion", "estimated_duration", "source_excerpt"}}]}}
 Rules:
@@ -84,18 +85,26 @@ Rules:
    spoken lines go to "dialogue" in {language}, attributed to the speaker's character id. Use "narrator" never.
 3. One scene = one visual moment with a single main action. Keep narration + dialogue of a scene under
    {max_chars} characters (about {settings.target_scene_duration:g} seconds spoken). estimated_duration is in seconds.
-4. "visual_prompt" is ENGLISH and describes only what is visible: who (name plus a short look), action, pose,
-   setting, time of day, lighting, shot type (close-up, medium, wide). No text, captions or speech bubbles.
-5. Characters: reuse ids from KNOWN CHARACTERS exactly. Add a character only for a named or recurring person,
-   with a lowercase ascii id. "appearance" is ENGLISH and lists fixed traits (age look, hair, eyes, build,
-   distinctive accessories) so the character can be drawn the same way in every scene.
+4. "visual_prompt" is ENGLISH, at most 50 words, and describes only what is visible, in this order: the main
+   subject and the ONE action happening now, the story props involved (named concretely), where each visible
+   character is in the frame (left / right / foreground / background, facing whom), expression, setting, time
+   of day, lighting, shot type (close-up, medium, wide). Draw only what the text states. Never summarise or
+   skip sentences, and never repeat a spoken line inside "narration". No text, captions or speech bubbles.
+5. Characters: reuse ids from KNOWN CHARACTERS exactly. Add a character only for a named or recurring
+   person, animal or creature, with a lowercase ascii id. "appearance" is ENGLISH and lists fixed traits
+   (age look, hair or fur, eyes, build, distinctive accessories) so it can be drawn the same way in every scene.
+   "gender" must follow the story: a male character (anh, hắn, ông, cậu, chàng, he) is "male", a female
+   one (cô, nàng, bà, chị, she) is "female". "species" is "human" or the creature in English ("black cat",
+   "white fox spirit", "dragon", "robot"); never turn an animal, spirit or monster into a person.
+   "age" is a number of years or a life stage ("8", "teenager", "elderly").
 6. "camera_motion" is one of: {", ".join(CAMERA_MOTIONS)}. Vary it; use slow_zoom_in for tension or emotion.
 7. "source_excerpt" copies verbatim the first 8-15 words of the source passage the scene covers.
 8. "emotion" is one English word; "location" is a short English place description."""
 
 
 def user_prompt(chunk: str, characters: list[ComicCharacter], position: int, total: int) -> str:
-    known = [c.model_dump(include={"id", "name", "gender", "appearance", "outfit"}) for c in characters]
+    known = [c.model_dump(include={"id", "name", "gender", "species", "age", "appearance", "outfit"})
+             for c in characters]
     return (f"KNOWN CHARACTERS: {json.dumps(known, ensure_ascii=False)}\n\n"
             f"STORY CHUNK {position}/{total}:\n{chunk}")
 
@@ -120,13 +129,34 @@ def _prepare_draft(data: Any) -> Any:
     return data
 
 
-def _validate_draft(answer: str, animated: bool) -> StoryboardDraft:
+# Below this a draft silently drops most of the story (a small local model summarising a
+# 3500-character chunk into five shots): ask for a repair, then fall back to the sentence splitter.
+MIN_COVERAGE = 0.6
+MIN_COVERAGE_CHUNK_CHARS = 600
+
+
+def draft_coverage(draft: StoryboardDraft, chunk: str) -> float:
+    """Share of the chunk's text that the draft will actually narrate or speak."""
+    spoken = 0
+    for scene in draft.scenes:
+        for part in scene.shots or [scene]:
+            spoken += len(_comparable(" ".join([part.narration, *(line.text for line in part.dialogue)])))
+    return spoken / max(1, len(_comparable(chunk)))
+
+
+def _validate_draft(answer: str, animated: bool, chunk: str = "") -> StoryboardDraft:
     data = extract_json(answer)
     draft = StoryboardDraft.model_validate(prepare_animated_draft(data) if animated else _prepare_draft(data))
     if animated:
         missing = [scene.scene_index for scene in draft.scenes if not scene.shots]
         if missing:
             raise ValueError(f"scenes {missing} have no shots; every scene needs 1-4 shots")
+    if len(chunk) >= MIN_COVERAGE_CHUNK_CHARS:
+        coverage = draft_coverage(draft, chunk)
+        if coverage < MIN_COVERAGE:
+            raise ValueError(
+                f"the narration and dialogue cover only {coverage:.0%} of the story chunk; keep the author's "
+                "wording for EVERY sentence in order and add more scenes/shots instead of summarising")
     return draft
 
 
@@ -140,7 +170,7 @@ def analyze_chunk(llm, settings: ComicSettings, chunk: str, characters: list[Com
     for round_number in range(MAX_REPAIR_ROUNDS + 1):
         answer = llm.generate_json(system, request, schema)
         try:
-            return _validate_draft(answer, animated)
+            return _validate_draft(answer, animated, chunk)
         except (ValidationError, ValueError) as exc:
             if round_number == MAX_REPAIR_ROUNDS:
                 raise
@@ -174,23 +204,53 @@ def heuristic_scenes(chunk: str, settings: ComicSettings, start_index: int = 1) 
     return scenes
 
 
+def attach_story_context(scenes: list[ComicScene], characters: list[ComicCharacter],
+                         previous: list[ComicScene]) -> None:
+    """Give sentence-split scenes the cast and place the LLM found in earlier chunks.
+
+    Without them every keyframe draws a different stranger in a different room, and the
+    character references (IP-Adapter) are never applied.
+    """
+    names = [(c.id, f" {_comparable(c.name)} ") for c in characters if len(_comparable(c.name)) >= 2]
+    location = next((s.location for s in reversed(previous) if s.location), "")
+    cast: list[str] = next((list(_scene_character_ids(s)) for s in reversed(previous) if _scene_character_ids(s)), [])
+    for scene in scenes:
+        for target in scene.shots or [scene]:
+            text = f" {_comparable(target.narration)} "
+            found = sorted((text.find(name), cid) for cid, name in names if name in text)
+            # A line without a name ("hắn nói…") continues the current conversation.
+            if found:
+                cast = [cid for _position, cid in found][:3]
+            if cast and not target.characters:
+                target.characters = list(cast)
+        if not scene.characters:
+            scene.characters = list(dict.fromkeys(
+                cid for shot in scene.shots for cid in shot.characters)) or list(cast)
+        if scene.location:
+            location = scene.location
+        elif location:
+            scene.location = location
+
+
 def translate_heuristic_visuals(scenes: list[ComicScene], translator) -> bool:
-    """Convert fallback narration into English prompts without external APIs."""
+    """Convert fallback narration into English prompts for the English-only image model."""
     if translator is None or not scenes:
         return False
-    sources = [scene.narration.replace("\n", " ").strip()[:1400] for scene in scenes]
+    # Animated keyframes are drawn from each shot's prompt, so shots need English too.
+    targets: list[tuple[object, str]] = []
+    for scene in scenes:
+        targets.append((scene, "visual_prompt"))
+        targets.extend((shot, "keyframe_prompt") for shot in scene.shots if shot.narration.strip())
+    sources = [target.narration.replace("\n", " ").strip()[:1400] for target, _field in targets]
     try:
         translated = translator.translate_lines(sources)
-        if len(translated) != len(scenes) or not all(str(value).strip() for value in translated):
+        if len(translated) != len(sources) or not all(str(value).strip() for value in translated):
             return False
     except Exception as exc:
         logger.warning("Could not translate local visual prompts (%s: %s)", type(exc).__name__, str(exc)[:160])
         return False
-    for scene, english in zip(scenes, translated):
-        scene.visual_prompt = (
-            "Depict this exact story event, including the described people, action and setting: "
-            + str(english).strip()
-        )
+    for (target, field_name), english in zip(targets, translated):
+        setattr(target, field_name, str(english).strip())
     return True
 
 
@@ -229,7 +289,8 @@ def build_storyboard(
     ids and looks and an episode never redraws a character introduced earlier in the story."""
     if not text.strip():
         raise ValueError("Truyện không có nội dung")
-    chunks = chunk_story(text, CHUNK_CHARS)
+    # Local models lose detail on long chunks; they get smaller ones.
+    chunks = chunk_story(text, getattr(llm, "story_chunk_chars", CHUNK_CHARS))
     registry: dict[str, ComicCharacter] = {c.id: c.model_copy() for c in known_characters}
     scenes: list[ComicScene] = []
     warnings: list[str] = []
@@ -259,6 +320,7 @@ def build_storyboard(
             else:
                 draft_scenes = heuristic_scenes(chunk, settings, len(scenes) + 1)
             methods.add("heuristic")
+            attach_story_context(draft_scenes, list(registry.values()), scenes)
             if translate_heuristic_visuals(draft_scenes, prompt_translator):
                 methods.add("visual-en-local")
         scenes.extend(draft_scenes)

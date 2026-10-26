@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import threading
 import time
@@ -24,6 +25,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol
+
+logger = logging.getLogger(__name__)
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_VEO_MODEL = "veo-3.0-fast-generate-001"
@@ -311,7 +314,17 @@ class GPUWorkerProvider:
         status: dict[str, Any] = job
         waited = 0.0
         while status.get("status") not in {"completed", "failed"}:
-            check_active()
+            try:
+                check_active()
+            except Exception:
+                # Free the GPU now instead of letting an abandoned clip run for minutes.
+                try:
+                    self._call(f"/v1/jobs/{job_id}/cancel", {})
+                except VideoGenerationError as exc:
+                    logger.warning("Could not cancel GPU worker job %s: %s", job_id, exc)
+                raise
+            if status.get("status") == "cancelled":
+                raise VideoGenerationError("GPU worker đã hủy clip")
             if waited >= self.max_wait_seconds:
                 raise VideoGenerationError("GPU worker quá thời gian chờ")
             self.sleeper(self.poll_seconds)
@@ -324,8 +337,10 @@ class GPUWorkerProvider:
             while block := response.read(1024 * 1024):
                 handle.write(block)
         return VideoResult(model=str(status.get("model") or self.cache_key),
-                           billed_seconds=float(status.get("gpu_seconds") or duration),
-                           metadata={"job_id": job_id})
+                           # The render budget counts seconds of video, as hosted APIs bill; GPU wall
+                           # time (minutes per clip on a laptop) would exhaust it after two shots.
+                           billed_seconds=duration,
+                           metadata={"job_id": job_id, "gpu_seconds": status.get("gpu_seconds")})
 
 
 def animation_provider_statuses() -> list[dict[str, Any]]:

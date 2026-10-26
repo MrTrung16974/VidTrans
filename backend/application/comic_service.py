@@ -23,7 +23,11 @@ from infrastructure.comic_series import ComicSeriesStore
 from infrastructure.image_providers import create_image_provider
 from infrastructure.llm_providers import create_story_llm
 from infrastructure.video_providers import Camera25DProvider, create_video_provider
-from infrastructure.visual_prompt_translator import LocalVisualPromptTranslator
+from infrastructure.visual_prompt_translator import (
+    ChainedVisualPromptTranslator,
+    LLMVisualPromptTranslator,
+    LocalVisualPromptTranslator,
+)
 from pipeline.animation_video import AnimatedVideoProducer
 from pipeline.comic_storyboard import build_storyboard
 from pipeline.comic_video import ComicRuntime, ComicVideoProducer, remove_stale_assets
@@ -129,7 +133,13 @@ class ComicJobRunner:
                         step_detail="Phân tích truyện", started_at=self.utc_now(), error=None)
         if not project.has_storyboard():
             llm = create_story_llm(settings.llm_provider)
-            prompt_translator = LocalVisualPromptTranslator() if settings.language == "vi" else None
+            prompt_translator = None
+            if settings.language == "vi":
+                # The offline Marian model is optional (needs transformers); the storyboard
+                # LLM, when there is one, writes the English prompts instead.
+                prompt_translator = ChainedVisualPromptTranslator(
+                    LocalVisualPromptTranslator(), LLMVisualPromptTranslator(llm) if llm is not None else None,
+                )
             storyboard = build_storyboard(
                 project.read_story(), settings, llm,
                 progress=lambda done, total: report("comic_storyboard", done / total,

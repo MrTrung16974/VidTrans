@@ -5571,6 +5571,12 @@ input[type="file"]::-webkit-file-upload-button:active {
 .comic-projects .comic-project { grid-template-columns: minmax(0, 1fr); }
 .comic-projects .comic-project .status-pill { justify-self: start; }
 .comic-project small { grid-column: 1 / -1; color: var(--muted); font-size: .74rem; line-height: 1.35; }
+.comic-project-row { position: relative; min-width: 0; }
+.comic-project-row .comic-project { padding-right: 40px; }
+.comic-project-delete { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 8px; background: transparent; color: #94a3b8; font-size: .8rem; cursor: pointer; opacity: .7; transition: background-color .15s, color .15s, opacity .15s; }
+.comic-project-row:hover .comic-project-delete, .comic-project-delete:focus-visible { opacity: 1; }
+.comic-project-delete:hover:not(:disabled) { background: #fee2e2; color: #b91c1c; }
+.comic-project-delete:disabled { cursor: not-allowed; opacity: .3; }
 .comic-project-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #f1f5f9; }
 .comic-project-pagination .pagination-btn { min-height: 30px; height: 30px; padding: 0 9px; font-size: 0.74rem; font-weight: 700; border-radius: 8px; }
 .comic-project-page-info { font-size: 0.75rem; font-weight: 600; color: #64748b; white-space: nowrap; }

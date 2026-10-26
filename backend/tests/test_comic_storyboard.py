@@ -8,6 +8,8 @@ from pydantic import ValidationError
 
 from domain.comic import ComicCharacter, ComicScene, ComicSettings, Storyboard, slugify_id
 from infrastructure.story_text import StoryTextError, chunk_story, decode_text, read_story_upload, split_sentences
+from infrastructure.visual_prompt_translator import ChainedVisualPromptTranslator, LLMVisualPromptTranslator
+from pipeline.animation_storyboard import heuristic_animated_scenes
 from pipeline.comic_storyboard import MAX_REPAIR_ROUNDS, build_storyboard, extract_json, heuristic_scenes
 
 STORY = (
@@ -189,6 +191,64 @@ class StoryboardTests(unittest.TestCase):
         )
         self.assertIn("drinks tea", board.scenes[0].visual_prompt)
         self.assertIn("visual-en-local", board.analysis_method)
+
+    def test_animated_fallback_translates_every_shot_keyframe(self) -> None:
+        class Translator:
+            def translate_lines(self, lines):
+                return [f"english {index}" for index, _ in enumerate(lines)]
+
+        board = build_storyboard(
+            "Doãn Thần mở cửa. Hắn nhìn thấy một hòn đá.\n\nĐầu đinh nam cười lớn.",
+            self.settings(llm_provider="heuristic", video_mode="animated"), None, prompt_translator=Translator(),
+        )
+        prompts = [shot.keyframe_prompt for scene in board.scenes for shot in scene.shots]
+        self.assertTrue(prompts)
+        self.assertTrue(all("english" in prompt for prompt in prompts))
+        self.assertFalse(any("Doãn" in prompt for prompt in prompts))
+
+    def test_llm_visual_translator_batches_and_chain_falls_back(self) -> None:
+        class FakeLLM:
+            calls = 0
+
+            def generate_json(self, system, user, schema):
+                FakeLLM.calls += 1
+                count = len(user.splitlines())
+                return "<think>x</think>" + json.dumps({"lines": [f"scene {i}" for i in range(count)]})
+
+        class Broken:
+            def translate_lines(self, lines):
+                raise ModuleNotFoundError("transformers")
+
+        lines = [f"Câu {index}." for index in range(13)]
+        translated = ChainedVisualPromptTranslator(Broken(), LLMVisualPromptTranslator(FakeLLM())).translate_lines(lines)
+        self.assertEqual(len(translated), 13)
+        self.assertEqual(FakeLLM.calls, 2)
+
+    def test_sentence_split_scenes_keep_cast_and_location_from_earlier_chunks(self) -> None:
+        from pipeline.comic_storyboard import attach_story_context
+
+        hero = ComicCharacter(id="doan_than", name="Doãn Thần", gender="male")
+        friend = ComicCharacter(id="dau_dinh", name="Đầu đinh nam", gender="male")
+        earlier = ComicScene(scene_index=1, narration="x", visual_prompt="cafe", location="Café", characters=["doan_than"])
+        scenes = heuristic_animated_scenes(
+            "Đầu đinh nam cười lớn. Doãn Thần im lặng.\n\nHắn nói tiếp về vũ trụ.",
+            self.settings(llm_provider="heuristic", video_mode="animated"), 2, 15.0,
+        )
+        attach_story_context(scenes, [hero, friend], [earlier])
+        self.assertEqual(scenes[0].shots[0].characters, ["dau_dinh", "doan_than"])
+        # No name in the sentence: the conversation's cast carries over.
+        self.assertEqual(scenes[1].shots[0].characters, ["dau_dinh", "doan_than"])
+        self.assertTrue(all(scene.location == "Café" for scene in scenes))
+
+    def test_draft_that_summarises_a_long_chunk_is_rejected(self) -> None:
+        from pipeline.comic_storyboard import _validate_draft
+
+        chunk = " ".join(f"Câu thứ {index} kể một sự việc khác nhau trong truyện." for index in range(30))
+        summary = {"characters": [], "scenes": [{"narration": "Tóm tắt ngắn.", "visual_prompt": "a quiet room"}]}
+        with self.assertRaisesRegex(ValueError, "cover only"):
+            _validate_draft(json.dumps(summary, ensure_ascii=False), False, chunk)
+        full = {"characters": [], "scenes": [{"narration": chunk, "visual_prompt": "a quiet room"}]}
+        self.assertEqual(len(_validate_draft(json.dumps(full, ensure_ascii=False), False, chunk).scenes), 1)
 
     def test_extract_json_ignores_thinking_and_fences(self) -> None:
         self.assertEqual(extract_json('<think>hmm {"a": 0}</think> ```json\n{"a": 1}\n```'), {"a": 1})

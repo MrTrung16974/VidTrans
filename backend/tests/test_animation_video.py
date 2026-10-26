@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from domain.comic import ComicCharacter, ComicScene, ComicSettings, Shot, Storyboard, style_negative_prompt
+from domain.comic import COMIC_STYLES, ComicCharacter, ComicScene, ComicSettings, Shot, Storyboard, style_negative_prompt
 from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import PlaceholderImageProvider
 from infrastructure.video_providers import (
@@ -136,6 +136,39 @@ class StoryboardTests(unittest.TestCase):
         motion = motion_prompt(scene, shot, board)
         self.assertIn("tracking", motion)
         self.assertIn("identical to the first frame", motion)
+
+    def test_keyframe_prompt_leads_with_action_and_drops_names(self) -> None:
+        board = animated_storyboard()
+        scene, shot = board.scenes[0], board.scenes[0].shots[1]
+        name = board.character(shot.characters[0]).name
+        shot.keyframe_prompt = f"{name} runs toward the gate"
+        prompt = keyframe_prompt(scene, shot, board, "16:9")
+        self.assertTrue(prompt.startswith(("the man runs", "the woman runs", "the person runs")), prompt)
+        self.assertNotIn(name, prompt)
+        style = COMIC_STYLES[board.style][1]
+        self.assertGreater(prompt.index(style), prompt.index("runs toward the gate"))
+
+    def test_character_prompts_state_gender_age_and_species(self) -> None:
+        from pipeline.comic_video import cast_negative, character_look, reference_prompt
+
+        man = ComicCharacter(id="doan_than", name="Doãn Thần", gender="male", age="20", appearance="short black hair")
+        boy = ComicCharacter(id="b", name="Tí", gender="male", age="8")
+        grandma = ComicCharacter(id="c", name="Bà Tư", gender="female", appearance="elderly, grey bun")
+        cat = ComicCharacter(id="d", name="Mướp", gender="male", species="Black Cat", appearance="green eyes")
+        self.assertTrue(character_look(man).startswith("a young man (male), short black hair"))
+        self.assertTrue(character_look(ComicCharacter(id="f", name="F", gender="male")).startswith("a man (male)"))
+        self.assertTrue(character_look(boy).startswith("a boy (male)"))
+        self.assertTrue(character_look(grandma).startswith("an old woman (female)"))
+        self.assertEqual(character_look(cat), "a male black cat, green eyes")
+        self.assertNotIn("Doãn", reference_prompt(man, "manhua"))
+        board = Storyboard(title="T", characters=[man, cat], scenes=[ComicScene(scene_index=1, narration="x", visual_prompt="a room")])
+        self.assertIn("woman, girl, female", cast_negative(board, ["doan_than"], "text"))
+        self.assertIn("human, person", cast_negative(board, ["d"], "text"))
+        self.assertEqual(cast_negative(board, ["doan_than", "d"], "text").count("woman"), 1)
+        self.assertEqual(ComicCharacter(id="e", name="E", species="Person").species, "human")
+        from pipeline.comic_video import without_names
+        self.assertEqual(without_names("Doan Than's face; doan_than nods", board),
+                         "the young man's face; the young man nods")
 
     def test_xianxia_style_renders_live_action_film_frames(self) -> None:
         board = animated_storyboard()
@@ -289,6 +322,7 @@ class ProducerTests(unittest.TestCase):
 class _WorkerHandler(BaseHTTPRequestHandler):
     clip: Path
     received: list = []
+    paths: list = []
     polls = 0
 
     def log_message(self, *args):
@@ -304,7 +338,10 @@ class _WorkerHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.headers.get("Authorization") != "Bearer secret":
             return self._json({"error": "unauthorized"}, 401)
+        self.paths.append(self.path)
         self.received.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        if self.path.endswith("/cancel"):
+            return self._json({"job_id": "j1", "status": "cancelled"})
         self._json({"job_id": "j1", "status": "queued"})
 
     def do_GET(self):
@@ -348,10 +385,37 @@ class RemoteProviderTests(unittest.TestCase):
                                                     height=360, fps=24, aspect_ratio="16:9", seed=5,
                                                     idempotency_key="k-1"), output, lambda: None)
             self.assertEqual(output.read_bytes(), clip.read_bytes())
-            self.assertEqual((result.model, result.billed_seconds), ("wan2.1-i2v", 7.5))
+            # Billed in seconds of video, not GPU time, so the render budget counts clips.
+            self.assertEqual((result.model, result.billed_seconds), ("wan2.1-i2v", 5.0))
+            self.assertEqual(result.metadata["gpu_seconds"], 7.5)
             sent = _WorkerHandler.received[0]
             self.assertEqual((sent["duration_seconds"], sent["seed"], sent["idempotency_key"]), (5.0, 5, "k-1"))
             self.assertTrue(sent["image_base64"])
+
+    def test_cancelled_render_cancels_the_worker_clip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            keyframe = Path(temp) / "k.png"
+            from PIL import Image
+
+            Image.new("RGB", (32, 32)).save(keyframe)
+            _WorkerHandler.received, _WorkerHandler.paths, _WorkerHandler.polls = [], [], 0
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _WorkerHandler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.shutdown)
+            env = {"VIDTRANS_ANIMATION_WORKER_URL": f"http://127.0.0.1:{server.server_port}",
+                   "VIDTRANS_ANIMATION_WORKER_TOKEN": "secret"}
+            with patch.dict("os.environ", env):
+                provider = GPUWorkerProvider(sleeper=lambda s: None)
+            from infrastructure.video_providers import VideoRequest
+
+            def cancelled() -> None:
+                raise RuntimeError("cancelled by user")
+
+            with self.assertRaises(RuntimeError):
+                provider.generate(VideoRequest(keyframe=keyframe, prompt="walk", duration_seconds=3, width=64,
+                                               height=36, fps=24, aspect_ratio="16:9", seed=1,
+                                               idempotency_key="k-2"), Path(temp) / "out.mp4", cancelled)
+            self.assertEqual(_WorkerHandler.paths, ["/v1/animate", "/v1/jobs/j1/cancel"])
 
     def test_veo_long_running_operation_is_polled_and_downloaded(self) -> None:
         calls = []

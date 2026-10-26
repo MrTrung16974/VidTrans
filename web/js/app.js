@@ -2,7 +2,7 @@ import { createTikTokWorkspace } from "./tiktok.js?v=20261025-youtube-title-vi";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261024-system-ws";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
-import { createComicWorkspace } from "./comic.js?v=20261025-comic-live";
+import { createComicWorkspace } from "./comic.js?v=20261026-delete-files";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 

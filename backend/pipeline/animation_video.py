@@ -36,13 +36,16 @@ from infrastructure.video_providers import VideoGenerationError, VideoProvider, 
 from pipeline.animation_qc import check_clip
 from pipeline.comic_video import (
     FADE_SECONDS,
+    MIN_SCENE_SECONDS,
     ComicRuntime,
     ComicVideoProducer,
     SceneResult,
-    character_prompt,
+    cast_description,
+    cast_negative,
     content_hash,
     file_hash,
     timed_cues,
+    without_names,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,19 +77,19 @@ def keyframe_prompt(scene: ComicScene, shot: Shot, storyboard: Storyboard, aspec
     style = COMIC_STYLES.get(storyboard.style, COMIC_STYLES["anime_comic"])[1]
     live_action = storyboard.style in LIVE_ACTION_STYLES
     medium = "Cinematic film keyframe" if live_action else "2D animation keyframe"
-    parts = [f"{medium}, {style}.", shot.keyframe_prompt.rstrip(".") + ".",
+    # The image model weighs the first ~77 tokens most: action and subject lead, style comes last.
+    parts = [without_names(shot.keyframe_prompt, storyboard).rstrip(".") + ".",
              f"{SHOT_FRAMING[shot.camera.shot_type]}, {SHOT_ANGLE[shot.camera.angle]}."]
-    cast = [storyboard.character(cid) for cid in shot.characters]
-    described = [character_prompt(c) for c in cast if c is not None]
-    if described:
-        parts.append("Characters: " + "; ".join(described) + ".")
-    setting = scene.location or scene.visual_prompt
+    cast = cast_description(storyboard, shot.characters)
+    if cast:
+        parts.append(cast)
+    setting = scene.location or without_names(scene.visual_prompt, storyboard)
     if setting:
         parts.append(f"Setting: {setting[:300]}.")
     if shot.emotion or scene.emotion:
         parts.append(f"Mood: {shot.emotion or scene.emotion}.")
     frame = "clean film frame" if live_action else "clean animation-ready frame"
-    parts.append(f"{aspect_ratio} composition, {frame}, no text, no speech bubbles, no watermark.")
+    parts.append(f"{medium}, {style}. {aspect_ratio} composition, {frame}, no text, no speech bubbles, no watermark.")
     return " ".join(parts)
 
 
@@ -151,7 +154,8 @@ class AnimatedVideoProducer(ComicVideoProducer):
         prompt = keyframe_prompt(scene, shot, storyboard, self.settings.aspect_ratio)
         shot_refs = [refs[cid] for cid in shot.characters if cid in refs]
         seed = self._seed(shot, f"{scene.scene_index}.{shot.shot_index}") if self.settings.seed else 0
-        negative = style_negative_prompt(storyboard.style, shot.negative_prompt)
+        negative = cast_negative(storyboard, shot.characters,
+                                 style_negative_prompt(storyboard.style, shot.negative_prompt))
         key = content_hash(ANIMATION_VERSION, "keyframe", self.images.cache_key, prompt, negative,
                            [ref_key for _p, ref_key in shot_refs], seed, self.width, self.height)
         path = self.project.dir("keyframes") / f"{stem}-{key[:16]}.png"
@@ -308,9 +312,12 @@ class AnimatedVideoProducer(ComicVideoProducer):
     def _prepare_shot(self, scene: ComicScene, shot: Shot, storyboard: Storyboard,
                       refs: dict[str, tuple[Path, str]]) -> PreparedShot:
         keyframe, keyframe_key = self.shot_keyframe(scene, shot, storyboard, refs)
+        spoken = shot.spoken_parts()
         audio, audio_key, duration, parts = self.speech_audio(
-            f"t{scene.scene_index:03d}-{shot.shot_index:02d}", shot.spoken_parts(), storyboard,
-            min_duration=shot.duration_seconds)
+            f"t{scene.scene_index:03d}-{shot.shot_index:02d}", spoken, storyboard,
+            # A spoken shot lasts as long as its voice: padding to the storyboard estimate left up to
+            # 1.5 s of silence between shots. Silent shots keep their requested length.
+            min_duration=MIN_SCENE_SECONDS if spoken else shot.duration_seconds)
         cues = timed_cues([(p["text"], p["start"], p["end"]) for p in parts], self.cue_chars)
         return PreparedShot(keyframe, keyframe_key, audio, audio_key, duration, cues)
 

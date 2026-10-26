@@ -153,6 +153,9 @@ class ComfyUIImageProvider:
     # A dropped connection between two prompts (ComfyUI busy freeing models) must not mark the
     # provider down: the render would then draw a stand-in for every remaining shot.
     connect_attempts: int = 4
+    # Set by the render: raises when the job is cancelled, so a stop request does not wait
+    # for the image ComfyUI is drawing (and that prompt is removed from ComfyUI's GPU).
+    check_active: Callable[[], None] | None = None
     opener: Callable[..., Any] | None = None
     sleeper: Callable[[float], None] = time.sleep
     base_url: str = field(default_factory=lambda: os.environ.get("VIDTRANS_COMFYUI_URL", "").strip().rstrip("/"))
@@ -257,7 +260,9 @@ class ComfyUIImageProvider:
             )
             try:
                 with self._open(request, timeout=min(self.timeout, 30.0)) as response:
-                    return json.loads(response.read(16 * 1024 * 1024).decode("utf-8"))
+                    raw = response.read(16 * 1024 * 1024)
+                    # /queue and /interrupt answer 200 with an empty body.
+                    return json.loads(raw.decode("utf-8")) if raw.strip() else {}
             except urllib.error.HTTPError as exc:
                 detail = ""
                 try:
@@ -286,6 +291,12 @@ class ComfyUIImageProvider:
         deadline = time.monotonic() + self.timeout
         image_info: dict[str, Any] | None = None
         while time.monotonic() < deadline:
+            if self.check_active is not None:
+                try:
+                    self.check_active()
+                except Exception:
+                    self._cancel_prompt(str(prompt_id))
+                    raise
             history = self._json(f"/history/{urllib.parse.quote(str(prompt_id))}")
             result = history.get(str(prompt_id)) or {}
             status = result.get("status") or {}
@@ -313,6 +324,17 @@ class ComfyUIImageProvider:
                 save_png_atomic(fit_cover(image, request.width, request.height), output_path)
         except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
             raise ImageGenerationError("ComfyUI đã sinh ảnh nhưng VidTrans không tải được ảnh kết quả") from exc
+
+    def _cancel_prompt(self, prompt_id: str) -> None:
+        """Drop a queued prompt, or interrupt it when it is the one ComfyUI is running."""
+        try:
+            self._json("/queue", body={"delete": [prompt_id]})
+            running = self._json("/queue").get("queue_running") or []
+            # Entries are [number, prompt_id, ...]; never interrupt another client's prompt.
+            if any(len(entry) > 1 and entry[1] == prompt_id for entry in running):
+                self._json("/interrupt", body={"prompt_id": prompt_id})
+        except (ImageGenerationError, ValueError) as exc:
+            logger.warning("Could not cancel ComfyUI prompt %s: %s", prompt_id, exc)
 
     def generate(self, request: ImageRequest, output_path: Path) -> None:
         reference_name = ""

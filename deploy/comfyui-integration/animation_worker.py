@@ -68,7 +68,9 @@ def comfy(path: str, *, body: dict[str, Any] | bytes | None = None, headers: dic
     if raw:
         return response
     with response:
-        return json.loads(response.read(16 * 1024 * 1024).decode("utf-8"))
+        payload = response.read(16 * 1024 * 1024)
+        # /queue and /interrupt answer 200 with an empty body.
+        return json.loads(payload.decode("utf-8")) if payload.strip() else {}
 
 
 def upload_image(png: bytes) -> str:
@@ -157,18 +159,47 @@ class Jobs:
         with self.lock:
             return self.jobs.get(job_id)
 
+    def cancel(self, job_id: str) -> dict[str, Any] | None:
+        """Stop a job VidTrans no longer waits for, freeing the GPU for the next render."""
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is None or job["status"] in {"completed", "failed", "cancelled"}:
+                return job
+            job["_cancelled"] = True
+            # A retry with the same idempotency key must start a new job, not get this one back.
+            key = str((job.get("_spec") or {}).get("idempotency_key") or "")
+            if key and self.by_key.get(key) == job_id:
+                del self.by_key[key]
+            if job["status"] == "queued":
+                job["status"], job["error"] = "cancelled", "cancelled"
+            prompt_id = job.get("_prompt_id")
+        if prompt_id:
+            try:
+                comfy("/queue", body={"delete": [prompt_id]})
+                running = comfy("/queue").get("queue_running") or []
+                if any(len(entry) > 1 and entry[1] == prompt_id for entry in running):
+                    comfy("/interrupt", body={"prompt_id": prompt_id})
+            except (OSError, ValueError) as exc:
+                logger.warning("Could not cancel ComfyUI prompt %s: %s", prompt_id, exc)
+        return job
+
     def _run(self) -> None:
         # One job at a time: a local GPU cannot run two video models at once.
         while True:
             job = self.jobs[self.pending.get()]
+            if job.get("_cancelled"):
+                continue
             started = time.monotonic()
             job["status"] = "running"
             try:
                 job["_video"] = self._render(job)
                 job["status"], job["progress"] = "completed", 1.0
             except Exception as exc:  # reported to VidTrans, which retries or falls back
-                logger.exception("Animation job %s failed", job["job_id"])
-                job["status"], job["error"] = "failed", str(exc)[:500]
+                if job.get("_cancelled"):
+                    job["status"], job["error"] = "cancelled", "cancelled"
+                else:
+                    logger.exception("Animation job %s failed", job["job_id"])
+                    job["status"], job["error"] = "failed", str(exc)[:500]
             finally:
                 job["gpu_seconds"] = round(time.monotonic() - started, 1)
                 job.pop("_spec", None)
@@ -180,8 +211,11 @@ class Jobs:
         prompt_id = queued.get("prompt_id")
         if not prompt_id:
             raise RuntimeError(f"ComfyUI không nhận workflow: {queued.get('error') or queued}")
+        job["_prompt_id"] = prompt_id
         deadline = time.monotonic() + TIMEOUT
         while time.monotonic() < deadline:
+            if job.get("_cancelled"):
+                raise RuntimeError("cancelled")
             result = comfy(f"/history/{urllib.parse.quote(str(prompt_id))}").get(str(prompt_id)) or {}
             status = result.get("status") or {}
             if status.get("status_str") == "error":
@@ -258,6 +292,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - http.server API
         if not self._authorized():
             return
+        parts = self.path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["v1", "jobs"] and parts[3] == "cancel" and JOB_ID.match(parts[2]):
+            job = JOBS.cancel(parts[2])
+            if not job:
+                return self._send(404, {"error": "job_not_found"})
+            return self._send(200, self._public(job))
         if self.path != "/v1/animate":
             return self._send(404, {"error": "not_found"})
         try:

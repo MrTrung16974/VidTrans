@@ -68,6 +68,8 @@ class ComicRouteDependencies:
     upload_dir: Callable[[str, str], Path]
     list_projects: Callable[..., tuple[list[dict[str, Any]], int]] | None = None
     series_store: ComicSeriesStore | None = None
+    # Removes the job and every file it produced (uploads, renders, work directory).
+    delete_project: Callable[[str, dict[str, Any]], None] | None = None
 
 
 class ScenePatch(BaseModel):
@@ -89,10 +91,16 @@ class SceneInsert(BaseModel):
     visual_prompt: str = Field(min_length=3, max_length=1500)
 
 
+def _identity_changed(before: ComicCharacter, after: ComicCharacter) -> bool:
+    """A pinned reference of the wrong gender or species must not survive the fix."""
+    return (before.gender, before.species) != (after.gender, after.species)
+
+
 class CharacterPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = None
     gender: str | None = None
+    species: str | None = None
     age: str | None = None
     appearance: str | None = None
     outfit: str | None = None
@@ -209,7 +217,7 @@ def settings_form(
     video_mode: str = Form("comic"),
     animation_provider: str = Form("camera_2_5d"),
     quality: str = Form("final"),
-    fps: int = Form(30),
+    fps: int = Form(24),
     motion_strength: float = Form(0.45),
     max_animation_attempts: int = Form(2),
     animation_budget_seconds: float = Form(240.0),
@@ -630,11 +638,39 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         return JSONResponse(series_payload(request, series))
 
     @router.delete("/series/{series_id}")
-    def delete_series(request: Request, series_id: str) -> JSONResponse:
-        """Delete the series record only; its episode videos stay available as standalone projects."""
+    def delete_series(request: Request, series_id: str,
+                      with_episodes: bool = Query(default=False)) -> JSONResponse:
+        """Delete the series and its files; ``with_episodes`` also deletes every episode video.
+
+        Without it the episodes stay available as standalone projects."""
         account, series = owned_series(request, series_id)
+        episodes: list[tuple[str, dict[str, Any]]] = []
+        if with_episodes:
+            for job_id in series.episode_job_ids():
+                job = deps.job_for_request(request, job_id)
+                if not is_comic_job(job):
+                    continue
+                if job.get("status") in ACTIVE_STATUSES:
+                    raise HTTPException(409, "Có tập đang được xử lý; hãy dừng tập đó trước khi xóa truyện")
+                episodes.append((job_id, job))
+        for job_id, job in episodes:
+            delete_project(job_id, job)
         series_store().delete(str(account["user_id"]), series.id)
-        return JSONResponse({"deleted": True, "series_id": series.id})
+        return JSONResponse({"deleted": True, "series_id": series.id, "deleted_episodes": len(episodes)})
+
+    def delete_project(job_id: str, job: dict[str, Any]) -> None:
+        if deps.delete_project is None:
+            raise HTTPException(501, "Chưa hỗ trợ xóa dự án")
+        deps.delete_project(job_id, job)
+
+    @router.delete("/projects/{job_id}")
+    def delete_comic_project(request: Request, job_id: str) -> JSONResponse:
+        """Delete a story video permanently, including its files on disk."""
+        job, _project = owned_project(request, job_id)
+        if job.get("status") in ACTIVE_STATUSES:
+            raise HTTPException(409, "Dự án đang được xử lý; hãy dừng trước khi xóa")
+        delete_project(job_id, job)
+        return JSONResponse({"deleted": True, "job_id": job_id})
 
     def update_series_character(request: Request, series_id: str, character_id: str,
                                 change: Callable[[ComicCharacter, ComicSeries], None]) -> dict[str, Any]:
@@ -662,8 +698,11 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                                                          "id": character.id})
             except ValidationError as exc:
                 raise HTTPException(422, _validation_detail(exc)) from exc
+            unpin = _identity_changed(character, updated)
             for key in changes:
                 setattr(character, key, getattr(updated, key))
+            if unpin:
+                character.approved_reference = None
 
         return JSONResponse(update_series_character(request, series_id, character_id, change))
 
@@ -793,9 +832,12 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         index = storyboard.characters.index(character)
         updated = {**data["characters"][index], **patch.model_dump(exclude_none=True)}
         try:
-            data["characters"][index] = ComicCharacter.model_validate({**updated, "id": character.id}).model_dump(mode="json")
+            fixed = ComicCharacter.model_validate({**updated, "id": character.id})
         except ValidationError as exc:
             raise HTTPException(422, _validation_detail(exc)) from exc
+        if _identity_changed(character, fixed):
+            fixed.approved_reference = None
+        data["characters"][index] = fixed.model_dump(mode="json")
         save(project, data)
         return JSONResponse(project_payload(job_id, job, project, request))
 

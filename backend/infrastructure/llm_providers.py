@@ -92,6 +92,9 @@ class GeminiJSONClient:
 
 
 class OllamaJSONClient:
+    # A 4-14B local model summarises a 3500-character chunk into a few shots; 1500 keeps it verbatim.
+    story_chunk_chars = 1500
+
     def __init__(self, *, timeout: float = 900.0, opener=None) -> None:
         self.model = local_model("qwen3")
         self.url = ollama_url()

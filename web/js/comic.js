@@ -150,10 +150,12 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         const meta = [comic.video_mode === "animated" ? "Hoạt hình" : "Truyện tranh", comic.scenes ? `${comic.scenes} cảnh` : "",
           comic.shots ? `${comic.shots} shot` : "", comic.aspect_ratio || ""].filter(Boolean).join(" · ");
         const active = current?.job?.job_id === job.job_id;
-        return `<button type="button" class="comic-project${active ? " is-active" : ""}"${active ? ' aria-current="true"' : ""} data-job="${escapeHtml(job.job_id)}">
-          <strong>${escapeHtml(comic.title || job.filename || job.job_id)}</strong>
+        const title = comic.title || job.filename || job.job_id;
+        return `<div class="comic-project-row"><button type="button" class="comic-project${active ? " is-active" : ""}"${active ? ' aria-current="true"' : ""} data-job="${escapeHtml(job.job_id)}">
+          <strong>${escapeHtml(title)}</strong>
           <span class="status-pill status-${statusClass(job)}">${escapeHtml(STEP_LABELS[job.step] || job.status)}</span>
-          <small>${escapeHtml(series)}<br>${escapeHtml(meta)}</small></button>`;
+          <small>${escapeHtml(series)}<br>${escapeHtml(meta)}</small></button>
+          <button type="button" class="comic-project-delete" data-delete-job="${escapeHtml(job.job_id)}" data-title="${escapeHtml(title)}"${isActive(job) ? " disabled" : ""} aria-label="Xóa ${escapeHtml(title)}" title="Xóa video và toàn bộ file">✕</button></div>`;
       }).join("");
       renderProjectPagination();
     } catch (error) {
@@ -174,6 +176,32 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   function refreshLists() {
     loadSeriesList();
     loadProjects();
+  }
+
+  // Deleting removes the files on the server too, so both actions confirm first.
+  async function deleteProject(jobId, title) {
+    if (!confirm(`Xóa vĩnh viễn "${title}"?\nVideo, ảnh, âm thanh và mọi file của dự án sẽ bị xóa khỏi máy chủ, không khôi phục được.`)) return;
+    try {
+      await api(`/projects/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+      toast("Đã xóa video và toàn bộ file");
+      if (current?.job?.job_id === jobId) location.hash = NEW_ROUTE;
+      refreshLists();
+    } catch (error) { toast(error.message, true); }
+  }
+
+  async function deleteSeries(seriesId, title, episodes) {
+    if (!confirm(`Xóa truyện "${title}"?`)) return;
+    const withEpisodes = episodes > 0 && confirm(
+      `Xóa luôn ${episodes} video tập của truyện và toàn bộ file của chúng?\n` +
+      "OK = xóa cả các tập (không khôi phục được) · Hủy = giữ các tập trong mục Tất cả video.");
+    try {
+      await api(`/series/${encodeURIComponent(seriesId)}${withEpisodes ? "?with_episodes=true" : ""}`, { method: "DELETE" });
+      toast(withEpisodes ? "Đã xóa truyện, các tập và file" : "Đã xóa truyện");
+      if (currentSeries?.series_id === seriesId || (withEpisodes && current?.job?.comic?.series_id === seriesId)) {
+        location.hash = NEW_ROUTE;
+      }
+      refreshLists();
+    } catch (error) { toast(error.message, true); }
   }
 
   function showSidebarTab(tab) {
@@ -200,9 +228,10 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         const active = series.series_id === activeId;
         const meta = [`${series.episodes} tập`, `${series.characters} nhân vật`, styleLabel(series.style),
           series.video_mode === "animated" ? "Hoạt hình" : "Truyện tranh"].filter(Boolean).join(" · ");
-        return `<button type="button" class="comic-project${active ? " is-active" : ""}"${active ? ' aria-current="true"' : ""} data-series="${escapeHtml(series.series_id)}">
+        return `<div class="comic-project-row"><button type="button" class="comic-project${active ? " is-active" : ""}"${active ? ' aria-current="true"' : ""} data-series="${escapeHtml(series.series_id)}">
           <strong>${escapeHtml(series.title)}</strong>
-          <small>${escapeHtml(meta)}</small></button>`;
+          <small>${escapeHtml(meta)}</small></button>
+          <button type="button" class="comic-project-delete" data-delete-series="${escapeHtml(series.series_id)}" data-title="${escapeHtml(series.title)}" data-episodes="${Number(series.episodes) || 0}" aria-label="Xóa ${escapeHtml(series.title)}" title="Xóa truyện">✕</button></div>`;
       }).join("");
     } catch (error) {
       list.innerHTML = `<p class="comic-empty">${escapeHtml(error.message)}</p>`;
@@ -474,6 +503,10 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
             <label class="field"><span>Tên</span><input name="name" value="${escapeHtml(c.name)}" maxlength="120"></label>
             <label class="field"><span>Giới tính</span><select name="gender">${["female", "male", "unknown"].map(g => `<option value="${g}"${c.gender === g ? " selected" : ""}>${{ female: "Nữ", male: "Nam", unknown: "Không rõ" }[g]}</option>`).join("")}</select></label>
           </div>
+          <div class="comic-inline">
+            <label class="field"><span>Loài (tiếng Anh)</span><input name="species" value="${escapeHtml(c.species || "human")}" maxlength="80" placeholder="human, black cat, dragon…"></label>
+            <label class="field"><span>Tuổi</span><input name="age" value="${escapeHtml(c.age || "")}" maxlength="60" placeholder="8, 25, elderly…"></label>
+          </div>
           <label class="field"><span>Ngoại hình cố định (tiếng Anh)</span><textarea name="appearance" rows="2" maxlength="600">${escapeHtml(c.appearance)}</textarea></label>
           <label class="field"><span>Trang phục</span><input name="outfit" value="${escapeHtml(c.outfit)}" maxlength="400"></label>
           <small class="field-hint">id: ${escapeHtml(c.id)} · ${c.reference_url ? "ảnh tham chiếu đang ghim cho các tập" : "chưa có ảnh tham chiếu — sẽ lấy ảnh của tập đầu tiên vẽ nhân vật này"}</small>
@@ -520,6 +553,10 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
           <div class="comic-inline">
             <label class="field"><span>Tên</span><input name="name" value="${escapeHtml(c.name)}" maxlength="120"></label>
             <label class="field"><span>Giới tính</span><select name="gender">${["female", "male", "unknown"].map(g => `<option value="${g}"${c.gender === g ? " selected" : ""}>${{ female: "Nữ", male: "Nam", unknown: "Không rõ" }[g]}</option>`).join("")}</select></label>
+          </div>
+          <div class="comic-inline">
+            <label class="field"><span>Loài (tiếng Anh)</span><input name="species" value="${escapeHtml(c.species || "human")}" maxlength="80" placeholder="human, black cat, dragon…"></label>
+            <label class="field"><span>Tuổi</span><input name="age" value="${escapeHtml(c.age || "")}" maxlength="60" placeholder="8, 25, elderly…"></label>
           </div>
           <label class="field"><span>Ngoại hình cố định (tiếng Anh, giữ nhất quán)</span><textarea name="appearance" rows="2" maxlength="600">${escapeHtml(c.appearance)}</textarea></label>
           <label class="field"><span>Trang phục</span><input name="outfit" value="${escapeHtml(c.outfit)}" maxlength="400"></label>
@@ -677,12 +714,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       const description = prompt("Giới thiệu truyện:", currentSeries.description || "") ?? currentSeries.description;
       await seriesMutate(api(seriesPath, json("PATCH", { title, description })), "Đã cập nhật truyện");
     } else if (op === "delete") {
-      if (!confirm(`Xóa truyện "${currentSeries.title}"? Các video tập đã tạo vẫn được giữ trong mục Tất cả video.`)) return;
-      try {
-        await api(seriesPath, { method: "DELETE" });
-        toast("Đã xóa truyện");
-        location.hash = NEW_ROUTE;
-      } catch (error) { toast(error.message, true); }
+      await deleteSeries(currentSeries.series_id, currentSeries.title, (currentSeries.episode_list || []).length);
     } else if (op === "clear-ref") {
       const characterId = event.target.closest("[data-series-character]").dataset.seriesCharacter;
       await seriesMutate(api(`${seriesPath}/characters/${encodeURIComponent(characterId)}/reference`, { method: "DELETE" }),
@@ -704,12 +736,17 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const target = event.target.closest("[data-series-character]");
     if (!target || !currentSeries) return;
     event.preventDefault();
-    const { name, gender, appearance, outfit } = Object.fromEntries(new FormData(target));
+    const { name, gender, species, age, appearance, outfit } = Object.fromEntries(new FormData(target));
     await seriesMutate(api(`/series/${encodeURIComponent(currentSeries.series_id)}/characters/${encodeURIComponent(target.dataset.seriesCharacter)}`,
-      json("PATCH", { name, gender, appearance, outfit })), "Đã lưu nhân vật của truyện");
+      json("PATCH", { name, gender, species, age, appearance, outfit })), "Đã lưu nhân vật của truyện");
   });
 
   $("#comicSeriesList").addEventListener("click", event => {
+    const remove = event.target.closest("[data-delete-series]");
+    if (remove) {
+      deleteSeries(remove.dataset.deleteSeries, remove.dataset.title, Number(remove.dataset.episodes) || 0);
+      return;
+    }
     const button = event.target.closest("[data-series]");
     if (!button) return;
     if (location.hash === seriesRoute(button.dataset.series)) {
@@ -722,6 +759,11 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   $$("[data-comic-tab]").forEach(button => button.addEventListener("click", () => showSidebarTab(button.dataset.comicTab)));
 
   $("#comicProjectList").addEventListener("click", event => {
+    const remove = event.target.closest("[data-delete-job]");
+    if (remove) {
+      if (!remove.disabled) deleteProject(remove.dataset.deleteJob, remove.dataset.title);
+      return;
+    }
     const button = event.target.closest("[data-job]");
     if (!button) return;
     if (location.hash === projectRoute(button.dataset.job)) {
@@ -887,8 +929,8 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const jobId = encodeURIComponent(current.job.job_id);
     const values = Object.fromEntries(new FormData(target));
     if (target.dataset.character !== undefined) {
-      const { name, gender, appearance, outfit } = values;
-      await mutate(api(withSceneQuery(`/projects/${jobId}/characters/${encodeURIComponent(target.dataset.character)}`), json("PATCH", { name, gender, appearance, outfit })), "Đã lưu nhân vật");
+      const { name, gender, species, age, appearance, outfit } = values;
+      await mutate(api(withSceneQuery(`/projects/${jobId}/characters/${encodeURIComponent(target.dataset.character)}`), json("PATCH", { name, gender, species, age, appearance, outfit })), "Đã lưu nhân vật");
       return;
     }
     if (target.dataset.shot !== undefined) {

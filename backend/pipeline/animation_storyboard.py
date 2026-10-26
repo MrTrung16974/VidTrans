@@ -35,8 +35,9 @@ ANIMATED_DRAFT_SCHEMA: dict[str, Any] = {
         "characters": {"type": "array", "items": {"type": "object", "properties": {
             "id": {"type": "string"}, "name": {"type": "string"},
             "gender": {"type": "string", "enum": ["female", "male", "unknown"]},
+            "species": {"type": "string"},
             "age": {"type": "string"}, "appearance": {"type": "string"}, "outfit": {"type": "string"},
-        }, "required": ["id", "name", "gender", "appearance"]}},
+        }, "required": ["id", "name", "gender", "species", "appearance"]}},
         "scenes": {"type": "array", "items": {"type": "object", "properties": {
             "location": {"type": "string"}, "emotion": {"type": "string"},
             "visual_prompt": {"type": "string"}, "source_excerpt": {"type": "string"},
@@ -65,7 +66,7 @@ def animated_system_prompt(settings: ComicSettings, chars_per_second: float) -> 
     max_chars = int(MAX_SHOT_SECONDS * chars_per_second)
     return f"""You are an animation director turning prose into a short 2D animated film.
 Answer with ONE JSON object only, no markdown:
-{{"characters": [{{"id", "name", "gender": "female|male|unknown", "age", "appearance", "outfit"}}],
+{{"characters": [{{"id", "name", "gender": "female|male|unknown", "species", "age", "appearance", "outfit"}}],
  "scenes": [{{"location", "emotion", "visual_prompt", "source_excerpt", "characters": ["<id>"],
    "shots": [{{"duration_seconds", "characters": ["<id>"], "action", "emotion",
      "camera": {{"shot_type", "movement", "angle"}}, "narration", "dialogue": [{{"character": "<id>", "text"}}],
@@ -77,17 +78,27 @@ Rules:
    Prefer several short shots to one complex shot: video models fail on long or compound actions.
 3. Separate narration from dialogue, in {language}. "narration" keeps the author's wording; spoken lines go to
    "dialogue" attributed to the speaker's character id. Keep each shot's narration + dialogue under {max_chars}
-   characters so it can be spoken within the shot.
-4. "visual_prompt" (scene) is an ENGLISH description of the environment shared by its shots.
-5. "keyframe_prompt" is ENGLISH and describes the first frame: who (name plus a short look), pose,
-   setting, lighting and framing. No text or speech bubbles.
+   characters so it can be spoken within the shot. Every sentence of the chunk appears exactly once: never
+   summarise, and never repeat a spoken line inside "narration".
+4. "visual_prompt" (scene) is an ENGLISH environment lock reused by all its shots: place, era, time of day,
+   lighting, weather and the fixed props that matter in the story, all taken from the text (format:
+   "<place>, <time of day>, <lighting>, <weather if stated>, <props>"; never reuse wording from these rules).
+5. "keyframe_prompt" is ENGLISH, at most 45 words, and describes the first frame in this order: the main
+   subject and the ONE action happening now, the story props involved (named concretely, as the text describes
+   them), where each visible character is in the frame (left / right /
+   foreground / background, facing whom), facial expression, then lighting. Refer to characters by name;
+   draw only what the text states. No text or speech bubbles.
 6. "motion_prompt" is ENGLISH and describes only what moves during the shot and how the camera moves,
    e.g. "Minh walks slowly toward the camera, leaves drift in the wind, slow tracking shot".
 7. camera.shot_type is one of {", ".join(SHOT_TYPES)}; camera.movement one of {", ".join(SHOT_MOVEMENTS)};
    camera.angle one of {", ".join(SHOT_ANGLES)}. Open a new place with an establishing or wide shot.
 8. Characters: reuse ids from KNOWN CHARACTERS exactly. Add a character only for a named or recurring person,
-   with a lowercase ascii id and a fixed ENGLISH "appearance" (age look, hair, eyes, build, palette,
-   distinctive accessories) so it is drawn identically in every shot.
+   animal or creature, with a lowercase ascii id and a fixed ENGLISH "appearance" (age look, hair or fur,
+   eyes, build, palette, distinctive accessories) so it is drawn identically in every shot.
+   "gender" must follow the story: a male character (anh, hắn, ông, cậu, chàng, he) is "male", a female
+   one (cô, nàng, bà, chị, she) is "female". "species" is "human" or the creature in English ("black cat",
+   "white fox spirit", "dragon", "robot"); never turn an animal, spirit or monster into a person.
+   "age" is a number of years or a life stage ("8", "teenager", "elderly").
 9. "source_excerpt" copies verbatim the first 8-15 words of the source passage the scene covers.
 10. "emotion" is one English word; "location" is a short English place description."""
 

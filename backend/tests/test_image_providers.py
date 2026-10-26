@@ -130,6 +130,32 @@ class ComfyUIImageProviderTests(unittest.TestCase):
         self.assertIn("Không kết nối được ComfyUI", str(raised.exception))
         self.assertEqual(len(calls), provider.connect_attempts)
 
+    def test_cancelled_job_removes_its_running_comfyui_prompt(self) -> None:
+        posted = []
+
+        def opener(request, timeout):
+            del timeout
+            path = request.full_url.removeprefix("http://comfy")
+            if request.data is not None:
+                posted.append((path, json.loads(request.data)))
+            if path == "/prompt":
+                return _Response(json.dumps({"prompt_id": "p1"}).encode())
+            if path == "/queue" and request.data is None:
+                return _Response(json.dumps({"queue_running": [[0, "p1", {}]], "queue_pending": []}).encode())
+            return _Response(b"")
+
+        def cancelled() -> None:
+            raise RuntimeError("cancelled by user")
+
+        provider = ComfyUIImageProvider(
+            base_url="http://comfy", checkpoint="model.safetensors", opener=opener, sleeper=lambda _: None,
+        )
+        provider.check_active = cancelled
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(RuntimeError):
+            provider.generate(ImageRequest(prompt="forest", width=512, height=512), Path(folder) / "scene.png")
+        self.assertEqual([path for path, _ in posted], ["/prompt", "/queue", "/interrupt"])
+        self.assertEqual(posted[1][1], {"delete": ["p1"]})
+
     def test_dropped_connection_is_retried_instead_of_marking_provider_down(self) -> None:
         failures = [ConnectionResetError("reset")]
 
