@@ -1406,16 +1406,34 @@ function renderAdminJobs(jobs) {
 
     return `
       <div class="admin-jobs-row" data-job-id="${escapeHtml(job.job_id)}">
-        <code>${escapeHtml(job.job_id)}</code>
-        <div class="user-meta" title="${escapeHtml(job.owner_user_id || "")}">
-          <strong>${userLabel}</strong>
-          ${job.owner_display_name ? `<br><small>${escapeHtml(job.owner_display_name)}</small>` : ""}
+        <div class="admin-job-cell admin-job-cell-id">
+          <span class="admin-job-label">Job ID</span>
+          <code>${escapeHtml(job.job_id)}</code>
         </div>
-        <div class="job-filename" title="${fileName}">${fileName}</div>
-        <div>${statusBadge}</div>
-        <div>${progress}%</div>
-        <small>${createdAt}</small>
-        <div>
+        <div class="admin-job-cell admin-job-cell-user user-meta" title="${escapeHtml(job.owner_user_id || "")}">
+          <span class="admin-job-label">Người dùng</span>
+          <div class="admin-job-user-info">
+            <strong>${userLabel}</strong>
+            ${job.owner_display_name ? `<small>${escapeHtml(job.owner_display_name)}</small>` : ""}
+          </div>
+        </div>
+        <div class="admin-job-cell admin-job-cell-file">
+          <span class="admin-job-label">Tên video</span>
+          <div class="job-filename" title="${fileName}">${fileName}</div>
+        </div>
+        <div class="admin-job-cell admin-job-cell-status">
+          <span class="admin-job-label">Trạng thái</span>
+          <div>${statusBadge}</div>
+        </div>
+        <div class="admin-job-cell admin-job-cell-progress">
+          <span class="admin-job-label">Tiến độ</span>
+          <strong class="admin-job-progress-val">${progress}%</strong>
+        </div>
+        <div class="admin-job-cell admin-job-cell-time">
+          <span class="admin-job-label">Thời gian tạo</span>
+          <small>${createdAt}</small>
+        </div>
+        <div class="admin-job-cell admin-job-cell-actions">
           <button class="button secondary mini-btn" type="button" data-admin-view-job="${escapeHtml(job.job_id)}" title="Xem chi tiết (Có ghi Audit)">Chi tiết</button>
         </div>
       </div>
@@ -1455,16 +1473,34 @@ function renderAdminBilling(orders) {
       <button class="button secondary mini-btn cancel-btn" type="button" data-admin-reject-order="${escapeHtml(order.order_id)}" title="Từ chối đơn (Có ghi Audit)">Từ chối</button>` : "—";
     return `
       <div class="admin-jobs-row" data-order-id="${escapeHtml(order.order_id)}">
-        <code>${escapeHtml(order.transfer_content)}</code>
-        <div class="user-meta" title="${escapeHtml(order.user_id)}">
-          <strong>${escapeHtml(order.user_email || order.user_id)}</strong>
-          ${order.user_display_name ? `<br><small>${escapeHtml(order.user_display_name)}</small>` : ""}
+        <div class="admin-job-cell admin-job-cell-id">
+          <span class="admin-job-label">Nội dung CK</span>
+          <code>${escapeHtml(order.transfer_content)}</code>
         </div>
-        <div>${escapeHtml(String(order.plan).toUpperCase())} · ${escapeHtml(order.provider)}</div>
-        <div><span class="badge ${badgeClass}">${escapeHtml(orderStatusLabel(order))}</span></div>
-        <div>${money(order.amount)}</div>
-        <small>${escapeHtml(createdAt)}${reportedAt ? `<br>Báo CK: ${escapeHtml(reportedAt)}` : ""}</small>
-        <div>${actions}</div>
+        <div class="admin-job-cell admin-job-cell-user user-meta" title="${escapeHtml(order.user_id)}">
+          <span class="admin-job-label">Người dùng</span>
+          <div class="admin-job-user-info">
+            <strong>${escapeHtml(order.user_email || order.user_id)}</strong>
+            ${order.user_display_name ? `<small>${escapeHtml(order.user_display_name)}</small>` : ""}
+          </div>
+        </div>
+        <div class="admin-job-cell admin-job-cell-file">
+          <span class="admin-job-label">Gói · Kênh</span>
+          <div>${escapeHtml(String(order.plan).toUpperCase())} · ${escapeHtml(order.provider)}</div>
+        </div>
+        <div class="admin-job-cell admin-job-cell-status">
+          <span class="admin-job-label">Trạng thái</span>
+          <div><span class="badge ${badgeClass}">${escapeHtml(orderStatusLabel(order))}</span></div>
+        </div>
+        <div class="admin-job-cell admin-job-cell-progress">
+          <span class="admin-job-label">Số tiền</span>
+          <strong class="admin-job-progress-val">${money(order.amount)}</strong>
+        </div>
+        <div class="admin-job-cell admin-job-cell-time">
+          <span class="admin-job-label">Thời gian</span>
+          <small>${escapeHtml(createdAt)}${reportedAt ? `<br>Báo CK: ${escapeHtml(reportedAt)}` : ""}</small>
+        </div>
+        <div class="admin-job-cell admin-job-cell-actions">${actions}</div>
       </div>`;
   }).join("");
 }

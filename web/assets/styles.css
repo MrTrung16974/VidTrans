@@ -2987,8 +2987,23 @@ input[type="file"]::-webkit-file-upload-button:active {
 .admin-create-submit { min-height: 42px; height: 42px; padding: 0 18px; font-size: 0.82rem; font-weight: 700; border-radius: 10px; background: linear-gradient(135deg, var(--brand), #ea580c); color: #ffffff; white-space: nowrap; box-shadow: 0 3px 10px rgba(239, 107, 58, 0.25); border: 0; cursor: pointer; transition: all 0.15s ease; }
 .admin-create-submit:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(239, 107, 58, 0.35); }
 
-/* Accounts Table Panel */
-.admin-accounts-panel { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 20px; background: #ffffff; box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04); }
+/* Accounts, Jobs & Audit Table Panels */
+.admin-accounts-panel,
+.admin-jobs-panel,
+.admin-audit-panel {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04);
+  min-width: 0;
+  max-width: 100%;
+}
+.admin-view,
+.admin-subtab-pane {
+  min-width: 0;
+  max-width: 100%;
+}
 .admin-toolbar {
   border-bottom: 1px solid #f1f5f9;
   background: #ffffff;
@@ -3080,14 +3095,153 @@ input[type="file"]::-webkit-file-upload-button:active {
   .admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-create-form { grid-template-columns: 1fr 1fr; }
   .admin-create-submit { grid-column: 1 / -1; width: 100%; justify-content: center; }
+  .admin-jobs-toolbar,
+  .admin-audit-toolbar { grid-template-columns: 1fr 1fr; }
+  .admin-jobs-toolbar .admin-list-title,
+  .admin-audit-toolbar .admin-list-title { grid-column: 1 / -1; }
   .admin-table-container { overflow-x: visible; }
-  .admin-account-head { display: none; }
+  .admin-account-head,
+  .admin-jobs-head,
+  .admin-audit-head { display: none; }
   .admin-account-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 16px; border-radius: 14px; border: 1px solid #e2e8f0; margin: 12px; background: #ffffff; min-width: 0; }
   .admin-account-user { grid-column: 1 / -1; padding-bottom: 6px; border-bottom: 1px solid #f1f5f9; }
   .field-label-inline { display: block; font-size: 0.68rem; font-weight: 700; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
   .admin-action-cell { grid-column: 1 / -1; width: 100%; display: flex; gap: 8px; margin-top: 4px; padding-top: 8px; border-top: 1px dashed #f1f5f9; }
   .btn-admin-save { flex: 1; justify-content: center; min-height: 40px; height: 40px; }
   .admin-action-cell .mini-btn { min-height: 40px; height: 40px; width: 44px; min-width: 44px; }
+
+  .admin-jobs-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+    min-width: 0;
+    width: auto;
+    gap: 8px;
+    padding: 16px;
+    border-radius: 14px;
+    margin: 12px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  }
+  .admin-jobs-row:hover {
+    background: #ffffff;
+  }
+  .admin-job-cell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    width: 100%;
+    padding: 3px 0;
+  }
+  .admin-job-label {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+    min-width: 95px;
+  }
+  .admin-job-cell-id {
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 8px;
+    margin-bottom: 2px;
+  }
+  .admin-job-user-info {
+    align-items: flex-end;
+    text-align: right;
+  }
+  .admin-job-cell-file {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .admin-jobs-row .job-filename {
+    width: 100%;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.4;
+  }
+  .admin-job-cell-time small {
+    text-align: right;
+  }
+  .admin-job-cell-actions {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px dashed #e2e8f0;
+    justify-content: stretch;
+  }
+  .admin-job-cell-actions button {
+    flex: 1;
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  .admin-audit-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+    min-width: 0;
+    width: auto;
+    gap: 8px;
+    padding: 16px;
+    border-radius: 14px;
+    margin: 12px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  }
+  .admin-audit-row:hover {
+    background: #ffffff;
+  }
+  .audit-col {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    width: 100%;
+    padding: 3px 0;
+  }
+  .audit-col-label {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+    min-width: 95px;
+  }
+  .audit-col-time {
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 8px;
+    margin-bottom: 2px;
+  }
+  .audit-col-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px dashed #e2e8f0;
+  }
+  .audit-col-meta .audit-metadata-code {
+    width: 100%;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 90px;
+    overflow-y: auto;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    background: #f8fafc;
+  }
 }
 
 @media(max-width: 680px) {
@@ -3159,6 +3313,67 @@ input[type="file"]::-webkit-file-upload-button:active {
   padding: 12px 18px;
   min-width: 960px;
 }
+.admin-job-cell {
+  min-width: 0;
+}
+.admin-job-label {
+  display: none;
+}
+.admin-job-user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.admin-job-user-info strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-job-user-info small {
+  color: #64748b;
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-jobs-row code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--brand);
+  background: #fff7ed;
+  border: 1px solid #ffedd5;
+  padding: 2px 7px;
+  border-radius: 6px;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-jobs-row .job-filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: #0f172a;
+}
+.admin-job-progress-val {
+  font-weight: 700;
+  color: #0f172a;
+  font-feature-settings: "tnum";
+}
+.admin-job-cell-time small {
+  color: #64748b;
+  font-size: 0.78rem;
+  display: block;
+}
+.admin-job-cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .admin-jobs-head {
   font-size: 0.72rem;
   font-weight: 700;
@@ -3175,6 +3390,9 @@ input[type="file"]::-webkit-file-upload-button:active {
 }
 .admin-jobs-row:hover {
   background: #f8fafc;
+}
+.admin-jobs-row:last-child {
+  border-bottom: 0;
 }
 .admin-audit-head, .admin-audit-row {
   display: grid;
@@ -4996,13 +5214,18 @@ input[type="file"]::-webkit-file-upload-button:active {
   .admin-jobs-row {
     display: flex;
     flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+    min-width: 0;
+    width: auto;
     gap: 8px;
     padding: 14px;
     border-radius: 14px;
-    margin: 8px 0;
+    margin: 10px 12px;
     border: 1px solid #e2e8f0;
     background: #ffffff;
     font-size: 0.82rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
   }
   .admin-jobs-row code {
     font-size: 0.76rem;
@@ -5013,6 +5236,7 @@ input[type="file"]::-webkit-file-upload-button:active {
     font-size: 0.84rem;
     font-weight: 600;
     word-break: break-word;
+    white-space: normal;
   }
   .admin-jobs-row button {
     width: 100%;
@@ -5028,10 +5252,11 @@ input[type="file"]::-webkit-file-upload-button:active {
     align-items: stretch;
     text-align: left;
     min-width: 0;
+    width: auto;
     gap: 8px;
     padding: 16px;
     border-radius: 14px;
-    margin: 10px 0;
+    margin: 10px 12px;
     border: 1px solid #e2e8f0;
     background: #ffffff;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);

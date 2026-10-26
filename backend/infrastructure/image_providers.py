@@ -150,6 +150,9 @@ class ComfyUIImageProvider:
     supports_references = True
     timeout: float = 300.0
     poll_interval: float = 1.0
+    # A dropped connection between two prompts (ComfyUI busy freeing models) must not mark the
+    # provider down: the render would then draw a stand-in for every remaining shot.
+    connect_attempts: int = 4
     opener: Callable[..., Any] | None = None
     sleeper: Callable[[float], None] = time.sleep
     base_url: str = field(default_factory=lambda: os.environ.get("VIDTRANS_COMFYUI_URL", "").strip().rstrip("/"))
@@ -246,25 +249,32 @@ class ComfyUIImageProvider:
 
     def _json(self, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
         data = json.dumps(body).encode() if body is not None else None
-        request = urllib.request.Request(
-            self.base_url + path, data=data,
-            headers={"Content-Type": "application/json"} if data else {},
-            method="POST" if data else "GET",
-        )
-        try:
-            with self._open(request, timeout=min(self.timeout, 30.0)) as response:
-                return json.loads(response.read(16 * 1024 * 1024).decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = ""
+        for attempt in range(1, self.connect_attempts + 1):
+            request = urllib.request.Request(
+                self.base_url + path, data=data,
+                headers={"Content-Type": "application/json"} if data else {},
+                method="POST" if data else "GET",
+            )
             try:
-                detail = exc.read(4096).decode("utf-8", "replace")
-            except Exception:
-                pass
-            raise ImageGenerationError(f"ComfyUI lỗi HTTP {exc.code}: {detail[:300]}") from exc
-        except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:
-            error = ImageGenerationError("Không kết nối được ComfyUI; hãy kiểm tra URL và ứng dụng ComfyUI")
-            error.unavailable = True
-            raise error from exc
+                with self._open(request, timeout=min(self.timeout, 30.0)) as response:
+                    return json.loads(response.read(16 * 1024 * 1024).decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = ""
+                try:
+                    detail = exc.read(4096).decode("utf-8", "replace")
+                except Exception:
+                    pass
+                raise ImageGenerationError(f"ComfyUI lỗi HTTP {exc.code}: {detail[:300]}") from exc
+            except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:
+                if attempt < self.connect_attempts:
+                    logger.warning("ComfyUI %s failed (%s); retrying %d/%d",
+                                   path.split("?")[0], type(exc).__name__, attempt, self.connect_attempts - 1)
+                    self.sleeper(2.0 * attempt)
+                    continue
+                error = ImageGenerationError("Không kết nối được ComfyUI; hãy kiểm tra URL và ứng dụng ComfyUI")
+                error.unavailable = True
+                raise error from exc
+        raise AssertionError("unreachable")
 
     def _generate_workflow(self, request: ImageRequest, output_path: Path, reference_name: str = "") -> None:
         from PIL import Image

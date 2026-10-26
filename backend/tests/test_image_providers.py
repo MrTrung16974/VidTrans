@@ -114,17 +114,41 @@ class ComfyUIImageProviderTests(unittest.TestCase):
         self.assertEqual(prompt_payloads[0]["prompt"]["9"]["inputs"]["image"], "uploaded.png")
 
     def test_connection_error_marks_provider_unavailable(self) -> None:
+        calls = []
+
         def opener(_request, timeout):
             del timeout
+            calls.append(1)
             raise urllib.error.URLError("offline")
 
         provider = ComfyUIImageProvider(
-            base_url="http://comfy", checkpoint="model.safetensors", opener=opener
+            base_url="http://comfy", checkpoint="model.safetensors", opener=opener, sleeper=lambda _: None
         )
         with tempfile.TemporaryDirectory() as folder, self.assertRaises(ImageGenerationError) as raised:
             provider.generate(ImageRequest(prompt="forest", width=512, height=512), Path(folder) / "scene.png")
         self.assertTrue(raised.exception.unavailable)
         self.assertIn("Không kết nối được ComfyUI", str(raised.exception))
+        self.assertEqual(len(calls), provider.connect_attempts)
+
+    def test_dropped_connection_is_retried_instead_of_marking_provider_down(self) -> None:
+        failures = [ConnectionResetError("reset")]
+
+        def opener(request, timeout):
+            del timeout
+            if request.full_url.endswith("/prompt"):
+                if failures:
+                    raise failures.pop()
+                return _Response(json.dumps({"prompt_id": "p1"}).encode())
+            raise urllib.error.HTTPError(request.full_url, 500, "stop", {}, io.BytesIO(b"boom"))
+
+        provider = ComfyUIImageProvider(
+            base_url="http://comfy", checkpoint="model.safetensors", opener=opener, sleeper=lambda _: None
+        )
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(ImageGenerationError) as raised:
+            provider.generate(ImageRequest(prompt="forest", width=512, height=512), Path(folder) / "scene.png")
+        # The reset /prompt was retried and reached /history; that HTTP error is not "unavailable".
+        self.assertFalse(getattr(raised.exception, "unavailable", False))
+        self.assertIn("HTTP 500", str(raised.exception))
 
     def test_history_error_is_reported_without_downloading(self) -> None:
         calls = []
