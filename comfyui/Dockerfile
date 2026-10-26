@@ -9,7 +9,12 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_RETRIES=8 \
     PYTHONUNBUFFERED=1
 
-COPY app/ /opt/comfyui/
+# comfyui/app/ is a git-ignored local checkout, so a server built from git has no copy:
+# fetch the pinned release instead. The wheels below match v0.36.0's requirements.txt.
+ADD https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/${COMFYUI_VERSION}.tar.gz /tmp/comfyui.tar.gz
+RUN mkdir -p /opt/comfyui \
+    && tar -xzf /tmp/comfyui.tar.gz --strip-components=1 -C /opt/comfyui \
+    && rm -f /tmp/comfyui.tar.gz
 
 RUN python -m pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
     --index-url https://download.pytorch.org/whl/cu126

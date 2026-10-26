@@ -7,6 +7,9 @@ services:
       args:
         COMFYUI_VERSION: "${VIDTRANS_COMFYUI_VERSION:-v0.36.0}"
     container_name: vidtrans-comfyui
+    # Opt-in: needs an NVIDIA GPU and several GB of RAM to build. Enable with
+    # `docker compose --profile comfyui up -d` (or COMPOSE_PROFILES=comfyui).
+    profiles: ["comfyui"]
     ports:
       # Chỉ mở local để có thể xem giao diện ComfyUI tại http://127.0.0.1:8188.
       - "127.0.0.1:${VIDTRANS_COMFYUI_PORT:-8188}:8188"
@@ -132,6 +135,9 @@ services:
     depends_on:
       comfyui:
         condition: service_healthy
+        # Without the comfyui profile the app starts anyway; image generation then reports
+        # ComfyUI as unreachable.
+        required: false
       postgres:
         condition: service_healthy
       social-browser:
