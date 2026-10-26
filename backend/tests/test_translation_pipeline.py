@@ -235,6 +235,29 @@ class PreservedCueTests(unittest.TestCase):
         self.assertEqual(fragment["translation_error"], "unchanged_translation")
         ensure_translation_complete(translated)
 
+    def test_short_latin_cue_echoed_back_is_preserved(self) -> None:
+        from pipeline.translation import ensure_translation_complete
+
+        translated = translate_segments(
+            self.cues("你好", "OK", "Tesla Model 3"), EchoLinesTranslator(),
+            retries=1, sleeper=lambda _: None, source_language="en",
+        )
+
+        self.assertEqual([s["translation_status"] for s in translated[1:]], ["preserved", "preserved"])
+        ensure_translation_complete(translated)
+
+    def test_long_latin_cue_echoed_back_still_fails(self) -> None:
+        from pipeline.translation import TranslationIncompleteError, ensure_translation_complete
+
+        translated = translate_segments(
+            self.cues("你好", "Where are you going tonight"), EchoLinesTranslator(),
+            retries=1, sleeper=lambda _: None, source_language="en",
+        )
+
+        self.assertEqual(translated[1]["translation_status"], "source_fallback")
+        with self.assertRaises(TranslationIncompleteError):
+            ensure_translation_complete(translated)
+
     def test_echoed_fragment_with_stray_latin_letter_is_not_fatal(self) -> None:
         from pipeline.translation import ensure_translation_complete
 

@@ -58,6 +58,11 @@ _RATE_LIMIT_RETRIES: int = 5
 # a name), not untranslated dialogue; it is hidden for review instead of failing the job.
 _MAX_FRAGMENT_LETTERS: int = 1
 
+# Latin-script sources have no source-only letters to check, so a short cue echoed back
+# ("OK", "iPhone", "NASA", "Jakarta") reads the same in the target language and is kept.
+# Longer echoes still fail: they mean the provider did not translate.
+_MAX_PRESERVED_LATIN_WORDS: int = 3
+
 class TextTranslator(Protocol):
     def translate(self, text: str) -> str | None: ...
 
@@ -470,10 +475,18 @@ def translate_segments(
                         reason == "unchanged_translation"
                         and _source_letter_count(source, source_language) <= _MAX_FRAGMENT_LETTERS
                     )
-                    cache[source] = (source, "dropped_fragment" if fragment else "source_fallback", reason[:160])
-                    if _provider_blocked(cause):
-                        rate_limit_reason = reason[:160]
-                    logger.warning("Translation failed at %.2fs (%s)", float(segments[index]["start"]), reason[:160])
+                    preserved = (
+                        reason == "unchanged_translation"
+                        and source_language not in _SOURCE_SCRIPT_RE
+                        and len(source.split()) <= _MAX_PRESERVED_LATIN_WORDS
+                    )
+                    if preserved:
+                        cache[source] = (source, "preserved", None)
+                    else:
+                        cache[source] = (source, "dropped_fragment" if fragment else "source_fallback", reason[:160])
+                        if _provider_blocked(cause):
+                            rate_limit_reason = reason[:160]
+                        logger.warning("Translation failed at %.2fs (%s)", float(segments[index]["start"]), reason[:160])
             translations[index] = cache[source]
         if progress_callback:
             progress_callback(completed, len(active))
