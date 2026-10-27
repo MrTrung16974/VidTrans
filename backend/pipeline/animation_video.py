@@ -39,11 +39,13 @@ from pipeline.comic_video import (
     MIN_SCENE_SECONDS,
     ComicRuntime,
     ComicVideoProducer,
+    SCENE_COMPOSITION,
     SceneResult,
     cast_description,
     cast_negative,
     content_hash,
     file_hash,
+    scene_negative,
     timed_cues,
     without_names,
 )
@@ -55,10 +57,11 @@ MAX_SLOWDOWN = 1.25
 MAX_SHOT_SECONDS = 10.0
 
 SHOT_FRAMING = {
-    "establishing": "establishing shot, very wide view of the whole location", "wide": "wide shot, full body",
-    "medium": "medium shot, waist up", "close_up": "close-up on the face", "extreme_close_up": "extreme close-up",
+    "establishing": "establishing shot, very wide view of the whole location",
+    "wide": "wide shot, full-body figures within the location", "medium": "medium shot, waist up, surroundings visible", "close_up": "close-up on the face", "extreme_close_up": "extreme close-up",
     "over_shoulder": "over-the-shoulder shot",
 }
+CLOSE_SHOTS = frozenset({"close_up", "extreme_close_up"})
 SHOT_ANGLE = {"eye_level": "eye-level camera", "low": "low-angle camera", "high": "high-angle camera",
               "overhead": "overhead top-down camera"}
 CAMERA_MOVES = {
@@ -80,12 +83,15 @@ def keyframe_prompt(scene: ComicScene, shot: Shot, storyboard: Storyboard, aspec
     # The image model weighs the first ~77 tokens most: action and subject lead, style comes last.
     parts = [without_names(shot.keyframe_prompt, storyboard).rstrip(".") + ".",
              f"{SHOT_FRAMING[shot.camera.shot_type]}, {SHOT_ANGLE[shot.camera.angle]}."]
-    cast = cast_description(storyboard, shot.characters)
-    if cast:
-        parts.append(cast)
+    # The place comes before the cast so it survives the token budget and the frame is not a lone portrait.
     setting = scene.location or without_names(scene.visual_prompt, storyboard)
     if setting:
         parts.append(f"Setting: {setting[:300]}.")
+    if shot.camera.shot_type not in CLOSE_SHOTS:
+        parts.append(f"{SCENE_COMPOSITION}.")
+    cast = cast_description(storyboard, shot.characters)
+    if cast:
+        parts.append(cast)
     if shot.emotion or scene.emotion:
         parts.append(f"Mood: {shot.emotion or scene.emotion}.")
     frame = "clean film frame" if live_action else "clean animation-ready frame"
@@ -154,8 +160,8 @@ class AnimatedVideoProducer(ComicVideoProducer):
         prompt = keyframe_prompt(scene, shot, storyboard, self.settings.aspect_ratio)
         shot_refs = [refs[cid] for cid in shot.characters if cid in refs]
         seed = self._seed(shot, f"{scene.scene_index}.{shot.shot_index}") if self.settings.seed else 0
-        negative = cast_negative(storyboard, shot.characters,
-                                 style_negative_prompt(storyboard.style, shot.negative_prompt))
+        negative = cast_negative(storyboard, shot.characters, scene_negative(
+            style_negative_prompt(storyboard.style, shot.negative_prompt), shot.camera.shot_type in CLOSE_SHOTS))
         key = content_hash(ANIMATION_VERSION, "keyframe", self.images.cache_key, prompt, negative,
                            [ref_key for _p, ref_key in shot_refs], seed, self.width, self.height)
         path = self.project.dir("keyframes") / f"{stem}-{key[:16]}.png"

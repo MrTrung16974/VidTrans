@@ -86,12 +86,14 @@ Rules:
 5. "keyframe_prompt" is ENGLISH, at most 45 words, and describes the first frame in this order: the main
    subject and the ONE action happening now, the story props involved (named concretely, as the text describes
    them), where each visible character is in the frame (left / right /
-   foreground / background, facing whom), facial expression, then lighting. Refer to characters by name;
-   draw only what the text states. No text or speech bubbles.
+   foreground / background, facing whom), facial expression, then lighting. It is a film frame inside the
+   scene's location, never a portrait or a character posing on a plain background. Refer to characters by
+   name; draw only what the text states. No text or speech bubbles.
 6. "motion_prompt" is ENGLISH and describes only what moves during the shot and how the camera moves,
    e.g. "Minh walks slowly toward the camera, leaves drift in the wind, slow tracking shot".
 7. camera.shot_type is one of {", ".join(SHOT_TYPES)}; camera.movement one of {", ".join(SHOT_MOVEMENTS)};
-   camera.angle one of {", ".join(SHOT_ANGLES)}. Open a new place with an establishing or wide shot.
+   camera.angle one of {", ".join(SHOT_ANGLES)}. Open a new place with an establishing or wide shot, and
+   keep most shots wide or medium so the location stays visible; close-ups only for a key face or object.
 8. Characters: reuse ids from KNOWN CHARACTERS exactly. Add a character only for a named or recurring person,
    animal or creature, with a lowercase ascii id and a fixed ENGLISH "appearance" (age look, hair or fur,
    eyes, build, palette, distinctive accessories) so it is drawn identically in every shot.

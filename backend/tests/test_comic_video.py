@@ -89,6 +89,19 @@ class HelperTests(unittest.TestCase):
         self.assertIn("long white hair", prompt)
         self.assertIn("no text", prompt)
 
+    def test_scene_prompt_frames_a_scene_not_a_portrait(self) -> None:
+        from pipeline.comic_video import scene_negative
+        board = storyboard()
+        scene = board.scenes[1]
+        scene.location = "moonlit bamboo courtyard"
+        prompt = scene_image_prompt(scene, board, "9:16")
+        self.assertIn("not a portrait", prompt)
+        self.assertLess(prompt.index("Setting:"), prompt.index("long white hair"))
+        self.assertIn("headshot", scene_negative("text"))
+        self.assertNotIn("headshot", scene_negative("text", close_up=True))
+        scene.visual_prompt = "Close-up of a trembling hand holding a jade pendant"
+        self.assertNotIn("not a portrait", scene_image_prompt(scene, board, "9:16"))
+
     def test_manhua_prompt_targets_soft_semi_realistic_style(self) -> None:
         board = storyboard()
         board.style = "manhua"

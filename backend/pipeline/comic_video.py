@@ -189,6 +189,23 @@ def _ascii_fold(text: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFD", text) if not unicodedata.combining(ch))
 
 
+# Character reference sheets and long cast lists pull SDXL toward a lone figure on a blank backdrop.
+SCENE_COMPOSITION = ("Cinematic scene, the characters act inside a fully detailed environment with foreground, "
+                     "midground and background depth, not a portrait, not a character sheet")
+_BLANK_BACKDROP_NEGATIVE = "character sheet, reference sheet, plain background, simple background, studio backdrop"
+_PORTRAIT_NEGATIVE = "portrait, headshot, posing for the camera, " + _BLANK_BACKDROP_NEGATIVE
+
+
+def scene_negative(negative: str, close_up: bool = False) -> str:
+    """A story frame never wants a blank backdrop; only a close-up may fill it with a face."""
+    extra = _BLANK_BACKDROP_NEGATIVE if close_up else _PORTRAIT_NEGATIVE
+    return ", ".join(part for part in (negative, extra) if part)
+
+
+def is_close_up(text: str) -> bool:
+    return bool(re.search(r"\b(extreme )?close[- ]?up\b", text, flags=re.IGNORECASE))
+
+
 def cast_description(storyboard: Storyboard, character_ids: list[str]) -> str:
     cast = [storyboard.character(cid) for cid in character_ids]
     described = [character_look(c) for c in cast if c is not None]
@@ -199,11 +216,14 @@ def scene_image_prompt(scene: ComicScene, storyboard: Storyboard, aspect_ratio: 
     # SDXL/SD1.5 weigh the first ~77 tokens most: the story content leads, style comes last.
     style = COMIC_STYLES.get(storyboard.style, COMIC_STYLES["anime_comic"])[1]
     lines = [without_names(scene.visual_prompt, storyboard).rstrip(".") + "."]
+    # The place comes before the cast so it survives the token budget and the frame is not a lone portrait.
+    if scene.location:
+        lines.append(f"Setting: {scene.location}.")
+    if not is_close_up(scene.visual_prompt):
+        lines.append(f"{SCENE_COMPOSITION}.")
     cast = cast_description(storyboard, scene.characters)
     if cast:
         lines.append(cast)
-    if scene.location:
-        lines.append(f"Setting: {scene.location}.")
     if scene.emotion:
         lines.append(f"Mood: {scene.emotion}.")
     lines.append(f"{style}.")
@@ -453,8 +473,8 @@ class ComicVideoProducer:
                     save_png_atomic(fit_cover(image, self.width, self.height), path)
             return path, key
         prompt = scene_image_prompt(scene, storyboard, self.settings.aspect_ratio)
-        negative = cast_negative(storyboard, scene.characters,
-                                 style_negative_prompt(storyboard.style, scene.negative_prompt))
+        negative = cast_negative(storyboard, scene.characters, scene_negative(
+            style_negative_prompt(storyboard.style, scene.negative_prompt), is_close_up(scene.visual_prompt)))
         scene_refs = [refs[cid] for cid in scene.characters if cid in refs]
         seed = self.settings.seed + scene.scene_index if self.settings.seed else 0
         key = content_hash(PIPELINE_VERSION, "scene", self.images.cache_key, prompt, negative,

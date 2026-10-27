@@ -373,7 +373,8 @@ class GeminiImageProvider:
         text = request.prompt
         if request.references:
             text += ("\nKeep every character's face, hairstyle and outfit identical to the reference "
-                     "image(s) provided.")
+                     "image(s) provided. Use them only for identity: draw the full scene described above, "
+                     "not a portrait, and do not copy their pose or plain background.")
         if request.negative_prompt:
             text += f"\nAvoid: {request.negative_prompt}."
         parts: list[dict[str, Any]] = [{"text": text}]

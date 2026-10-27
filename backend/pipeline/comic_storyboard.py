@@ -85,11 +85,14 @@ Rules:
    spoken lines go to "dialogue" in {language}, attributed to the speaker's character id. Use "narrator" never.
 3. One scene = one visual moment with a single main action. Keep narration + dialogue of a scene under
    {max_chars} characters (about {settings.target_scene_duration:g} seconds spoken). estimated_duration is in seconds.
-4. "visual_prompt" is ENGLISH, at most 50 words, and describes only what is visible, in this order: the main
-   subject and the ONE action happening now, the story props involved (named concretely), where each visible
-   character is in the frame (left / right / foreground / background, facing whom), expression, setting, time
-   of day, lighting, shot type (close-up, medium, wide). Draw only what the text states. Never summarise or
-   skip sentences, and never repeat a spoken line inside "narration". No text, captions or speech bubbles.
+4. "visual_prompt" is ENGLISH, at most 60 words, and describes a cinematic SCENE (a film still), never a
+   portrait, in this order: shot type and the place ("Wide shot of a moonlit bamboo courtyard"), the ONE
+   action happening now and who does it, where each visible character stands in that place (left / right /
+   foreground / background, facing whom), the story props involved (named concretely), environment details
+   in foreground, midground and background, time of day, lighting and atmosphere. Prefer wide or medium-wide
+   shots that show the surroundings; use a close-up only when the text centres on a face or an object.
+   Draw only what the text states. Never summarise or skip sentences, and never repeat a spoken line inside
+   "narration". No text, captions or speech bubbles.
 5. Characters: reuse ids from KNOWN CHARACTERS exactly. Add a character only for a named or recurring
    person, animal or creature, with a lowercase ascii id. "appearance" is ENGLISH and lists fixed traits
    (age look, hair or fur, eyes, build, distinctive accessories) so it can be drawn the same way in every scene.
