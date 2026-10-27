@@ -1307,7 +1307,11 @@ def get_media_duration(path: Path) -> float:
             str(path),
         ]
     )
-    return float((result.stdout or "0").strip() or 0)
+    # ffprobe prints "N/A" for a header-only file (e.g. silenceremove ate it all).
+    try:
+        return float((result.stdout or "0").strip() or 0)
+    except ValueError:
+        return 0.0
 
 
 def get_video_dimensions(path: Path) -> tuple[int, int]:
@@ -1811,24 +1815,21 @@ def synthesize_tts_segments(
             "silenceremove=start_periods=1:start_duration=0.08:start_threshold=-50dB,"
             "areverse"
         )
+        def trim_tts_audio(source: Path, target: Path) -> float:
+            run_tts_ffmpeg(
+                [FFMPEG, "-y", "-i", str(source), "-af", trim_filter, "-ac", "1", "-ar", "24000", str(target)]
+            )
+            duration = get_media_duration(target)
+            if duration > 0:
+                return duration
+            # FFmpeg's chained silenceremove can empty a very short clip (a
+            # one-syllable line); keep the untrimmed render instead of failing.
+            run_tts_ffmpeg([FFMPEG, "-y", "-i", str(source), "-ac", "1", "-ar", "24000", str(target)])
+            return get_media_duration(target)
+
         if job_id:
             ensure_job_active(job_id)
-        run_tts_ffmpeg(
-            [
-                FFMPEG,
-                "-y",
-                "-i",
-                str(output_path),
-                "-af",
-                trim_filter,
-                "-ac",
-                "1",
-                "-ar",
-                "24000",
-                str(trimmed_path),
-            ]
-        )
-        rendered_duration = get_media_duration(trimmed_path)
+        rendered_duration = trim_tts_audio(output_path, trimmed_path)
 
         native_rate_boost = adaptive_synthesis_rate_percent(rendered_duration, cue_duration)
         if not native_rate_boost and relax_pace:
@@ -1843,23 +1844,9 @@ def synthesize_tts_segments(
                 tts_edge_with_retry(
                     text, adaptive_output_path, voice_name, candidate_rate_string, pitch_string
                 )
-                run_tts_ffmpeg(
-                    [
-                        FFMPEG,
-                        "-y",
-                        "-i",
-                        str(adaptive_output_path),
-                        "-af",
-                        trim_filter,
-                        "-ac",
-                        "1",
-                        "-ar",
-                        "24000",
-                        str(adaptive_trimmed_path),
-                    ]
-                )
+                adaptive_duration = trim_tts_audio(adaptive_output_path, adaptive_trimmed_path)
                 adaptive_trimmed_path.replace(trimmed_path)
-                rendered_duration = get_media_duration(trimmed_path)
+                rendered_duration = adaptive_duration
                 effective_rate_percent = candidate_rate_percent
                 applied_native_rate_boost = native_rate_boost
             except JobCancelled:

@@ -36,6 +36,13 @@ class TTSConcurrencyTests(unittest.TestCase):
         self.assertEqual(resolve_tts_worker_count("cit", 20, configured="2", cpu_count=8), 2)
 
 
+class MediaDurationParsingTests(unittest.TestCase):
+    def test_unknown_duration_from_header_only_file_is_zero(self) -> None:
+        probe = subprocess.CompletedProcess(args=[], returncode=0, stdout="N/A\n", stderr="")
+        with patch("main.run_cmd", return_value=probe):
+            self.assertEqual(get_media_duration(Path("empty.wav")), 0.0)
+
+
 @unittest.skipUnless(shutil.which(FFMPEG) and shutil.which(FFPROBE), "ffmpeg/ffprobe required")
 class AudioDurationIntegrationTests(unittest.TestCase):
     def test_localized_blur_filter_uses_ocr_box_not_full_width_band(self) -> None:
