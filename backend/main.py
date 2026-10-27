@@ -124,6 +124,7 @@ from infrastructure.tts_providers import (
     warm_cit_voice_previews,
     synthesize_elevenlabs,
     tts_account_blocked,
+    tts_voice_pool,
 )
 from domain.plan_entitlements import (
     PlanEntitlementError,
@@ -181,7 +182,12 @@ from pipeline.tts_timing import (
     schedule_voice_segments,
     speech_level_gain,
 )
-from pipeline.voice_routing import read_pcm_wav, route_segments_by_pitch, route_segments_manually
+from pipeline.voice_routing import (
+    TTS_BASE_F0_HZ,
+    read_pcm_wav,
+    route_segments_by_pitch,
+    route_segments_manually,
+)
 from pipeline.voice_style import AUTO_VOICE_STYLE, infer_speaker_voice, infer_voice_style
 
 try:
@@ -1704,6 +1710,7 @@ def synthesize_tts_segments(
     tts_provider: str = "edge",
     tts_voices: dict[str, str] | None = None,
     relax_pace: bool = False,
+    tts_voice_pool: dict[str, list[str]] | None = None,
 ) -> list[Path]:
     tts_dir = work_dir / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
@@ -1759,6 +1766,13 @@ def synthesize_tts_segments(
 
         output_path = tts_dir / f"{index:04d}.mp3"
         selected_voice_type = str(segment.get("voice_type", voice_type))
+        # Each detected character of a voice style gets its own voice from the
+        # pool; rank 0 (the main speaker) keeps the voice the user selected.
+        pool = (tts_voice_pool or {}).get(selected_voice_type) or []
+        speaker_rank = max(0, int(segment.get("speaker_rank") or 0))
+        selected_voice_key = (
+            pool[speaker_rank % len(pool)] if pool else (tts_voices or {}).get(selected_voice_type)
+        )
         profile = language_profile(target_language)
         voice_name = profile.edge_voice(selected_voice_type)
         # Auto voice routing nudges each speaker turn towards the source F0;
@@ -1771,7 +1785,15 @@ def synthesize_tts_segments(
         # When a line is too long, a second native TTS render is preferable to
         # a large FFmpeg atempo shift, which flattens Vietnamese prosody.
         if tts_provider == "cit":
-            voice_name = (tts_voices or {}).get(selected_voice_type) or voice_name
+            voice_name = selected_voice_key or voice_name
+        elif tts_provider == "elevenlabs" and selected_voice_key:
+            voice_name = selected_voice_key
+        # Edge applies the pitch nudge inside synthesis; CIT and ElevenLabs have no
+        # pitch control, so the same nudge is applied to their render afterwards.
+        post_pitch_filter = ""
+        if tts_provider in {"cit", "elevenlabs"} and segment.get("voice_pitch_offset_hz"):
+            base_f0 = TTS_BASE_F0_HZ.get(selected_voice_type, TTS_BASE_F0_HZ["female"])
+            post_pitch_filter = build_pitch_shift_filter((base_f0 + pitch_hz - preset.pitch_hz) / base_f0)
 
         def render_with_provider(target: Path, rate: int) -> None:
             if tts_provider == "azure":
@@ -1783,14 +1805,14 @@ def synthesize_tts_segments(
                     voice_type=selected_voice_type,
                     voice_style=voice_style,
                     speed=1.0 + (rate / 100.0),
-                    voice_key=(tts_voices or {}).get(selected_voice_type),
+                    voice_key=selected_voice_key,
                 )
             elif tts_provider == "cit":
                 synthesize_cit(
                     text,
                     target,
                     voice_type=selected_voice_type,
-                    voice_key=(tts_voices or {}).get(selected_voice_type),
+                    voice_key=selected_voice_key,
                     speed=1.0 + (rate / 100.0),
                     language=target_language,
                 )
@@ -1815,7 +1837,8 @@ def synthesize_tts_segments(
         # stop_periods=1 would stop at the first natural pause inside a line.
         trimmed_path = tts_dir / f"{index:04d}_trimmed.wav"
         trim_filter = (
-            "silenceremove=start_periods=1:start_duration=0.08:start_threshold=-50dB,"
+            (f"{post_pitch_filter}," if post_pitch_filter else "")
+            + "silenceremove=start_periods=1:start_duration=0.08:start_threshold=-50dB,"
             "areverse,"
             "silenceremove=start_periods=1:start_duration=0.08:start_threshold=-50dB,"
             "areverse"
@@ -1829,7 +1852,8 @@ def synthesize_tts_segments(
                 return duration
             # FFmpeg's chained silenceremove can empty a very short clip (a
             # one-syllable line); keep the untrimmed render instead of failing.
-            run_tts_ffmpeg([FFMPEG, "-y", "-i", str(source), "-ac", "1", "-ar", "24000", str(target)])
+            untrimmed = ["-af", post_pitch_filter] if post_pitch_filter else []
+            run_tts_ffmpeg([FFMPEG, "-y", "-i", str(source), *untrimmed, "-ac", "1", "-ar", "24000", str(target)])
             return get_media_duration(target)
 
         if job_id:
@@ -1885,6 +1909,7 @@ def synthesize_tts_segments(
         segment["tts_speed_factor"] = round(speed_factor, 3)
         segment["tts_voice_style"] = preset.key
         segment["tts_voice_name"] = voice_name
+        segment["tts_speaker_rank"] = speaker_rank
         segment["tts_voice_rate"] = f"{effective_rate_percent:+d}%"
         segment["tts_native_rate_boost"] = applied_native_rate_boost
         segment["tts_voice_pitch"] = pitch_string
@@ -1930,6 +1955,21 @@ def synthesize_tts_segments(
 MAX_TTS_PITCH_OFFSET_HZ = 40
 VOICE_FADE_IN_SECONDS = 0.012
 VOICE_FADE_OUT_SECONDS = 0.04
+
+
+MAX_POST_PITCH_SEMITONES = 2.5
+
+
+def build_pitch_shift_filter(ratio: float, sample_rate: int = 24000) -> str:
+    """Shift pitch by ``ratio`` while keeping the clip's duration."""
+    limit = 2.0 ** (MAX_POST_PITCH_SEMITONES / 12.0)
+    ratio = max(1.0 / limit, min(limit, float(ratio)))
+    if abs(ratio - 1.0) < 0.005:
+        return ""
+    return (
+        f"aresample={sample_rate},asetrate={sample_rate * ratio:.2f},"
+        f"aresample={sample_rate},{build_atempo_filter(1.0 / ratio)}"
+    )
 
 
 def build_atempo_filter(speed_factor: float) -> str:
@@ -3144,6 +3184,8 @@ def process_video(
         if mode in (2, 3):
             ensure_job_active(job_id)
             update_job(job_id, step="tts", progress=0.55)
+            # Auto routing separates characters; each gets its own voice of its style.
+            voice_pool = tts_voice_pool(tts_provider, tts_voices) if voice_mode == "auto" else {}
             tts_fingerprint_fields = lambda provider: fingerprint_payload(  # noqa: E731
                 {
                     "version": 1,
@@ -3156,16 +3198,18 @@ def process_video(
                     "requested_voice_style": requested_voice_style,
                     "tts_provider": provider,
                     "tts_voices": (tts_voices or {}) if provider == tts_provider else {},
+                    "tts_voice_pool": voice_pool if provider == tts_provider else {},
                     "speech_rate": speech_rate,
                     "video_duration": round(video_duration, 3),
                     "routing": [
                         {
                             "voice_type": segment.get("voice_type"),
                             "voice_routing": segment.get("voice_routing"),
+                            "speaker_rank": segment.get("speaker_rank"),
                         }
                         for segment in translated_segments
                     ],
-                    "tts_pipeline_version": 5,
+                    "tts_pipeline_version": 6,
                 }
             )
             tts_fingerprint = tts_fingerprint_fields(tts_provider)
@@ -3198,6 +3242,7 @@ def process_video(
                             tts_provider=tts_provider,
                             tts_voices=tts_voices,
                             relax_pace=requested_voice_style == AUTO_VOICE_STYLE,
+                            tts_voice_pool=voice_pool,
                         )
                     except Exception as exc:
                         blocked = tts_account_blocked(exc) if tts_provider != "edge" else None

@@ -322,6 +322,23 @@ class ElevenLabsPreviewTest(unittest.TestCase):
             elevenlabs_voice_preview("v-unknown")
 
 
+
+class TTSVoicePoolTest(unittest.TestCase):
+    def test_pool_starts_with_selection_and_skips_the_other_styles_pick(self) -> None:
+        voices = [
+            tts_providers.CITVoice("Hải Đăng", "Hải Đăng", "male"),
+            tts_providers.CITVoice("Minh Đức", "Minh Đức", "male"),
+            tts_providers.CITVoice("Ngọc Linh", "Ngọc Linh", "female"),
+            tts_providers.CITVoice("Thu Hà", "Thu Hà", "female"),
+        ]
+        with patch.object(tts_providers, "cit_voices", return_value=voices):
+            pool = tts_providers.tts_voice_pool("cit", {"female": "Hải Đăng", "male": "Hải Đăng"})
+        self.assertEqual(pool["female"], ["Hải Đăng", "Ngọc Linh", "Thu Hà"])
+        self.assertEqual(pool["male"], ["Hải Đăng", "Minh Đức"])
+
+    def test_single_voice_providers_have_no_pool(self) -> None:
+        self.assertEqual(tts_providers.tts_voice_pool("edge", {}), {})
+
 if __name__ == "__main__":
     unittest.main()
 

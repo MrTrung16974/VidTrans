@@ -25,6 +25,7 @@ from main import (
     write_ass,
     write_srt,
     synthesize_tts_segments,
+    build_pitch_shift_filter,
 )
 
 
@@ -63,6 +64,22 @@ class AudioDurationIntegrationTests(unittest.TestCase):
         self.assertIn("crop=640:80:120:500", value)
         self.assertIn("overlay=120:500", value)
         self.assertNotIn("ih*0.32", value)
+
+    def test_post_pitch_shift_keeps_clip_duration(self) -> None:
+        self.assertEqual(build_pitch_shift_filter(1.0), "")
+        with tempfile.TemporaryDirectory(prefix="vidtrans-pitch-") as directory:
+            source = Path(directory) / "tone.wav"
+            shifted = Path(directory) / "shifted.wav"
+            subprocess.run(
+                [FFMPEG, "-y", "-f", "lavfi", "-i", "sine=frequency=200:duration=2", "-ar", "24000", str(source)],
+                check=True, capture_output=True,
+            )
+            for ratio in (1.12, 0.89):
+                subprocess.run(
+                    [FFMPEG, "-y", "-i", str(source), "-af", build_pitch_shift_filter(ratio), "-ar", "24000", str(shifted)],
+                    check=True, capture_output=True,
+                )
+                self.assertAlmostEqual(get_media_duration(shifted), 2.0, delta=0.06)
 
     def test_tts_skips_punctuation_only_cue_before_calling_provider(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vidtrans-empty-tts-") as directory:

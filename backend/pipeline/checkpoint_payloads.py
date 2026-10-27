@@ -11,6 +11,7 @@ TTS_STATE_KEYS = (
     "tts_catch_up_tempo",
     "tts_voice_style",
     "tts_voice_name",
+    "tts_speaker_rank",
     "tts_voice_rate",
     "tts_voice_pitch",
     "tts_duration",

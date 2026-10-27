@@ -11,6 +11,7 @@ from pipeline.voice_routing import (
     TTS_BASE_F0_HZ,
     PitchAnalysis,
     analyze_pitch,
+    assign_speaker_ranks,
     route_segments_by_pitch,
     tts_pitch_offset_hz,
 )
@@ -211,3 +212,34 @@ class VoiceRoutingTests(unittest.TestCase):
             route_segments_by_pitch(segments, audio_path, fallback_voice="female", content_voice="female")
 
         self.assertEqual([segment["voice_type"] for segment in segments], ["male"] * 3)
+
+    def test_distinct_pitch_groups_become_ranked_characters(self) -> None:
+        voices = ["female", "female", "female", "female", "male", "male"]
+        pitches = [210.0, 212.0, 290.0, 211.0, 120.0, 121.0]
+        durations = [3.0, 3.0, 1.0, 3.0, 2.0, 2.0]
+
+        ranks = assign_speaker_ranks(voices, pitches, durations)
+
+        self.assertEqual(ranks, [0, 0, 1, 0, 0, 0])
+
+    def test_speakers_per_style_are_capped_and_unpitched_cues_stay_main(self) -> None:
+        voices = ["male"] * 5
+        pitches = [100.0, 130.0, 165.0, 210.0, None]
+        ranks = assign_speaker_ranks(voices, pitches, [2.0, 1.5, 1.0, 0.5, 1.0])
+        self.assertLessEqual(max(ranks), 2)
+        self.assertEqual(ranks[0], 0)
+        self.assertEqual(ranks[4], 0)
+
+    def test_routing_records_speaker_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "speakers.wav"
+            samples = np.concatenate([voiced_wave(f, 1.0) for f in (210.0, 210.0, 300.0, 300.0, 210.0)])
+            self.write_audio(audio_path, samples)
+            segments = [{"start": float(i), "end": float(i + 1), "text": "Xin chào"} for i in range(5)]
+            route_segments_by_pitch(segments, audio_path, fallback_voice="female")
+
+        self.assertEqual({segment["voice_type"] for segment in segments}, {"female"})
+        ranks = [segment["speaker_rank"] for segment in segments]
+        self.assertEqual(ranks[0], ranks[4])
+        self.assertNotEqual(ranks[0], ranks[2])
+        self.assertEqual(segments[2]["voice_routing"]["speaker_id"], f"female-{ranks[2]}")

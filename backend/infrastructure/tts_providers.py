@@ -551,6 +551,31 @@ def _default_cit_voice(voices: list[CITVoice], gender: str) -> CITVoice | None:
     return next((voice for voice in voices if voice.gender == gender), voices[0] if voices else None)
 
 
+def tts_voice_pool(provider: str, selected: dict[str, str] | None) -> dict[str, list[str]]:
+    """Voices per style for multi-character dubbing: the selection first, then the
+    provider's other voices of the same style. Empty when the provider has one voice."""
+
+    provider = normalize_tts_provider(provider)
+    if provider == "cit":
+        available = [(voice.key, voice.gender) for voice in cit_voices()]
+    elif provider == "elevenlabs":
+        available = [(voice.key, voice.gender) for voice in elevenlabs_voices()]
+    else:
+        return {}
+    selected = selected or {}
+    # A voice the user picked for the other style is never reused as an extra
+    # character, or the narrator of one style would speak for the other too.
+    reserved = {key for key in selected.values() if key}
+    pool: dict[str, list[str]] = {}
+    for gender in ("female", "male"):
+        primary = selected.get(gender)
+        voices = [primary] if primary else []
+        voices += [key for key, voice_gender in available if voice_gender == gender and key not in reserved]
+        if voices:
+            pool[gender] = voices
+    return pool
+
+
 def resolve_tts_voice_selection(
     provider: str, female_key: str | None = None, male_key: str | None = None
 ) -> dict[str, str]:

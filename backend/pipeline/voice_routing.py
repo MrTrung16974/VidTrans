@@ -49,6 +49,13 @@ WEAK_CONFIDENCE = 0.2
 # time. Enough to settle a voice sitting between the pitch ranges, never
 # enough to outvote a speaker whose pitch is clearly confident.
 CONTENT_EVIDENCE_SHARE = 0.25
+# Speaker turns of one voice style whose pitch centres lie within this distance
+# are treated as one character. Narrower than SPEAKER_SPLIT_SEMITONES: a turn
+# boundary needs a clear jump, a separate character only a stable difference.
+SPEAKER_CLUSTER_SEMITONES = 2.5
+# Pitch alone cannot tell many similar voices apart; beyond this, extra
+# characters share the closest voice instead of inventing unreliable ones.
+MAX_SPEAKERS_PER_VOICE = 3
 
 
 @dataclass(frozen=True)
@@ -276,10 +283,11 @@ def route_segments_by_pitch(
             sources[index] = "smoothed"
 
     matched_pitches = _speaker_pitch_targets(analyses, durations, resolved_voices)
+    speaker_ranks = assign_speaker_ranks(resolved_voices, matched_pitches, durations)
 
     summary = {"male": 0, "female": 0, "fallback": 0}
-    for segment, analysis, selected_voice, selection_source, matched_pitch in zip(
-        segments, analyses, resolved_voices, sources, matched_pitches
+    for segment, analysis, selected_voice, selection_source, matched_pitch, speaker_rank in zip(
+        segments, analyses, resolved_voices, sources, matched_pitches, speaker_ranks
     ):
         if selection_source != "pitch":
             summary["fallback"] += 1
@@ -287,8 +295,10 @@ def route_segments_by_pitch(
         pitch_offset = tts_pitch_offset_hz(selected_voice, matched_pitch)
         segment["voice_type"] = selected_voice
         segment["voice_pitch_offset_hz"] = pitch_offset
+        segment["speaker_rank"] = speaker_rank
         segment["voice_routing"] = {
             "mode": "auto",
+            "speaker_id": f"{selected_voice}-{speaker_rank}",
             "selection_source": selection_source,
             "raw_voice_type": analysis.voice_type,
             "resolved_voice_type": selected_voice,
@@ -386,6 +396,47 @@ def _speaker_pitch_targets(
     return targets
 
 
+def assign_speaker_ranks(
+    voices: list[str],
+    pitches: list[float | None],
+    durations: list[float],
+) -> list[int]:
+    """Group speaker turns into characters per voice style, ranked by speech time.
+
+    Rank 0 is the character speaking most in that style and keeps the voice the
+    user selected; higher ranks get the next voices of the same style. Cues
+    without a pitch target stay with rank 0.
+    """
+
+    ranks = [0] * len(voices)
+    for voice in set(voices):
+        indices = [i for i, v in enumerate(voices) if v == voice and pitches[i]]
+        weight_by_pitch: dict[float, float] = {}
+        for i in indices:
+            weight_by_pitch[pitches[i]] = weight_by_pitch.get(pitches[i], 0.0) + max(durations[i], 0.25)  # type: ignore[index]
+        # Heaviest turns seed the clusters so a brief outlier cannot become the main voice.
+        centres: list[float] = []
+        cluster_weight: list[float] = []
+        for pitch, weight in sorted(weight_by_pitch.items(), key=lambda item: -item[1]):
+            distances = [abs(_semitones(pitch, centre)) for centre in centres]
+            nearest = min(range(len(centres)), key=distances.__getitem__) if centres else None
+            if nearest is not None and (
+                distances[nearest] <= SPEAKER_CLUSTER_SEMITONES or len(centres) >= MAX_SPEAKERS_PER_VOICE
+            ):
+                cluster_weight[nearest] += weight
+            else:
+                centres.append(pitch)
+                cluster_weight.append(weight)
+        if len(centres) < 2:
+            continue
+        order = sorted(range(len(centres)), key=lambda c: -cluster_weight[c])
+        rank_of_cluster = {cluster: rank for rank, cluster in enumerate(order)}
+        for i in indices:
+            nearest = min(range(len(centres)), key=lambda c: abs(_semitones(pitches[i], centres[c])))  # type: ignore[arg-type]
+            ranks[i] = rank_of_cluster[nearest]
+    return ranks
+
+
 def tts_pitch_offset_hz(voice_type: str, source_pitch_hz: float | None) -> int:
     """Edge TTS pitch offset that nudges the voice towards the source F0."""
     base = TTS_BASE_F0_HZ.get(voice_type)
@@ -402,6 +453,8 @@ def route_segments_manually(segments: list[dict[str, Any]], voice_type: str) -> 
     summary = {"male": 0, "female": 0, "fallback": 0}
     for segment in segments:
         segment["voice_type"] = voice_type
+        segment["speaker_rank"] = 0
+        segment.pop("voice_pitch_offset_hz", None)
         segment["voice_routing"] = {"mode": "manual", "selection_source": "manual"}
         summary[voice_type] += 1
     return summary
