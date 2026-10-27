@@ -69,6 +69,30 @@ class SubtitleLayoutTests(unittest.TestCase):
         self.assertEqual(result["x"], 540)
         self.assertFalse(result["mask_original"])
 
+    def test_long_cue_shrinks_and_never_runs_past_frame(self) -> None:
+        text = (
+            "Tôi cảm thấy rất buồn khi biết chuyện này. Ban đầu, tôi nghĩ rằng cặp đôi đã yêu nhau "
+            "từ lâu và quyết định ly hôn. Nhưng bây giờ, khi nhìn lại, tôi thấy rằng có lẽ họ chưa "
+            "thực sự ly hôn mà chỉ đơn giản là chia tay."
+        )
+        result = apply_subtitle_layout(
+            [{"text": text}], video_width=1658, video_height=1080, style={"font_size": 36}
+        )[0]["subtitle_layout"]
+        lines = result["render_text"].split("\n")
+        self.assertLess(result["font_size"], 54)
+        self.assertGreaterEqual(result["font_size"], 22)
+        self.assertLessEqual(len(lines), 3)
+        for line in lines:
+            self.assertLessEqual(len(line) * result["font_size"] * 0.54, 1658 * 0.84 + 1)
+        self.assertEqual(" ".join(" ".join(lines).split()), " ".join(text.split()))
+
+    def test_short_cue_keeps_default_size(self) -> None:
+        result = apply_subtitle_layout(
+            [{"text": "Cứ mơ mãi, mơ mãi"}], video_width=1920, video_height=1080, style={"font_size": 36}
+        )[0]["subtitle_layout"]
+        self.assertEqual(result["font_size"], 54)
+        self.assertEqual(result["render_text"], "Cứ mơ mãi, mơ mãi")
+
     def test_rejects_unknown_placement_mode(self) -> None:
         with self.assertRaisesRegex(ValueError, "placement_mode"):
             SubtitleLayoutOptions.from_style({"placement_mode": "unknown"})

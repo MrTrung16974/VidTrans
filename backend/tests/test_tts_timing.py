@@ -6,6 +6,7 @@ import numpy as np
 
 from pipeline.tts_timing import (
     MAX_BORROWED_PAUSE_SECONDS,
+    MAX_CATCH_UP_TEMPO,
     MAX_LEVEL_CORRECTION_DB,
     TARGET_SPEECH_RMS_DBFS,
     MAX_NATURAL_TEMPO,
@@ -13,6 +14,7 @@ from pipeline.tts_timing import (
     adaptive_synthesis_rate_percent,
     available_voice_window,
     bounded_tempo,
+    catch_up_tempo,
     schedule_voice_segments,
     speech_level_gain,
 )
@@ -88,6 +90,33 @@ class TTSTimingTests(unittest.TestCase):
         ]
         schedule = schedule_voice_segments(segments, video_duration=3.0)
         self.assertEqual(len(schedule), 1)
+
+    def test_catch_up_only_speeds_late_clips_within_total_limit(self) -> None:
+        self.assertEqual(catch_up_tempo(1.5, 1.2, 0.1, 1.0), 1.0)
+        self.assertEqual(catch_up_tempo(0.5, 2.0, 1.0, 1.0), 1.0)
+        extra = catch_up_tempo(2.0, 1.5, 1.0, MAX_NATURAL_TEMPO)
+        self.assertGreater(extra, 1.0)
+        self.assertLessEqual(extra * MAX_NATURAL_TEMPO, MAX_CATCH_UP_TEMPO + 1e-9)
+
+    def test_schedule_refits_late_clip_and_reduces_drift(self) -> None:
+        segments = [
+            {"start": 0.0, "end": 1.0, "tts_path": "a.wav", "tts_duration": 1.6, "tts_target_duration": 1.0},
+            {"start": 1.0, "end": 2.0, "tts_path": "b.wav", "tts_duration": 1.0, "tts_target_duration": 1.0},
+            {"start": 2.0, "end": 3.0, "tts_path": "c.wav", "tts_duration": 0.6, "tts_target_duration": 1.0},
+        ]
+        refitted_paths: list[str] = []
+
+        def refit(segment: dict, factor: float) -> float:
+            refitted_paths.append(segment["tts_path"])
+            return float(segment["tts_duration"]) / factor
+
+        plain = schedule_voice_segments([dict(item) for item in segments], video_duration=5.0)
+        refitted = schedule_voice_segments(segments, video_duration=5.0, refit=refit)
+
+        self.assertNotIn("a.wav", refitted_paths)
+        self.assertIn("b.wav", refitted_paths)
+        self.assertLess(refitted[2]["drift"], plain[2]["drift"])
+        self.assertGreaterEqual(refitted[1]["start"], refitted[0]["end"])
 
 
 if __name__ == "__main__":

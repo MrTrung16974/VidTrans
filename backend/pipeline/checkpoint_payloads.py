@@ -8,6 +8,7 @@ TTS_STATE_KEYS = (
     "voice_type",
     "voice_routing",
     "tts_speed_factor",
+    "tts_catch_up_tempo",
     "tts_voice_style",
     "tts_voice_name",
     "tts_voice_rate",

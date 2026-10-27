@@ -1710,7 +1710,6 @@ def synthesize_tts_segments(
     preset = voice_preset(voice_style)
     tts_provider = normalize_tts_provider(tts_provider)
     rate_percent = int((speech_rate - 1.0) * 100) + preset.rate_percent
-    base_rate_string = f"{rate_percent:+d}%"
 
     import concurrent.futures
     import threading
@@ -1771,33 +1770,39 @@ def synthesize_tts_segments(
         # Pass 1: generate at the requested expressive rate and measure it.
         # When a line is too long, a second native TTS render is preferable to
         # a large FFmpeg atempo shift, which flattens Vietnamese prosody.
-        edge_succeeded = False
-        effective_rate_percent = rate_percent
-        try:
+        if tts_provider == "cit":
+            voice_name = (tts_voices or {}).get(selected_voice_type) or voice_name
+
+        def render_with_provider(target: Path, rate: int) -> None:
             if tts_provider == "azure":
-                synthesize_azure(text, output_path, voice_name=voice_name, rate_percent=rate_percent, pitch_hz=pitch_hz)
+                synthesize_azure(text, target, voice_name=voice_name, rate_percent=rate, pitch_hz=pitch_hz)
             elif tts_provider == "elevenlabs":
                 synthesize_elevenlabs(
                     text,
-                    output_path,
+                    target,
                     voice_type=selected_voice_type,
                     voice_style=voice_style,
-                    speed=1.0 + (rate_percent / 100.0),
+                    speed=1.0 + (rate / 100.0),
                     voice_key=(tts_voices or {}).get(selected_voice_type),
                 )
             elif tts_provider == "cit":
-                voice_name = (tts_voices or {}).get(selected_voice_type) or voice_name
                 synthesize_cit(
                     text,
-                    output_path,
+                    target,
                     voice_type=selected_voice_type,
                     voice_key=(tts_voices or {}).get(selected_voice_type),
-                    speed=1.0 + (rate_percent / 100.0),
+                    speed=1.0 + (rate / 100.0),
                     language=target_language,
                 )
             else:
-                tts_edge_with_retry(text, output_path, voice_name, base_rate_string, pitch_string)
-                edge_succeeded = True
+                tts_edge_with_retry(text, target, voice_name, f"{rate:+d}%", pitch_string)
+
+        # gTTS has no rate control, so only a successful native first pass may be re-rendered.
+        native_render_ok = False
+        effective_rate_percent = rate_percent
+        try:
+            render_with_provider(output_path, rate_percent)
+            native_render_ok = True
         except Exception as exc:
             if tts_provider != "edge":
                 raise
@@ -1832,18 +1837,19 @@ def synthesize_tts_segments(
         rendered_duration = trim_tts_audio(output_path, trimmed_path)
 
         native_rate_boost = adaptive_synthesis_rate_percent(rendered_duration, cue_duration)
-        if not native_rate_boost and relax_pace:
+        # Slowing a short line is cosmetic; CIT/ElevenLabs re-renders cost CPU or
+        # credits, so they are only spent where a line would otherwise overflow.
+        if not native_rate_boost and relax_pace and tts_provider == "edge":
             native_rate_boost = relaxed_synthesis_rate_percent(rendered_duration, cue_duration)
         applied_native_rate_boost = 0
-        if edge_succeeded and native_rate_boost:
-            adaptive_output_path = tts_dir / f"{index:04d}_adaptive.mp3"
+        if native_render_ok and native_rate_boost:
+            # Every provider re-renders natively: with only the bounded atempo, long
+            # CIT/ElevenLabs lines overflowed and the delay accumulated for minutes.
+            adaptive_output_path = tts_dir / f"{index:04d}_adaptive{output_path.suffix}"
             adaptive_trimmed_path = tts_dir / f"{index:04d}_adaptive.wav"
             candidate_rate_percent = rate_percent + native_rate_boost
-            candidate_rate_string = f"{candidate_rate_percent:+d}%"
             try:
-                tts_edge_with_retry(
-                    text, adaptive_output_path, voice_name, candidate_rate_string, pitch_string
-                )
+                render_with_provider(adaptive_output_path, candidate_rate_percent)
                 adaptive_duration = trim_tts_audio(adaptive_output_path, adaptive_trimmed_path)
                 adaptive_trimmed_path.replace(trimmed_path)
                 rendered_duration = adaptive_duration
@@ -1852,7 +1858,7 @@ def synthesize_tts_segments(
             except JobCancelled:
                 raise
             except Exception as exc:
-                logger.warning("Adaptive edge-tts render failed; keeping first pass: %s", type(exc).__name__)
+                logger.warning("Adaptive %s render failed; keeping first pass: %s", tts_provider, type(exc).__name__)
             finally:
                 adaptive_output_path.unlink(missing_ok=True)
                 adaptive_trimmed_path.unlink(missing_ok=True)
@@ -1992,7 +1998,30 @@ def _mix_delayed_clips(
 def build_voice_track(segments: list[dict[str, Any]], work_dir: Path, video_duration: float) -> Path:
     voice_track = work_dir / "voice_track.wav"
     clips: list[tuple[Path, int, str, str]] = []
-    schedule_voice_segments(segments, video_duration=video_duration)
+
+    def refit_late_clip(segment: dict[str, Any], factor: float) -> float:
+        source = Path(segment["tts_path"])
+        target = source.with_name(f"{source.stem}_catchup.wav")
+        run_ffmpeg(
+            [FFMPEG, "-y", "-i", str(source), "-af", build_atempo_filter(factor), "-ac", "1", "-ar", "24000", str(target)]
+        )
+        duration = get_media_duration(target)
+        if duration <= 0:
+            return 0.0
+        segment["tts_path"] = target
+        segment["tts_catch_up_tempo"] = round(factor, 3)
+        segment["tts_speed_factor"] = round(float(segment.get("tts_speed_factor") or 1.0) * factor, 3)
+        segment["tts_duration"] = round(duration, 3)
+        target_duration = float(segment.get("tts_target_duration") or duration)
+        segment["tts_overrun"] = round(max(0.0, duration - target_duration), 3)
+        segment["tts_fit_quality"] = (
+            "exact" if segment["tts_overrun"] <= 0.05
+            else "soft" if segment["tts_overrun"] <= 0.35
+            else "overflow"
+        )
+        return duration
+
+    schedule_voice_segments(segments, video_duration=video_duration, refit=refit_late_clip)
     for segment in segments:
         tts_path = segment.get("tts_path")
         if not tts_path:
@@ -3136,7 +3165,7 @@ def process_video(
                         }
                         for segment in translated_segments
                     ],
-                    "tts_pipeline_version": 4,
+                    "tts_pipeline_version": 5,
                 }
             )
             tts_fingerprint = tts_fingerprint_fields(tts_provider)

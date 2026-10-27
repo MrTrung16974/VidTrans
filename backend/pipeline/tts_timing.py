@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 
 
 MAX_NATURAL_TEMPO = 1.08
+# Only a clip that starts late may go faster than the natural limit, so dense
+# narration catches up with the picture instead of lagging for whole minutes.
+MAX_CATCH_UP_TEMPO = 1.15
+CATCH_UP_DRIFT_SECONDS = 0.25
 TEMPO_DEADBAND = 1.03
 MAX_SYNTHESIS_RATE_BOOST_PERCENT = 12
 # A line far shorter than its source window sounds rushed against a slow,
@@ -53,6 +57,21 @@ def relaxed_synthesis_rate_percent(rendered_duration: float, cue_duration: float
     return max(-MAX_SYNTHESIS_RATE_SLOWDOWN_PERCENT, round((ratio / SLOWDOWN_FILL_RATIO - 1.0) * 100))
 
 
+def catch_up_tempo(duration: float, window: float, drift: float, applied_tempo: float) -> float:
+    """Extra tempo for a late clip so it ends near its own window end.
+
+    The total speed-up (``applied_tempo`` times the result) never exceeds
+    MAX_CATCH_UP_TEMPO; a clip that is on time is left untouched.
+    """
+
+    if drift <= CATCH_UP_DRIFT_SECONDS or duration <= 0:
+        return 1.0
+    applied_tempo = max(1.0, applied_tempo)
+    required = duration / max(0.25, window - drift)
+    extra = min(required, MAX_CATCH_UP_TEMPO / applied_tempo)
+    return extra if extra > TEMPO_DEADBAND else 1.0
+
+
 def available_voice_window(segments: Sequence[dict[str, Any]], index: int) -> float:
     """Return a natural TTS window, borrowing only a bounded real pause.
 
@@ -76,6 +95,7 @@ def schedule_voice_segments(
     segments: Sequence[dict[str, Any]],
     *,
     video_duration: float,
+    refit: Callable[[dict[str, Any], float], float] | None = None,
 ) -> list[dict[str, float]]:
     """Place natural-speed clips without overlapping consecutive speakers.
 
@@ -83,6 +103,8 @@ def schedule_voice_segments(
     previous Vietnamese line is still speaking, the next line starts just
     after it. A real pause in the source automatically resets accumulated
     delay because the desired start will again be later than the previous end.
+    When ``refit`` is given, a late clip is re-timed by ``catch_up_tempo``;
+    the callback applies the factor and returns the new clip duration.
     """
 
     schedule: list[dict[str, float]] = []
@@ -97,6 +119,15 @@ def schedule_voice_segments(
         start = max(source_start, previous_end + VOICE_GAP_SECONDS if schedule else source_start)
         if start >= video_duration:
             break
+        if refit is not None:
+            window = float(segment.get("tts_target_duration") or 0.0) or max(
+                0.25, float(segment.get("end") or source_start) - source_start
+            )
+            factor = catch_up_tempo(
+                duration, window, start - source_start, float(segment.get("tts_speed_factor") or 1.0)
+            )
+            if factor > 1.0:
+                duration = max(0.0, refit(segment, factor)) or duration
         end = start + duration
         item = {
             "segment_index": float(index),

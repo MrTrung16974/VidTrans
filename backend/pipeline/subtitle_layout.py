@@ -47,12 +47,13 @@ def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
 
 
-def _wrap_for_width(text: str, *, font_size: int, max_width: float) -> str:
-    words = " ".join(text.split()).split()
-    if not words:
-        return ""
-    approximate_character_width = max(font_size * 0.54, 1)
-    character_limit = max(8, int(max_width / approximate_character_width))
+MAX_SUBTITLE_LINES = 2
+# Last resort for very long cues at the minimum size: a third line is readable,
+# a line running past the frame edge is not.
+OVERFLOW_SUBTITLE_LINES = 3
+
+
+def _greedy_lines(words: Sequence[str], character_limit: int) -> list[str]:
     lines: list[str] = []
     current = ""
     for word in words:
@@ -64,10 +65,40 @@ def _wrap_for_width(text: str, *, font_size: int, max_width: float) -> str:
             current = word
     if current:
         lines.append(current)
-    if len(lines) <= 2:
+    return lines
+
+
+def _character_limit(font_size: int, max_width: float) -> int:
+    return max(8, int(max_width / max(font_size * 0.54, 1)))
+
+
+def _wrap_for_width(text: str, *, font_size: int, max_width: float) -> str:
+    words = " ".join(text.split()).split()
+    if not words:
+        return ""
+    character_limit = _character_limit(font_size, max_width)
+    lines = _greedy_lines(words, character_limit)
+    if len(lines) <= MAX_SUBTITLE_LINES:
         return "\n".join(lines)
-    midpoint = math.ceil(len(words) / 2)
-    return " ".join(words[:midpoint]) + "\n" + " ".join(words[midpoint:])
+    # Balance over the allowed lines; splitting at the word midpoint alone let
+    # each half run past the frame edge.
+    line_count = min(len(lines), OVERFLOW_SUBTITLE_LINES)
+    balanced_limit = max(character_limit // 2, math.ceil(len(" ".join(words)) / line_count))
+    while True:
+        balanced = _greedy_lines(words, balanced_limit)
+        if len(balanced) <= line_count or balanced_limit >= character_limit:
+            return "\n".join(balanced)
+        balanced_limit += 1
+
+
+def _fit_text(text: str, *, font_size: int, min_font_size: int, max_width: float) -> tuple[int, str]:
+    """Shrink a long cue until it fits two lines inside the frame, then wrap it."""
+
+    words = " ".join(text.split()).split()
+    size = font_size
+    while size > min_font_size and len(_greedy_lines(words, _character_limit(size, max_width))) > MAX_SUBTITLE_LINES:
+        size = max(min_font_size, int(size * 0.92))
+    return size, _wrap_for_width(text, font_size=size, max_width=max_width)
 
 
 def apply_subtitle_layout(
@@ -106,9 +137,10 @@ def apply_subtitle_layout(
             font_size = matched_font if options.match_source_size else default_font
             font_size = int(_clamp(font_size, options.min_font_size, options.max_font_size))
             max_text_width = min(video_width * 0.92, max(box_w * 1.45, video_width * 0.38))
-            render_text = _wrap_for_width(
+            font_size, render_text = _fit_text(
                 str(segment.get("text", "")),
                 font_size=font_size,
+                min_font_size=options.min_font_size,
                 max_width=max_text_width,
             )
             line_count = max(1, render_text.count("\n") + 1)
@@ -134,9 +166,10 @@ def apply_subtitle_layout(
         else:
             font_size = default_font
             max_text_width = video_width * 0.84
-            render_text = _wrap_for_width(
+            font_size, render_text = _fit_text(
                 str(segment.get("text", "")),
                 font_size=font_size,
+                min_font_size=options.min_font_size,
                 max_width=max_text_width,
             )
             line_count = max(1, render_text.count("\n") + 1)
