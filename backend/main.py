@@ -3935,6 +3935,30 @@ def default_video_retention_days() -> int | None:
     return retention_days("VIDTRANS_JOB_RETENTION_DAYS", 30) if retention_enabled() else None
 
 
+def remove_job_storage(owner_user_id: str, job_id: str, payload: dict[str, Any]) -> None:
+    """Delete every file a job produced: its upload/output/work folders and artifacts."""
+    for root in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR):
+        path = tenant_storage_path(root, owner_user_id, job_id)
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+    for key in ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file"):
+        filename = payload.get(key)
+        if filename:
+            stored_artifact_path(str(filename)).unlink(missing_ok=True)
+    # Older uploads were stored beside the job folder as <job_id>.<ext>.
+    request = payload.get("resume_request")
+    video_path = Path(str(request.get("video_path") or "")) if isinstance(request, dict) else None
+    if video_path and video_path.name.startswith(f"{job_id}."):
+        resolved = video_path.resolve()
+        if resolved.is_relative_to(UPLOAD_DIR.resolve()) and resolved.is_file():
+            resolved.unlink(missing_ok=True)
+    owner_uploads = UPLOAD_DIR / "users" / storage_owner_segment(owner_user_id)
+    if owner_uploads.is_dir():
+        for legacy in owner_uploads.glob(f"{job_id}.*"):
+            if legacy.is_file():
+                legacy.unlink(missing_ok=True)
+
+
 def remove_pruned_storage(removed: dict[str, Any]) -> None:
     for job in removed["jobs"]:
         for root in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR):
@@ -6505,15 +6529,21 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         raise HTTPException(status_code=409, detail="Hãy kết thúc lượt chuẩn bị TikTok trước khi xóa video")
     if job.get("status") in {"queued", "processing", "scheduled", "cancelling"}:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa")
-    # Soft delete: the job disappears from the user's views, but its row and
-    # files are kept until the retention policy purges them. The store
-    # atomically re-checks the terminal status.
+    # The row is soft-deleted (kept for quota/audit until retention purges it),
+    # but the videos and work files go now so deleted jobs stop using disk.
+    # The store atomically re-checks the terminal status.
     try:
-        JOB_SERVICE.delete(job_id, require_terminal=True)
+        deleted = JOB_SERVICE.delete(job_id, require_terminal=True)
     except JobNotFoundError:
         raise HTTPException(status_code=404, detail="job not found") from None
     except JobStateConflictError:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa") from None
+    owner_user_id = job.get("owner_user_id")
+    if owner_user_id:
+        try:
+            remove_job_storage(str(owner_user_id), job_id, deleted or job)
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not remove files of deleted job %s: %s", job_id, type(exc).__name__)
     TENANT_GOVERNANCE.release(job_id)
     return JSONResponse({"job_id": job_id, "deleted": True})
 

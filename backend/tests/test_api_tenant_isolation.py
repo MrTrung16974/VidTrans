@@ -140,7 +140,15 @@ class ApiTenantIsolationTests(unittest.TestCase):
         self.assertTrue(payload["deleted"])
         self.assertIsNone(self.service.get("job-b"))
 
-    def test_delete_is_soft_and_keeps_artifacts(self) -> None:
+    def test_delete_hides_job_and_removes_its_files(self) -> None:
+        work = self.work_dir / "users" / "user-a" / "job-a" / "transcript.json"
+        work.parent.mkdir(parents=True)
+        work.write_text("{}")
+        upload = self.upload_dir / "users" / "user-a" / "job-a.mp4"
+        upload.parent.mkdir(parents=True)
+        upload.write_bytes(b"source")
+        other = self.upload_dir / "users" / "user-a" / "job-ab.mp4"
+        other.write_bytes(b"other")
         governance = Mock()
         browser = Mock()
         browser.active_attempt.return_value = None
@@ -151,7 +159,10 @@ class ApiTenantIsolationTests(unittest.TestCase):
                 main.delete_job_endpoint(request_for(self.user_a, "DELETE"), "job-a")
             self.assertEqual(missing.exception.status_code, 404)
         self.assertIsNone(self.service.get("job-a"))
-        self.assertEqual((self.output_dir / "users" / "user-a" / "job-a" / "video.mp4").read_bytes(), b"video-a")
+        self.assertFalse((self.output_dir / "users" / "user-a" / "job-a").exists())
+        self.assertFalse(work.parent.exists())
+        self.assertFalse(upload.exists())
+        self.assertTrue(other.exists())
         governance.release.assert_called_once_with("job-a")
 
     def test_admin_view_is_explicit_and_role_protected(self) -> None:
