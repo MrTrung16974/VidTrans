@@ -2,6 +2,8 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/comfyui/app" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/comfyui/app/custom_nodes/ComfyUI_IPAdapter_plus" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ui-ux-pro-max-skill" vcs="Git" />
   </component>
 </project>
