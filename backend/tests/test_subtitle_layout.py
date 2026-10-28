@@ -56,6 +56,15 @@ class SubtitleLayoutTests(unittest.TestCase):
         normal = layouts[0]["font_size"]
         self.assertLessEqual(layouts[2]["font_size"], round(normal * 1.15))
 
+    def test_short_line_from_a_narrow_caption_stays_on_one_line(self) -> None:
+        layout = apply_subtitle_layout(
+            [{"text": "Chúc em hạnh phúc", "source_bbox": {"x": 0.39, "y": 0.84, "width": 0.214, "height": 0.072}}],
+            video_width=960,
+            video_height=720,
+            style={},
+        )[0]["subtitle_layout"]
+        self.assertNotIn("\n", layout["render_text"])
+
     def test_places_vietnamese_above_original(self) -> None:
         result = apply_subtitle_layout(
             [

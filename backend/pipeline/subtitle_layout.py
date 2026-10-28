@@ -52,6 +52,7 @@ MAX_SUBTITLE_LINES = 2
 # A decorative or emphasised caption in the source can be half again as tall as
 # the video's normal captions; the translation keeps the video's usual size.
 MAX_FONT_ABOVE_TYPICAL = 1.15
+MIN_TEXT_WIDTH_SHARE = 0.5
 # Last resort for very long cues at the minimum size: a third line is readable,
 # a line running past the frame edge is not.
 OVERFLOW_SUBTITLE_LINES = 3
@@ -151,7 +152,9 @@ def apply_subtitle_layout(
                 matched_font = min(matched_font, round(typical_font * MAX_FONT_ABOVE_TYPICAL))
             font_size = matched_font if options.match_source_size else default_font
             font_size = int(_clamp(font_size, options.min_font_size, options.max_font_size))
-            max_text_width = min(video_width * 0.92, max(box_w * 1.45, video_width * 0.38))
+            # Chinese captions are narrow; the same line in Vietnamese needs more room,
+            # so a short line is not broken in two just because its source was short.
+            max_text_width = min(video_width * 0.92, max(box_w * 1.45, video_width * MIN_TEXT_WIDTH_SHARE))
             font_size, render_text = _fit_text(
                 str(segment.get("text", "")),
                 font_size=font_size,
