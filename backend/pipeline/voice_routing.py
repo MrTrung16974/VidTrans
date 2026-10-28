@@ -63,6 +63,10 @@ MAX_SPEAKERS_PER_VOICE = 3
 # as the same person. Clean same-speaker pairs score 0.6-0.8, different people
 # below 0.4; background music pulls both down, so the cut sits in between.
 SAME_SPEAKER_SIMILARITY = 0.45
+# Embeddings decide speakers only when the embedded cues carry most of the
+# speech; otherwise short lines would each look like a new person and the
+# pitch grouping is the safer guess.
+MIN_EMBEDDED_SPEECH_SHARE = 0.6
 
 SpeakerEmbedder = Callable[[np.ndarray, int], "np.ndarray | None"]
 
@@ -367,7 +371,7 @@ def cluster_speakers(
     durations: list[float],
     singing: list[bool] | None = None,
 ) -> list[int] | None:
-    """Group cues into speakers by embedding; None when no cue has one.
+    """Group cues into speakers by embedding; None when too few cues have one.
 
     Spoken cues are clustered with average linkage. Sung cues and cues without
     an embedding never found a speaker of their own: a sung line joins the
@@ -375,6 +379,10 @@ def cluster_speakers(
     """
 
     singing = singing or [False] * len(embeddings)
+    spoken = sum(durations)
+    embedded = sum(duration for vector, duration in zip(embeddings, durations) if vector is not None)
+    if spoken <= 0 or embedded / spoken < MIN_EMBEDDED_SPEECH_SHARE:
+        return None
     seeds = [i for i, vector in enumerate(embeddings) if vector is not None and not singing[i]]
     if not seeds:
         seeds = [i for i, vector in enumerate(embeddings) if vector is not None]

@@ -255,6 +255,8 @@ class VoiceRoutingTests(unittest.TestCase):
         a, b = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
         near_a = np.array([0.9, 0.1, 0.0]) / np.linalg.norm([0.9, 0.1, 0.0])
         labels = cluster_speakers([a, near_a, None, b, b], [2.0, 2.0, 0.3, 2.0, 2.0])
+        # Mostly short, unembedded lines: pitch grouping is used instead.
+        self.assertIsNone(cluster_speakers([a, None, None], [2.0, 1.5, 1.5]))
         self.assertEqual(labels[0], labels[1])
         self.assertEqual(labels[2], labels[1])
         self.assertNotEqual(labels[0], labels[3])

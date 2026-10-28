@@ -17,8 +17,9 @@ import numpy as np
 WESPEAKER_REPOSITORY = "Wespeaker/wespeaker-voxceleb-resnet34-LM"
 WESPEAKER_MODEL_FILE = "voxceleb_resnet34_LM.onnx"
 SAMPLE_RATE = 16000
-# Shorter cues give embeddings too noisy to compare; they follow their neighbours.
-MIN_EMBEDDING_SECONDS = 0.8
+# Embeddings of shorter clips barely resemble each other even for one speaker
+# (cosine 0.1-0.3 on 1 s Douyin lines), so such cues are not embedded.
+MIN_EMBEDDING_SECONDS = 2.0
 MAX_EMBEDDING_SECONDS = 20.0
 
 

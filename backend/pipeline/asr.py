@@ -44,6 +44,11 @@ def _loop_text(text: str) -> str:
     return "".join(character for character in str(text or "") if character.isalnum()).casefold()
 
 
+# Whisper writes Mandarin in traditional characters about as often as in
+# simplified ones (more so on separated vocals); a simplified prompt settles it.
+SIMPLIFIED_CHINESE_PROMPT = "以下是普通话的句子。"
+
+
 def _muted_overlap(start: float, end: float, muted: Sequence[tuple[float, float]]) -> float:
     return sum(max(0.0, min(end, last) - max(start, first)) for first, last in muted)
 
@@ -352,6 +357,8 @@ class ASRService:
             "beam_size": self.config.beam_size if attempt["beam"] else 1,
             "vad_filter": attempt["vad"],
         }
+        if attempt["language"] == "zh":
+            options["initial_prompt"] = SIMPLIFIED_CHINESE_PROMPT
         if attempt["vad"]:
             options["vad_parameters"] = {"min_silence_duration_ms": self.config.vad_min_silence_ms}
         if attempt.get("recovery"):
