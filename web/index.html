@@ -342,11 +342,11 @@
                           <span class="field-label-group"><span>AI dịch phụ đề</span></span>
                           <select id="translationProvider" name="translation_provider">
                             <option value="google">Google Translate — nhanh, miễn phí</option>
-                            <option value="gemini">Gemini AI — mượt theo ngữ cảnh (Free tier)</option>
+                            <option value="gemini" selected>Gemini AI — dịch theo ngữ cảnh, sát nghĩa (mặc định)</option>
                             <option value="qwen3">Qwen3-4B — AI local hiểu ngữ cảnh, chậm trên CPU (~2.5–3 GB)</option>
-                            <option value="translategemma" selected>TranslateGemma — AI dịch local qua Ollama (mặc định, miễn phí, không giới hạn)</option>
+                            <option value="translategemma">TranslateGemma — AI dịch local qua Ollama (miễn phí, không giới hạn)</option>
                           </select>
-                          <small id="translationProviderHint" class="field-hint">Mặc định dùng TranslateGemma (AI local). Nếu Ollama chưa chạy sẽ tự chuyển sang Google Translate.</small>
+                          <small id="translationProviderHint" class="field-hint">Mặc định dùng Gemini AI. Nếu Gemini lỗi hoặc hết hạn mức sẽ tự chuyển sang Google Translate rồi AI local.</small>
                         </label>
                         <label class="field">
                           <span class="field-label-group"><span>Nguồn phụ đề</span></span>

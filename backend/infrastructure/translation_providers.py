@@ -149,8 +149,11 @@ def installed_local_model(provider: str, *, opener=None) -> str:
 
 
 def default_translation_provider() -> str:
-    """TranslateGemma when Ollama has it, otherwise the always-available Google Translate."""
+    """Gemini when a key is set: it reads the whole dialogue, so meaning and forms of
+    address beat TranslateGemma's cue-by-cue output. Then TranslateGemma, then Google."""
 
+    if os.environ.get("GEMINI_API_KEY", "").strip():
+        return "gemini"
     return "translategemma" if local_model_available("translategemma") else "google"
 
 

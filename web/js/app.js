@@ -858,7 +858,9 @@ async function loadTranslationProviders() {
         option.textContent += ["translategemma", "qwen3"].includes(option.value) ? " — chưa chạy Ollama" : " — chưa cấu hình key";
       }
     });
-    if (select.selectedOptions[0]?.disabled) select.value = "google";
+    if (select.selectedOptions[0]?.disabled) {
+      select.value = ["gemini", "translategemma"].find(key => providers.get(key)?.configured && providers.get(key)?.allowed !== false) || "google";
+    }
     const updateHint = () => {
       hint.textContent = providers.get(select.value)?.description || "";
       updateFormSummary();
