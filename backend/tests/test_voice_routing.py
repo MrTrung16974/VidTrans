@@ -312,6 +312,23 @@ class VoiceRoutingTests(unittest.TestCase):
         )
         self.assertEqual(deep_man_and_woman[0].pitch_hz, 98.0)
 
+    def test_dialogue_over_music_keeps_one_voice_per_style(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "music.wav"
+            samples = np.concatenate([voiced_wave(f, 1.0) for f in (110.0, 150.0, 110.0, 150.0)])
+            self.write_audio(audio_path, samples)
+            segments = [
+                {"start": float(i), "end": float(i + 1), "text": "Xin chào", "audio_scene": {"music": 0.8}}
+                for i in range(4)
+            ]
+            route_segments_by_pitch(
+                segments, audio_path, fallback_voice="male", speaker_embedder=lambda clip, rate: np.eye(4)[len(clip) % 4]
+            )
+
+        self.assertEqual({segment["speaker_rank"] for segment in segments}, {0})
+        self.assertEqual(len({segment["voice_pitch_offset_hz"] for segment in segments}), 1)
+        self.assertEqual(segments[0]["voice_routing"]["speaker_source"], "music")
+
     def test_routing_records_speaker_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             audio_path = Path(directory) / "speakers.wav"

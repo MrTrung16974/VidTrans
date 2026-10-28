@@ -11,6 +11,7 @@ from pipeline.ocr import (
     OCRConfig,
     OCRLine,
     IsolatedPaddleOCRReader,
+    is_watermark,
     PaddleOCRReader,
     TesseractOCRReader,
     annotate_ocr_segments_with_asr,
@@ -264,6 +265,16 @@ class OCRTextTests(unittest.TestCase):
             PaddleOCRReader(model="large")
         with self.assertRaises(ValueError):
             IsolatedPaddleOCRReader(model="large")
+
+    def test_editor_watermarks_are_not_subtitles(self) -> None:
+        for text in ("剪映", "剪映号:KongH", "抖音号 12345"):
+            self.assertTrue(is_watermark(text), text)
+        for text in ("祝你幸福", "剪映祝你幸福"):
+            self.assertFalse(is_watermark(text), text)
+        text, _confidence = select_subtitle_text(
+            [OCRLine("剪映", 0.99, (10, 10, 60, 30)), OCRLine("祝你幸福", 0.95, (100, 40, 500, 80))], 0.5
+        )
+        self.assertEqual(text, "祝你幸福")
 
     def test_default_paddle_reader_runs_outside_the_whisper_process(self) -> None:
         import pipeline.ocr as ocr

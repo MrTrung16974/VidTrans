@@ -268,14 +268,27 @@ def merge_independent_ocr_asr_segments(
     return sorted(merged, key=lambda item: (float(item["start"]), float(item["end"])))
 
 
+# Editor and platform watermarks share the caption band on Douyin clips
+# ("剪映", "剪映号:KongH", "抖音号 123"); they are branding, not dialogue.
+WATERMARK_LINE = re.compile(r"^(剪映|抖音|快手|西瓜视频|CapCut|TikTok)(号[:：]?[A-Za-z0-9_.\-]*)?$", re.IGNORECASE)
+
+
+def is_watermark(text: str) -> bool:
+    return bool(WATERMARK_LINE.match(normalize_zh_text(text).replace(" ", "")))
+
+
+def _subtitle_candidates(lines: Sequence[OCRLine], min_confidence: float) -> list[OCRLine]:
+    return [
+        line
+        for line in lines
+        if line.confidence >= min_confidence and contains_cjk(line.text) and not is_watermark(line.text)
+    ]
+
+
 def select_subtitle_text(lines: Sequence[OCRLine], min_confidence: float) -> tuple[str, float]:
     """Select Chinese text lines in visual reading order from an OCR result."""
 
-    candidates = [
-        line
-        for line in lines
-        if line.confidence >= min_confidence and contains_cjk(line.text)
-    ]
+    candidates = _subtitle_candidates(lines, min_confidence)
     if not candidates:
         return "", 0.0
 
@@ -306,11 +319,7 @@ def select_subtitle_geometry(
 ) -> tuple[str, float, tuple[float, float, float, float] | None]:
     """Return text plus a normalized union bbox for the accepted Chinese lines."""
 
-    candidates = [
-        line
-        for line in lines
-        if line.confidence >= min_confidence and contains_cjk(line.text)
-    ]
+    candidates = _subtitle_candidates(lines, min_confidence)
     text, confidence = select_subtitle_text(candidates, min_confidence)
     boxes = [line.bbox for line in candidates if line.bbox is not None]
     if not text or not boxes or frame_width <= 0 or frame_height <= 0:

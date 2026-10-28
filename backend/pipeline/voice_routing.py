@@ -67,6 +67,12 @@ SAME_SPEAKER_SIMILARITY = 0.45
 # speech; otherwise short lines would each look like a new person and the
 # pitch grouping is the safer guess.
 MIN_EMBEDDED_SPEECH_SHARE = 0.6
+# When music plays under most of the dialogue, neither pitch nor embeddings
+# separate people reliably (one Douyin clip gave a single man three voices);
+# each voice style then keeps one TTS voice.
+MUSIC_UNDER_CUE = 0.5
+MUSIC_HEAVY_SHARE = 0.5
+
 # YIN sometimes locks onto half the true F0 of a low voice. A line below this
 # whose doubled pitch matches another confident male line is read an octave up.
 OCTAVE_ERROR_MAX_HZ = 100.0
@@ -309,7 +315,10 @@ def route_segments_by_pitch(
             sources[index] = "smoothed"
 
     speakers = None
-    if speaker_embedder is not None:
+    music_heavy = _music_heavy(segments, durations)
+    if music_heavy:
+        speakers = [0 if voice == "male" else 1 for voice in resolved_voices]
+    elif speaker_embedder is not None:
         try:
             speaker_samples, speaker_rate = (
                 read_pcm_wav(speaker_audio_path) if speaker_audio_path else (samples, sample_rate)
@@ -330,7 +339,10 @@ def route_segments_by_pitch(
             )
         except Exception:
             logger.warning("Speaker embeddings failed; grouping speakers by pitch", exc_info=True)
-    if speakers is not None:
+    if music_heavy:
+        matched_pitches = _cluster_pitch_targets(speakers, analyses, durations, resolved_voices)  # type: ignore[arg-type]
+        speaker_ranks = [0] * len(segments)
+    elif speakers is not None:
         for index, voice in enumerate(speaker_voice_styles(speakers, analyses, durations, resolved_voices)):
             if voice != resolved_voices[index]:
                 resolved_voices[index] = voice
@@ -364,10 +376,21 @@ def route_segments_by_pitch(
             "content_voice_type": content_voice,
             "matched_pitch_hz": round(matched_pitch, 1) if matched_pitch else None,
             "pitch_offset_hz": pitch_offset,
-            "speaker_source": "embedding" if speakers is not None else "pitch",
+            "speaker_source": "music" if music_heavy else "embedding" if speakers is not None else "pitch",
             **asdict(analysis),
         }
     return summary
+
+
+def _music_heavy(segments: list[dict[str, Any]], durations: list[float]) -> bool:
+    spoken = [(segment, duration) for segment, duration in zip(segments, durations) if not segment.get("skip_tts")]
+    total = sum(duration for _, duration in spoken)
+    under_music = sum(
+        duration
+        for segment, duration in spoken
+        if float((segment.get("audio_scene") or {}).get("music") or 0.0) >= MUSIC_UNDER_CUE
+    )
+    return total > 0 and under_music / total >= MUSIC_HEAVY_SHARE
 
 
 def cluster_speakers(
