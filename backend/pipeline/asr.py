@@ -13,7 +13,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from domain.languages import language_profile, normalize_language
 
@@ -42,6 +42,10 @@ LOOP_MIN_CHARS_PER_SECOND = 0.6
 
 def _loop_text(text: str) -> str:
     return "".join(character for character in str(text or "") if character.isalnum()).casefold()
+
+
+def _muted_overlap(start: float, end: float, muted: Sequence[tuple[float, float]]) -> float:
+    return sum(max(0.0, min(end, last) - max(start, first)) for first, last in muted)
 
 
 def drop_repetition_loops(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -229,15 +233,24 @@ class ASRService:
 
     def transcribe(
         self, model_name: str, media_path: Path, *, progress: ProgressCallback | None = None,
-        source_language: str = "auto",
+        source_language: str = "auto", muted: Sequence[tuple[float, float]] = (),
     ) -> ASRResult:
-        """Return raw Whisper-style segment dicts (start/end/text/words/avg_logprob)."""
+        """Return raw Whisper-style segment dicts (start/end/text/words/avg_logprob).
+
+        ``muted`` spans (seconds) are silenced first: VAD then skips them, and
+        Whisper neither spends time on nor invents lyrics for pure music.
+        """
         source = normalize_language(source_language, allow_auto=True)
         forced = None if source == "auto" else language_profile(source).whisper_code
         model = self.engine(model_name)
         # Decode once: every retry below re-reads the same audio, and passing the
         # array is exactly what both engines would otherwise do internally.
         audio = self._load_audio(model, media_path)
+        if muted and hasattr(audio, "shape"):
+            audio = audio.copy()
+            rate = self._sampling_rate(model)
+            for start, end in muted:
+                audio[int(start * rate) : int(end * rate)] = 0
         attempts: list[dict[str, Any]] = [
             # Accurate pass: beam search, VAD, hallucination guard.
             {"language": forced, "beam": True, "vad": self.config.vad, "strict": True},
@@ -253,7 +266,7 @@ class ASRService:
             if self.config.engine == "faster":
                 result = self._faster_result(model, audio, attempt, progress)
                 if attempt["strict"] and result.segments:
-                    result = self._recover_lost_speech(model, audio, result, attempt)
+                    result = self._recover_lost_speech(model, audio, result, attempt, muted)
             else:
                 result = self._openai_result(model, audio, attempt)
             if any((segment.get("text") or "").strip() for segment in result.segments):
@@ -277,7 +290,15 @@ class ASRService:
 
         return whisper.load_audio(str(media_path))
 
-    def _recover_lost_speech(self, model: Any, audio: Any, result: ASRResult, attempt: dict[str, Any]) -> ASRResult:
+    def _sampling_rate(self, model: Any) -> int:
+        if self.config.engine == "faster":
+            return int(model.feature_extractor.sampling_rate)
+        return 16000
+
+    def _recover_lost_speech(
+        self, model: Any, audio: Any, result: ASRResult, attempt: dict[str, Any],
+        muted: Sequence[tuple[float, float]] = (),
+    ) -> ASRResult:
         """Re-transcribe long stretches with no usable speech: dropped by VAD or eaten by a loop."""
 
         if not hasattr(audio, "shape"):
@@ -290,7 +311,7 @@ class ASRService:
         gaps = [
             (start, end)
             for start, end in zip(boundaries[::2], boundaries[1::2])
-            if end - start >= VAD_GAP_SECONDS
+            if end - start - _muted_overlap(start, end, muted) >= VAD_GAP_SECONDS
         ]
         if not gaps:
             return result

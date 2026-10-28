@@ -77,6 +77,20 @@ class ASRServiceTests(unittest.TestCase):
         # The 8s tail after the last segment is a gap too.
         self.assertEqual(len(model.calls), 3)
 
+    def test_muted_music_is_silenced_and_not_heard_again(self):
+        import numpy as np
+
+        model = FakeFasterModel([[_segment(0.0, 2.0, "你好"), _segment(30.0, 32.0, "谢谢"), _segment(33.0, 40.0, "谢谢你们大家好今天我们一起来")]])
+        model.feature_extractor = SimpleNamespace(sampling_rate=16000)
+        asr = service(model)
+        asr._load_audio = lambda model, path: np.ones(16000 * 40, dtype=np.float32)
+        asr.transcribe("small", Path("v.mp4"), source_language="zh-CN", muted=[(3.0, 29.0)])
+        heard = model.inputs[0]
+        self.assertEqual(float(heard[16000 * 10]), 0.0)
+        self.assertEqual(float(heard[16000 * 1]), 1.0)
+        # Only 2s of the 28s gap are unmuted, so no recovery pass runs.
+        self.assertEqual(len(model.calls), 1)
+
     def test_repetition_loop_is_dropped_and_its_time_heard_again(self):
         import numpy as np
 

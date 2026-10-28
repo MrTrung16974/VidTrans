@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import logging
 import math
 import wave
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
+
+logger = logging.getLogger(__name__)
 
 MALE_MAX_F0_HZ = 160.0
 FEMALE_MIN_F0_HZ = 190.0
@@ -56,6 +59,12 @@ SPEAKER_CLUSTER_SEMITONES = 2.5
 # Pitch alone cannot tell many similar voices apart; beyond this, extra
 # characters share the closest voice instead of inventing unreliable ones.
 MAX_SPEAKERS_PER_VOICE = 3
+# Cosine similarity above which two WeSpeaker embeddings of short cues are taken
+# as the same person. Clean same-speaker pairs score 0.6-0.8, different people
+# below 0.4; background music pulls both down, so the cut sits in between.
+SAME_SPEAKER_SIMILARITY = 0.45
+
+SpeakerEmbedder = Callable[[np.ndarray, int], "np.ndarray | None"]
 
 
 @dataclass(frozen=True)
@@ -212,12 +221,16 @@ def route_segments_by_pitch(
     *,
     fallback_voice: str,
     content_voice: str | None = None,
+    speaker_embedder: SpeakerEmbedder | None = None,
+    speaker_audio_path: Path | None = None,
 ) -> dict[str, int]:
     """Assign each subtitle cue a free local TTS voice choice.
 
     The classifier selects a TTS *voice style*, not a person's gender. Ambiguous
     or noisy cues inherit the latest confident style, then the narrator's
     voice implied by the dialogue (``content_voice``), then the fallback.
+    With ``speaker_embedder`` cues are first grouped into speakers by timbre,
+    and each speaker keeps one voice style and one TTS voice throughout.
     """
     samples, sample_rate = read_pcm_wav(audio_path)
     analyses: list[PitchAnalysis] = []
@@ -287,10 +300,40 @@ def route_segments_by_pitch(
             resolved_voices[index] = resolved_voices[index - 1]
             sources[index] = "smoothed"
 
-    matched_pitches = _speaker_pitch_targets(analyses, durations, resolved_voices)
-    speaker_ranks = assign_speaker_ranks(
-        resolved_voices, matched_pitches, durations, [analysis.confidence for analysis in analyses]
-    )
+    speakers = None
+    if speaker_embedder is not None:
+        try:
+            speaker_samples, speaker_rate = (
+                read_pcm_wav(speaker_audio_path) if speaker_audio_path else (samples, sample_rate)
+            )
+            embeddings = [
+                None
+                if segment.get("skip_tts")
+                else speaker_embedder(
+                    speaker_samples[
+                        int(max(0.0, float(segment["start"])) * speaker_rate) : int(float(segment["end"]) * speaker_rate)
+                    ],
+                    speaker_rate,
+                )
+                for segment in segments
+            ]
+            speakers = cluster_speakers(
+                embeddings, durations, [segment.get("audio_type") == "singing" for segment in segments]
+            )
+        except Exception:
+            logger.warning("Speaker embeddings failed; grouping speakers by pitch", exc_info=True)
+    if speakers is not None:
+        for index, voice in enumerate(speaker_voice_styles(speakers, analyses, durations, resolved_voices)):
+            if voice != resolved_voices[index]:
+                resolved_voices[index] = voice
+                sources[index] = "speaker"
+        matched_pitches = _cluster_pitch_targets(speakers, analyses, durations, resolved_voices)
+        speaker_ranks = _cluster_ranks(speakers, durations, resolved_voices)
+    else:
+        matched_pitches = _speaker_pitch_targets(analyses, durations, resolved_voices)
+        speaker_ranks = assign_speaker_ranks(
+            resolved_voices, matched_pitches, durations, [analysis.confidence for analysis in analyses]
+        )
 
     summary = {"male": 0, "female": 0, "fallback": 0}
     for segment, analysis, selected_voice, selection_source, matched_pitch, speaker_rank in zip(
@@ -313,9 +356,126 @@ def route_segments_by_pitch(
             "content_voice_type": content_voice,
             "matched_pitch_hz": round(matched_pitch, 1) if matched_pitch else None,
             "pitch_offset_hz": pitch_offset,
+            "speaker_source": "embedding" if speakers is not None else "pitch",
             **asdict(analysis),
         }
     return summary
+
+
+def cluster_speakers(
+    embeddings: list[np.ndarray | None],
+    durations: list[float],
+    singing: list[bool] | None = None,
+) -> list[int] | None:
+    """Group cues into speakers by embedding; None when no cue has one.
+
+    Spoken cues are clustered with average linkage. Sung cues and cues without
+    an embedding never found a speaker of their own: a sung line joins the
+    closest speaker, anything else the speaker of its nearest neighbour.
+    """
+
+    singing = singing or [False] * len(embeddings)
+    seeds = [i for i, vector in enumerate(embeddings) if vector is not None and not singing[i]]
+    if not seeds:
+        seeds = [i for i, vector in enumerate(embeddings) if vector is not None]
+    if not seeds:
+        return None
+    clusters: list[list[int]] = [[i] for i in seeds]
+    vectors = np.stack([embeddings[i] for i in seeds])  # type: ignore[misc]
+    position = {index: row for row, index in enumerate(seeds)}
+    similarity = vectors @ vectors.T
+
+    def linkage(left: list[int], right: list[int]) -> float:
+        return float(similarity[np.ix_([position[i] for i in left], [position[i] for i in right])].mean())
+
+    while len(clusters) > 1:
+        best, pair = -1.0, (0, 0)
+        for a in range(len(clusters)):
+            for b in range(a + 1, len(clusters)):
+                score = linkage(clusters[a], clusters[b])
+                if score > best:
+                    best, pair = score, (a, b)
+        if best < SAME_SPEAKER_SIMILARITY:
+            break
+        a, b = pair
+        clusters[a].extend(clusters.pop(b))
+
+    labels: list[int | None] = [None] * len(embeddings)
+    for label, members in enumerate(clusters):
+        for index in members:
+            labels[index] = label
+    centroids = [vectors[[position[i] for i in members]].mean(axis=0) for members in clusters]
+    for index, vector in enumerate(embeddings):
+        if labels[index] is None and vector is not None:
+            labels[index] = int(np.argmax([float(vector @ centroid) for centroid in centroids]))
+    for index in range(len(labels)):
+        if labels[index] is None:
+            nearest = min(
+                (i for i, label in enumerate(labels) if label is not None and embeddings[i] is not None),
+                key=lambda i: (abs(i - index), i > index),
+            )
+            labels[index] = labels[nearest]
+    return [int(label) for label in labels]  # type: ignore[arg-type]
+
+
+def speaker_voice_styles(
+    speakers: list[int],
+    analyses: list[PitchAnalysis],
+    durations: list[float],
+    voices: list[str],
+) -> list[str]:
+    """One voice style per speaker: pitch evidence first, then the cues' own styles."""
+
+    styles: dict[int, str] = {}
+    for speaker in set(speakers):
+        members = [i for i, s in enumerate(speakers) if s == speaker]
+        evidence = {"male": 0.0, "female": 0.0}
+        for i in members:
+            voice = analyses[i].voice_type or _weak_voice_type(analyses[i])
+            if voice:
+                evidence[voice] += max(analyses[i].confidence, WEAK_CONFIDENCE) * max(durations[i], 0.25)
+        if evidence["male"] == evidence["female"]:
+            for i in members:
+                evidence[voices[i]] += max(durations[i], 0.25)
+        styles[speaker] = "male" if evidence["male"] >= evidence["female"] else "female"
+    return [styles[speaker] for speaker in speakers]
+
+
+def _cluster_pitch_targets(
+    speakers: list[int],
+    analyses: list[PitchAnalysis],
+    durations: list[float],
+    voices: list[str],
+) -> list[float | None]:
+    targets: dict[int, float | None] = {}
+    for speaker in set(speakers):
+        members = [
+            i
+            for i, s in enumerate(speakers)
+            if s == speaker
+            and analyses[i].pitch_hz is not None
+            and analyses[i].confidence >= MIN_CONFIDENCE
+            and analyses[i].voice_type in (None, voices[i])
+        ]
+        targets[speaker] = _weighted_median(
+            [analyses[i].pitch_hz for i in members],  # type: ignore[misc]
+            [analyses[i].confidence * max(durations[i], 0.25) for i in members],
+        )
+    return [targets[speaker] for speaker in speakers]
+
+
+def _cluster_ranks(speakers: list[int], durations: list[float], voices: list[str]) -> list[int]:
+    """Rank speakers of each voice style by speech time; extra ones share the last voice."""
+
+    rank_of: dict[int, int] = {}
+    for voice in set(voices):
+        totals: dict[int, float] = {}
+        for i, (speaker, style) in enumerate(zip(speakers, voices)):
+            if style == voice:
+                totals[speaker] = totals.get(speaker, 0.0) + durations[i]
+        for rank, speaker in enumerate(sorted(totals, key=lambda s: -totals[s])):
+            rank_of[speaker] = min(rank, MAX_SPEAKERS_PER_VOICE - 1)
+    return [rank_of[speaker] for speaker in speakers]
 
 
 def _weak_voice_type(analysis: PitchAnalysis) -> str | None:

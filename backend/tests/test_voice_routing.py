@@ -12,6 +12,7 @@ from pipeline.voice_routing import (
     PitchAnalysis,
     analyze_pitch,
     assign_speaker_ranks,
+    cluster_speakers,
     route_segments_by_pitch,
     tts_pitch_offset_hz,
 )
@@ -249,6 +250,47 @@ class VoiceRoutingTests(unittest.TestCase):
 
         self.assertEqual([segment["voice_type"] for segment in segments], ["male"] * 3)
         self.assertEqual({segment["speaker_rank"] for segment in segments}, {0})
+
+    def test_embeddings_group_speakers_and_short_cues_follow_neighbours(self) -> None:
+        a, b = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
+        near_a = np.array([0.9, 0.1, 0.0]) / np.linalg.norm([0.9, 0.1, 0.0])
+        labels = cluster_speakers([a, near_a, None, b, b], [2.0, 2.0, 0.3, 2.0, 2.0])
+        self.assertEqual(labels[0], labels[1])
+        self.assertEqual(labels[2], labels[1])
+        self.assertNotEqual(labels[0], labels[3])
+        self.assertIsNone(cluster_speakers([None, None], [1.0, 1.0]))
+
+    def test_sung_cue_never_founds_a_new_speaker(self) -> None:
+        a, b = np.array([1.0, 0.0]), np.array([0.0, 1.0])
+        labels = cluster_speakers([a, a, b], [2.0, 2.0, 2.0], [False, False, True])
+        self.assertEqual(len(set(labels)), 1)
+
+    def test_one_speaker_keeps_one_voice_style_across_pitch_flips(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "flip.wav"
+            samples = np.concatenate([voiced_wave(f, 1.0) for f in (120.0, 120.0, 230.0, 120.0)])
+            self.write_audio(audio_path, samples)
+            segments = [{"start": float(i), "end": float(i + 1), "text": "Xin chào"} for i in range(4)]
+            route_segments_by_pitch(
+                segments, audio_path, fallback_voice="female", speaker_embedder=lambda clip, rate: np.array([1.0, 0.0])
+            )
+
+        self.assertEqual([segment["voice_type"] for segment in segments], ["male"] * 4)
+        self.assertEqual({segment["speaker_rank"] for segment in segments}, {0})
+        self.assertEqual(segments[2]["voice_routing"]["selection_source"], "speaker")
+        self.assertEqual(segments[0]["voice_routing"]["speaker_source"], "embedding")
+
+    def test_failing_embedder_falls_back_to_pitch_grouping(self) -> None:
+        def broken(clip, rate):
+            raise RuntimeError("model missing")
+
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "broken.wav"
+            self.write_audio(audio_path, voiced_wave(120.0, 2.0))
+            segments = [{"start": float(i), "end": float(i + 1), "text": "Xin chào"} for i in range(2)]
+            route_segments_by_pitch(segments, audio_path, fallback_voice="male", speaker_embedder=broken)
+
+        self.assertEqual(segments[0]["voice_routing"]["speaker_source"], "pitch")
 
     def test_routing_records_speaker_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,5 @@
+# Vocal separation for speech under music. Speech/singing/music labels and
+# speaker embeddings run as ONNX models through onnxruntime (already pulled in
+# by faster-whisper). torchaudio is installed first, from the CPU index, at the
+# version matching the image's torch, so pip never swaps in a CUDA build.
+demucs==4.0.1

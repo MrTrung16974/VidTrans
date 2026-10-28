@@ -16,6 +16,8 @@ STAGE_NAMES = frozenset(
         "ocr",
         "asr",
         "caption_alignment",
+        "audio_scene",
+        "vocal_separation",
         "translation",
         "summary",
         "voice_routing",

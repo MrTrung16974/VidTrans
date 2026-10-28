@@ -4,6 +4,15 @@ ARG BASE_IMAGE=vidtrans-deps:local
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
+# Audio analysis dependencies arrived after the base image was built. This
+# layer stays cached until requirements-audio.txt changes, so code-only
+# rebuilds still skip pip.
+COPY requirements-audio.txt ./
+RUN set -eux; \
+    torch_version="$(python -c 'import torch; print(torch.__version__.split("+")[0])')"; \
+    python -c 'import torchaudio' 2>/dev/null \
+        || pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torchaudio==${torch_version}"; \
+    pip install --no-cache-dir -r requirements-audio.txt
 RUN rm -rf /app/backend
 COPY backend ./backend
 RUN mkdir -p /usr/local/share/fonts/vidtrans \

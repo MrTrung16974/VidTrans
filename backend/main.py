@@ -16,7 +16,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -164,7 +164,17 @@ from pipeline.parallel import collect_indexed_futures
 from pipeline.stage_metrics import StageMeasurement, measure_stage
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
 from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, merge_fragment_cues, segment_subtitle_cues
+from pipeline.audio_scene import (
+    AudioSceneClassifier,
+    SceneWindow,
+    has_singing_or_music_only,
+    label_segments,
+    music_only_regions,
+    music_under_speech,
+)
 from pipeline.caption_alignment import CaptionAlignmentConfig, align_speech_to_burned_captions
+from pipeline.speaker_embedding import SpeakerEmbedder
+from pipeline.vocal_separation import VocalSeparator
 from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, TikTokPost, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
@@ -804,6 +814,22 @@ ASR_SERVICE = ASRService(
     ),
 )
 _whisper_slots = threading.BoundedSemaphore(SETTINGS.whisper_concurrency)
+
+
+def _env_flag(name: str, default: str) -> str:
+    return os.environ.get(name, default).strip().lower() or default
+
+
+# Speech/singing/music labels steer ASR, vocal separation and voice routing.
+AUDIO_SCENE_ENABLED = _env_flag("VIDTRANS_AUDIO_SCENE", "on") in {"1", "true", "yes", "on"}
+# auto: separate only when speech sits under music; Demucs runs ~2x clip length on CPU.
+VOCAL_SEPARATION_MODE = _env_flag("VIDTRANS_VOCAL_SEPARATION", "auto")
+VOCAL_SEPARATION_MAX_SECONDS = float(os.environ.get("VIDTRANS_VOCAL_SEPARATION_MAX_SECONDS", "240") or 240)
+VOCAL_SEPARATION_MIN_MUSIC_SHARE = 0.5
+SPEAKER_EMBEDDING_ENABLED = _env_flag("VIDTRANS_SPEAKER_EMBEDDING", "on") in {"1", "true", "yes", "on"}
+AUDIO_SCENES = AudioSceneClassifier()
+VOCAL_SEPARATOR = VocalSeparator()
+SPEAKER_EMBEDDER = SpeakerEmbedder()
 _ocr_slots = threading.BoundedSemaphore(SETTINGS.ocr_concurrency)
 _job_context = threading.local()
 _stage_record_lock = threading.Lock()
@@ -1384,11 +1410,12 @@ def transcribe_video(
     media_duration: float | None = None,
     *,
     progress: Callable[[float, float | None], None] | None = None,
+    muted: Sequence[tuple[float, float]] = (),
 ) -> tuple[list[dict[str, Any]], str | None, float | None]:
     if progress is None and job_id:
         progress = make_asr_progress_callback(job_id, media_duration)
     result = ASR_SERVICE.transcribe(
-        model_name, video_path, progress=progress, source_language=source_language
+        model_name, video_path, progress=progress, source_language=source_language, muted=muted
     )
     detected = result.detected_language
     if detected:
@@ -2160,8 +2187,15 @@ def voice_clip_gain(clip_path: Path) -> float:
     return speech_level_gain(samples)
 
 
-def extract_voice_analysis_audio(video_path: Path, output_path: Path) -> Path:
-    """Create the compact mono PCM input used by the local pitch router."""
+VOCALS_FILENAME = "vocals.wav"
+
+
+def extract_voice_analysis_audio(video_path: Path, output_path: Path, *, band_limited: bool = True) -> Path:
+    """Create the compact mono PCM input used by the local pitch router.
+
+    Pitch tracking wants the voice band only; speaker embeddings need the full
+    spectrum, so they read an unfiltered copy (``band_limited=False``).
+    """
     run_ffmpeg(
         [
             FFMPEG,
@@ -2170,8 +2204,7 @@ def extract_voice_analysis_audio(video_path: Path, output_path: Path) -> Path:
             str(video_path),
             "-vn",
             # Drop mains hum/bass and hiss outside the voice F0 + low harmonics.
-            "-af",
-            "highpass=f=65,lowpass=f=1500",
+            *(["-af", "highpass=f=65,lowpass=f=1500"] if band_limited else []),
             "-ac",
             "1",
             "-ar",
@@ -2690,6 +2723,60 @@ def speech_coverage(segments: list[dict[str, Any]], duration: float | None) -> f
     return min(1.0, covered / duration)
 
 
+def prepare_speech_audio(
+    job_id: str,
+    video_path: Path,
+    work_dir: Path,
+    video_duration: float | None,
+    scenes: list[SceneWindow],
+) -> tuple[Path, list[tuple[float, float]]]:
+    """Classify the soundtrack, separate vocals under music and pick spans Whisper skips.
+
+    Fills ``scenes`` in place for the caller. Any failure keeps plain Whisper
+    on the original media: these steps improve recognition, never gate it.
+    """
+    if not AUDIO_SCENE_ENABLED:
+        return video_path, []
+    try:
+        update_job(job_id, step_detail="Đang phân loại lời nói, tiếng hát và nhạc nền")
+        with measure_job_stage(job_id, "audio_scene", video_duration=video_duration):
+            from faster_whisper.audio import decode_audio
+
+            samples = decode_audio(str(video_path), sampling_rate=16000)
+            scenes[:] = AUDIO_SCENES.classify(samples, check_active=lambda: ensure_job_active(job_id))
+    except JobCancelled:
+        raise
+    except Exception:
+        logger.warning("Audio scene classification failed for job %s; using plain Whisper", job_id, exc_info=True)
+        return video_path, []
+    muted = music_only_regions(scenes)
+    music_share = music_under_speech(scenes)
+    logger.info(
+        "Job %s soundtrack: music under %.0f%% of speech, %d music-only span(s) %s",
+        job_id, music_share * 100, len(muted), muted,
+    )
+    # Pure music everywhere: let Whisper try the lyrics rather than hear nothing.
+    if muted and sum(end - start for start, end in muted) >= (video_duration or 0) - 1.0:
+        muted = []
+    speech_media = video_path
+    wants_separation = VOCAL_SEPARATION_MODE == "always" or (
+        VOCAL_SEPARATION_MODE == "auto"
+        and music_share >= VOCAL_SEPARATION_MIN_MUSIC_SHARE
+        and (video_duration or 0) <= VOCAL_SEPARATION_MAX_SECONDS
+    )
+    if wants_separation:
+        try:
+            update_job(job_id, step_detail="Đang tách giọng nói khỏi nhạc nền")
+            with measure_job_stage(job_id, "vocal_separation", video_duration=video_duration):
+                ensure_job_active(job_id)
+                speech_media = VOCAL_SEPARATOR.separate(video_path, work_dir / VOCALS_FILENAME)
+        except JobCancelled:
+            raise
+        except Exception:
+            logger.warning("Vocal separation failed for job %s; using the original audio", job_id, exc_info=True)
+    return speech_media, muted
+
+
 def recognize_video_source(
     *,
     job_id: str,
@@ -2748,14 +2835,17 @@ def recognize_video_source(
             logger.warning("OCR subtitle extraction failed; using speech transcription", exc_info=True)
             return []
 
+    scenes: list[SceneWindow] = []
+
     def recognize_speech(
         progress: Callable[[float, float | None], None] | None,
     ) -> tuple[list[dict[str, Any]], str | None, float | None]:
         with _whisper_slots:
             ensure_job_active(job_id)
             asr_language = "auto" if subtitle_source == "independent" else source_language
+            speech_media, muted = prepare_speech_audio(job_id, video_path, work_dir, video_duration, scenes)
             return transcribe_video(
-                whisper_model, video_path, asr_language, job_id, video_duration, progress=progress
+                whisper_model, speech_media, asr_language, job_id, video_duration, progress=progress, muted=muted
             )
 
     def measured_speech(
@@ -2807,7 +2897,10 @@ def recognize_video_source(
         and source_language == "zh-CN"
         and SETTINGS.ocr_backend != "off"
         and (video_duration or 0) >= SPEECH_RESCUE_MIN_SECONDS
-        and speech_coverage(asr_segments, video_duration) < SPEECH_RESCUE_MAX_COVERAGE
+        and (
+            speech_coverage(asr_segments, video_duration) < SPEECH_RESCUE_MAX_COVERAGE
+            or has_singing_or_music_only(scenes)
+        )
     ):
         logger.info(
             "Speech covers only %.0f%% of job %s; reading burned-in captions as well",
@@ -2865,6 +2958,10 @@ def recognize_video_source(
         )
 
     segments = segment_subtitle_cues(segments, options=segmentation_options)
+    if scenes:
+        counts = label_segments(segments, scenes)
+        if counts:
+            logger.info("Audio types of job %s cues: %s", job_id, counts)
     segments = filter_meaningful_segments(segments)
     meaningful_count = sum(1 for segment in segments if not segment.get("skip_subtitle"))
     skipped_count = len(segments) - meaningful_count
@@ -3200,9 +3297,16 @@ def process_video(
                 if voice_mode == "auto":
                     update_job(job_id, step="routing-voices", progress=0.5)
                     try:
-                        analysis_audio = extract_voice_analysis_audio(
-                            video_path,
-                            work_dir / "voice_analysis.wav",
+                        # Under music the separated vocals carry the cleaner pitch and timbre.
+                        vocals = work_dir / VOCALS_FILENAME
+                        voice_source = vocals if vocals.is_file() else video_path
+                        analysis_audio = extract_voice_analysis_audio(voice_source, work_dir / "voice_analysis.wav")
+                        speaker_audio = (
+                            extract_voice_analysis_audio(
+                                voice_source, work_dir / "speaker_audio.wav", band_limited=False
+                            )
+                            if SPEAKER_EMBEDDING_ENABLED
+                            else None
                         )
                         content_voice, content_cues = infer_speaker_voice(translated_segments, target_language)
                         if content_voice:
@@ -3217,6 +3321,8 @@ def process_video(
                             analysis_audio,
                             fallback_voice=voice_type,
                             content_voice=content_voice,
+                            speaker_embedder=SPEAKER_EMBEDDER.embed if speaker_audio else None,
+                            speaker_audio_path=speaker_audio,
                         )
                     except JobCancelled:
                         raise

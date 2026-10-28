@@ -50,6 +50,10 @@ RUN pip install -r requirements-downloader.txt
 COPY requirements-asr.txt ./
 RUN pip install -r requirements-asr.txt
 
+COPY requirements-audio.txt ./
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torchaudio==2.6.0 \
+    && pip install -r requirements-audio.txt
+
 # Small CPU-only translator used to turn Vietnamese fallback storyboards into
 # English image prompts. Model weights live in the persistent HF cache volume.
 COPY requirements-visual.txt ./

@@ -24,6 +24,7 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
         stack.enter_context(patch.object(main, "ensure_job_active", lambda job_id: None))
         stack.enter_context(patch.object(main, "record_job_stage_measurement", lambda job_id, measurement: None))
         stack.enter_context(patch.object(main, "SETTINGS", SimpleNamespace(ocr_backend="tesseract", ocr_model="m")))
+        stack.enter_context(patch.object(main, "AUDIO_SCENE_ENABLED", False))
         stack.enter_context(patch.object(main, "segment_subtitle_cues", lambda segments, options=None: segments))
         stack.enter_context(patch.object(main, "filter_meaningful_segments", lambda segments: segments))
         stack.enter_context(patch.object(
@@ -53,7 +54,7 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
             progress_callback(10, 10)
             return list(OCR_SEGMENTS)
 
-        def asr(model, path, language, job_id, duration, *, progress):
+        def asr(model, path, language, job_id, duration, *, progress, **kwargs):
             both_running.wait()
             progress(10.0, 10.0)
             return list(ASR_SEGMENTS), "zh-CN", 0.99
@@ -74,7 +75,7 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
             asr_started.wait(5)
             raise RuntimeError("tesseract missing")
 
-        def asr(model, path, language, job_id, duration, *, progress):
+        def asr(model, path, language, job_id, duration, *, progress, **kwargs):
             asr_started.set()
             for step in range(1, 10_000):
                 asr_reports.append(step)
@@ -91,7 +92,7 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
         def ocr(*args, **kwargs):
             raise RuntimeError("ocr crashed")
 
-        def asr(model, path, language, job_id, duration, *, progress):
+        def asr(model, path, language, job_id, duration, *, progress, **kwargs):
             return list(ASR_SEGMENTS), "zh-CN", 0.99
 
         with patch.object(main, "extract_burned_subtitle_segments", ocr), patch.object(main, "transcribe_video", asr):
@@ -132,7 +133,7 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
             progress_callback(1, 1)
             return list(OCR_SEGMENTS)
 
-        def asr(model, path, language, job_id, duration, *, progress):
+        def asr(model, path, language, job_id, duration, *, progress, **kwargs):
             return list(ASR_SEGMENTS), "zh-CN", 0.99
 
         with patch.object(main, "extract_burned_subtitle_segments", ocr), patch.object(main, "transcribe_video", asr):
@@ -144,7 +145,7 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
     def test_speech_only_job_skips_ocr_when_speech_covers_the_video(self) -> None:
         speech = [{"start": float(i), "end": float(i + 1), "text": "你好"} for i in range(8)]
 
-        def asr(model, path, language, job_id, duration, *, progress):
+        def asr(model, path, language, job_id, duration, *, progress, **kwargs):
             return list(speech), "zh-CN", 0.99
 
         with patch.object(main, "extract_burned_subtitle_segments") as ocr, patch.object(main, "transcribe_video", asr):
