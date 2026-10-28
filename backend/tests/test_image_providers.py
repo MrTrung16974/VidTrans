@@ -320,6 +320,48 @@ class PollinationsImageProviderTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1].get_header("Authorization"), "Bearer sk")
 
+    def test_seed_stays_within_the_api_limit(self) -> None:
+        # Comic job 75d2ea28: 9 scenes failed with 400 "seed: Too big: expected number to be <=2147483647".
+        provider = PollinationsImageProvider(token="sk")
+        url = provider._url(ImageRequest(prompt="x", width=512, height=512, seed=3_000_000_000))
+        seed = int(url.split("seed=", 1)[1].split("&", 1)[0])
+        self.assertLessEqual(seed, 2**31 - 1)
+
+    def test_free_limit_waits_and_retries(self) -> None:
+        calls, sleeps = [], []
+        body = (b'{"status":402,"error":{"code":"FREE_LIMIT","message":"Free limit reached: 1 image every 45 '
+                b'seconds per IP. Retry after 35s"}}')
+
+        def opener(request, timeout):
+            calls.append(request)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(request.full_url, 402, "Payment Required", {}, io.BytesIO(body))
+            return _Response(_png(), "image/jpeg")
+
+        provider = PollinationsImageProvider(opener=opener, sleeper=sleeps.append, token="sk")
+        with tempfile.TemporaryDirectory() as folder:
+            provider.generate(ImageRequest(prompt="x", width=512, height=512), Path(folder) / "s.png")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [36.0])
+
+    def test_anonymous_calls_are_spaced_by_the_free_interval(self) -> None:
+        from infrastructure import image_providers
+
+        image_providers._pollinations_last_call[0] = float("-inf")
+        now, sleeps = [1000.0], []
+
+        def sleeper(seconds):
+            sleeps.append(seconds)
+            now[0] += seconds
+
+        provider = PollinationsImageProvider(opener=lambda request, timeout: _Response(_png(), "image/jpeg"),
+                                             sleeper=sleeper, clock=lambda: now[0], token="")
+        with tempfile.TemporaryDirectory() as folder:
+            provider.generate(ImageRequest(prompt="a", width=512, height=512), Path(folder) / "a.png")
+            now[0] += 10.0
+            provider.generate(ImageRequest(prompt="b", width=512, height=512), Path(folder) / "b.png")
+        self.assertEqual(sleeps, [image_providers.POLLINATIONS_FREE_INTERVAL_SECONDS - 10.0])
+
 
 if __name__ == "__main__":
     unittest.main()

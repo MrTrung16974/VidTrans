@@ -14,7 +14,9 @@ import io
 import json
 import logging
 import os
+import re
 import textwrap
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -29,6 +31,14 @@ DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 CLOUDFLARE_BASE_URL = "https://api.cloudflare.com/client/v4/accounts"
 DEFAULT_CLOUDFLARE_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 POLLINATIONS_BASE_URL = "https://image.pollinations.ai/prompt"
+# Anonymous calls get one image per 45 s per IP; anything faster is refused with
+# 402 FREE_LIMIT, so parallel scenes all fell back to stand-ins.
+POLLINATIONS_FREE_INTERVAL_SECONDS = 46.0
+# The API rejects a larger seed with 400 "Query parameter validation failed".
+POLLINATIONS_MAX_SEED = 2**31 - 1
+_POLLINATIONS_LOCK = threading.Lock()
+_pollinations_last_call = [float("-inf")]
+_RETRY_AFTER_RE = re.compile(r"retry after (\d+)\s*s", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
@@ -472,29 +482,33 @@ def _fetch_image(open_url: Callable[..., Any], build_request: Callable[[], urlli
                 content_type = (response.headers.get("Content-Type") or "") if getattr(response, "headers", None) else ""
                 return _decode_image(response.read(64 * 1024 * 1024), content_type)
         except urllib.error.HTTPError as exc:
-            if exc.code not in {429, 500, 502, 503, 504, 530}:
-                detail = ""
-                try:
-                    detail = exc.read(2048).decode("utf-8", "replace")
-                except Exception:
-                    pass
+            detail = ""
+            try:
+                detail = exc.read(2048).decode("utf-8", "replace")
+            except Exception:
+                pass
+            # Pollinations' free tier answers 402 FREE_LIMIT to a call that came too soon.
+            throttled = exc.code == 402 and "FREE_LIMIT" in detail
+            if exc.code not in {429, 500, 502, 503, 504, 530} and not throttled:
                 error = ImageGenerationError(f"{label} lỗi HTTP {exc.code}: {detail[:300]}")
                 error.unavailable = exc.code in {401, 402, 403}  # A bad key/quota fails every image.
                 raise error from exc
             last_error = exc
+            retry_after = _RETRY_AFTER_RE.search(detail)
         except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:
             last_error = exc
+            retry_after = None
         except OSError as exc:  # PIL could not read the body
             raise ImageGenerationError(f"{label} trả về dữ liệu không phải ảnh") from exc
         if attempt + 1 < attempts:
-            delay = min(60.0, 5.0 * 2 ** attempt)
+            delay = min(60.0, float(retry_after.group(1)) + 1.0) if retry_after else min(60.0, 5.0 * 2 ** attempt)
             logger.warning("%s failed (%s); retrying in %.0fs", label, type(last_error).__name__, delay)
             sleeper(delay)
     error = ImageGenerationError(
         f"{label} hết hạn mức hoặc không phản hồi sau nhiều lần thử"
         f" ({type(last_error).__name__ if last_error else 'unknown'})"
     )
-    error.rate_limited = isinstance(last_error, urllib.error.HTTPError) and last_error.code == 429
+    error.rate_limited = isinstance(last_error, urllib.error.HTTPError) and last_error.code in {402, 429}
     error.unavailable = True
     raise error from last_error
 
@@ -570,6 +584,7 @@ class PollinationsImageProvider:
     attempts: int = 4
     opener: Callable[..., Any] | None = None
     sleeper: Callable[[float], None] = time.sleep
+    clock: Callable[[], float] = time.monotonic
     token: str = field(default_factory=lambda: os.environ.get("POLLINATIONS_TOKEN", "").strip())
     model: str = field(default_factory=lambda: os.environ.get("VIDTRANS_POLLINATIONS_MODEL", "flux").strip() or "flux")
 
@@ -588,7 +603,8 @@ class PollinationsImageProvider:
         query = {
             "width": max(64, round(request.width * scale) // 8 * 8),
             "height": max(64, round(request.height * scale) // 8 * 8),
-            "seed": request.seed or int.from_bytes(hashlib.sha256(request.prompt.encode()).digest()[:4], "big"),
+            "seed": (request.seed or int.from_bytes(hashlib.sha256(request.prompt.encode()).digest()[:4], "big"))
+            % POLLINATIONS_MAX_SEED,
             "model": self.model, "nologo": "true", "private": "true",
         }
         # Prompts travel in the URL path; keep them under common URL length limits.
@@ -599,11 +615,25 @@ class PollinationsImageProvider:
         headers = {"User-Agent": "VidTrans/1.0"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-        image = _fetch_image(
+            image = self._fetch(url, headers)
+        else:
+            # One anonymous call at a time across every job, spaced by the free-tier interval.
+            with _POLLINATIONS_LOCK:
+                wait = _pollinations_last_call[0] + POLLINATIONS_FREE_INTERVAL_SECONDS - self.clock()
+                if wait > 0:
+                    self.sleeper(wait)
+                try:
+                    image = self._fetch(url, headers)
+                finally:
+                    _pollinations_last_call[0] = self.clock()
+        save_png_atomic(fit_cover(image, request.width, request.height), output_path)
+
+
+    def _fetch(self, url: str, headers: dict[str, str]):
+        return _fetch_image(
             self._open, lambda: urllib.request.Request(url, headers=headers, method="GET"),
             label="Pollinations", timeout=self.timeout, attempts=self.attempts, sleeper=self.sleeper,
         )
-        save_png_atomic(fit_cover(image, request.width, request.height), output_path)
 
 
 def image_provider_statuses() -> list[dict[str, Any]]:
