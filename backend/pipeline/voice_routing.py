@@ -227,7 +227,12 @@ def route_segments_by_pitch(
         end = max(start, float(segment["end"]))
         start_sample = max(0, int(start * sample_rate))
         end_sample = min(len(samples), int(end * sample_rate))
-        analyses.append(analyze_pitch(samples[start_sample:end_sample], sample_rate))
+        if segment.get("skip_tts"):
+            # Unspoken cues (fillers, sound effects) must neither vote for a voice
+            # style nor split one speaker's turn; they follow their neighbours.
+            analyses.append(PitchAnalysis(None, 0.0, 0, 0, None))
+        else:
+            analyses.append(analyze_pitch(samples[start_sample:end_sample], sample_rate))
         durations.append(max(0.0, end - start))
 
     evidence = {"male": 0.0, "female": 0.0}
@@ -283,7 +288,9 @@ def route_segments_by_pitch(
             sources[index] = "smoothed"
 
     matched_pitches = _speaker_pitch_targets(analyses, durations, resolved_voices)
-    speaker_ranks = assign_speaker_ranks(resolved_voices, matched_pitches, durations)
+    speaker_ranks = assign_speaker_ranks(
+        resolved_voices, matched_pitches, durations, [analysis.confidence for analysis in analyses]
+    )
 
     summary = {"male": 0, "female": 0, "fallback": 0}
     for segment, analysis, selected_voice, selection_source, matched_pitch, speaker_rank in zip(
@@ -400,20 +407,26 @@ def assign_speaker_ranks(
     voices: list[str],
     pitches: list[float | None],
     durations: list[float],
+    confidences: list[float] | None = None,
 ) -> list[int]:
     """Group speaker turns into characters per voice style, ranked by speech time.
 
     Rank 0 is the character speaking most in that style and keeps the voice the
     user selected; higher ranks get the next voices of the same style. Cues
-    without a pitch target stay with rank 0.
+    without a pitch target stay with rank 0. When ``confidences`` are given, only
+    a turn with a strongly pitched cue may start a new character: weak pitch
+    (singing, music, noise) wanders too far to tell speakers apart.
     """
 
     ranks = [0] * len(voices)
     for voice in set(voices):
         indices = [i for i, v in enumerate(voices) if v == voice and pitches[i]]
         weight_by_pitch: dict[float, float] = {}
+        confidence_by_pitch: dict[float, float] = {}
         for i in indices:
             weight_by_pitch[pitches[i]] = weight_by_pitch.get(pitches[i], 0.0) + max(durations[i], 0.25)  # type: ignore[index]
+            confidence = confidences[i] if confidences is not None else 1.0
+            confidence_by_pitch[pitches[i]] = max(confidence_by_pitch.get(pitches[i], 0.0), confidence)  # type: ignore[index]
         # Heaviest turns seed the clusters so a brief outlier cannot become the main voice.
         centres: list[float] = []
         cluster_weight: list[float] = []
@@ -421,7 +434,9 @@ def assign_speaker_ranks(
             distances = [abs(_semitones(pitch, centre)) for centre in centres]
             nearest = min(range(len(centres)), key=distances.__getitem__) if centres else None
             if nearest is not None and (
-                distances[nearest] <= SPEAKER_CLUSTER_SEMITONES or len(centres) >= MAX_SPEAKERS_PER_VOICE
+                distances[nearest] <= SPEAKER_CLUSTER_SEMITONES
+                or len(centres) >= MAX_SPEAKERS_PER_VOICE
+                or confidence_by_pitch[pitch] < STRONG_CONFIDENCE
             ):
                 cluster_weight[nearest] += weight
             else:

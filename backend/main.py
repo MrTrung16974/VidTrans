@@ -2664,6 +2664,32 @@ def normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any
     return normalized
 
 
+# A speech-only job whose speech covers less than this share of a video at least
+# SPEECH_RESCUE_MIN_SECONDS long also reads the burned-in captions: songs and
+# loud music defeat Whisper, yet such clips usually show their lyrics on screen.
+SPEECH_RESCUE_MAX_COVERAGE = 0.5
+SPEECH_RESCUE_MIN_SECONDS = 8.0
+
+
+def speech_coverage(segments: list[dict[str, Any]], duration: float | None) -> float:
+    """Share of the video covered by recognised speech, overlaps counted once."""
+    if not duration or duration <= 0:
+        return 1.0
+    covered = 0.0
+    reached = 0.0
+    spans = sorted(
+        (float(segment["start"]), float(segment["end"]))
+        for segment in segments
+        if str(segment.get("text") or "").strip()
+    )
+    for start, end in spans:
+        start = max(start, reached)
+        if end > start:
+            covered += end - start
+            reached = end
+    return min(1.0, covered / duration)
+
+
 def recognize_video_source(
     *,
     job_id: str,
@@ -2774,6 +2800,32 @@ def recognize_video_source(
                     "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
                     "nếu không, hãy chọn video có âm thanh."
                 )
+    merge_source = subtitle_source
+    if (
+        not ocr_segments
+        and subtitle_source == "speech"
+        and source_language == "zh-CN"
+        and SETTINGS.ocr_backend != "off"
+        and (video_duration or 0) >= SPEECH_RESCUE_MIN_SECONDS
+        and speech_coverage(asr_segments, video_duration) < SPEECH_RESCUE_MAX_COVERAGE
+    ):
+        logger.info(
+            "Speech covers only %.0f%% of job %s; reading burned-in captions as well",
+            speech_coverage(asr_segments, video_duration) * 100,
+            job_id,
+        )
+        update_job(
+            job_id,
+            step="extracting-subtitles",
+            step_detail="Lời thoại chỉ nghe được một phần video; đang đọc thêm chữ trên video",
+        )
+
+        def report_rescue_ocr(completed: int, total: int) -> None:
+            ensure_job_active(job_id)
+
+        ocr_segments = recognize_burned_subtitles(report_rescue_ocr)
+        if ocr_segments:
+            merge_source = "auto"
     if ocr_segments and subtitle_source == "independent":
         segments = merge_independent_ocr_asr_segments(
             ocr_segments,
@@ -2782,7 +2834,7 @@ def recognize_video_source(
             asr_language=detected_language,
         )
         source_method = "independent"
-    elif ocr_segments and subtitle_source == "auto":
+    elif ocr_segments and merge_source == "auto":
         segments = merge_ocr_and_asr_segments(ocr_segments, asr_segments)
         source_method = "hybrid"
     elif ocr_segments:

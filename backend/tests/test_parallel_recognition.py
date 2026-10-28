@@ -127,6 +127,32 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
         self.assertEqual(calls, [threading.current_thread().name])
         self.assertEqual(method, "ocr")
 
+    def test_speech_only_job_reads_captions_when_speech_covers_little_of_the_video(self) -> None:
+        def ocr(*args, progress_callback, **kwargs):
+            progress_callback(1, 1)
+            return list(OCR_SEGMENTS)
+
+        def asr(model, path, language, job_id, duration, *, progress):
+            return list(ASR_SEGMENTS), "zh-CN", 0.99
+
+        with patch.object(main, "extract_burned_subtitle_segments", ocr), patch.object(main, "transcribe_video", asr):
+            segments, _language, _probability, method, _skipped = self.recognize("speech")
+
+        self.assertEqual(self.merged, [(OCR_SEGMENTS, ASR_SEGMENTS)])
+        self.assertEqual(method, "hybrid")
+
+    def test_speech_only_job_skips_ocr_when_speech_covers_the_video(self) -> None:
+        speech = [{"start": float(i), "end": float(i + 1), "text": "你好"} for i in range(8)]
+
+        def asr(model, path, language, job_id, duration, *, progress):
+            return list(speech), "zh-CN", 0.99
+
+        with patch.object(main, "extract_burned_subtitle_segments") as ocr, patch.object(main, "transcribe_video", asr):
+            segments, _language, _probability, method, _skipped = self.recognize("speech")
+
+        ocr.assert_not_called()
+        self.assertEqual((segments, method), (speech, "speech"))
+
 
 class SourceRecognitionProgressTests(unittest.TestCase):
     def test_combined_progress_never_moves_backwards_when_asr_retries(self) -> None:

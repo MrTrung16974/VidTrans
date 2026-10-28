@@ -230,6 +230,26 @@ class VoiceRoutingTests(unittest.TestCase):
         self.assertEqual(ranks[0], 0)
         self.assertEqual(ranks[4], 0)
 
+    def test_weakly_pitched_turn_does_not_become_a_new_character(self) -> None:
+        voices = ["male", "male"]
+        pitches = [151.0, 121.0]
+        durations = [1.5, 1.1]
+
+        self.assertEqual(assign_speaker_ranks(voices, pitches, durations, [0.52, 0.49]), [0, 0])
+        self.assertEqual(assign_speaker_ranks(voices, pitches, durations, [0.9, 0.9]), [0, 1])
+
+    def test_unspoken_cue_does_not_split_a_speaker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "filler.wav"
+            samples = np.concatenate([voiced_wave(f, 1.0) for f in (120.0, 240.0, 120.0)])
+            self.write_audio(audio_path, samples)
+            segments = [{"start": float(i), "end": float(i + 1), "text": "Xin chào"} for i in range(3)]
+            segments[1]["skip_tts"] = True
+            route_segments_by_pitch(segments, audio_path, fallback_voice="male")
+
+        self.assertEqual([segment["voice_type"] for segment in segments], ["male"] * 3)
+        self.assertEqual({segment["speaker_rank"] for segment in segments}, {0})
+
     def test_routing_records_speaker_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             audio_path = Path(directory) / "speakers.wav"
