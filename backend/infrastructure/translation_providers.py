@@ -14,6 +14,8 @@ from domain.languages import language_profile, validate_language_pair
 from infrastructure.translation_prompt import (
     TranslationHistory,
     TranslationOutputError,
+    condense_system_prompt,
+    condense_user_prompt,
     is_traditional_chinese,
     leaks_source_script,
     parse_translations,
@@ -273,11 +275,26 @@ class GeminiContextTranslator:
         return translate_halving(self._translate_chunk, lines, durations, provider="Gemini")
 
     def _translate_chunk(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
+        text = self._generate(
+            system_prompt(self.source_language, self.target_language, "".join(lines)),
+            user_prompt(lines, durations, self.history.items()),
+        )
+        translated = parse_translations(text, len(lines), provider="gemini", sources=lines)
+        self.history.extend(lines, translated)
+        return translated
+
+    def condense_lines(self, sources: list[str], translations: list[str], max_syllables: list[int]) -> list[str]:
+        """Shorter rewrites of dubbing lines too long for their source timing."""
+        text = self._generate(
+            condense_system_prompt(self.source_language, self.target_language, "".join(sources)),
+            condense_user_prompt(sources, translations, max_syllables),
+        )
+        return parse_translations(text, len(sources), provider="gemini", sources=sources)
+
+    def _generate(self, system: str, user: str) -> str:
         body = json.dumps({
-            "systemInstruction": {
-                "parts": [{"text": system_prompt(self.source_language, self.target_language, "".join(lines))}]
-            },
-            "contents": [{"role": "user", "parts": [{"text": user_prompt(lines, durations, self.history.items())}]}],
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
             "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
         }).encode("utf-8")
         def generate(model: str):
@@ -322,10 +339,7 @@ class GeminiContextTranslator:
                 raise TranslationConfigurationError(
                     f"Không tìm thấy model Gemini khả dụng: {attempted_label}"
                 )
-            text = payload["candidates"][0]["content"]["parts"][0]["text"]
-            translated = parse_translations(text, len(lines), provider="gemini", sources=lines)
-            self.history.extend(lines, translated)
-            return translated
+            return payload["candidates"][0]["content"]["parts"][0]["text"]
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
                 raise TranslationRateLimitedError("Gemini đã hết hạn mức tạm thời (HTTP 429)") from exc

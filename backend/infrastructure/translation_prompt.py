@@ -154,6 +154,33 @@ def user_prompt(
     return "\n".join(parts)
 
 
+def condense_system_prompt(source_language: str, target_language: str, sample: str = "") -> str:
+    source = language_name(source_language, sample)
+    target = language_name(target_language)
+    return "\n".join([
+        f"You shorten {target} dubbing lines translated from {source} so the voice fits the original timing.",
+        "Rules:",
+        "1. Each item has the original `source`, the current `text` and `max_syllables`. Rewrite `text` so it "
+        "keeps the meaning, tone and forms of address of the source but has at most `max_syllables` spoken "
+        "syllables (words). Drop filler, repetition and details the scene does not need.",
+        "2. If `text` still contains source-script characters, translate them; Chinese person names become their "
+        "Sino-Vietnamese reading (王小明 → Vương Tiểu Minh).",
+        f"3. Output only natural spoken {target}: no notes, brackets, pinyin or source-script characters.",
+        '4. Reply with JSON only: {"translations": [{"id": <id>, "source": "<the item source copied exactly>", '
+        '"text": "<shortened line>"}]}, one entry per id, in order.',
+    ])
+
+
+def condense_user_prompt(
+    sources: Sequence[str], translations: Sequence[str], max_syllables: Sequence[int]
+) -> str:
+    items = [
+        {"id": index + 1, "source": source, "text": text, "max_syllables": int(limit)}
+        for index, (source, text, limit) in enumerate(zip(sources, translations, max_syllables))
+    ]
+    return f"Shorten these {len(items)} items: " + json.dumps(items, ensure_ascii=False)
+
+
 def _comparable(text: str) -> str:
     """Letters and digits only, Simplified script, case-folded: what an echo must preserve."""
 

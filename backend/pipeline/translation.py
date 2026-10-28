@@ -6,6 +6,8 @@ import re
 import time
 from typing import Any, Callable, Protocol, Sequence
 
+from pipeline.tts_timing import available_voice_window
+
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +65,22 @@ _MAX_FRAGMENT_LETTERS: int = 1
 # Longer echoes still fail: they mean the provider did not translate.
 _MAX_PRESERVED_LATIN_WORDS: int = 3
 
+# The Vietnamese dubbing voices speak ~5.8 syllables per second; the bounded native
+# rate boost and atempo stretch that to ~7. A longer line overflows its window and
+# pushes every following line late, so it is rewritten shorter, aiming at ~6.
+_MAX_DUB_SYLLABLES_PER_SECOND: float = 7.0
+_FIT_DUB_SYLLABLES_PER_SECOND: float = 6.0
+_CONDENSE_BATCH_LINES: int = 20
+_SYLLABLE_RE = re.compile(r"\w+")
+
 class TextTranslator(Protocol):
     def translate(self, text: str) -> str | None: ...
+
+
+class LineCondenser(Protocol):
+    def condense_lines(
+        self, sources: list[str], translations: list[str], max_syllables: list[int]
+    ) -> list[str]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +296,59 @@ def repair_leaked_translations(
             segment["translation_repaired"] = True
             repaired += 1
     return repaired
+
+
+def fit_translations_to_voice(
+    segments: list[dict[str, Any]],
+    condenser: LineCondenser,
+    *,
+    check_active: Callable[[], None] = lambda: None,
+) -> int:
+    """Rewrite dubbing lines too long for their voice window or still in source script.
+
+    Line-by-line translators know nothing of timing; their long lines overflowed by
+    a third and delayed the dubbing by seconds. A translator that keeps a name in
+    Chinese leaves the cue unvoiced. A rewrite is kept only when it is free of source
+    script and, for a line that only ran long, shorter. Returns the rewritten count.
+    """
+
+    candidates: list[tuple[int, int, bool]] = []
+    for index, segment in enumerate(segments):
+        text = str(segment.get("text") or "")
+        if segment.get("skip_tts") or segment.get("skip_subtitle") or not text or not segment.get("source_text"):
+            continue
+        script = _SOURCE_SCRIPT_RE.get(str(segment.get("source_language") or ""))
+        leaked = bool(script and script.search(text))
+        window = available_voice_window(segments, index)
+        if leaked or len(_SYLLABLE_RE.findall(text)) > window * _MAX_DUB_SYLLABLES_PER_SECOND:
+            candidates.append((index, max(2, int(window * _FIT_DUB_SYLLABLES_PER_SECOND)), leaked))
+
+    rewritten = 0
+    for offset in range(0, len(candidates), _CONDENSE_BATCH_LINES):
+        check_active()
+        batch = candidates[offset : offset + _CONDENSE_BATCH_LINES]
+        try:
+            values = condenser.condense_lines(
+                [str(segments[index]["source_text"]) for index, _, _ in batch],
+                [str(segments[index]["text"]) for index, _, _ in batch],
+                [limit for _, limit, _ in batch],
+            )
+        except Exception as exc:
+            logger.warning("Cannot shorten %d dubbing lines: %s", len(batch), type(exc).__name__)
+            continue
+        for (index, _, leaked), value in zip(batch, values):
+            segment = segments[index]
+            value = _clean(value)
+            script = _SOURCE_SCRIPT_RE.get(str(segment.get("source_language") or ""))
+            if not value or (script and script.search(value)):
+                continue
+            if not leaked and len(_SYLLABLE_RE.findall(value)) >= len(_SYLLABLE_RE.findall(str(segment["text"]))):
+                continue
+            segment["text_before_fit"] = segment["text"]
+            segment["text"] = value
+            segment["translation_condensed"] = True
+            rewritten += 1
+    return rewritten
 
 
 def _translate_with_retry(

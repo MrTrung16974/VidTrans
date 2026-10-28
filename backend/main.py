@@ -133,6 +133,7 @@ from domain.plan_entitlements import (
     ensure_video_providers_allowed,
 )
 from infrastructure.translation_providers import (
+    GeminiContextTranslator,
     create_translation_provider,
     default_translation_provider,
     ensure_translation_provider_configured,
@@ -170,6 +171,7 @@ from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
 from pipeline.translation import (
     ensure_translation_complete,
     filter_meaningful_segments,
+    fit_translations_to_voice,
     repair_leaked_translations,
     segment_filter_signature,
     translate_segments,
@@ -2823,6 +2825,19 @@ def recognize_video_source(
     return segments, detected_language, detected_language_probability, source_method, skipped_count
 
 
+def fit_dubbing_translations(job_id: str, segments: list[dict[str, Any]], *, source_language: str) -> None:
+    """Shorten translations the dubbing voice cannot say within the source timing."""
+    try:
+        condenser = GeminiContextTranslator(source_language=source_language, target_language="vi")
+    except Exception as exc:
+        logger.info("Dubbing lines are not shortened: %s", exc)
+        return
+    update_job(job_id, step_detail="Đang rút gọn câu dịch quá dài so với lời gốc")
+    rewritten = fit_translations_to_voice(segments, condenser, check_active=lambda: ensure_job_active(job_id))
+    if rewritten:
+        update_job(job_id, step_detail=f"Đã rút gọn {rewritten} câu dịch cho khớp thời gian lồng tiếng")
+
+
 def process_video(
     *,
     job_id: str,
@@ -3045,6 +3060,8 @@ def process_video(
                 )
                 if repaired:
                     update_job(job_id, step_detail=f"Đã sửa {repaired} câu dịch còn sót chữ gốc")
+        if mode in (2, 3) and target_language == "vi":
+            fit_dubbing_translations(job_id, translated_segments, source_language=effective_source_language)
         translation_fallback_cues = sum(
             1 for segment in translated_segments if segment.get("translation_status") == "source_fallback"
         )

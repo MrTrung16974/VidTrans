@@ -542,6 +542,27 @@ class MisalignedBatchTests(unittest.TestCase):
         self.assertEqual([len(lines) for lines in requests], [5, 2, 3])
 
 
+class CondenseLinesTests(unittest.TestCase):
+    def test_gemini_condense_sends_budget_and_parses_reply(self) -> None:
+        sent: list = []
+
+        def opener(request, **_kwargs):
+            body = json.loads(request.data)
+            sent.append(body)
+            return _gemini_reply([{"id": 1, "source": "这辈子老死不想往来", "text": "Cả đời này không qua lại"}])
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+            translator = GeminiContextTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+        result = translator.condense_lines(
+            ["这辈子老死不想往来"], ["Tôi không muốn liên lạc nữa, vì tôi sẽ chết mà không gặp lại"], [7]
+        )
+
+        self.assertEqual(result, ["Cả đời này không qua lại"])
+        prompt = sent[0]["contents"][0]["parts"][0]["text"]
+        self.assertIn('"max_syllables": 7', prompt)
+        self.assertIn("Sino-Vietnamese", sent[0]["systemInstruction"]["parts"][0]["text"])
+
+
 class FallbackReportingTests(unittest.TestCase):
     def test_cues_translated_by_the_backup_are_reported(self) -> None:
         from infrastructure.translation_prompt import TranslationOutputError

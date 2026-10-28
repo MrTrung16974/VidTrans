@@ -2,6 +2,7 @@ import unittest
 
 from pipeline.translation import (
     contains_han,
+    fit_translations_to_voice,
     repair_leaked_translations,
     segment_filter_signature,
     translate_segments,
@@ -186,6 +187,71 @@ class LeakRepairTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordingCondenser:
+    def __init__(self, replies: dict[str, str]) -> None:
+        self.replies = replies
+        self.calls: list[tuple[list[str], list[str], list[int]]] = []
+
+    def condense_lines(self, sources, translations, max_syllables):
+        self.calls.append((sources, translations, max_syllables))
+        return [self.replies.get(text, text) for text in translations]
+
+
+def _cue(start: float, end: float, source: str, text: str, **extra) -> dict:
+    return {"start": start, "end": end, "source_text": source, "text": text, "source_language": "zh-CN", **extra}
+
+
+class DubbingFitTests(unittest.TestCase):
+    # Job 329da5e0: an 11-syllable line in a 1.1 s window overflowed by 0.9 s.
+    LONG = "Tôi muốn biết giá một đại trắng vào ngày mai là bao nhiêu"
+
+    def test_overlong_line_is_shortened_within_its_window(self) -> None:
+        segments = [_cue(10.0, 11.12, "算个明天大白多钱已经", self.LONG), _cue(11.2, 12.5, "好", "Được")]
+        condenser = RecordingCondenser({self.LONG: "Mai đại trắng giá bao nhiêu"})
+
+        self.assertEqual(fit_translations_to_voice(segments, condenser), 1)
+
+        self.assertEqual(condenser.calls, [(["算个明天大白多钱已经"], [self.LONG], [6])])
+        self.assertEqual(segments[0]["text"], "Mai đại trắng giá bao nhiêu")
+        self.assertEqual(segments[0]["text_before_fit"], self.LONG)
+        self.assertEqual(segments[1]["text"], "Được")
+
+    def test_line_that_fits_or_is_skipped_is_not_sent(self) -> None:
+        segments = [
+            _cue(0.0, 3.0, "我们走吧", "Chúng ta đi thôi"),
+            _cue(3.0, 3.5, "嗯嗯嗯嗯", self.LONG, skip_tts=True),
+        ]
+        condenser = RecordingCondenser({})
+
+        self.assertEqual(fit_translations_to_voice(segments, condenser), 0)
+        self.assertEqual(condenser.calls, [])
+
+    def test_name_left_in_chinese_is_translated_even_when_short(self) -> None:
+        # Job e21f157d: TranslateGemma returned 昭丁 for 昭蒂 and the cue was never voiced.
+        segments = [_cue(171.97, 172.43, "昭蒂", "昭丁")]
+        condenser = RecordingCondenser({"昭丁": "Chiêu Đế"})
+
+        self.assertEqual(fit_translations_to_voice(segments, condenser), 1)
+        self.assertEqual(segments[0]["text"], "Chiêu Đế")
+
+    def test_rewrite_that_is_longer_or_still_chinese_is_rejected(self) -> None:
+        segments = [_cue(10.0, 11.12, "算个明天大白多钱已经", self.LONG), _cue(20.0, 20.4, "昭蒂", "昭丁")]
+        condenser = RecordingCondenser({self.LONG: self.LONG + " vậy hả anh", "昭丁": "Chiêu 蒂"})
+
+        self.assertEqual(fit_translations_to_voice(segments, condenser), 0)
+        self.assertEqual(segments[0]["text"], self.LONG)
+        self.assertEqual(segments[1]["text"], "昭丁")
+
+    def test_condenser_failure_keeps_translations(self) -> None:
+        class Broken:
+            def condense_lines(self, *_args):
+                raise RuntimeError("quota")
+
+        segments = [_cue(10.0, 11.12, "算个明天大白多钱已经", self.LONG)]
+        self.assertEqual(fit_translations_to_voice(segments, Broken()), 0)
+        self.assertEqual(segments[0]["text"], self.LONG)
 
 
 class EchoLinesTranslator:
