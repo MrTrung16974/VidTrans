@@ -217,6 +217,10 @@ class CITVoiceStudioProviderTest(unittest.TestCase):
                 resolve_tts_voice_selection("cit", "Ngọc Huyền", ""),
                 {"female": "Ngọc Huyền", "male": "Minh Đức"},
             )
+            self.assertEqual(
+                resolve_tts_voice_selection("cit", "Minh Đức", "Minh Đức"),
+                {"female": "Ngọc Huyền", "male": "Minh Đức"},
+            )
             with self.assertRaisesRegex(ValueError, "không còn trong ứng dụng"):
                 resolve_tts_voice_selection("cit", "Đã xoá", "")
         self.assertEqual(resolve_tts_voice_selection("edge", "x", "y"), {})

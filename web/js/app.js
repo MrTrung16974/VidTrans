@@ -709,10 +709,12 @@ function syncSelectedVoice() {
   const selected = select?.selectedOptions[0];
   const gender = selected?.dataset.gender || select?.value || "female";
   $("#voiceType").value = gender;
-  $("#elevenlabsFemaleVoice").value = isElevenLabs ? select.value : "";
-  $("#elevenlabsMaleVoice").value = isElevenLabs ? select.value : "";
-  $("#ttsFemaleVoice").value = hasVoiceList ? select.value : "";
-  $("#ttsMaleVoice").value = hasVoiceList ? select.value : "";
+  // The picked voice only fills its own style; the server picks a default for the
+  // other, so auto routing never reads female characters with a male voice.
+  $("#elevenlabsFemaleVoice").value = isElevenLabs && gender === "female" ? select.value : "";
+  $("#elevenlabsMaleVoice").value = isElevenLabs && gender === "male" ? select.value : "";
+  $("#ttsFemaleVoice").value = hasVoiceList && gender === "female" ? select.value : "";
+  $("#ttsMaleVoice").value = hasVoiceList && gender === "male" ? select.value : "";
 }
 
 const VOICE_PREVIEW_PROVIDERS = new Set(["edge", "elevenlabs", "cit"]);

@@ -177,7 +177,9 @@ def resolve_elevenlabs_voice_selection(
         key = (key or "").strip()
         if key and key not in by_key:
             raise ValueError(f"Giọng ElevenLabs đã chọn không còn trong cấu hình máy chủ: {key}")
-        voice = by_key.get(key) or _default_elevenlabs_voice(voices, gender)
+        voice = by_key.get(key)
+        if voice is None or voice.gender != gender:
+            voice = _default_elevenlabs_voice(voices, gender)
         if voice is not None:
             selection[gender] = voice.key
     return selection
@@ -596,10 +598,13 @@ def tts_voice_pool(provider: str, selected: dict[str, str] | None) -> dict[str, 
     # A voice the user picked for the other style is never reused as an extra
     # character, or the narrator of one style would speak for the other too.
     reserved = {key for key in selected.values() if key}
+    gender_of = dict(available)
     pool: dict[str, list[str]] = {}
     for gender in ("female", "male"):
         primary = selected.get(gender)
-        voices = [primary] if primary else []
+        # The web form used to send its one picked voice for both styles, so female
+        # characters were read by a male voice; a cross-style pick never leads a pool.
+        voices = [primary] if primary and gender_of.get(primary, gender) == gender else []
         voices += [key for key, voice_gender in available if voice_gender == gender and key not in reserved]
         if voices:
             pool[gender] = voices
@@ -623,7 +628,9 @@ def resolve_tts_voice_selection(
         key = (key or "").strip()
         if key and key not in by_key:
             raise ValueError(f"Giọng CIT Voice Studio đã chọn không còn trong ứng dụng: {key}")
-        voice = by_key.get(key) or _default_cit_voice(voices, gender)
+        voice = by_key.get(key)
+        if voice is None or voice.gender != gender:
+            voice = _default_cit_voice(voices, gender)
         if voice is not None:
             selection[gender] = voice.key
     return selection

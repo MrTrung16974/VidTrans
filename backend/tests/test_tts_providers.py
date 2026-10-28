@@ -332,9 +332,23 @@ class TTSVoicePoolTest(unittest.TestCase):
             tts_providers.CITVoice("Thu Hà", "Thu Hà", "female"),
         ]
         with patch.object(tts_providers, "cit_voices", return_value=voices):
-            pool = tts_providers.tts_voice_pool("cit", {"female": "Hải Đăng", "male": "Hải Đăng"})
-        self.assertEqual(pool["female"], ["Hải Đăng", "Ngọc Linh", "Thu Hà"])
+            pool = tts_providers.tts_voice_pool("cit", {"female": "Thu Hà", "male": "Hải Đăng"})
+        self.assertEqual(pool["female"], ["Thu Hà", "Ngọc Linh"])
         self.assertEqual(pool["male"], ["Hải Đăng", "Minh Đức"])
+
+    def test_a_male_pick_never_voices_female_characters(self) -> None:
+        # Jobs 022a7056/6dcb566f stored {"female": "Xuân Vĩnh", "male": "Xuân Vĩnh"}: the main
+        # female character was read by a male voice, the others by female voices.
+        voices = [
+            tts_providers.CITVoice("Xuân Vĩnh", "Xuân Vĩnh", "male"),
+            tts_providers.CITVoice("Thiện Minh", "Thiện Minh", "male"),
+            tts_providers.CITVoice("Ngọc Linh", "Ngọc Linh", "female"),
+            tts_providers.CITVoice("Quỳnh Anh", "Quỳnh Anh", "female"),
+        ]
+        with patch.object(tts_providers, "cit_voices", return_value=voices):
+            pool = tts_providers.tts_voice_pool("cit", {"female": "Xuân Vĩnh", "male": "Xuân Vĩnh"})
+        self.assertEqual(pool["female"], ["Ngọc Linh", "Quỳnh Anh"])
+        self.assertEqual(pool["male"], ["Xuân Vĩnh", "Thiện Minh"])
 
     def test_extra_voices_prefer_soft_styles_and_skip_novelty_voices(self) -> None:
         voices = [
