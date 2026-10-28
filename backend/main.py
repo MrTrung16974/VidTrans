@@ -149,6 +149,7 @@ from pipeline.ocr import (
     extract_burned_subtitle_segments,
     merge_independent_ocr_asr_segments,
     merge_ocr_and_asr_segments,
+    split_repeated_captions,
 )
 from pipeline.comic_video import ComicRuntime
 from pipeline.checkpoint_payloads import (
@@ -1413,12 +1414,15 @@ def transcribe_video(
     *,
     progress: Callable[[float, float | None], None] | None = None,
     muted: Sequence[tuple[float, float]] = (),
+    repeated_sink: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, float | None]:
     if progress is None and job_id:
         progress = make_asr_progress_callback(job_id, media_duration)
     result = ASR_SERVICE.transcribe(
         model_name, video_path, progress=progress, source_language=source_language, muted=muted
     )
+    if repeated_sink is not None:
+        repeated_sink.extend(normalize_segments(result.repeated))
     detected = result.detected_language
     if detected:
         try:
@@ -2838,6 +2842,22 @@ def recognize_video_source(
             return []
 
     scenes: list[SceneWindow] = []
+    repeated_lines: list[dict[str, Any]] = []
+    speech_media, muted = video_path, []
+    if source_probe.has_audio:
+        speech_media, muted = prepare_speech_audio(job_id, video_path, work_dir, video_duration, scenes)
+    may_read_captions = (
+        subtitle_source == "speech"
+        and source_language == "zh-CN"
+        and SETTINGS.ocr_backend != "off"
+        and (video_duration or 0) >= SPEECH_RESCUE_MIN_SECONDS
+    )
+    # A song or music-only stretch is known before Whisper starts: read the
+    # captions alongside it instead of after it.
+    early_caption_rescue = may_read_captions and not run_ocr and has_singing_or_music_only(scenes)
+    if early_caption_rescue:
+        logger.info("Job %s soundtrack holds singing or music only; reading burned-in captions as well", job_id)
+        run_ocr = True
 
     def recognize_speech(
         progress: Callable[[float, float | None], None] | None,
@@ -2845,9 +2865,9 @@ def recognize_video_source(
         with _whisper_slots:
             ensure_job_active(job_id)
             asr_language = "auto" if subtitle_source == "independent" else source_language
-            speech_media, muted = prepare_speech_audio(job_id, video_path, work_dir, video_duration, scenes)
             return transcribe_video(
-                whisper_model, speech_media, asr_language, job_id, video_duration, progress=progress, muted=muted
+                whisper_model, speech_media, asr_language, job_id, video_duration, progress=progress, muted=muted,
+                repeated_sink=repeated_lines,
             )
 
     def measured_speech(
@@ -2892,17 +2912,12 @@ def recognize_video_source(
                     "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
                     "nếu không, hãy chọn video có âm thanh."
                 )
-    merge_source = subtitle_source
+    merge_source = "auto" if early_caption_rescue and ocr_segments else subtitle_source
     if (
         not ocr_segments
-        and subtitle_source == "speech"
-        and source_language == "zh-CN"
-        and SETTINGS.ocr_backend != "off"
-        and (video_duration or 0) >= SPEECH_RESCUE_MIN_SECONDS
-        and (
-            speech_coverage(asr_segments, video_duration) < SPEECH_RESCUE_MAX_COVERAGE
-            or has_singing_or_music_only(scenes)
-        )
+        and not early_caption_rescue
+        and may_read_captions
+        and speech_coverage(asr_segments, video_duration) < SPEECH_RESCUE_MAX_COVERAGE
     ):
         logger.info(
             "Speech covers only %.0f%% of job %s; reading burned-in captions as well",
@@ -2915,8 +2930,15 @@ def recognize_video_source(
             step_detail="Lời thoại chỉ nghe được một phần video; đang đọc thêm chữ trên video",
         )
 
+        last_reported = -1
+
         def report_rescue_ocr(completed: int, total: int) -> None:
+            nonlocal last_reported
             ensure_job_active(job_id)
+            if completed != total and completed - last_reported < max(1, total // 50):
+                return
+            last_reported = completed
+            update_job(job_id, step_detail=f"Đang đọc chữ trên video {completed}/{total} khung hình")
 
         ocr_segments = recognize_burned_subtitles(report_rescue_ocr)
         if ocr_segments:
@@ -2930,6 +2952,7 @@ def recognize_video_source(
         )
         source_method = "independent"
     elif ocr_segments and merge_source == "auto":
+        ocr_segments = split_repeated_captions(ocr_segments, [*asr_segments, *repeated_lines])
         segments = merge_ocr_and_asr_segments(ocr_segments, asr_segments)
         source_method = "hybrid"
     elif ocr_segments:

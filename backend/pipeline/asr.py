@@ -116,6 +116,9 @@ class ASRResult:
     segments: list[dict[str, Any]]
     detected_language: str | None = None
     language_probability: float | None = None
+    # Lines dropped as repetition loops. A line really said several times looks
+    # the same to Whisper; burned-in captions can later vouch for them.
+    repeated: list[dict[str, Any]] = field(default_factory=list)
 
 
 def faster_whisper_available() -> bool:
@@ -303,8 +306,10 @@ class ASRService:
 
         if not hasattr(audio, "shape"):
             return result
-        result = ASRResult(drop_repetition_loops(result.segments), result.detected_language,
-                           result.language_probability)
+        kept = drop_repetition_loops(result.segments)
+        kept_ids = {id(segment) for segment in kept}
+        result = ASRResult(kept, result.detected_language, result.language_probability,
+                           [segment for segment in result.segments if id(segment) not in kept_ids])
         rate = int(model.feature_extractor.sampling_rate)
         total = len(audio) / rate
         boundaries = [0.0, *(edge for segment in result.segments for edge in (segment["start"], segment["end"])), total]
@@ -337,7 +342,7 @@ class ASRService:
             return result
         logger.info("Recovered %d speech segment(s) lost to VAD or repetition loops", len(recovered))
         segments = sorted([*result.segments, *recovered], key=lambda segment: (segment["start"], segment["end"]))
-        return ASRResult(segments, result.detected_language, result.language_probability)
+        return ASRResult(segments, result.detected_language, result.language_probability, result.repeated)
 
     def _faster(self, model: Any, media_path: Path, attempt: dict[str, Any],
                 progress: ProgressCallback | None) -> list[dict[str, Any]]:

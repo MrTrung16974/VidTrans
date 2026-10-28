@@ -43,6 +43,19 @@ class SubtitleLayoutTests(unittest.TestCase):
         self.assertGreaterEqual(result["font_size"], 45)
         self.assertTrue(result["mask_original"])
 
+    def test_emphasised_source_caption_does_not_blow_up_the_translation(self) -> None:
+        def cue(height: float) -> dict:
+            return {"text": "Chúc em", "source_bbox": {"x": 0.4, "y": 0.84, "width": 0.2, "height": height}}
+
+        layouts = [
+            segment["subtitle_layout"]
+            for segment in apply_subtitle_layout(
+                [cue(0.07), cue(0.07), cue(0.112), cue(0.07)], video_width=960, video_height=720, style={}
+            )
+        ]
+        normal = layouts[0]["font_size"]
+        self.assertLessEqual(layouts[2]["font_size"], round(normal * 1.15))
+
     def test_places_vietnamese_above_original(self) -> None:
         result = apply_subtitle_layout(
             [

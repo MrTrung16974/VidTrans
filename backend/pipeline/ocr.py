@@ -228,6 +228,44 @@ def merge_ocr_and_asr_segments(
     )
 
 
+def split_repeated_captions(
+    ocr_segments: list[dict[str, Any]],
+    asr_segments: Sequence[dict[str, Any]],
+    *,
+    min_similarity: float = 0.8,
+    min_part_seconds: float = 0.3,
+) -> list[dict[str, Any]]:
+    """Split a caption that stays on screen while its line is said several times.
+
+    The caption alone yields one short dubbed line followed by seconds of the
+    original voice; one part per spoken repetition lets every repetition be
+    dubbed. Each part keeps the caption's text, so the screen does not change.
+    """
+
+    output: list[dict[str, Any]] = []
+    for cue in ocr_segments:
+        start, end = float(cue["start"]), float(cue["end"])
+        text = normalize_zh_text(str(cue.get("text") or ""))
+        spoken = sorted(
+            float(segment["start"])
+            for segment in asr_segments
+            if text
+            and start <= (float(segment["start"]) + float(segment["end"])) / 2 < end
+            and text_similarity(text, normalize_zh_text(str(segment.get("text") or ""))) >= min_similarity
+        )
+        if len(spoken) < 2:
+            output.append(cue)
+            continue
+        bounds = [start, *(point for point in spoken[1:] if point > start), end]
+        for first, last in zip(bounds, bounds[1:]):
+            if last - first < min_part_seconds:
+                continue
+            part = dict(cue)
+            part.update({"start": round(first, 3), "end": round(last, 3), "repeated_caption": True})
+            output.append(part)
+    return output
+
+
 def merge_independent_ocr_asr_segments(
     ocr_segments: list[dict[str, Any]],
     asr_segments: list[dict[str, Any]],

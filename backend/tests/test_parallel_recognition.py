@@ -142,6 +142,29 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
         self.assertEqual(self.merged, [(OCR_SEGMENTS, ASR_SEGMENTS)])
         self.assertEqual(method, "hybrid")
 
+    def test_song_found_before_whisper_reads_captions_alongside_it(self) -> None:
+        both_running = threading.Barrier(2, timeout=5)
+        speech = [{"start": float(i), "end": float(i + 1), "text": "你好"} for i in range(8)]
+
+        def prepare(job_id, video_path, work_dir, duration, scenes):
+            scenes.append(main.SceneWindow(0.0, 10.0, speech=0.02, singing=0.1, music=0.9))
+            return video_path, []
+
+        def ocr(*args, progress_callback, **kwargs):
+            both_running.wait()  # Deadlocks if OCR waits for Whisper to finish.
+            return list(OCR_SEGMENTS)
+
+        def asr(model, path, language, job_id, duration, *, progress, **kwargs):
+            both_running.wait()
+            return list(speech), "zh-CN", 0.99
+
+        with patch.object(main, "prepare_speech_audio", prepare), \
+                patch.object(main, "extract_burned_subtitle_segments", ocr), patch.object(main, "transcribe_video", asr):
+            _segments, _language, _probability, method, _skipped = self.recognize("speech")
+
+        self.assertEqual(method, "hybrid")
+        self.assertEqual(self.merged, [(OCR_SEGMENTS, speech)])
+
     def test_speech_only_job_skips_ocr_when_speech_covers_the_video(self) -> None:
         speech = [{"start": float(i), "end": float(i + 1), "text": "你好"} for i in range(8)]
 

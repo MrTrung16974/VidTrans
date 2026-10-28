@@ -12,6 +12,7 @@ from pipeline.ocr import (
     OCRLine,
     IsolatedPaddleOCRReader,
     is_watermark,
+    split_repeated_captions,
     PaddleOCRReader,
     TesseractOCRReader,
     annotate_ocr_segments_with_asr,
@@ -265,6 +266,23 @@ class OCRTextTests(unittest.TestCase):
             PaddleOCRReader(model="large")
         with self.assertRaises(ValueError):
             IsolatedPaddleOCRReader(model="large")
+
+    def test_caption_held_over_repeated_speech_is_split_per_repetition(self) -> None:
+        # Douyin clip: "祝你幸福" stays on screen 5.7-12.07s while it is said five times.
+        caption = {"start": 5.7, "end": 12.067, "text": "祝你幸福", "source_method": "ocr"}
+        heard = [
+            {"start": start, "end": start + 1.0, "text": text}
+            for start, text in ((5.82, "祝你幸福"), (7.16, "祝你幸福"), (8.8, "祝你幸福"), (10.04, "祝你幸福"), (11.08, "祝你幸福啊"))
+        ]
+        parts = split_repeated_captions([caption], heard)
+        self.assertEqual([part["start"] for part in parts], [5.7, 7.16, 8.8, 10.04, 11.08])
+        self.assertEqual(parts[-1]["end"], 12.067)
+        self.assertEqual({part["text"] for part in parts}, {"祝你幸福"})
+
+    def test_caption_without_repeated_speech_stays_whole(self) -> None:
+        caption = {"start": 0.0, "end": 4.0, "text": "祝你幸福"}
+        heard = [{"start": 0.5, "end": 1.5, "text": "祝你幸福"}, {"start": 2.0, "end": 3.0, "text": "明明你也很爱我"}]
+        self.assertEqual(split_repeated_captions([caption], heard), [caption])
 
     def test_editor_watermarks_are_not_subtitles(self) -> None:
         for text in ("剪映", "剪映号:KongH", "抖音号 12345"):

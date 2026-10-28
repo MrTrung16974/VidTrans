@@ -106,6 +106,17 @@ class ASRServiceTests(unittest.TestCase):
         self.assertEqual(texts.count("我死定了"), 1)
         self.assertIn("我想吃水果", texts)
 
+    def test_dropped_loop_lines_are_kept_aside_for_captions_to_confirm(self):
+        import numpy as np
+
+        model = FakeFasterModel([[_segment(float(i), float(i) + 0.9, "祝你幸福") for i in range(5)]])
+        model.feature_extractor = SimpleNamespace(sampling_rate=16000)
+        asr = service(model)
+        asr._load_audio = lambda model, path: np.zeros(16000 * 5, dtype=np.float32)
+        result = asr.transcribe("small", Path("v.mp4"), source_language="zh-CN")
+        self.assertEqual(len(result.segments) + len(result.repeated), 5)
+        self.assertGreaterEqual(len(result.repeated), 1)
+
     def test_loop_filter_keeps_real_repeats(self):
         from pipeline.asr import drop_repetition_loops
 

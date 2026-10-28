@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from statistics import median
 from typing import Any, Sequence
 
 
@@ -48,6 +49,9 @@ def _clamp(value: float, lower: float, upper: float) -> float:
 
 
 MAX_SUBTITLE_LINES = 2
+# A decorative or emphasised caption in the source can be half again as tall as
+# the video's normal captions; the translation keeps the video's usual size.
+MAX_FONT_ABOVE_TYPICAL = 1.15
 # Last resort for very long cues at the minimum size: a third line is readable,
 # a line running past the frame edge is not.
 OVERFLOW_SUBTITLE_LINES = 3
@@ -101,6 +105,14 @@ def _fit_text(text: str, *, font_size: int, min_font_size: int, max_width: float
     return size, _wrap_for_width(text, font_size=size, max_width=max_width)
 
 
+def _matched_font(segment: dict[str, Any], video_height: int) -> int | None:
+    source_bbox = segment.get("source_bbox")
+    if not isinstance(source_bbox, dict) or not all(key in source_bbox for key in ("x", "y", "width", "height")):
+        return None
+    source_font_height = float(segment.get("source_font_height", source_bbox["height"])) * video_height
+    return round(source_font_height * 0.92)
+
+
 def apply_subtitle_layout(
     segments: Sequence[dict[str, Any]],
     *,
@@ -117,6 +129,10 @@ def apply_subtitle_layout(
     default_font = int(_clamp(default_font, options.min_font_size, options.max_font_size))
     margin_v = int(round(float(style.get("margin_v", 60)) * video_height / 720))
     laid_out: list[dict[str, Any]] = []
+    matched_fonts = [
+        font for font in (_matched_font(segment, video_height) for segment in segments) if font is not None
+    ]
+    typical_font = median(matched_fonts) if matched_fonts else None
 
     for original in segments:
         segment = dict(original)
@@ -130,10 +146,9 @@ def apply_subtitle_layout(
             box_y = float(source_bbox["y"]) * video_height
             box_w = float(source_bbox["width"]) * video_width
             box_h = float(source_bbox["height"]) * video_height
-            source_font_height = float(
-                segment.get("source_font_height", source_bbox["height"])
-            ) * video_height
-            matched_font = round(source_font_height * 0.92)
+            matched_font = _matched_font(segment, video_height) or default_font
+            if typical_font:
+                matched_font = min(matched_font, round(typical_font * MAX_FONT_ABOVE_TYPICAL))
             font_size = matched_font if options.match_source_size else default_font
             font_size = int(_clamp(font_size, options.min_font_size, options.max_font_size))
             max_text_width = min(video_width * 0.92, max(box_w * 1.45, video_width * 0.38))
