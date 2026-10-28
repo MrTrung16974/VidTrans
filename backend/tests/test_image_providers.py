@@ -7,12 +7,15 @@ from pathlib import Path
 
 from PIL import Image
 
-from infrastructure.image_providers import ComfyUIImageProvider, ImageGenerationError, ImageRequest
+from infrastructure.image_providers import (
+    CloudflareImageProvider, ComfyUIImageProvider, ImageGenerationError, ImageRequest, PollinationsImageProvider,
+)
 
 
 class _Response:
-    def __init__(self, body: bytes) -> None:
+    def __init__(self, body: bytes, content_type: str = "") -> None:
         self.body = body
+        self.headers = {"Content-Type": content_type}
 
     def __enter__(self):
         return self
@@ -209,6 +212,113 @@ class ComfyUIImageProviderTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as folder, self.assertRaisesRegex(ImageGenerationError, "quá thời gian"):
             provider.generate(ImageRequest(prompt="forest", width=512, height=512), Path(folder) / "scene.png")
+
+
+def _png(size=(256, 256)) -> bytes:
+    data = io.BytesIO()
+    Image.new("RGB", size, "teal").save(data, "PNG")
+    return data.getvalue()
+
+
+class CloudflareImageProviderTests(unittest.TestCase):
+    def test_requires_account_and_token(self) -> None:
+        with self.assertRaisesRegex(ImageGenerationError, "CLOUDFLARE_API_TOKEN"):
+            CloudflareImageProvider(account_id="", api_token="")
+
+    def test_flux_decodes_json_image_and_fits_scene(self) -> None:
+        import base64
+        seen = []
+
+        def opener(request, timeout):
+            seen.append(request)
+            body = json.dumps({"success": True, "result": {"image": base64.b64encode(_png()).decode()}})
+            return _Response(body.encode(), "application/json")
+
+        provider = CloudflareImageProvider(account_id="acc", api_token="tok", opener=opener, sleeper=lambda _: None,
+                                           model="@cf/black-forest-labs/flux-1-schnell", steps=4)
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "scene.png"
+            provider.generate(ImageRequest(prompt="forest", width=1080, height=1920, seed=7), output)
+            with Image.open(output) as result:
+                self.assertEqual(result.size, (1080, 1920))
+        request = seen[0]
+        self.assertTrue(request.full_url.endswith("/accounts/acc/ai/run/@cf/black-forest-labs/flux-1-schnell"))
+        self.assertEqual(request.get_header("Authorization"), "Bearer tok")
+        payload = json.loads(request.data)
+        self.assertEqual((payload["steps"], payload["seed"]), (4, 7))
+        self.assertIn("vertical 9:16 composition", payload["prompt"])
+
+    def test_sdxl_sends_size_and_reads_raw_png(self) -> None:
+        def opener(request, timeout):
+            payload = json.loads(request.data)
+            self.assertEqual((payload["width"], payload["height"]), (576, 1024))
+            return _Response(_png((576, 1024)), "image/png")
+
+        provider = CloudflareImageProvider(account_id="a", api_token="t", opener=opener, sleeper=lambda _: None,
+                                           model="@cf/stabilityai/stable-diffusion-xl-base-1.0")
+        with tempfile.TemporaryDirectory() as folder:
+            provider.generate(ImageRequest(prompt="x", width=1080, height=1920), Path(folder) / "s.png")
+
+    def test_exhausted_daily_quota_marks_provider_unavailable(self) -> None:
+        def opener(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, io.BytesIO(b"{}"))
+
+        provider = CloudflareImageProvider(account_id="a", api_token="t", opener=opener, sleeper=lambda _: None,
+                                           attempts=2)
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(ImageGenerationError) as caught:
+            provider.generate(ImageRequest(prompt="x", width=512, height=512), Path(folder) / "s.png")
+        self.assertTrue(caught.exception.unavailable)
+        self.assertTrue(caught.exception.rate_limited)
+
+    def test_bad_token_fails_without_retry(self) -> None:
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(1)
+            raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, io.BytesIO(b"bad token"))
+
+        provider = CloudflareImageProvider(account_id="a", api_token="t", opener=opener, sleeper=lambda _: None)
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(ImageGenerationError) as caught:
+            provider.generate(ImageRequest(prompt="x", width=512, height=512), Path(folder) / "s.png")
+        self.assertTrue(caught.exception.unavailable)
+        self.assertEqual(len(calls), 1)
+
+
+class PollinationsImageProviderTests(unittest.TestCase):
+    def test_builds_url_and_saves_scene(self) -> None:
+        seen = []
+
+        def opener(request, timeout):
+            seen.append(request)
+            return _Response(_png((576, 1024)), "image/jpeg")
+
+        provider = PollinationsImageProvider(opener=opener, sleeper=lambda _: None, token="")
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "scene.png"
+            provider.generate(ImageRequest(prompt="a cat / samurai", width=1080, height=1920, seed=3), output)
+            with Image.open(output) as result:
+                self.assertEqual(result.size, (1080, 1920))
+        url = seen[0].full_url
+        self.assertIn("/prompt/a%20cat%20%2F%20samurai?", url)
+        self.assertIn("width=576", url)
+        self.assertIn("height=1024", url)
+        self.assertIn("seed=3", url)
+        self.assertIsNone(seen[0].get_header("Authorization"))
+
+    def test_token_is_sent_and_server_errors_are_retried(self) -> None:
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(request)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(request.full_url, 502, "Bad Gateway", {}, io.BytesIO(b""))
+            return _Response(_png(), "image/jpeg")
+
+        provider = PollinationsImageProvider(opener=opener, sleeper=lambda _: None, token="sk")
+        with tempfile.TemporaryDirectory() as folder:
+            provider.generate(ImageRequest(prompt="x", width=512, height=512), Path(folder) / "s.png")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1].get_header("Authorization"), "Bearer sk")
 
 
 if __name__ == "__main__":

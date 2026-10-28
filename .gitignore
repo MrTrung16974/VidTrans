@@ -22,3 +22,4 @@ __pycache__/
 /comfyui/animation-worker.pid
 *.log
 *.pid
+*.pyc

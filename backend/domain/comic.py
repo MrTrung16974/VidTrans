@@ -65,7 +65,7 @@ QUALITY_SIZES: dict[str, dict[str, tuple[int, int]]] = {
 }
 
 LLM_PROVIDERS = ("auto", "gemini", "qwen3", "heuristic")
-IMAGE_PROVIDERS = ("placeholder", "comfyui", "gemini")
+IMAGE_PROVIDERS = ("placeholder", "comfyui", "cloudflare", "pollinations", "gemini")
 MAX_STORY_CHARS = 60_000
 
 
@@ -307,7 +307,7 @@ class ComicSettings(_Model):
     style: str = "manhua"
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"
     llm_provider: Literal["auto", "gemini", "qwen3", "heuristic"] = "auto"
-    image_provider: Literal["placeholder", "comfyui", "gemini"] = "placeholder"
+    image_provider: Literal["placeholder", "comfyui", "cloudflare", "pollinations", "gemini"] = "placeholder"
     narrator_voice: Literal["female", "male"] = "female"
     tts_provider: Literal["edge", "cit"] = "edge"
     # CIT Voice Studio voice ids keyed "narrator", "female", "male" (resolved when the project is created).

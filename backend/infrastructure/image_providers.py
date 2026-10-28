@@ -1,6 +1,7 @@
 """Scene image generators behind one interface.
 
-GPU or API key; ``comfyui`` uses a locally hosted ComfyUI server; ``gemini``
+GPU or API key; ``comfyui`` uses a locally hosted ComfyUI server; ``cloudflare``
+(Workers AI free tier) and ``pollinations`` (no account) are free hosted APIs; ``gemini``
 calls the Gemini image model and accepts character reference images for
 consistency. Every provider writes a PNG of exactly the requested size, so the
 renderer never has to care which one produced it.
@@ -25,6 +26,9 @@ from typing import Any, Callable, Protocol
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+CLOUDFLARE_BASE_URL = "https://api.cloudflare.com/client/v4/accounts"
+DEFAULT_CLOUDFLARE_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+POLLINATIONS_BASE_URL = "https://image.pollinations.ai/prompt"
 logger = logging.getLogger(__name__)
 
 
@@ -439,12 +443,179 @@ class GeminiImageProvider:
         raise ImageGenerationError(f"Gemini không trả về ảnh ({reason}); hãy sửa prompt của cảnh")
 
 
+def _composition_hint(request: ImageRequest) -> str:
+    # Square-only models are cropped by fit_cover: keep the subject in the part that survives.
+    orientation = "vertical" if request.height > request.width else "horizontal"
+    return f"{request.prompt}\n{orientation} {request.aspect_ratio} composition, main subject centered"
+
+
+def _decode_image(raw: bytes, content_type: str):
+    """Cloudflare answers raw image bytes (SDXL) or JSON with a base64 image (FLUX)."""
+    from PIL import Image
+
+    if not content_type.startswith("application/json"):
+        return Image.open(io.BytesIO(raw))
+    payload = json.loads(raw.decode("utf-8"))
+    encoded = (payload.get("result") or {}).get("image") or payload.get("image")
+    if not encoded:
+        raise ImageGenerationError(f"Không nhận được ảnh: {str(payload.get('errors') or payload)[:300]}")
+    return Image.open(io.BytesIO(base64.b64decode(encoded)))
+
+
+def _fetch_image(open_url: Callable[..., Any], build_request: Callable[[], urllib.request.Request], *,
+                 label: str, timeout: float, attempts: int, sleeper: Callable[[float], None]):
+    """Send one image request, retrying rate limits and transient errors with backoff."""
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            with open_url(build_request(), timeout=timeout) as response:
+                content_type = (response.headers.get("Content-Type") or "") if getattr(response, "headers", None) else ""
+                return _decode_image(response.read(64 * 1024 * 1024), content_type)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in {429, 500, 502, 503, 504, 530}:
+                detail = ""
+                try:
+                    detail = exc.read(2048).decode("utf-8", "replace")
+                except Exception:
+                    pass
+                error = ImageGenerationError(f"{label} lỗi HTTP {exc.code}: {detail[:300]}")
+                error.unavailable = exc.code in {401, 402, 403}  # A bad key/quota fails every image.
+                raise error from exc
+            last_error = exc
+        except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:
+            last_error = exc
+        except OSError as exc:  # PIL could not read the body
+            raise ImageGenerationError(f"{label} trả về dữ liệu không phải ảnh") from exc
+        if attempt + 1 < attempts:
+            delay = min(60.0, 5.0 * 2 ** attempt)
+            logger.warning("%s failed (%s); retrying in %.0fs", label, type(last_error).__name__, delay)
+            sleeper(delay)
+    error = ImageGenerationError(
+        f"{label} hết hạn mức hoặc không phản hồi sau nhiều lần thử"
+        f" ({type(last_error).__name__ if last_error else 'unknown'})"
+    )
+    error.rate_limited = isinstance(last_error, urllib.error.HTTPError) and last_error.code == 429
+    error.unavailable = True
+    raise error from last_error
+
+
+@dataclass
+class CloudflareImageProvider:
+    """Cloudflare Workers AI text-to-image (free tier: 10,000 Neurons per day).
+
+    FLUX.1 schnell only draws square 1024px images, so the result is cropped to
+    the scene size; SDXL-family models take width/height and a negative prompt.
+    """
+
+    key = "cloudflare"
+    supports_references = False
+    timeout: float = 120.0
+    attempts: int = 4
+    opener: Callable[..., Any] | None = None
+    sleeper: Callable[[float], None] = time.sleep
+    account_id: str = field(default_factory=lambda: os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip())
+    api_token: str = field(default_factory=lambda: os.environ.get("CLOUDFLARE_API_TOKEN", "").strip())
+    model: str = field(default_factory=lambda: os.environ.get(
+        "VIDTRANS_CLOUDFLARE_IMAGE_MODEL", DEFAULT_CLOUDFLARE_IMAGE_MODEL).strip() or DEFAULT_CLOUDFLARE_IMAGE_MODEL)
+    steps: int = field(default_factory=lambda: int(os.environ.get("VIDTRANS_CLOUDFLARE_IMAGE_STEPS", "4")))
+
+    def __post_init__(self) -> None:
+        if not self.account_id or not self.api_token:
+            raise ImageGenerationError(
+                "Cloudflare Workers AI chưa được cấu hình (CLOUDFLARE_ACCOUNT_ID và CLOUDFLARE_API_TOKEN)"
+            )
+        self._open = self.opener or urllib.request.urlopen
+
+    @property
+    def cache_key(self) -> str:
+        return f"cloudflare-{self.model}-{self.steps}"
+
+    def _body(self, request: ImageRequest) -> dict[str, Any]:
+        seed = request.seed or int.from_bytes(hashlib.sha256(request.prompt.encode()).digest()[:4], "big")
+        if "flux-1-schnell" in self.model:
+            return {"prompt": _composition_hint(request)[:2048], "steps": max(1, min(8, self.steps)), "seed": seed}
+        # SDXL-family models: sizes must be multiples of 8 within 256..2048.
+        scale = min(1.0, 1024 / max(request.width, request.height))
+        return {
+            "prompt": request.prompt[:2048], "seed": seed, "num_steps": max(1, min(20, self.steps)),
+            "negative_prompt": request.negative_prompt or "text, watermark, logo, blurry, low quality",
+            "width": max(256, round(request.width * scale) // 8 * 8),
+            "height": max(256, round(request.height * scale) // 8 * 8),
+        }
+
+    def generate(self, request: ImageRequest, output_path: Path) -> None:
+        body = json.dumps(self._body(request)).encode()
+        url = f"{CLOUDFLARE_BASE_URL}/{urllib.parse.quote(self.account_id)}/ai/run/{self.model}"
+        image = _fetch_image(
+            self._open,
+            lambda: urllib.request.Request(url, data=body, method="POST", headers={
+                "Content-Type": "application/json", "Authorization": f"Bearer {self.api_token}",
+            }),
+            label="Cloudflare Workers AI", timeout=self.timeout, attempts=self.attempts, sleeper=self.sleeper,
+        )
+        save_png_atomic(fit_cover(image, request.width, request.height), output_path)
+
+
+@dataclass
+class PollinationsImageProvider:
+    """Pollinations.ai: free, works without an account.
+
+    Anonymous calls are throttled (about one image per 15 s), may be served by a
+    smaller model and carry a watermark; POLLINATIONS_TOKEN lifts those limits.
+    """
+
+    key = "pollinations"
+    supports_references = False
+    timeout: float = 180.0
+    attempts: int = 4
+    opener: Callable[..., Any] | None = None
+    sleeper: Callable[[float], None] = time.sleep
+    token: str = field(default_factory=lambda: os.environ.get("POLLINATIONS_TOKEN", "").strip())
+    model: str = field(default_factory=lambda: os.environ.get("VIDTRANS_POLLINATIONS_MODEL", "flux").strip() or "flux")
+
+    def __post_init__(self) -> None:
+        self._open = self.opener or urllib.request.urlopen
+
+    @property
+    def cache_key(self) -> str:
+        return f"pollinations-{self.model}"
+
+    def _url(self, request: ImageRequest) -> str:
+        scale = min(1.0, 1024 / max(request.width, request.height))
+        prompt = request.prompt
+        if request.negative_prompt:
+            prompt += f"\nAvoid: {request.negative_prompt}."
+        query = {
+            "width": max(64, round(request.width * scale) // 8 * 8),
+            "height": max(64, round(request.height * scale) // 8 * 8),
+            "seed": request.seed or int.from_bytes(hashlib.sha256(request.prompt.encode()).digest()[:4], "big"),
+            "model": self.model, "nologo": "true", "private": "true",
+        }
+        # Prompts travel in the URL path; keep them under common URL length limits.
+        return f"{POLLINATIONS_BASE_URL}/{urllib.parse.quote(prompt[:1500], safe='')}?{urllib.parse.urlencode(query)}"
+
+    def generate(self, request: ImageRequest, output_path: Path) -> None:
+        url = self._url(request)
+        headers = {"User-Agent": "VidTrans/1.0"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        image = _fetch_image(
+            self._open, lambda: urllib.request.Request(url, headers=headers, method="GET"),
+            label="Pollinations", timeout=self.timeout, attempts=self.attempts, sleeper=self.sleeper,
+        )
+        save_png_atomic(fit_cover(image, request.width, request.height), output_path)
+
+
 def image_provider_statuses() -> list[dict[str, Any]]:
     return [
         {"key": "placeholder", "label": "Ảnh minh họa tạm (offline, miễn phí)", "configured": True},
         {"key": "comfyui", "label": "ComfyUI local (AI, miễn phí)",
          "configured": bool(os.environ.get("VIDTRANS_COMFYUI_URL", "").strip()
                             and os.environ.get("VIDTRANS_COMFYUI_CHECKPOINT", "").strip())},
+        {"key": "cloudflare", "label": "Cloudflare Workers AI FLUX (AI, miễn phí theo ngày)",
+         "configured": bool(os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+                            and os.environ.get("CLOUDFLARE_API_TOKEN", "").strip())},
+        {"key": "pollinations", "label": "Pollinations (AI, miễn phí, chậm)", "configured": True},
         {"key": "gemini", "label": "Gemini Image (AI, giữ nhân vật nhất quán)",
          "configured": bool(os.environ.get("GEMINI_API_KEY", "").strip())},
     ]
@@ -453,6 +624,10 @@ def image_provider_statuses() -> list[dict[str, Any]]:
 def create_image_provider(key: str, *, font_path: Path | None = None) -> ImageProvider:
     if key == "comfyui":
         return ComfyUIImageProvider()
+    if key == "cloudflare":
+        return CloudflareImageProvider()
+    if key == "pollinations":
+        return PollinationsImageProvider()
     if key == "gemini":
         return GeminiImageProvider()
     if key == "placeholder":
