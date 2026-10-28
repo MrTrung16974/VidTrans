@@ -364,6 +364,7 @@ class TranslateGemmaTranslator:
         self.url = ollama_url()
         self.timeout = timeout
         self._open = opener or _direct_open
+        self._rescue = None
         self.name = f"translategemma-{self.model}"
 
     def _prompt(self, text: str) -> str:
@@ -419,7 +420,25 @@ class TranslateGemmaTranslator:
         translated = str((payload.get("message") or {}).get("content") or "").strip()
         if not translated:
             raise TranslationServiceError("translategemma_empty_translation")
+        if leaks_source_script(translated, self.target_language):
+            # It often keeps names in Chinese; dubbing voices cannot read them.
+            translated = self._rescue_line(text, translated)
         return translated
+
+    def _rescue_line(self, line: str, fallback: str) -> str:
+        if self._rescue is None:
+            self._rescue = GoogleVietnameseTranslator(
+                source_language=self.source_language, target_language=self.target_language
+            )
+        try:
+            value = self._rescue.translate(line)
+        except Exception as exc:
+            logger.warning("TranslateGemma kept the source script and the rescue failed: %s", type(exc).__name__)
+            return fallback
+        if not value or leaks_source_script(value, self.target_language):
+            return fallback
+        logger.info("TranslateGemma kept the source script; used %s for one cue", getattr(self._rescue, "name", "rescue"))
+        return value
 
 
 class Qwen3Translator:

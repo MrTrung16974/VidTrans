@@ -336,6 +336,19 @@ class TTSVoicePoolTest(unittest.TestCase):
         self.assertEqual(pool["female"], ["Hải Đăng", "Ngọc Linh", "Thu Hà"])
         self.assertEqual(pool["male"], ["Hải Đăng", "Minh Đức"])
 
+    def test_extra_voices_prefer_soft_styles_and_skip_novelty_voices(self) -> None:
+        voices = [
+            tts_providers.CITVoice("Hải Đăng", "Hải Đăng (Nam · Bắc · Phong cách tự nhiên · 48 kHz)", "male"),
+            tts_providers.CITVoice("Adam bựa", "Adam bựa (Nam · Bắc · Phong cách tự nhiên · 48 kHz)", "male"),
+            tts_providers.CITVoice("Minh Đức", "Minh Đức (Nam · Bắc · Phong cách tin tức · 48 kHz)", "male"),
+            tts_providers.CITVoice("Thái Sơn", "Thái Sơn (Nam · Nam · Phong cách kể chuyện · 48 kHz)", "male"),
+            tts_providers.CITVoice("Thiện Minh", "Thiện Minh (Nam · Bắc · Phong cách kể chuyện · 48 kHz)", "male"),
+            tts_providers.CITVoice("Phạm Tuyên", "Phạm Tuyên (Nam · Bắc · Phong cách tự nhiên · 48 kHz)", "male"),
+        ]
+        with patch.object(tts_providers, "cit_voices", return_value=voices):
+            pool = tts_providers.tts_voice_pool("cit", {"male": "Hải Đăng"})
+        self.assertEqual(pool["male"], ["Hải Đăng", "Thiện Minh", "Thái Sơn", "Phạm Tuyên", "Minh Đức"])
+
     def test_single_voice_providers_have_no_pool(self) -> None:
         self.assertEqual(tts_providers.tts_voice_pool("edge", {}), {})
 

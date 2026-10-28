@@ -170,6 +170,7 @@ from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
 from pipeline.translation import (
     ensure_translation_complete,
     filter_meaningful_segments,
+    repair_leaked_translations,
     segment_filter_signature,
     translate_segments,
     translate_segments_by_source_language,
@@ -1789,9 +1790,11 @@ def synthesize_tts_segments(
         elif tts_provider == "elevenlabs" and selected_voice_key:
             voice_name = selected_voice_key
         # Edge applies the pitch nudge inside synthesis; CIT and ElevenLabs have no
-        # pitch control, so the same nudge is applied to their render afterwards.
+        # pitch control. Shifting their render afterwards muddies the voice, so it
+        # is only done when the pool cannot give this character a voice of its own.
         post_pitch_filter = ""
-        if tts_provider in {"cit", "elevenlabs"} and segment.get("voice_pitch_offset_hz"):
+        has_own_voice = len(pool) > speaker_rank
+        if tts_provider in {"cit", "elevenlabs"} and segment.get("voice_pitch_offset_hz") and not has_own_voice:
             base_f0 = TTS_BASE_F0_HZ.get(selected_voice_type, TTS_BASE_F0_HZ["female"])
             post_pitch_filter = build_pitch_shift_filter((base_f0 + pitch_hz - preset.pitch_hz) / base_f0)
 
@@ -1861,9 +1864,9 @@ def synthesize_tts_segments(
         rendered_duration = trim_tts_audio(output_path, trimmed_path)
 
         native_rate_boost = adaptive_synthesis_rate_percent(rendered_duration, cue_duration)
-        # Slowing a short line is cosmetic; CIT/ElevenLabs re-renders cost CPU or
-        # credits, so they are only spent where a line would otherwise overflow.
-        if not native_rate_boost and relax_pace and tts_provider == "edge":
+        # A line rushed into a long window sounds hurried against the source; the
+        # local CIT render is free, only ElevenLabs credits are saved for overflow.
+        if not native_rate_boost and relax_pace and tts_provider in {"edge", "cit"}:
             native_rate_boost = relaxed_synthesis_rate_percent(rendered_duration, cue_duration)
         applied_native_rate_boost = 0
         if native_render_ok and native_rate_boost:
@@ -3031,6 +3034,17 @@ def process_video(
         record_job_stage_cache(job_id, "translation", translation_cache_hit)
         if translation_cache_hit:
             update_job(job_id, step_detail="Đã dùng lại bản dịch hợp lệ", progress=0.46)
+            if subtitle_source != "independent":
+                # Translations cached before the leak check may still carry Chinese names.
+                from infrastructure.vietnamese_translator import GoogleVietnameseTranslator
+
+                repaired = repair_leaked_translations(
+                    translated_segments,
+                    GoogleVietnameseTranslator(source_language=effective_source_language, target_language=target_language),
+                    source_language=effective_source_language,
+                )
+                if repaired:
+                    update_job(job_id, step_detail=f"Đã sửa {repaired} câu dịch còn sót chữ gốc")
         translation_fallback_cues = sum(
             1 for segment in translated_segments if segment.get("translation_status") == "source_fallback"
         )
@@ -3209,7 +3223,7 @@ def process_video(
                         }
                         for segment in translated_segments
                     ],
-                    "tts_pipeline_version": 6,
+                    "tts_pipeline_version": 7,
                 }
             )
             tts_fingerprint = tts_fingerprint_fields(tts_provider)

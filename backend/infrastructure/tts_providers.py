@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import re
 import tempfile
 import threading
 import time
@@ -551,13 +552,42 @@ def _default_cit_voice(voices: list[CITVoice], gender: str) -> CITVoice | None:
     return next((voice for voice in voices if voice.gender == gender), voices[0] if voices else None)
 
 
+# CIT labels read "Name (Nữ · Bắc · Phong cách kể chuyện · 48 kHz)". Narrative
+# styles are the warmest for dubbing; news reads are the stiffest.
+_CIT_STYLE_SOFTNESS = (("kể chuyện", 0), ("đọc truyện", 0), ("tự nhiên", 1), ("tin tức", 3))
+_NOVELTY_VOICE_MARKERS = ("bựa", "hài", "troll")
+
+
+def _cit_voice_softness(label: str) -> int:
+    lowered = label.lower()
+    return next((rank for marker, rank in _CIT_STYLE_SOFTNESS if marker in lowered), 2)
+
+
+def _cit_voice_region(label: str) -> str | None:
+    parts = [part.strip().lower() for part in label.partition("(")[2].rstrip(")").split("·")]
+    return parts[1] if len(parts) > 1 else None
+
+
+def _is_novelty_voice(label: str) -> bool:
+    name = label.partition("(")[0].lower()
+    return any(re.search(rf"(?<!\w){marker}(?!\w)", name) for marker in _NOVELTY_VOICE_MARKERS)
+
+
 def tts_voice_pool(provider: str, selected: dict[str, str] | None) -> dict[str, list[str]]:
     """Voices per style for multi-character dubbing: the selection first, then the
     provider's other voices of the same style. Empty when the provider has one voice."""
 
     provider = normalize_tts_provider(provider)
     if provider == "cit":
-        available = [(voice.key, voice.gender) for voice in cit_voices()]
+        voices = cit_voices()
+        regions = {voice.key: _cit_voice_region(voice.label) for voice in voices}
+        primary_regions = {regions.get(key) for key in (selected or {}).values() if key}
+        # Extra characters get the softest voices first, in the narrator's accent.
+        ranked = sorted(
+            (voice for voice in voices if not _is_novelty_voice(voice.label)),
+            key=lambda voice: (_cit_voice_softness(voice.label), regions[voice.key] not in primary_regions),
+        )
+        available = [(voice.key, voice.gender) for voice in ranked]
     elif provider == "elevenlabs":
         available = [(voice.key, voice.gender) for voice in elevenlabs_voices()]
     else:

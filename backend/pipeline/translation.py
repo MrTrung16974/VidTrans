@@ -248,6 +248,40 @@ def ensure_translation_complete(
         )
 
 
+def repair_leaked_translations(
+    segments: list[dict[str, Any]],
+    translator: TextTranslator,
+    *,
+    source_language: str,
+) -> int:
+    """Retranslate cues whose translation still carries source-script words.
+
+    Older cached translations kept Chinese names ("雅荣 cũng nói..."); subtitles
+    showed them and the dubbing voice skipped them. A cue is replaced only when
+    the new translation is free of source script. Returns the repaired count.
+    """
+
+    script = _SOURCE_SCRIPT_RE.get(source_language)
+    if script is None:
+        return 0
+    repaired = 0
+    for segment in segments:
+        text = str(segment.get("text") or "")
+        source = str(segment.get("source_text") or "")
+        if segment.get("skip_subtitle") or not script.search(text) or not source or _FILLER_ONLY_RE.match(source):
+            continue
+        try:
+            value = _clean(translator.translate(source))
+        except Exception as exc:
+            logger.warning("Cannot repair a leaked translation: %s", type(exc).__name__)
+            continue
+        if value and not script.search(value):
+            segment["text"] = value
+            segment["translation_repaired"] = True
+            repaired += 1
+    return repaired
+
+
 def _translate_with_retry(
     text: str,
     translator: TextTranslator,

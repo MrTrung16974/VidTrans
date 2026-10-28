@@ -157,6 +157,17 @@ class TranslateGemmaTests(unittest.TestCase):
         self.assertEqual(sent["body"]["options"]["num_ctx"], 2048)
         self.assertEqual(sent["body"]["keep_alive"], "30s")
 
+    def test_chinese_left_in_the_output_is_retranslated_with_google(self) -> None:
+        def opener(_request, **_kwargs):
+            return _Response({"message": {"content": "雅荣 cũng nói rằng sẽ giao gấp đôi"}})
+
+        translator = TranslateGemmaTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+        with patch("infrastructure.translation_providers.GoogleVietnameseTranslator") as google:
+            google.return_value.translate.return_value = "Nhã Vinh cũng nói sẽ giao gấp đôi"
+            self.assertEqual(translator.translate("雅荣也说会加倍送"), "Nhã Vinh cũng nói sẽ giao gấp đôi")
+            google.return_value.translate.side_effect = RuntimeError("down")
+            self.assertEqual(translator.translate("雅荣也说会加倍送"), "雅荣 cũng nói rằng sẽ giao gấp đôi")
+
     def test_missing_model_is_a_permanent_error(self) -> None:
         def opener(request, **_kwargs):
             raise urllib.error.HTTPError(request.full_url, 404, "not found", {}, io.BytesIO(b""))

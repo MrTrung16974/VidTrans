@@ -2,6 +2,7 @@ import unittest
 
 from pipeline.translation import (
     contains_han,
+    repair_leaked_translations,
     segment_filter_signature,
     translate_segments,
     translate_segments_by_source_language,
@@ -164,6 +165,23 @@ class TranslationPipelineTests(unittest.TestCase):
             ["Bản dịch tiếng Trung", "Bản dịch tiếng Hàn", "Bản dịch tiếng Trung"],
         )
         self.assertEqual([item["start"] for item in translated], [0.0, 1.0, 2.0])
+
+
+class LeakRepairTests(unittest.TestCase):
+    def test_only_leaked_cues_are_retranslated(self) -> None:
+        segments = [
+            {"source_text": "雅荣也说", "text": "雅荣 cũng nói"},
+            {"source_text": "你好", "text": "Xin chào"},
+            {"source_text": "啊", "text": "啊"},
+            {"source_text": "世界", "text": "世 giới"},
+        ]
+        translator = MarkerTranslator()
+        translator.translate = lambda text: {"雅荣也说": "Nhã Vinh cũng nói", "世界": "世界"}[text]
+
+        self.assertEqual(repair_leaked_translations(segments, translator, source_language="zh-CN"), 1)
+        self.assertEqual(segments[0]["text"], "Nhã Vinh cũng nói")
+        self.assertEqual(segments[2]["text"], "啊")  # Filler stays; it is not dubbed.
+        self.assertEqual(segments[3]["text"], "世 giới")  # Still leaking: keep the original.
 
 
 if __name__ == "__main__":

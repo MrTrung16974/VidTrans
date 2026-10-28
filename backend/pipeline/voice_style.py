@@ -20,12 +20,15 @@ DEFAULT_VOICE_STYLE = "natural"
 # Share of cues that must carry a style's keywords before it is chosen.
 MIN_STYLE_SHARE = 0.15
 MIN_STYLE_HITS = 2
+SOFT_STYLES = frozenset({"gentle", "storyteller", "calm"})
 # Source pace, in characters/second for CJK and words/second otherwise.
 SLOW_CJK_RATE = 4.5
 FAST_CJK_RATE = 6.5
 SLOW_WORD_RATE = 2.0
 FAST_WORD_RATE = 3.6
 PACE_BONUS = 0.10
+# A clearly unhurried source is read gently even without keywords.
+CLEARLY_SLOW_PACE_SHARE = 0.8
 EXCLAMATION_SHARE = 0.3
 
 STYLE_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -160,11 +163,16 @@ def infer_voice_style(segments: list[dict[str, Any]]) -> StyleDecision:
         reasons.append("exclamations")
 
     best = max(scores, key=lambda style: scores[style])
-    keyword_backed = hits.get(best, 0) >= MIN_STYLE_HITS
+    # A soft, expressive read suits more videos than a pushy one, so soft
+    # styles need less evidence than the brisk ones.
+    min_hits = 1 if best in SOFT_STYLES else MIN_STYLE_HITS
+    keyword_backed = hits.get(best, 0) >= min_hits
     # Pace or punctuation alone is weak evidence; it may choose energetic
     # (which has no keywords) but only once clearly above the bonus itself.
     if scores[best] >= MIN_STYLE_SHARE and (keyword_backed or best == "energetic" and scores[best] > PACE_BONUS):
         return StyleDecision(best, scores, pace, reasons)
+    if pace is not None and pace <= CLEARLY_SLOW_PACE_SHARE * (SLOW_CJK_RATE if cjk else SLOW_WORD_RATE):
+        return StyleDecision("gentle", scores, pace, reasons)
     return StyleDecision(DEFAULT_VOICE_STYLE, scores, pace, reasons)
 
 

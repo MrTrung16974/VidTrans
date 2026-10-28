@@ -53,6 +53,19 @@ class VoiceStyleTests(unittest.TestCase):
         ]
         self.assertEqual(infer_voice_style(segments).style, "commercial")
 
+    def test_one_soft_cue_in_a_slow_clip_picks_gentle(self) -> None:
+        segments = [
+            cue("回到你身邊", "Quay trở lại bên cạnh em", 0, 2.0),
+            cue("我只在乎", "Tôi chỉ quan tâm", 2.0, 4.0),
+            cue("想你", "Nhớ em", 4.0, 5.5),
+            cue("我自己", "Chính tôi", 5.5, 7.0),
+        ]
+        self.assertEqual(infer_voice_style(segments).style, "gentle")
+
+    def test_slow_source_without_keywords_reads_gently(self) -> None:
+        segments = [cue("我們去公園", "Chúng ta đi công viên", 0, 2.0), cue("天氣不錯", "Thời tiết đẹp", 2.0, 3.6)]
+        self.assertEqual(infer_voice_style(segments).style, "gentle")
+
     def test_plain_content_stays_natural(self) -> None:
         segments = [cue("我們去公園", "Chúng ta đi công viên", 0, 1.2), cue("天氣不錯", "Thời tiết đẹp", 1.2, 2.2)]
         self.assertEqual(infer_voice_style(segments).style, "natural")
