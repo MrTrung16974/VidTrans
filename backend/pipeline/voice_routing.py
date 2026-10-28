@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import wave
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -67,6 +67,9 @@ SAME_SPEAKER_SIMILARITY = 0.45
 # speech; otherwise short lines would each look like a new person and the
 # pitch grouping is the safer guess.
 MIN_EMBEDDED_SPEECH_SHARE = 0.6
+# YIN sometimes locks onto half the true F0 of a low voice. A line below this
+# whose doubled pitch matches another confident male line is read an octave up.
+OCTAVE_ERROR_MAX_HZ = 100.0
 
 SpeakerEmbedder = Callable[[np.ndarray, int], "np.ndarray | None"]
 
@@ -251,6 +254,7 @@ def route_segments_by_pitch(
         else:
             analyses.append(analyze_pitch(samples[start_sample:end_sample], sample_rate))
         durations.append(max(0.0, end - start))
+    analyses = correct_octave_errors(analyses)
 
     evidence = {"male": 0.0, "female": 0.0}
     for analysis, duration in zip(analyses, durations):
@@ -484,6 +488,28 @@ def _cluster_ranks(speakers: list[int], durations: list[float], voices: list[str
         for rank, speaker in enumerate(sorted(totals, key=lambda s: -totals[s])):
             rank_of[speaker] = min(rank, MAX_SPEAKERS_PER_VOICE - 1)
     return [rank_of[speaker] for speaker in speakers]
+
+
+def correct_octave_errors(analyses: list[PitchAnalysis]) -> list[PitchAnalysis]:
+    """Double low pitches that sit an octave below another confident male line.
+
+    Only a doubling that stays inside the male range is applied, so this
+    merges one man's lines and never turns a deep male voice into a female one.
+    """
+
+    references = [
+        analysis.pitch_hz
+        for analysis in analyses
+        if analysis.pitch_hz and analysis.confidence >= MIN_CONFIDENCE and analysis.pitch_hz >= OCTAVE_ERROR_MAX_HZ
+    ]
+    corrected = list(analyses)
+    for index, analysis in enumerate(analyses):
+        pitch = analysis.pitch_hz
+        if not pitch or pitch >= OCTAVE_ERROR_MAX_HZ or 2 * pitch > MALE_MAX_F0_HZ:
+            continue
+        if any(abs(_semitones(2 * pitch, reference)) <= SPEAKER_CLUSTER_SEMITONES for reference in references):
+            corrected[index] = replace(analysis, pitch_hz=2 * pitch)
+    return corrected
 
 
 def _weak_voice_type(analysis: PitchAnalysis) -> str | None:

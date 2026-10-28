@@ -12,6 +12,7 @@ from pipeline.voice_routing import (
     PitchAnalysis,
     analyze_pitch,
     assign_speaker_ranks,
+    correct_octave_errors,
     cluster_speakers,
     route_segments_by_pitch,
     tts_pitch_offset_hz,
@@ -293,6 +294,23 @@ class VoiceRoutingTests(unittest.TestCase):
             route_segments_by_pitch(segments, audio_path, fallback_voice="male", speaker_embedder=broken)
 
         self.assertEqual(segments[0]["voice_routing"]["speaker_source"], "pitch")
+
+    def test_octave_down_pitch_is_read_as_the_matching_voice(self) -> None:
+        # Measured on a Douyin clip: one man at 151 Hz, then YIN reported 78-84 Hz.
+        analyses = [
+            PitchAnalysis(151.0, 0.52, 22, 46, "male"),
+            PitchAnalysis(84.0, 0.48, 10, 30, "male"),
+            PitchAnalysis(78.0, 0.73, 30, 44, "male"),
+        ]
+        corrected = correct_octave_errors(analyses)
+        # 84 Hz doubled leaves the male range, so it is left for the rank logic.
+        self.assertEqual([round(a.pitch_hz or 0) for a in corrected], [151, 84, 156])
+        lone_low_voice = correct_octave_errors([PitchAnalysis(85.0, 0.8, 30, 40, "male")])
+        self.assertEqual(lone_low_voice[0].pitch_hz, 85.0)
+        deep_man_and_woman = correct_octave_errors(
+            [PitchAnalysis(98.0, 0.8, 20, 20, "male"), PitchAnalysis(200.0, 0.9, 20, 20, "female")]
+        )
+        self.assertEqual(deep_man_and_woman[0].pitch_hz, 98.0)
 
     def test_routing_records_speaker_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
