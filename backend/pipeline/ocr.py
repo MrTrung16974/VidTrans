@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -757,6 +758,64 @@ class TesseractOCRReader:
         return pages
 
 
+_CHILD_READER: PaddleOCRReader | None = None
+
+
+def _start_child_reader(model: str) -> None:
+    global _CHILD_READER
+    _CHILD_READER = PaddleOCRReader(model=model)
+
+
+def _child_read(image_path: str) -> list[OCRLine]:
+    assert _CHILD_READER is not None
+    return _CHILD_READER.read(Path(image_path))
+
+
+class IsolatedPaddleOCRReader:
+    """PaddleOCR running in its own long-lived child process.
+
+    CTranslate2 (faster-whisper) ships libgomp and Paddle ships libiomp5. Once
+    Whisper has decoded in a process, every later Paddle inference there fails
+    with ``RuntimeError: std::exception``, so OCR must not share the worker
+    process with Whisper. The child loads the models once and is restarted
+    after a crash.
+    """
+
+    def __init__(self, *, model: str = "medium") -> None:
+        if model not in PADDLE_MODEL_NAMES:
+            raise ValueError(f"OCR model must be one of: {', '.join(PADDLE_MODEL_NAMES)}")
+        self._model = model
+        self._lock = threading.Lock()
+        self._pool: Any = None
+
+    def _executor(self) -> Any:
+        if self._pool is None:
+            import multiprocessing
+            from concurrent.futures import ProcessPoolExecutor
+
+            self._pool = ProcessPoolExecutor(
+                max_workers=1,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_start_child_reader,
+                initargs=(self._model,),
+            )
+        return self._pool
+
+    def read(self, image_path: Path) -> list[OCRLine]:
+        from concurrent.futures.process import BrokenProcessPool
+
+        with self._lock:
+            try:
+                return self._executor().submit(_child_read, str(image_path)).result()
+            except BrokenProcessPool:
+                self._pool = None
+                raise
+
+
+def _isolate_paddle() -> bool:
+    return os.environ.get("VIDTRANS_OCR_ISOLATED", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
 _DEFAULT_READERS: dict[tuple[str, str], OCRReader] = {}
 _DEFAULT_READER_LOCK = threading.Lock()
 
@@ -768,9 +827,12 @@ def get_default_reader(backend: str = "paddle", model: str = "medium") -> OCRRea
     if key not in _DEFAULT_READERS:
         with _DEFAULT_READER_LOCK:
             if key not in _DEFAULT_READERS:
-                _DEFAULT_READERS[key] = (
-                    PaddleOCRReader(model=model) if backend == "paddle" else TesseractOCRReader()
-                )
+                if backend == "tesseract":
+                    _DEFAULT_READERS[key] = TesseractOCRReader()
+                elif _isolate_paddle():
+                    _DEFAULT_READERS[key] = IsolatedPaddleOCRReader(model=model)
+                else:
+                    _DEFAULT_READERS[key] = PaddleOCRReader(model=model)
     return _DEFAULT_READERS[key]
 
 

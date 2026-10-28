@@ -10,6 +10,7 @@ from pipeline.ocr import (
     FrameObservation,
     OCRConfig,
     OCRLine,
+    IsolatedPaddleOCRReader,
     PaddleOCRReader,
     TesseractOCRReader,
     annotate_ocr_segments_with_asr,
@@ -261,6 +262,17 @@ class OCRTextTests(unittest.TestCase):
     def test_paddle_reader_rejects_unknown_model(self) -> None:
         with self.assertRaises(ValueError):
             PaddleOCRReader(model="large")
+        with self.assertRaises(ValueError):
+            IsolatedPaddleOCRReader(model="large")
+
+    def test_default_paddle_reader_runs_outside_the_whisper_process(self) -> None:
+        import pipeline.ocr as ocr
+
+        with patch.dict(ocr._DEFAULT_READERS, {}, clear=True):
+            self.assertIsInstance(ocr.get_default_reader("paddle", "mobile"), IsolatedPaddleOCRReader)
+        with patch.dict(ocr._DEFAULT_READERS, {}, clear=True), patch.dict("os.environ", {"VIDTRANS_OCR_ISOLATED": "0"}), \
+                patch.object(ocr, "PaddleOCRReader", lambda model: ("in-process", model)):
+            self.assertEqual(ocr.get_default_reader("paddle", "mobile"), ("in-process", "mobile"))
 
     def test_normalizes_union_bbox_for_selected_chinese_lines(self) -> None:
         text, confidence, bbox = select_subtitle_geometry(
