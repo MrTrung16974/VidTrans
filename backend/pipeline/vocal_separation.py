@@ -1,9 +1,9 @@
 """Separate the voice from background music with Demucs.
 
 Separation costs about twice the clip length on a 4-core CPU, so callers run
-it only when the scene classifier hears speech under music. The vocal stem
-feeds Whisper and the voice analysis; the original soundtrack is still what
-the final mix keeps.
+it only when the scene classifier hears speech under music, and it is off by
+default (VIDTRANS_VOCAL_SEPARATION). The vocal stem feeds Whisper only: a
+background song's singer stays in it, so voice analysis keeps the original.
 """
 
 from __future__ import annotations

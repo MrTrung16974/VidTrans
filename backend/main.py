@@ -823,7 +823,9 @@ def _env_flag(name: str, default: str) -> str:
 # Speech/singing/music labels steer ASR, vocal separation and voice routing.
 AUDIO_SCENE_ENABLED = _env_flag("VIDTRANS_AUDIO_SCENE", "on") in {"1", "true", "yes", "on"}
 # auto: separate only when speech sits under music; Demucs runs ~2x clip length on CPU.
-VOCAL_SEPARATION_MODE = _env_flag("VIDTRANS_VOCAL_SEPARATION", "auto")
+# Off by default: Douyin background songs keep their singer in the vocal stem, so
+# Whisper heard no more dialogue and the stem's pitch belonged to the singer.
+VOCAL_SEPARATION_MODE = _env_flag("VIDTRANS_VOCAL_SEPARATION", "off")
 VOCAL_SEPARATION_MAX_SECONDS = float(os.environ.get("VIDTRANS_VOCAL_SEPARATION_MAX_SECONDS", "240") or 240)
 VOCAL_SEPARATION_MIN_MUSIC_SHARE = 0.5
 SPEAKER_EMBEDDING_ENABLED = _env_flag("VIDTRANS_SPEAKER_EMBEDDING", "on") in {"1", "true", "yes", "on"}
@@ -3297,13 +3299,11 @@ def process_video(
                 if voice_mode == "auto":
                     update_job(job_id, step="routing-voices", progress=0.5)
                     try:
-                        # Under music the separated vocals carry the cleaner pitch and timbre.
-                        vocals = work_dir / VOCALS_FILENAME
-                        voice_source = vocals if vocals.is_file() else video_path
-                        analysis_audio = extract_voice_analysis_audio(voice_source, work_dir / "voice_analysis.wav")
+                        # Not the separated vocals: a background song's singer stays in that stem.
+                        analysis_audio = extract_voice_analysis_audio(video_path, work_dir / "voice_analysis.wav")
                         speaker_audio = (
                             extract_voice_analysis_audio(
-                                voice_source, work_dir / "speaker_audio.wav", band_limited=False
+                                video_path, work_dir / "speaker_audio.wav", band_limited=False
                             )
                             if SPEAKER_EMBEDDING_ENABLED
                             else None
