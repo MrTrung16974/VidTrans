@@ -1,6 +1,22 @@
 {
   "components": {
     "schemas": {
+      "AccountPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "title": "AccountPatch",
+        "type": "object"
+      },
       "Body_confirm_password_reset_api_v1_auth_password_reset_confirm_post": {
         "properties": {
           "code": {
@@ -335,7 +351,7 @@
             "type": "string"
           },
           "whisper_model": {
-            "default": "base",
+            "default": "medium",
             "title": "Whisper Model",
             "type": "string"
           }
@@ -430,7 +446,7 @@
             "title": "File"
           },
           "fps": {
-            "default": 30,
+            "default": 24,
             "title": "Fps",
             "type": "integer"
           },
@@ -455,9 +471,15 @@
             "type": "integer"
           },
           "max_scenes": {
-            "default": 40,
-            "title": "Max Scenes",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Scenes"
           },
           "motion_strength": {
             "default": 0.45,
@@ -611,7 +633,7 @@
             "title": "File"
           },
           "fps": {
-            "default": 30,
+            "default": 24,
             "title": "Fps",
             "type": "integer"
           },
@@ -636,9 +658,15 @@
             "type": "integer"
           },
           "max_scenes": {
-            "default": 40,
-            "title": "Max Scenes",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Scenes"
           },
           "motion_strength": {
             "default": 0.45,
@@ -895,7 +923,7 @@
             "type": "string"
           },
           "whisper_model": {
-            "default": "base",
+            "default": "medium",
             "title": "Whisper Model",
             "type": "string"
           }
@@ -1073,7 +1101,7 @@
             "type": "string"
           },
           "whisper_model": {
-            "default": "base",
+            "default": "medium",
             "title": "Whisper Model",
             "type": "string"
           }
@@ -1096,6 +1124,37 @@
           "reviewed"
         ],
         "title": "Body_publish_api_v1_tiktok_browser_attempts__attempt_id__publish_post",
+        "type": "object"
+      },
+      "Body_queue_video_api_v1_branding_videos_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "override": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "top-right",
+              "top-left",
+              "bottom-right",
+              "bottom-left"
+            ],
+            "title": "Override",
+            "type": "string"
+          },
+          "rights_confirmed": {
+            "default": false,
+            "title": "Rights Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_queue_video_api_v1_branding_videos_post",
         "type": "object"
       },
       "Body_register_account_api_v1_auth_register_post": {
@@ -1289,6 +1348,20 @@
         "title": "Body_upload_keyframe_api_v1_comic_projects__job_id__scenes__scene_index__shots__shot_index__keyframe_post",
         "type": "object"
       },
+      "Body_upload_logo_api_v1_me_branding_logo_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_logo_api_v1_me_branding_logo_post",
+        "type": "object"
+      },
       "Body_upload_reference_api_v1_comic_projects__job_id__characters__character_id__references_post": {
         "properties": {
           "file": {
@@ -1329,6 +1402,81 @@
           "file"
         ],
         "title": "Body_upload_series_reference_api_v1_comic_series__series_id__characters__character_id__reference_post",
+        "type": "object"
+      },
+      "BrandingConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_detect": {
+            "default": true,
+            "title": "Auto Detect",
+            "type": "boolean"
+          },
+          "cover_original": {
+            "default": false,
+            "title": "Cover Original",
+            "type": "boolean"
+          },
+          "default_position": {
+            "default": "top-right",
+            "enum": [
+              "top-right",
+              "top-left",
+              "bottom-right",
+              "bottom-left"
+            ],
+            "title": "Default Position",
+            "type": "string"
+          },
+          "logo_size": {
+            "default": 12.0,
+            "maximum": 40.0,
+            "minimum": 3.0,
+            "title": "Logo Size",
+            "type": "number"
+          },
+          "low_confidence_action": {
+            "default": "default",
+            "enum": [
+              "default",
+              "review"
+            ],
+            "title": "Low Confidence Action",
+            "type": "string"
+          },
+          "margin": {
+            "default": 3.0,
+            "maximum": 15.0,
+            "minimum": 0.0,
+            "title": "Margin",
+            "type": "number"
+          },
+          "min_confidence": {
+            "default": 0.55,
+            "maximum": 0.95,
+            "minimum": 0.2,
+            "title": "Min Confidence",
+            "type": "number"
+          },
+          "multi_logo_strategy": {
+            "default": "nearest-default",
+            "enum": [
+              "nearest-default",
+              "largest",
+              "most-confident"
+            ],
+            "title": "Multi Logo Strategy",
+            "type": "string"
+          },
+          "opacity": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.1,
+            "title": "Opacity",
+            "type": "number"
+          }
+        },
+        "title": "BrandingConfig",
         "type": "object"
       },
       "CharacterPatch": {
@@ -1388,6 +1536,17 @@
               }
             ],
             "title": "Outfit"
+          },
+          "species": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Species"
           },
           "voice": {
             "anyOf": [
@@ -1548,6 +1707,36 @@
           }
         },
         "title": "RenderRequest",
+        "type": "object"
+      },
+      "ReprocessRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cover_original": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Original"
+          },
+          "override": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "top-right",
+              "top-left",
+              "bottom-right",
+              "bottom-left"
+            ],
+            "title": "Override",
+            "type": "string"
+          }
+        },
+        "title": "ReprocessRequest",
         "type": "object"
       },
       "SceneInsert": {
@@ -3691,6 +3880,278 @@
         "summary": "Switch Free Plan"
       }
     },
+    "/api/v1/branding/videos": {
+      "get": {
+        "operationId": "history_api_v1_branding_videos_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "History",
+        "tags": [
+          "branding"
+        ]
+      },
+      "post": {
+        "operationId": "queue_video_api_v1_branding_videos_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_queue_video_api_v1_branding_videos_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Queue Video",
+        "tags": [
+          "branding"
+        ]
+      }
+    },
+    "/api/v1/branding/videos/{job_id}": {
+      "get": {
+        "operationId": "video_status_api_v1_branding_videos__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Video Status",
+        "tags": [
+          "branding"
+        ]
+      }
+    },
+    "/api/v1/branding/videos/{job_id}/download": {
+      "get": {
+        "operationId": "download_api_v1_branding_videos__job_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Download",
+        "tags": [
+          "branding"
+        ]
+      }
+    },
+    "/api/v1/branding/videos/{job_id}/reprocess": {
+      "post": {
+        "description": "Re-render with a confirmed placement (after a \"needs review\" result) or another choice.",
+        "operationId": "reprocess_api_v1_branding_videos__job_id__reprocess_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReprocessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Reprocess",
+        "tags": [
+          "branding"
+        ]
+      }
+    },
     "/api/v1/comic/options": {
       "get": {
         "operationId": "options_api_v1_comic_options_get",
@@ -3864,6 +4325,55 @@
       }
     },
     "/api/v1/comic/projects/{job_id}": {
+      "delete": {
+        "description": "Delete a story video permanently, including its files on disk.",
+        "operationId": "delete_comic_project_api_v1_comic_projects__job_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete Comic Project",
+        "tags": [
+          "Comic Video"
+        ]
+      },
       "get": {
         "operationId": "get_project_api_v1_comic_projects__job_id__get",
         "parameters": [
@@ -5289,7 +5799,7 @@
     },
     "/api/v1/comic/series/{series_id}": {
       "delete": {
-        "description": "Delete the series record only; its episode videos stay available as standalone projects.",
+        "description": "Delete the series and its files; ``with_episodes`` also deletes every episode video.\n\nWithout it the episodes stay available as standalone projects.",
         "operationId": "delete_series_api_v1_comic_series__series_id__delete",
         "parameters": [
           {
@@ -5299,6 +5809,16 @@
             "schema": {
               "title": "Series Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_episodes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "With Episodes",
+              "type": "boolean"
             }
           }
         ],
@@ -7107,6 +7627,232 @@
           }
         ],
         "summary": "Get Current User"
+      },
+      "put": {
+        "operationId": "update_me_api_v1_me_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update Me",
+        "tags": [
+          "branding"
+        ]
+      }
+    },
+    "/api/v1/me/branding": {
+      "get": {
+        "operationId": "get_branding_api_v1_me_branding_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Branding",
+        "tags": [
+          "branding"
+        ]
+      },
+      "put": {
+        "operationId": "put_branding_api_v1_me_branding_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrandingConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Put Branding",
+        "tags": [
+          "branding"
+        ]
+      }
+    },
+    "/api/v1/me/branding/logo": {
+      "delete": {
+        "operationId": "delete_logo_api_v1_me_branding_logo_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete Logo",
+        "tags": [
+          "branding"
+        ]
+      },
+      "get": {
+        "operationId": "get_logo_api_v1_me_branding_logo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Logo",
+        "tags": [
+          "branding"
+        ]
+      },
+      "post": {
+        "operationId": "upload_logo_api_v1_me_branding_logo_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_logo_api_v1_me_branding_logo_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Upload Logo",
+        "tags": [
+          "branding"
+        ]
       }
     },
     "/api/v1/me/platform-apps": {

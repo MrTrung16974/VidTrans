@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261026-compact-shot-card" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261029-logo" />
   </head>
   <body>
     <div class="app-shell">
@@ -75,6 +75,7 @@
         <nav id="mainNavigation" class="nav-tabs" aria-label="Điều hướng chính">
           <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span><span class="nav-label-full">Dịch video</span><span class="nav-label-short">Dịch</span></span></a>
           <a href="#comic" data-view-link="comic" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v6h-7zM13 13h7v6h-7z"/></svg></i><span><span class="nav-label-full">Truyện → Video</span><span class="nav-label-short">Truyện</span></span></a>
+          <a href="#account" data-view-link="account" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="13" y="7" width="6" height="4" rx="1"/></svg></i><span><span class="nav-label-full">Gắn logo</span><span class="nav-label-short">Logo</span></span></a>
           <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
           <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span><span class="nav-label-full">Đăng bài mạng xã hội</span><span class="nav-label-short">Đăng bài</span></span></a>
           <a href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span><span class="nav-label-full">Đăng nhập nguồn</span><span class="nav-label-short">Nguồn</span></span></a>
@@ -89,6 +90,7 @@
                 <strong id="userPopoverName">Tài khoản</strong>
                 <small id="userPopoverRole">Quản trị viên</small>
               </div>
+              <a href="#account" data-view-link="account">Tài khoản & logo</a>
               <a href="#billing" data-view-link="billing">Gói dịch vụ & thanh toán</a>
               <a href="#admin" data-view-link="admin" data-admin-only class="is-hidden" hidden>Quản trị</a>
               <button id="appLogoutButton" class="auth-logout" type="button">Đăng xuất</button>
@@ -1962,6 +1964,116 @@
           </div>
         </section>
 
+        <section id="accountView" class="view account-view is-hidden">
+          <div class="account-header">
+            <span class="eyebrow-chip">ACCOUNT · BRANDING SETTINGS</span>
+            <h1>Tài khoản & logo thương hiệu</h1>
+            <p>Logo và cấu hình dưới đây chỉ thuộc tài khoản của bạn. Video gửi lên sẽ được tự động nhận diện logo có sẵn; không tìm thấy thì logo được chèn ở vị trí mặc định.</p>
+          </div>
+
+          <div class="account-grid">
+            <section class="card account-card">
+              <h2>Thông tin tài khoản</h2>
+              <form id="accountProfileForm" class="account-form">
+                <label>Email
+                  <input id="accountEmail" type="email" disabled />
+                </label>
+                <label>Tên hiển thị
+                  <input id="accountDisplayName" name="display_name" required maxlength="120" autocomplete="name" />
+                </label>
+                <button class="button secondary" type="submit">Lưu tên hiển thị</button>
+              </form>
+
+              <h2 class="account-subtitle">Logo thương hiệu</h2>
+              <div class="logo-upload">
+                <div id="logoPreview" class="logo-preview is-empty"><span>Chưa có logo</span></div>
+                <div class="logo-upload-actions">
+                  <label class="button secondary logo-file-button">
+                    <input id="logoFileInput" type="file" accept="image/png,image/webp,image/jpeg" hidden />
+                    Tải logo lên
+                  </label>
+                  <button id="logoDeleteButton" class="button danger small-btn" type="button" disabled>Xóa logo</button>
+                  <small>PNG nền trong suốt được khuyến nghị · tối đa 5 MB. Phần viền trong suốt thừa sẽ được tự cắt.</small>
+                </div>
+              </div>
+            </section>
+
+            <section class="card account-card">
+              <h2>Cấu hình chèn logo</h2>
+              <form id="brandingForm" class="account-form branding-form">
+                <label class="check-row"><input type="checkbox" name="auto_detect" /> Tự động nhận diện vị trí logo có sẵn</label>
+                <label>Vị trí mặc định khi không tìm thấy logo
+                  <select name="default_position">
+                    <option value="top-right">Góc trên bên phải (mặc định)</option>
+                    <option value="top-left">Góc trên bên trái</option>
+                    <option value="bottom-right">Góc dưới bên phải</option>
+                    <option value="bottom-left">Góc dưới bên trái</option>
+                  </select>
+                </label>
+                <label>Kích thước logo (% chiều rộng video): <b data-output="logo_size">12%</b>
+                  <input type="range" name="logo_size" min="3" max="40" step="1" />
+                </label>
+                <label>Độ hiển thị: <b data-output="opacity">100%</b>
+                  <input type="range" name="opacity" min="10" max="100" step="5" />
+                </label>
+                <label>Khoảng cách tới mép (% cạnh ngắn): <b data-output="margin">3%</b>
+                  <input type="range" name="margin" min="0" max="15" step="0.5" />
+                </label>
+                <label>Khi video có nhiều logo, thay logo
+                  <select name="multi_logo_strategy">
+                    <option value="nearest-default">Gần vị trí mặc định nhất</option>
+                    <option value="largest">Lớn nhất</option>
+                    <option value="most-confident">Nhận diện chắc chắn nhất</option>
+                  </select>
+                </label>
+                <label>Khi không chắc chắn vị trí
+                  <select name="low_confidence_action">
+                    <option value="default">Dùng vị trí mặc định</option>
+                    <option value="review">Dùng vị trí mặc định và yêu cầu tôi xác nhận</option>
+                  </select>
+                </label>
+                <label class="check-row"><input type="checkbox" name="cover_original" /> Che (làm mờ) logo cũ trước khi chèn logo mới</label>
+                <div class="branding-preview-wrap">
+                  <div class="branding-preview-frames">
+                    <div class="branding-frame landscape" data-preview-frame><span class="frame-label">16:9</span></div>
+                    <div class="branding-frame portrait" data-preview-frame><span class="frame-label">9:16</span></div>
+                  </div>
+                  <small>Xem trước vị trí mặc định trên video ngang và dọc.</small>
+                </div>
+                <div class="account-form-actions">
+                  <button class="button primary" type="submit">Lưu cấu hình</button>
+                  <button id="brandingCopyButton" class="button secondary" type="button">Sao chép cấu hình (JSON)</button>
+                </div>
+              </form>
+            </section>
+          </div>
+
+          <section class="card account-card branding-process-card">
+            <h2>Gắn logo vào video</h2>
+            <form id="brandingVideoForm" class="account-form branding-video-form">
+              <label>Video
+                <input id="brandingVideoInput" name="file" type="file" accept="video/*" required />
+              </label>
+              <label>Vị trí
+                <select name="override">
+                  <option value="auto">Tự động theo cấu hình</option>
+                  <option value="top-right">Ép góc trên bên phải</option>
+                  <option value="top-left">Ép góc trên bên trái</option>
+                  <option value="bottom-right">Ép góc dưới bên phải</option>
+                  <option value="bottom-left">Ép góc dưới bên trái</option>
+                </select>
+              </label>
+              <label class="check-row"><input type="checkbox" name="rights_confirmed" value="true" required /> Tôi có quyền chỉnh sửa video này (kể cả thay/che logo có sẵn)</label>
+              <button class="button primary" type="submit">Gửi xử lý</button>
+            </form>
+            <div class="branding-history-head">
+              <h3>Lịch sử xử lý</h3>
+              <button id="brandingHistoryRefresh" class="button secondary small-btn" type="button">Làm mới</button>
+            </div>
+            <div id="brandingHistory" class="branding-history"><div class="empty-state"><strong>Chưa có video nào</strong></div></div>
+          </section>
+        </section>
+
         <section id="billingView" class="view billing-view is-hidden">
           <div class="billing-header">
             <div class="billing-header-copy">
@@ -2179,6 +2291,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261026-concurrent-pipeline"></script>
+    <script type="module" src="/js/app.js?v=20261029-logo"></script>
   </body>
 </html>

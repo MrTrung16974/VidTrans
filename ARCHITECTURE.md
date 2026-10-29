@@ -109,6 +109,25 @@ motion prompt, or "regenerate" (a new take/seed), re-animates only that shot; ap
 character references are pinned so profile edits create variants instead of overwriting.
 Lip-sync is not implemented yet.
 
+## Account branding (logo)
+
+A third job type stamps the account's logo on a video (`job_action = "logo_branding"`), on
+the same queue, quota, cancellation, retention and ownership checks as the other jobs.
+
+```text
+upload + rights confirmation -> snapshot logo/settings into the job -> probe
+-> logo detection (pipeline/logo_detection.py: persistent edges over a moving scene,
+   per 6 s window, tracks across windows) -> placements per time segment
+   (pipeline/logo_overlay.py) -> one FFmpeg pass: delogo (optional) + scaled logo + opacity
+```
+
+- `domain/branding.py` holds the settings contract; `infrastructure/branding_store.py` keeps one
+  row per user (`user_branding_configs`) and the logo under `work/users/<user>/branding/`.
+- `application/branding_routes.py` exposes `/api/v1/me`, `/api/v1/me/branding[/logo]` and
+  `/api/v1/branding/videos[...]`; `application/branding_service.py` runs the job.
+- No logo found -> default corner (top-right unless configured); low confidence -> default, or
+  default plus a "needs review" flag so the user re-runs with a chosen corner.
+
 ## Job state
 
 Job state is stored in PostgreSQL configured by `VIDTRANS_DATABASE_URL`. Docker

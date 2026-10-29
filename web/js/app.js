@@ -3,6 +3,7 @@ import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-f
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261024-system-ws";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261026-delete-files";
+import { createBrandingWorkspace } from "./branding.js?v=20261029-logo";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -905,7 +906,7 @@ function bindWorkflowStepNav() {
 let activeView = null;
 
 function showView() {
-  let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : "create";
+  let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : location.hash === "#account" ? "account" : "create";
   if (["admin", "douyin"].includes(view) && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
   if (["tiktok", "comic"].includes(view) && state.auth.role === "viewer") view = "jobs";
   $("#createView").classList.toggle("is-hidden", view !== "create");
@@ -919,6 +920,9 @@ function showView() {
   $("#douyinView").classList.toggle("is-hidden", view !== "douyin");
   $("#adminView").classList.toggle("is-hidden", view !== "admin");
   $("#billingView").classList.toggle("is-hidden", view !== "billing");
+  $("#accountView").classList.toggle("is-hidden", view !== "account");
+  if (view === "account" && state.appStarted) brandingWorkspace.enter();
+  else brandingWorkspace.leave();
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
   if (window.innerWidth <= 1024) {
     const activeDockLink = $(`#mainNavigation a[data-view-link="${view}"]`);
@@ -2937,6 +2941,7 @@ const tiktokWorkspace = createTikTokWorkspace({
   canManageAllVideos: () => state.auth.role === "owner",
 });
 const comicWorkspace = createComicWorkspace({ requestJson, toast, escapeHtml });
+const brandingWorkspace = createBrandingWorkspace({ requestJson, toast, escapeHtml });
 const platformAppsSettings = createPlatformAppsSettings({
   requestJson, toast, escapeHtml, onChange: () => tiktokWorkspace.enter(),
 });

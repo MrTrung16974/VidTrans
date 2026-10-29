@@ -6369,3 +6369,57 @@ input[type="file"]::-webkit-file-upload-button:active {
   .sys-process-row > span:nth-child(n+2) { font-size: 0.74rem; }
   .sys-process-row > span[data-label]::before { content: attr(data-label) " "; color: #94a3b8; }
 }
+
+/* ---------------------------------------------------------------- account & branding */
+.account-view { display: grid; gap: 20px; }
+.account-header h1 { margin: 10px 0 6px; font-size: clamp(1.5rem, 3vw, 2rem); }
+.account-header p { margin: 0; max-width: 760px; color: var(--muted); }
+.account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.account-card { padding: 22px; display: grid; gap: 14px; align-content: start; min-width: 0; }
+.account-card h2 { margin: 0; font-size: 1.1rem; }
+.account-subtitle { margin-top: 8px !important; }
+.account-form { display: grid; gap: 12px; }
+.account-form label { display: grid; gap: 6px; font-weight: 600; font-size: .9rem; color: var(--ink); }
+.account-form input:not([type="checkbox"]):not([type="range"]), .account-form select {
+  width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font: inherit;
+}
+.account-form input[type="range"] { width: 100%; accent-color: var(--brand); }
+.account-form .check-row { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.account-form .check-row input { width: 18px; height: 18px; accent-color: var(--brand); flex: none; }
+.account-form-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.account-form > button { justify-self: start; }
+.logo-upload { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.logo-preview {
+  width: 140px; height: 140px; flex: none; display: grid; place-items: center; gap: 4px; padding: 10px; border-radius: 14px;
+  border: 1px dashed var(--line); text-align: center;
+  background: repeating-conic-gradient(#eef2f6 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+}
+.logo-preview img { max-width: 100%; max-height: 96px; object-fit: contain; }
+.logo-preview small, .logo-preview.is-empty span { color: var(--muted); font-size: .78rem; }
+.logo-upload-actions { display: grid; gap: 8px; justify-items: start; flex: 1; min-width: 180px; }
+.logo-upload-actions small { color: var(--muted); }
+.logo-file-button { cursor: pointer; }
+.branding-preview-wrap { display: grid; gap: 6px; }
+.branding-preview-wrap small { color: var(--muted); }
+.branding-preview-frames { display: flex; gap: 14px; align-items: flex-end; }
+.branding-frame { position: relative; overflow: hidden; border-radius: 10px; background: linear-gradient(135deg, #334155, #0f172a); }
+.branding-frame.landscape { width: min(100%, 240px); aspect-ratio: 16 / 9; }
+.branding-frame.portrait { width: 76px; aspect-ratio: 9 / 16; }
+.branding-frame .frame-label { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,.5); font-size: .75rem; }
+.branding-frame .preview-logo { position: absolute; height: auto; }
+.branding-video-form { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: end; }
+.branding-video-form .check-row, .branding-video-form button { grid-column: 1 / -1; justify-self: start; }
+.branding-history-head { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+.branding-history-head h3 { margin: 0; font-size: 1rem; }
+.branding-history { display: grid; gap: 10px; }
+.branding-job { display: flex; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+.branding-job-main { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.branding-job-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branding-job-main small { color: var(--muted); }
+.branding-job-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.branding-review { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--brand-light); font-size: .85rem; }
+@media (max-width: 860px) {
+  .account-grid, .branding-video-form { grid-template-columns: 1fr; }
+  .branding-job { flex-direction: column; }
+  .branding-job-actions { justify-content: flex-start; }
+}

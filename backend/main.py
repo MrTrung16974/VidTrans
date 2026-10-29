@@ -35,6 +35,8 @@ from application.job_scheduler import JobScheduler
 from application.job_service import JobService
 from application.comic_routes import ComicRouteDependencies, create_comic_router, requeue_comic_job
 from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
+from application.branding_routes import BrandingRouteDependencies, create_branding_router
+from application.branding_service import BRANDING_JOB_ACTION, BrandingJobRunner
 from application.instagram_routes import create_instagram_router
 from application.seo_routes import create_seo_router
 from application.threads_routes import create_threads_router
@@ -78,6 +80,7 @@ from infrastructure.publishers.youtube import YouTubePublisher, YouTubePublisher
 from infrastructure.platform_apps import PLATFORM_APPS, PlatformAppError, PlatformAppStore, load_or_create_key
 from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
 from infrastructure.comic_series import ComicSeriesStore
+from infrastructure.branding_store import BrandingStore
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SocialPublishStore
@@ -691,6 +694,8 @@ _tenant_migration_manifest = {
 _tenant_manifest_path = WORK_DIR / "migrations" / "tenant-storage-v1.json"
 write_json_atomic(_tenant_manifest_path, _tenant_migration_manifest)
 SOCIAL_CREDENTIALS = SocialCredentialStore(DATABASE_TARGET)
+# Logos live beside the user's other private files: <work>/users/<user>/branding/.
+BRANDING_STORE = BrandingStore(DATABASE_TARGET, lambda user_id: WORK_DIR / "users" / storage_owner_segment(user_id))
 try:
     SOCIAL_CREDENTIAL_CIPHER: CredentialCipher | None = CredentialCipher.from_env()
 except CredentialCipherError:
@@ -4010,6 +4015,9 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
         if job_action == COMIC_JOB_ACTION:
             run_comic_job(job_id, resume_request)
             return
+        if job_action == BRANDING_JOB_ACTION:
+            run_branding_job(job_id, resume_request)
+            return
         if job_action != "process_video":
             raise ValueError("Stored background action is invalid")
         video_path = prepare_job_source_video(job_id, resume_request)
@@ -4168,6 +4176,44 @@ def run_comic_job(job_id: str, request: dict[str, Any]) -> None:
         TENANT_GOVERNANCE.release(job_id)
     except Exception as exc:
         logger.exception("Comic video failed for job %s", job_id)
+        update_job(job_id, status="failed", step="failed", error=public_error_message(exc), finished_at=utc_now())
+        TENANT_GOVERNANCE.release(job_id)
+    finally:
+        if hasattr(_job_context, "job_id"):
+            del _job_context.job_id
+
+
+BRANDING_RUNNER = BrandingJobRunner(
+    update_job=update_job,
+    ensure_active=ensure_job_active,
+    output_dir=lambda owner_user_id, job_id: tenant_job_dir(OUTPUT_DIR, owner_user_id, job_id),
+    artifact_name=lambda path: stored_artifact_name(path),
+    get_job=lambda job_id: JOB_SERVICE.get(job_id),
+    ffmpeg=lambda: FFMPEG,
+    ffprobe=lambda: FFPROBE,
+    utc_now=utc_now,
+)
+
+
+def run_branding_job(job_id: str, request: dict[str, Any]) -> None:
+    _job_context.job_id = job_id
+    try:
+        BRANDING_RUNNER.run(job_id, request)
+        TENANT_GOVERNANCE.consume(job_id)
+    except JobCancelled:
+        logger.info("Logo branding cancelled for job %s", job_id)
+        current = JOB_SERVICE.get(job_id) or {}
+        update_job(
+            job_id,
+            status="cancelled",
+            step="cancelled",
+            progress=float(current.get("progress", 0.0)),
+            step_detail="Đã hủy theo yêu cầu",
+            finished_at=utc_now(),
+        )
+        TENANT_GOVERNANCE.release(job_id)
+    except Exception as exc:
+        logger.exception("Logo branding failed for job %s", job_id)
         update_job(job_id, status="failed", step="failed", error=public_error_message(exc), finished_at=utc_now())
         TENANT_GOVERNANCE.release(job_id)
     finally:
@@ -4536,6 +4582,7 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
         metadata={"email": deleted.get("email")},
     )
     PLATFORM_APP_STORE.delete_user(user_id)
+    BRANDING_STORE.delete_user(user_id)
     # Safely clean up user-specific storage directories
     for base_dir in (WORK_DIR, UPLOAD_DIR, OUTPUT_DIR):
         user_dir = base_dir / "users" / storage_owner_segment(user_id)
@@ -6924,6 +6971,26 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     delete_project=delete_comic_project_permanently,
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
+
+
+BRANDING_ROUTE_DEPS = BrandingRouteDependencies(
+    store=BRANDING_STORE,
+    current_account=lambda request: current_account(request),
+    update_display_name=lambda user_id, name: ADMIN_ACCOUNTS.update(user_id, display_name=name),
+    public_account=public_admin_account,
+    job_for_request=lambda request, job_id: job_for_request(request, job_id),
+    job_response=lambda job_id, job: job_response(job_id, job),
+    list_jobs=lambda **query: JOB_SERVICE.list_jobs(**query),
+    create_job=lambda job_id, payload, owner_user_id: JOB_SERVICE.create(job_id, payload, owner_user_id=owner_user_id),
+    retry_job=lambda job_id, **fields: JOB_SERVICE.retry(job_id, **fields),
+    reserve_quota=lambda job_id, account: reserve_job_quota(job_id, account),
+    release_quota=lambda job_id: TENANT_GOVERNANCE.release(job_id),
+    notify_scheduler=lambda: notify_scheduler(),
+    upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
+    validate_video=lambda path: validate_video_file(path, ffprobe=FFPROBE),
+    artifact_path=lambda filename: stored_artifact_path(filename),
+)
+app.include_router(create_branding_router(BRANDING_ROUTE_DEPS))
 
 
 def custom_openapi() -> dict[str, Any]:
