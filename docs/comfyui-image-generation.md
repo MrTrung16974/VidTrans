@@ -121,6 +121,21 @@ VIDTRANS_ANIMATION_WORKER_MAX_SECONDS=4
 Trong **Truyện → Video** chọn phong cách **Phim tiên hiệp Trung Quốc (điện ảnh)**,
 AI vẽ ảnh **ComfyUI local**, và chế độ hoạt hình **GPU worker riêng**.
 
+### Chạy ComfyUI và animation worker bằng Docker Compose
+
+Compose có profile `comfyui` gồm hai service: `comfyui` tạo ảnh và
+`comfyui-animation-worker` chuyển keyframe thành video LTX-Video. Sau khi các
+model ở trên đã có trong `comfyui/models`, chạy:
+
+```bash
+docker compose --profile comfyui up -d --build comfyui comfyui-animation-worker vidtrans
+```
+
+Backend dùng mạng nội bộ Docker (`http://comfyui:8188` và
+`http://comfyui-animation-worker:9000`), không cần mở cổng worker ra máy chủ.
+Khi cấu hình này hoạt động, giao diện hiển thị **ComfyUI LTX-Video local (AI,
+miễn phí)** tại mục **AI tạo chuyển động**.
+
 Lưu ý trên Mac:
 
 - PyTorch 2.14.x cho ra khung nhiễu/vỡ với LTX-Video trên MPS; script ghim
