@@ -1,0 +1,79 @@
+name: Mobile
+
+on:
+  pull_request:
+    paths: ["mobile/**", "backend/**", "contracts/**", ".github/workflows/mobile.yml"]
+  push:
+    branches: [main]
+    paths: ["mobile/**", "backend/**", "contracts/**", ".github/workflows/mobile.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.41.5"
+
+jobs:
+  contract:
+    name: API contract up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install API dependencies
+        # Rendering the OpenAPI document does not load the ML models; skip the
+        # multi-GB OCR/ASR wheels. FastAPI is pinned to the version that wrote the contract.
+        run: |
+          grep -vE '^(openai-whisper|paddleocr|paddlepaddle)' requirements.txt > /tmp/requirements-api.txt
+          pip install -r /tmp/requirements-api.txt "fastapi==0.162.0"
+      - name: Check contracts/openapi.json
+        working-directory: backend
+        run: python scripts/export_openapi.py --check
+
+  flutter:
+    name: Analyze, test, build Android
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vidtrans-debug-apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 7
+
+  ios:
+    name: Build iOS (no codesign)
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build ios --release --no-codesign

@@ -14,9 +14,17 @@ class JobService:
     preserve this interface when processing moves out of the API process.
     """
 
-    def __init__(self, store: JobStore, *, on_change: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        store: JobStore,
+        *,
+        on_change: Callable[[str], None] | None = None,
+        on_status: Callable[[str, str], None] | None = None,
+    ) -> None:
         self._store = store
         self._on_change = on_change
+        # (job_id, status) after a status write took effect; drives mobile pushes.
+        self._on_status = on_status
 
     def _changed(self, job_id: str) -> None:
         # Push notifications are best effort; a listener failure must never
@@ -25,6 +33,14 @@ class JobService:
             return
         try:
             self._on_change(job_id)
+        except Exception:
+            pass
+
+    def _status_written(self, job_id: str, status: str) -> None:
+        if self._on_status is None:
+            return
+        try:
+            self._on_status(job_id, status)
         except Exception:
             pass
 
@@ -45,6 +61,10 @@ class JobService:
     def update(self, job_id: str, **fields: Any) -> dict[str, Any]:
         updated = self._store.update(job_id, **fields)
         self._changed(job_id)
+        requested = fields.get("status")
+        # The store ignores writes to cancelled jobs; only report what was stored.
+        if requested is not None and updated.get("status") == requested:
+            self._status_written(job_id, str(requested))
         return updated
 
     def create_batch(
@@ -72,6 +92,20 @@ class JobService:
 
     def list_batches(self, **filters: Any) -> tuple[list[dict[str, Any]], int]:
         return self._store.list_batches(**filters)
+
+    def claim_idempotency_key(self, owner_user_id: str, scope: str, key: str, **ttls: int) -> tuple[str, Any]:
+        return self._store.claim_idempotency_key(owner_user_id, scope, key, **ttls)
+
+    def reclaim_idempotency_key(self, owner_user_id: str, scope: str, key: str) -> str:
+        return self._store.reclaim_idempotency_key(owner_user_id, scope, key)
+
+    def complete_idempotency_key(
+        self, owner_user_id: str, scope: str, key: str, token: str, response: Mapping[str, Any]
+    ) -> None:
+        self._store.complete_idempotency_key(owner_user_id, scope, key, token, response)
+
+    def release_idempotency_key(self, owner_user_id: str, scope: str, key: str, token: str) -> None:
+        self._store.release_idempotency_key(owner_user_id, scope, key, token)
 
     def attach_to_batch(self, job_id: str, batch_id: str, *, priority: int = 0) -> None:
         self._store.attach_to_batch(job_id, batch_id, priority=priority)
@@ -102,6 +136,7 @@ class JobService:
     def retry(self, job_id: str, **fields: Any) -> dict[str, Any]:
         retried = self._store.retry(job_id, **fields)
         self._changed(job_id)
+        self._status_written(job_id, "queued")
         return retried
 
     def finalize_cancellation(self, job_id: str, **fields: Any) -> tuple[dict[str, Any], bool]:

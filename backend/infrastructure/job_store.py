@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 
 from infrastructure.database import connect, prepare_target
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
@@ -245,6 +246,19 @@ class JobStore:
                 END;
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS idempotency_keys (
+                    owner_user_id TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    idem_key TEXT NOT NULL,
+                    claim_token TEXT NOT NULL,
+                    response_json TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (owner_user_id, scope, idem_key)
+                )
+                """
+            )
 
     @staticmethod
     def _encode(payload: Mapping[str, Any]) -> str:
@@ -466,6 +480,73 @@ class JobStore:
                 elif batch["total_jobs"]:
                     batch["status"] = "completed_with_errors"
         return batches, total
+
+    def claim_idempotency_key(
+        self, owner_user_id: str, scope: str, key: str, *, pending_ttl_seconds: int, ttl_seconds: int
+    ) -> tuple[str, Any]:
+        """Claim ``key`` for one create request.
+
+        Returns ``("claimed", token)`` when the caller must do the work, ``("done", response)``
+        when an earlier request finished, or ``("pending", None)`` while it still runs. A claim
+        whose request died without releasing it expires after ``pending_ttl_seconds``.
+        """
+
+        now = datetime.now(timezone.utc)
+        token = uuid.uuid4().hex
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "DELETE FROM idempotency_keys WHERE owner_user_id=? AND scope=? AND idem_key=? "
+                "AND (created_at < ? OR (response_json IS NULL AND created_at < ?))",
+                (
+                    owner_user_id, scope, key,
+                    (now - timedelta(seconds=ttl_seconds)).isoformat(),
+                    (now - timedelta(seconds=pending_ttl_seconds)).isoformat(),
+                ),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO idempotency_keys(owner_user_id, scope, idem_key, claim_token, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (owner_user_id, scope, key, token, now.isoformat()),
+            )
+            row = connection.execute(
+                "SELECT claim_token, response_json FROM idempotency_keys WHERE owner_user_id=? AND scope=? AND idem_key=?",
+                (owner_user_id, scope, key),
+            ).fetchone()
+        if row is None or str(row["claim_token"]) == token:
+            return "claimed", token
+        if row["response_json"] is None:
+            return "pending", None
+        return "done", self._decode(str(row["response_json"]))
+
+    def reclaim_idempotency_key(self, owner_user_id: str, scope: str, key: str) -> str:
+        """Take over a finished key whose result is no longer worth replaying (e.g. it failed)."""
+
+        token = uuid.uuid4().hex
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE idempotency_keys SET claim_token=?, response_json=NULL, created_at=? "
+                "WHERE owner_user_id=? AND scope=? AND idem_key=?",
+                (token, _utc_now(), owner_user_id, scope, key),
+            )
+        return token
+
+    def complete_idempotency_key(
+        self, owner_user_id: str, scope: str, key: str, token: str, response: Mapping[str, Any]
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE idempotency_keys SET response_json=? "
+                "WHERE owner_user_id=? AND scope=? AND idem_key=? AND claim_token=?",
+                (self._encode(response), owner_user_id, scope, key, token),
+            )
+
+    def release_idempotency_key(self, owner_user_id: str, scope: str, key: str, token: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM idempotency_keys WHERE owner_user_id=? AND scope=? AND idem_key=? AND claim_token=?",
+                (owner_user_id, scope, key, token),
+            )
 
     @staticmethod
     def _batch_row(row: sqlite3.Row) -> dict[str, Any]:

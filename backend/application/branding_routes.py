@@ -17,11 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from application.api_models import Account, QueuedJob
 from application.branding_service import BRANDING_JOB_ACTION, is_branding_job
+from application.idempotency import IdempotentRequest
 from domain.branding import LOGO_POSITIONS, BrandingConfig, PlacementOverride
 from infrastructure.branding_store import BrandingError, BrandingStore
 
@@ -48,6 +50,8 @@ class BrandingRouteDependencies:
     upload_dir: Callable[[str, str], Path]
     validate_video: Callable[[Path], None]
     artifact_path: Callable[[str], Path]
+    # Dependency from application.idempotency.idempotency_guard for POST /branding/videos.
+    video_idempotency: Callable[..., Any]
 
 
 class AccountPatch(BaseModel):
@@ -85,7 +89,7 @@ def create_branding_router(deps: BrandingRouteDependencies) -> APIRouter:
         return job
 
     # ------------------------------------------------------------------ account
-    @router.put("/me")
+    @router.put("/me", response_model=Account)
     def update_me(request: Request, body: AccountPatch) -> JSONResponse:
         account = deps.current_account(request)
         try:
@@ -151,14 +155,18 @@ def create_branding_router(deps: BrandingRouteDependencies) -> APIRouter:
         return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
     # ------------------------------------------------------------------ jobs
-    @router.post("/branding/videos", status_code=202)
+    @router.post("/branding/videos", status_code=202, response_model=QueuedJob,
+                 responses={200: {"model": QueuedJob, "description": "Idempotency-Key replay of an earlier job"}})
     async def queue_video(
         request: Request,
+        idempotent: IdempotentRequest = Depends(deps.video_idempotency),
         file: UploadFile = File(...),
         # Replacing or covering another logo is only for videos the user may edit.
         rights_confirmed: bool = Form(False),
         override: PlacementOverride = Form("auto"),
     ) -> JSONResponse:
+        if idempotent.replay is not None:
+            return JSONResponse(idempotent.replay)
         account = deps.current_account(request)
         owner = str(account["user_id"])
         if not rights_confirmed:
@@ -215,7 +223,9 @@ def create_branding_router(deps: BrandingRouteDependencies) -> APIRouter:
             shutil.rmtree(upload_dir, ignore_errors=True)
             raise
         deps.notify_scheduler()
-        return JSONResponse({"job_id": job_id, "status": "queued"}, status_code=202)
+        queued = {"job_id": job_id, "status": "queued"}
+        idempotent.complete(queued)
+        return JSONResponse(queued, status_code=202)
 
     @router.get("/branding/videos")
     def history(

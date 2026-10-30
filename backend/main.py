@@ -16,7 +16,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Annotated, Any, Callable, Optional, Sequence
 from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -33,6 +33,10 @@ from infrastructure.artifact_archive import build_artifact_archive
 from app.config import AppSettings, available_cpu_count
 from application.job_scheduler import JobScheduler
 from application.job_service import JobService
+from application.api_models import (
+    Account, AuthStatus, AuthToken, Batch, BatchPage, CreatedBatch, Job, JobPage,
+)
+from application.idempotency import IdempotentRequest, idempotency_guard
 from application.comic_routes import ComicRouteDependencies, create_comic_router, requeue_comic_job
 from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
 from application.branding_routes import BrandingRouteDependencies, create_branding_router
@@ -81,6 +85,9 @@ from infrastructure.platform_apps import PLATFORM_APPS, PlatformAppError, Platfo
 from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccountStore
 from infrastructure.comic_series import ComicSeriesStore
 from infrastructure.branding_store import BrandingStore
+from infrastructure.device_store import DeviceStore
+from infrastructure.push_notifications import FcmSender, JobPushNotifier
+from application.device_routes import DeviceRouteDependencies, create_device_router
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SocialPublishStore
@@ -364,7 +371,13 @@ app.add_middleware(
 # job_change_snapshot is defined with the job routes below; it is only
 # called once the broadcaster runs, after the module has loaded.
 JOB_EVENTS = JobEventHub(lambda job_ids: job_change_snapshot(job_ids))
-JOB_SERVICE = JobService(JobStore(DATABASE_TARGET), on_change=JOB_EVENTS.notify)
+DEVICE_STORE = DeviceStore(DATABASE_TARGET)
+PUSH_NOTIFIER = JobPushNotifier(DEVICE_STORE, FcmSender.from_env(), lambda job_id: JOB_SERVICE.get(job_id))
+JOB_SERVICE = JobService(
+    JobStore(DATABASE_TARGET),
+    on_change=JOB_EVENTS.notify,
+    on_status=lambda job_id, status: PUSH_NOTIFIER.on_status(job_id, status),
+)
 N8N_WORKFLOW_CONFIG = N8nWebhookConfig.from_env()
 WORKFLOW_EVENT_STORE = WorkflowEventStore(DATABASE_TARGET)
 WORKFLOW_EVENTS = WorkflowEventSink(WORKFLOW_EVENT_STORE)
@@ -948,6 +961,7 @@ async def authenticate_request(request: Request, call_next: Callable[..., Any]):
         and request.method.upper() not in SAFE_HTTP_METHODS
         and not request.url.path.startswith("/api/v1/billing/")
         and request.url.path != "/api/v1/auth/session"
+        and not request.url.path.startswith("/api/v1/me/devices")
     ):
         return JSONResponse(
             {"detail": "Tài khoản Người xem không có quyền thay đổi dữ liệu"},
@@ -4385,6 +4399,7 @@ async def start_job_scheduler() -> None:
 @app.on_event("shutdown")
 async def stop_job_scheduler() -> None:
     await JOB_EVENTS.stop()
+    PUSH_NOTIFIER.shutdown()
     await SYSTEM_EVENTS.stop()
     retention_task = getattr(app.state, "retention_task", None)
     if retention_task is not None:
@@ -4585,6 +4600,7 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
     )
     PLATFORM_APP_STORE.delete_user(user_id)
     BRANDING_STORE.delete_user(user_id)
+    DEVICE_STORE.delete_user(user_id)
     # Safely clean up user-specific storage directories
     for base_dir in (WORK_DIR, UPLOAD_DIR, OUTPUT_DIR):
         user_dir = base_dir / "users" / storage_owner_segment(user_id)
@@ -4932,7 +4948,7 @@ def validate_tiktok_auto_publish(request: ProcessingRequest, owner_user_id: str)
         )
 
 
-@app.get("/api/v1/me")
+@app.get("/api/v1/me", response_model=Account)
 def get_current_user(request: Request) -> JSONResponse:
     account = current_account(request)
     return JSONResponse(public_admin_account(account), headers={"Cache-Control": "no-store"})
@@ -5289,7 +5305,7 @@ def clear_auth_cookies(response: Response) -> None:
         )
 
 
-@app.get("/api/v1/auth/status")
+@app.get("/api/v1/auth/status", response_model=AuthStatus)
 def get_auth_status(request: Request) -> JSONResponse:
     payload = AUTH_MANAGER.status()
     payload["authenticated"] = False
@@ -5310,7 +5326,7 @@ def get_auth_status(request: Request) -> JSONResponse:
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
-@app.post("/api/v1/auth/token")
+@app.post("/api/v1/auth/token", response_model=AuthToken)
 def create_auth_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -5369,7 +5385,7 @@ class RefreshTokenBody(BaseModel):
     refresh_token: str = Field(min_length=1, max_length=4096)
 
 
-@app.post("/api/v1/auth/refresh", openapi_extra={"requestBody": {
+@app.post("/api/v1/auth/refresh", response_model=AuthToken, openapi_extra={"requestBody": {
     "required": False,
     "description": "Native apps only. Web clients send no body and use the refresh cookie.",
     "content": {"application/json": {"schema": RefreshTokenBody.model_json_schema()}},
@@ -6023,9 +6039,25 @@ async def process_video_endpoint(
     )
 
 
-@app.post("/api/v1/batches")
+def job_replay_valid(response: dict[str, Any]) -> bool:
+    """A remembered create is replayed unless its job is gone or failed (then the retry runs anew)."""
+
+    job = JOB_SERVICE.get(str(response.get("job_id") or ""))
+    return job is not None and job.get("status") != "failed"
+
+
+def batch_replay_valid(response: dict[str, Any]) -> bool:
+    return any(job_replay_valid(job) for job in response.get("jobs") or [])
+
+
+BATCH_IDEMPOTENCY = idempotency_guard(lambda: JOB_SERVICE, lambda request: current_account(request), "batches", batch_replay_valid)
+
+
+@app.post("/api/v1/batches", status_code=201, response_model=CreatedBatch,
+          responses={200: {"model": CreatedBatch, "description": "Idempotency-Key replay of an earlier batch"}})
 async def create_batch_endpoint(
     request: Request,
+    idempotent: Annotated[IdempotentRequest, Depends(BATCH_IDEMPOTENCY)] = IdempotentRequest(),
     files: list[UploadFile] | None = File(default=None),
     source_links: str = Form(""),
     source_cookies: UploadFile | None = File(default=None),
@@ -6061,6 +6093,8 @@ async def create_batch_endpoint(
     tiktok_privacy_level: str = Form("SELF_ONLY"),
     tiktok_publish_at: str | None = Form(default=None),
 ) -> JSONResponse:
+    if idempotent.replay is not None:
+        return JSONResponse(idempotent.replay)
     account = current_account(request)
     owner_user_id = str(account["user_id"])
     tts_provider = tts_provider.strip().lower() or default_tts_provider()
@@ -6351,15 +6385,14 @@ async def create_batch_endpoint(
         raise
 
     notify_scheduler()
-    return JSONResponse(
-        {
-            "batch_id": batch_id,
-            "name": normalized_name,
-            "total_jobs": len(created_jobs),
-            "jobs": created_jobs,
-        },
-        status_code=201,
-    )
+    created = {
+        "batch_id": batch_id,
+        "name": normalized_name,
+        "total_jobs": len(created_jobs),
+        "jobs": created_jobs,
+    }
+    idempotent.complete(created)
+    return JSONResponse(created, status_code=201)
 
 
 def job_response(job_id: str, job: dict[str, Any], queue_positions: dict[str, int] | None = None) -> dict[str, Any]:
@@ -6386,7 +6419,7 @@ def job_response(job_id: str, job: dict[str, Any], queue_positions: dict[str, in
     return response
 
 
-@app.get("/api/v1/jobs")
+@app.get("/api/v1/jobs", response_model=JobPage)
 def list_jobs_endpoint(
     request: Request,
     status: str | None = Query(default=None),
@@ -6618,7 +6651,7 @@ async def admin_system_events_socket(websocket: WebSocket) -> None:
         reader.cancel()
 
 
-@app.get("/api/v1/jobs/{job_id}")
+@app.get("/api/v1/jobs/{job_id}", response_model=Job)
 def get_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     job = job_for_request(request, job_id)
     if job is None:
@@ -6680,7 +6713,7 @@ def download_all_job_artifacts(request: Request, job_id: str) -> FileResponse:
     )
 
 
-@app.get("/api/v1/batches")
+@app.get("/api/v1/batches", response_model=BatchPage)
 def list_batches_endpoint(
     request: Request,
     limit: int = Query(default=50, ge=1, le=200),
@@ -6697,7 +6730,7 @@ def list_batches_endpoint(
     return JSONResponse({"items": batches, "total": total, "limit": limit, "offset": offset})
 
 
-@app.get("/api/v1/batches/{batch_id}")
+@app.get("/api/v1/batches/{batch_id}", response_model=Batch)
 def get_batch_endpoint(request: Request, batch_id: str) -> JSONResponse:
     account = current_account(request)
     owner_user_id = str(account["user_id"])
@@ -6723,7 +6756,7 @@ def get_batch_endpoint(request: Request, batch_id: str) -> JSONResponse:
     return JSONResponse(batch)
 
 
-@app.post("/api/v1/jobs/{job_id}/cancel")
+@app.post("/api/v1/jobs/{job_id}/cancel", response_model=Job)
 def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     if job_for_request(request, job_id) is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -6733,7 +6766,7 @@ def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     return JSONResponse(job_response(job_id, job))
 
 
-@app.post("/api/v1/jobs/{job_id}/retry")
+@app.post("/api/v1/jobs/{job_id}/retry", response_model=Job)
 def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     account = current_account(request)
     source = job_for_request(request, job_id)
@@ -6973,6 +7006,12 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     delete_project=delete_comic_project_permanently,
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
+DEVICE_ROUTE_DEPS = DeviceRouteDependencies(
+    store=DEVICE_STORE,
+    current_account=lambda request: current_account(request),
+    push_enabled=lambda: PUSH_NOTIFIER.enabled,
+)
+app.include_router(create_device_router(DEVICE_ROUTE_DEPS))
 
 
 BRANDING_ROUTE_DEPS = BrandingRouteDependencies(
@@ -6991,6 +7030,9 @@ BRANDING_ROUTE_DEPS = BrandingRouteDependencies(
     upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
     validate_video=lambda path: validate_video_file(path, ffprobe=FFPROBE),
     artifact_path=lambda filename: stored_artifact_path(filename),
+    video_idempotency=idempotency_guard(
+        lambda: JOB_SERVICE, lambda request: current_account(request), "branding_videos", job_replay_valid
+    ),
 )
 app.include_router(create_branding_router(BRANDING_ROUTE_DEPS))
 
