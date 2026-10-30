@@ -33,6 +33,8 @@ PERSISTENCE = 0.8
 # Above this share of persistent pixels the scene itself is static (slides, fixed camera on a wall).
 MAX_STATIC_SHARE = 0.25
 MIN_SCENE_CHANGE = 3.0
+# Pixels whose value barely changes across the window (logo fill, solid borders).
+STATIC_STD = 8.0
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,8 @@ class Box:
 class Candidate:
     box: Box
     confidence: float
+    # Which pixels inside ``box`` are the logo's strokes (analysis resolution), for inpainting.
+    stencil: np.ndarray | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass
@@ -83,6 +87,10 @@ class Segment:
     end: float
     box: Box | None
     confidence: float
+    # Index into ``Detection.stencils``: the mask used to inpaint this logo.
+    track: int | None = None
+    # A moving logo: (t, centre x, centre y) shares of the frame; the renderer interpolates.
+    keyframes: list[tuple[float, float, float]] | None = None
 
 
 @dataclass
@@ -95,9 +103,15 @@ class Detection:
     candidates: list[dict]
     windows: int
     valid_windows: int
+    method: str = "persistence"  # "persistence" | "template"
+    stencils: dict[int, np.ndarray] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "status": self.status, "confidence": self.confidence, "method": self.method,
+            "segments": [asdict(segment) for segment in self.segments], "candidates": self.candidates,
+            "windows": self.windows, "valid_windows": self.valid_windows,
+        }
 
 
 # ------------------------------------------------------------------ frame sampling
@@ -122,7 +136,7 @@ def sample_frames(
     out_w, out_h = analysis_size(width, height)
     result = run(
         [ffmpeg, "-v", "error", "-i", str(video_path), "-an", "-sn",
-         "-vf", f"fps={fps:.4f},scale={out_w}:{out_h},format=gray",
+         "-vf", f"fps={fps:.4f}:round=up,scale={out_w}:{out_h},format=gray",
          "-f", "rawvideo", "pipe:1"],
         capture_output=True, check=True,
     )
@@ -190,6 +204,30 @@ def _location_prior(box: Box) -> float:
     return 0.0
 
 
+def _grow_into_static(mask: np.ndarray, temporal_std: np.ndarray, x0: int, y0: int, x1: int, y1: int,
+                      ) -> tuple[tuple[int, int, int, int], np.ndarray]:
+    """The logo body: its persistent edges plus the unchanging pixels connected to them.
+
+    A solid border or fill has no edges of its own once the scene behind it changes
+    colour, so edges alone outline only the logo's inner details; inpainting that
+    would leave the border and refill the hole with its colour.
+    """
+    height, width = mask.shape
+    reach = max(2, min(x1 - x0, y1 - y0) // 2)
+    gx0, gy0, gx1, gy1 = max(0, x0 - reach), max(0, y0 - reach), min(width, x1 + reach), min(height, y1 + reach)
+    region = np.zeros((gy1 - gy0, gx1 - gx0), dtype=bool)
+    region[y0 - gy0:y1 - gy0, x0 - gx0:x1 - gx0] = mask[y0:y1, x0:x1]
+    allowed = (temporal_std[gy0:gy1, gx0:gx1] < STATIC_STD) | region
+    for _ in range(reach):
+        grown = _dilate(region, 1) & allowed
+        if np.array_equal(grown, region):
+            break
+        region = grown
+    ys, xs = np.nonzero(region)
+    bx0, by0, bx1, by1 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+    return (gx0 + bx0, gy0 + by0, gx0 + bx1, gy0 + by1), region[by0:by1, bx0:bx1]
+
+
 def detect_candidates(frames: np.ndarray) -> tuple[bool, list[Candidate]]:
     """Analyse one window of frames; returns (scene readable, candidates)."""
     if len(frames) < 2:
@@ -233,7 +271,9 @@ def detect_candidates(frames: np.ndarray) -> tuple[bool, list[Candidate]]:
         change = min(1.0, max(0.0, (ring_change - inside_change) / 10.0))
         steadiness = min(1.0, max(0.0, (float(persistence[y0:y1, x0:x1][inside].mean()) - PERSISTENCE) / 0.2))
         confidence = 0.4 * steadiness + 0.35 * change + 0.15 * location + 0.1 * min(1.0, density * 4)
-        candidates.append(Candidate(box, round(confidence, 3)))
+        (bx0, by0, bx1, by1), stencil = _grow_into_static(mask, temporal_std, x0, y0, x1, y1)
+        body = Box(bx0 / width, by0 / height, (bx1 - bx0) / width, (by1 - by0) / height)
+        candidates.append(Candidate(body, round(confidence, 3), stencil))
     return True, sorted(candidates, key=lambda item: -item.confidence)
 
 
@@ -297,8 +337,10 @@ def decide(
         for candidate in window.candidates:
             track = next((t for t in tracks if _median_box(t["boxes"]).iou(candidate.box) > 0.3), None)
             if track is None:
-                track = {"boxes": [], "confidences": [], "windows": []}
+                track = {"boxes": [], "confidences": [], "windows": [], "stencil": None, "best": -1.0}
                 tracks.append(track)
+            if candidate.stencil is not None and candidate.confidence > track["best"]:
+                track["stencil"], track["best"] = candidate.stencil, candidate.confidence
             track["boxes"].append(candidate.box)
             track["confidences"].append(candidate.confidence)
             track["windows"].append(index)
@@ -341,7 +383,7 @@ def decide(
         if segments and segments[-1].box == box:
             segments[-1].end = window.end
         else:
-            segments.append(Segment(window.start, window.end, box, confidence))
+            segments.append(Segment(window.start, window.end, box, confidence, track_index))
     if segments:
         segments[0].start, segments[-1].end = 0.0, duration
 
@@ -365,6 +407,10 @@ def decide(
         candidates=candidates,
         windows=len(windows),
         valid_windows=valid_count,
+        stencils={
+            segment.track: tracks[segment.track]["stencil"] for segment in found
+            if tracks[segment.track]["stencil"] is not None
+        },
     )
 
 

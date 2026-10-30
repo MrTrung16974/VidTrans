@@ -2,6 +2,7 @@
 
     /api/v1/me/branding            GET, PUT   settings of the signed-in account
     /api/v1/me/branding/logo       GET, POST, DELETE
+    /api/v1/me/branding/template   GET, POST, DELETE  sample of the old logo to replace
     /api/v1/branding/videos        POST (queue a video), GET (history)
     /api/v1/branding/videos/{id}   GET; /download; /reprocess
 
@@ -69,8 +70,11 @@ def create_branding_router(deps: BrandingRouteDependencies) -> APIRouter:
         if logo:
             # The content-addressed filename doubles as a cache buster for the preview.
             logo = {**logo, "url": f"/api/v1/me/branding/logo?v={logo['filename']}"}
+        template = stored["template"]
+        if template:
+            template = {**template, "url": f"/api/v1/me/branding/template?v={template['filename']}"}
         return {
-            "config": stored["config"].model_dump(mode="json"), "logo": logo,
+            "config": stored["config"].model_dump(mode="json"), "logo": logo, "template": template,
             "updated_at": stored["updated_at"], "positions": list(LOGO_POSITIONS),
         }
 
@@ -123,6 +127,29 @@ def create_branding_router(deps: BrandingRouteDependencies) -> APIRouter:
             raise HTTPException(404, "Chưa có logo")
         return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
+    @router.post("/me/branding/template")
+    async def upload_template(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+        user_id = str(deps.current_account(request)["user_id"])
+        data = await file.read(5 * 1024 * 1024 + 1)
+        try:
+            deps.store.save_template(user_id, data)
+        except BrandingError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return JSONResponse(branding_payload(user_id), headers=NO_STORE)
+
+    @router.delete("/me/branding/template")
+    def delete_template(request: Request) -> JSONResponse:
+        user_id = str(deps.current_account(request)["user_id"])
+        deps.store.delete_template(user_id)
+        return JSONResponse(branding_payload(user_id), headers=NO_STORE)
+
+    @router.get("/me/branding/template")
+    def get_template(request: Request) -> FileResponse:
+        path = deps.store.template_path(str(deps.current_account(request)["user_id"]))
+        if path is None:
+            raise HTTPException(404, "Chưa có logo mẫu")
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
     # ------------------------------------------------------------------ jobs
     @router.post("/branding/videos", status_code=202)
     async def queue_video(
@@ -162,6 +189,10 @@ def create_branding_router(deps: BrandingRouteDependencies) -> APIRouter:
             # Snapshot: later logo/setting changes never alter this job.
             logo_path = upload_dir / "logo.png"
             shutil.copyfile(logo_source, logo_path)
+            template_source = deps.store.template_path(owner)
+            template_path = upload_dir / "template.png" if template_source else None
+            if template_source:
+                shutil.copyfile(template_source, template_path)
         except BaseException:
             deps.release_quota(job_id)
             shutil.rmtree(upload_dir, ignore_errors=True)
@@ -176,7 +207,7 @@ def create_branding_router(deps: BrandingRouteDependencies) -> APIRouter:
                     "video_path": str(video_path),
                     "logo_path": str(logo_path), "logo_width": stored["logo"]["width"],
                     "logo_height": stored["logo"]["height"], "config": config.model_dump(mode="json"),
-                    "override": override,
+                    "override": override, "template_path": str(template_path) if template_path else None,
                 },
             }, owner)
         except Exception:

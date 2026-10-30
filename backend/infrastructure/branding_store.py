@@ -65,6 +65,16 @@ class BrandingStore:
         # Resolves (and creates) the tenant directory that holds the user's logo.
         self.user_dir = user_dir
         with self._db() as db:
+            # Optional sample of the logo to replace; detection then tracks it, even while it moves.
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS user_branding_templates (
+                    user_id TEXT PRIMARY KEY,
+                    filename TEXT NOT NULL,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
             db.execute("""
                 CREATE TABLE IF NOT EXISTS user_branding_configs (
                     user_id TEXT PRIMARY KEY,
@@ -118,7 +128,54 @@ class BrandingStore:
                     "filename": str(row["logo_filename"]), "width": int(row["logo_width"]),
                     "height": int(row["logo_height"]), "transparent": bool(row["logo_transparent"]),
                 }
-        return {"config": config, "logo": logo, "updated_at": row["updated_at"] if row else None}
+        template = None
+        template_row = self._template_row(user_id)
+        if template_row and self.template_path(user_id) is not None:
+            template = {"filename": str(template_row["filename"]), "width": int(template_row["width"]),
+                        "height": int(template_row["height"])}
+        return {"config": config, "logo": logo, "template": template,
+                "updated_at": row["updated_at"] if row else None}
+
+    def _template_row(self, user_id: str) -> Any:
+        with self._db() as db:
+            return db.execute("SELECT * FROM user_branding_templates WHERE user_id=?", (user_id,)).fetchone()
+
+    def save_template(self, user_id: str, data: bytes) -> dict[str, Any]:
+        user_id = self._user(user_id)
+        png, width, height, _ = normalise_logo(data)
+        filename = f"template-{hashlib.sha256(png).hexdigest()[:16]}.png"
+        directory = self._logo_dir(user_id)
+        temporary = directory / f".{filename}.tmp"
+        temporary.write_bytes(png)
+        temporary.replace(directory / filename)
+        with self._db() as db:
+            db.execute("""
+                INSERT INTO user_branding_templates(user_id, filename, width, height, updated_at) VALUES(?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET filename=excluded.filename, width=excluded.width,
+                    height=excluded.height, updated_at=excluded.updated_at
+            """, (user_id, filename, width, height, utc_now()))
+        for stale in directory.glob("template-*.png"):
+            if stale.name != filename:
+                stale.unlink(missing_ok=True)
+        return self.get(user_id)
+
+    def delete_template(self, user_id: str) -> dict[str, Any]:
+        user_id = self._user(user_id)
+        with self._db() as db:
+            db.execute("DELETE FROM user_branding_templates WHERE user_id=?", (user_id,))
+        for stale in self._logo_dir(user_id).glob("template-*.png"):
+            stale.unlink(missing_ok=True)
+        return self.get(user_id)
+
+    def template_path(self, user_id: str) -> Path | None:
+        row = self._template_row(self._user(user_id))
+        if not row:
+            return None
+        directory = self._logo_dir(user_id).resolve()
+        path = (directory / str(row["filename"])).resolve()
+        if not path.is_relative_to(directory) or not path.is_file():
+            return None
+        return path
 
     def save_config(self, user_id: str, config: BrandingConfig) -> dict[str, Any]:
         user_id = self._user(user_id)
@@ -178,3 +235,4 @@ class BrandingStore:
     def delete_user(self, user_id: str) -> None:
         with self._db() as db:
             db.execute("DELETE FROM user_branding_configs WHERE user_id=?", (self._user(user_id),))
+            db.execute("DELETE FROM user_branding_templates WHERE user_id=?", (self._user(user_id),))

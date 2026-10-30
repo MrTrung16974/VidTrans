@@ -10,7 +10,7 @@ const POSITION_LABELS = {
 };
 const POLL_MS = 2000;
 
-export function createBrandingWorkspace({ requestJson, toast, escapeHtml }) {
+export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogoChange }) {
   const $ = selector => document.querySelector(selector);
   const $$ = selector => [...document.querySelectorAll(selector)];
   const form = $("#brandingForm");
@@ -27,6 +27,8 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml }) {
     return {
       auto_detect: form.elements.auto_detect.checked,
       cover_original: form.elements.cover_original.checked,
+      // Read from the element: a disabled select is left out of FormData.
+      cover_method: form.elements.cover_method.value,
       default_position: data.get("default_position"),
       logo_size: Number(data.get("logo_size")),
       opacity: Number(data.get("opacity")) / 100,
@@ -91,6 +93,14 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml }) {
       preview.innerHTML = "<span>Chưa có logo</span>";
     }
     $("#logoDeleteButton").disabled = !data.logo;
+    const templatePreview = $("#templatePreview");
+    templatePreview.classList.toggle("is-empty", !data.template);
+    templatePreview.innerHTML = data.template
+      ? `<img src="${escapeHtml(data.template.url)}" alt="Logo mẫu cần thay" /><small>${data.template.width}×${data.template.height}px</small>`
+      : "<span>Chưa có mẫu</span>";
+    $("#templateDeleteButton").disabled = !data.template;
+    form.elements.cover_method.disabled = !form.elements.cover_original.checked;
+    onLogoChange?.(data.logo?.url || null);
     updateOutputs();
   }
 
@@ -100,9 +110,12 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml }) {
     if (info.override && info.override !== "auto") return `Ép ${POSITION_LABELS[info.override] || info.override}`;
     const detection = info.detection;
     if (!detection) return "Không nhận diện · vị trí mặc định";
+    const cover = info.cover_method === "inpaint" ? " · đã khôi phục nền logo cũ" : info.cover_method === "blur" ? " · đã làm mờ logo cũ" : "";
+    const via = detection.method === "template" ? " theo mẫu" : "";
+    const moving = info.placements.some(item => item.source === "tracked") ? " · logo di chuyển, đã bám theo" : "";
     if (detection.status === "found") {
       const spans = info.placements.length > 1 ? ` · ${info.placements.length} đoạn` : "";
-      return `Tìm thấy logo (độ tin cậy ${Math.round(detection.confidence * 100)}%)${spans}`;
+      return `Tìm thấy logo${via} (độ tin cậy ${Math.round(detection.confidence * 100)}%)${spans}${moving}${cover}`;
     }
     if (detection.status === "uncertain") return "Không chắc chắn · dùng vị trí mặc định";
     return "Không có logo · vị trí mặc định";
@@ -141,29 +154,40 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml }) {
     }).join("");
   }
 
-  async function loadHistory() {
-    const payload = await requestJson("/api/v1/branding/videos?limit=20");
+  async function loadHistory({ silent = false } = {}) {
+    const payload = await requestJson("/api/v1/branding/videos?limit=20", { silent });
     renderHistory(payload);
     clearTimeout(pollTimer);
     if (active && payload.items.some(job => ACTIVE.has(job.status))) {
-      pollTimer = setTimeout(() => loadHistory().catch(() => {}), POLL_MS);
+      pollTimer = setTimeout(() => loadHistory({ silent: true }).catch(() => {}), POLL_MS);
     }
   }
 
   async function load() {
-    const [account, data] = await Promise.all([requestJson("/api/v1/me"), requestJson("/api/v1/me/branding")]);
-    $("#accountEmail").value = account.email || "";
-    $("#accountDisplayName").value = account.display_name || "";
-    renderBranding(data);
-    await loadHistory();
+    $("#logoPreview")?.classList.add("is-loading");
+    $("#templatePreview")?.classList.add("is-loading");
+    try {
+      const [account, data] = await Promise.all([requestJson("/api/v1/me"), requestJson("/api/v1/me/branding")]);
+      $("#accountEmail").value = account.email || "";
+      $("#accountDisplayName").value = account.display_name || "";
+      renderBranding(data);
+      await loadHistory();
+    } finally {
+      $("#logoPreview")?.classList.remove("is-loading");
+      $("#templatePreview")?.classList.remove("is-loading");
+    }
   }
 
-  async function run(action, success) {
+  async function run(action, success, previewSelector = null) {
+    const preview = previewSelector ? $(previewSelector) : null;
+    preview?.classList.add("is-loading");
     try {
       await action();
       if (success) toast(success);
     } catch (error) {
       toast(error.message, true);
+    } finally {
+      preview?.classList.remove("is-loading");
     }
   }
 
@@ -185,15 +209,31 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml }) {
     if (!file) return;
     const body = new FormData();
     body.append("file", file);
-    run(async () => renderBranding(await requestJson("/api/v1/me/branding/logo", { method: "POST", body })), "Đã cập nhật logo");
+    run(async () => renderBranding(await requestJson("/api/v1/me/branding/logo", { method: "POST", body })), "Đã cập nhật logo", "#logoPreview");
+  });
+
+  $("#templateFileInput").addEventListener("change", event => {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (!file) return;
+    const body = new FormData();
+    body.append("file", file);
+    run(async () => renderBranding(await requestJson("/api/v1/me/branding/template", { method: "POST", body })), "Đã lưu logo mẫu", "#templatePreview");
+  });
+
+  $("#templateDeleteButton").addEventListener("click", () => {
+    run(async () => renderBranding(await requestJson("/api/v1/me/branding/template", { method: "DELETE" })), "Đã xóa logo mẫu", "#templatePreview");
   });
 
   $("#logoDeleteButton").addEventListener("click", () => {
     if (!confirm("Xóa logo của tài khoản?")) return;
-    run(async () => renderBranding(await requestJson("/api/v1/me/branding/logo", { method: "DELETE" })), "Đã xóa logo");
+    run(async () => renderBranding(await requestJson("/api/v1/me/branding/logo", { method: "DELETE" })), "Đã xóa logo", "#logoPreview");
   });
 
-  form.addEventListener("input", updateOutputs);
+  form.addEventListener("input", () => {
+    form.elements.cover_method.disabled = !form.elements.cover_original.checked;
+    updateOutputs();
+  });
   form.addEventListener("submit", event => {
     event.preventDefault();
     run(async () => renderBranding(await requestJson("/api/v1/me/branding", {

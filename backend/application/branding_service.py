@@ -6,10 +6,15 @@ ownership checks with video translation. When queued, the account's logo and
 settings are copied into the job (``resume_request``): editing them later never
 changes a job that is already waiting or running.
 
-    probe -> detect logo (optional) -> plan placements -> FFmpeg render -> artifact
+    probe -> find the old logo (template tracking when the user gave a sample of it,
+    else persistent-edge detection) -> plan placements -> render -> artifact
+
+Rendering is one FFmpeg pass, or, when the old logo is inpainted, frames stream
+through ``pipeline.logo_inpaint`` between a decoder and the encoder.
 """
 from __future__ import annotations
 
+import io
 import logging
 import subprocess
 from dataclasses import dataclass
@@ -18,7 +23,8 @@ from typing import Any, Callable
 
 from domain.branding import BrandingConfig
 from infrastructure.media_probe import probe_media_file
-from pipeline.logo_detection import Box, Detection, Segment, detect_logo
+from pipeline import logo_inpaint, logo_tracking
+from pipeline.logo_detection import Detection, detect_logo
 from pipeline.logo_overlay import build_ffmpeg_command, plan_placements
 
 logger = logging.getLogger(__name__)
@@ -31,12 +37,18 @@ def is_branding_job(job: dict[str, Any] | None) -> bool:
     return bool(job) and job.get("job_action") == BRANDING_JOB_ACTION
 
 
-def segments_from_dicts(items: list[dict[str, Any]]) -> list[Segment]:
-    return [
-        Segment(float(item["start"]), float(item["end"]), Box(**item["box"]) if item.get("box") else None,
-                float(item.get("confidence") or 0.0))
-        for item in items
-    ]
+def decoded_size(ffmpeg: str, video_path: Path) -> tuple[int, int] | None:
+    """Frame size as FFmpeg decodes it, i.e. after rotation metadata (phone videos) is applied."""
+    from PIL import Image
+
+    result = subprocess.run(
+        [ffmpeg, "-v", "error", "-i", str(video_path), "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"],
+        capture_output=True, timeout=60,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return None
+    with Image.open(io.BytesIO(result.stdout)) as image:
+        return image.size
 
 
 @dataclass
@@ -67,33 +79,53 @@ class BrandingJobRunner:
         if not logo_path.is_file():
             raise FileNotFoundError("Logo của job không còn trên máy chủ")
 
+        template_path = Path(str(request["template_path"])) if request.get("template_path") else None
+
         self._progress(job_id, "probe", 0.0, "Đang đọc thông tin video")
         probe = probe_media_file(video_path, ffprobe=self.ffprobe())
+        width, height = decoded_size(self.ffmpeg(), video_path) or (probe.width, probe.height)
+        fps = probe.fps if 1.0 <= probe.fps <= 120.0 else 30.0
         self.ensure_active(job_id)
 
         detection: Detection | None = None
         if config.auto_detect and override == "auto":
-            self._progress(job_id, "detect", 0.0, "Đang nhận diện logo có sẵn trong video")
-            detection = detect_logo(
-                self.ffmpeg(), video_path, width=probe.width, height=probe.height, duration=probe.duration,
-                strategy=config.multi_logo_strategy, default_position=config.default_position,
-                min_confidence=config.min_confidence,
-            )
+            if template_path is not None and template_path.is_file() and logo_tracking.available():
+                # The user named the logo to replace: follow it, and never replace another one instead.
+                self._progress(job_id, "detect", 0.0, "Đang dò logo theo mẫu")
+
+                def tracking_progress(fraction: float) -> None:
+                    self._progress(job_id, "detect", fraction, "Đang dò logo theo mẫu")
+                    self.ensure_active(job_id)
+
+                detection = logo_tracking.track_template(
+                    self.ffmpeg(), video_path, template_path, width=width, height=height,
+                    duration=probe.duration, progress=tracking_progress,
+                )
+            else:
+                self._progress(job_id, "detect", 0.0, "Đang nhận diện logo có sẵn trong video")
+                detection = detect_logo(
+                    self.ffmpeg(), video_path, width=width, height=height, duration=probe.duration,
+                    strategy=config.multi_logo_strategy, default_position=config.default_position,
+                    min_confidence=config.min_confidence,
+                )
             self.ensure_active(job_id)
+        inpaint = config.cover_original and config.cover_method == "inpaint" and logo_inpaint.available()
         placements = plan_placements(
             detection.segments if detection else None,
-            duration=probe.duration, video_w=probe.width, video_h=probe.height,
+            duration=probe.duration, video_w=width, video_h=height,
             logo_w=int(request["logo_width"]), logo_h=int(request["logo_height"]),
             size_percent=config.logo_size, margin_percent=config.margin,
-            default_position=config.default_position, cover_original=config.cover_original, override=override,
+            default_position=config.default_position, cover_original=config.cover_original,
+            cover_method="inpaint" if inpaint else "blur", override=override,
         )
         needs_review = bool(detection and detection.status == "uncertain" and config.low_confidence_action == "review")
         summary = {
             "override": override,
-            "video": {"width": probe.width, "height": probe.height, "duration": probe.duration,
+            "video": {"width": width, "height": height, "duration": probe.duration, "fps": fps,
                       "has_audio": probe.has_audio},
             "detection": detection.to_dict() if detection else None,
             "detected_logo": bool(detection and detection.status == "found"),
+            "cover_method": ("inpaint" if inpaint else "blur") if config.cover_original else None,
             "placements": [placement.to_dict() for placement in placements],
             "needs_review": needs_review,
         }
@@ -102,19 +134,47 @@ class BrandingJobRunner:
         output = self.output_dir(owner, job_id) / f"{video_path.stem}.branded.mp4"
         detail = f"Đang chèn logo ({len(placements)} vị trí)" if len(placements) > 1 else "Đang chèn logo"
         self._progress(job_id, "render", 0.0, detail)
-        try:
-            self._render(job_id, video_path, logo_path, output, placements, config.opacity, probe.duration,
-                         copy_audio=True)
-        except subprocess.CalledProcessError:
-            # Some source audio codecs (Vorbis, PCM in MKV...) cannot go into MP4 as-is.
-            logger.info("Logo job %s: audio copy failed, re-encoding audio to AAC", job_id)
-            self._render(job_id, video_path, logo_path, output, placements, config.opacity, probe.duration,
-                         copy_audio=False)
+        repaired = inpaint and any(placement.cover_box for placement in placements)
+        for copy_audio in (True, False):
+            try:
+                if repaired:
+                    self._render_inpainted(job_id, video_path, logo_path, output, placements,
+                                           detection.stencils if detection else {}, width, height, fps,
+                                           probe.duration, config.opacity, copy_audio=copy_audio)
+                else:
+                    self._render(job_id, video_path, logo_path, output, placements, config.opacity,
+                                 probe.duration, copy_audio=copy_audio)
+                break
+            except subprocess.CalledProcessError:
+                if not copy_audio:
+                    raise
+                # Some source audio codecs (Vorbis, PCM in MKV...) cannot go into MP4 as-is.
+                logger.info("Logo job %s: audio copy failed, re-encoding audio to AAC", job_id)
         self.update_job(
             job_id, status="completed", step="completed", progress=1.0,
             step_detail="Cần xác nhận vị trí logo" if needs_review else "Đã chèn logo",
             output_video=self.artifact_name(output), branding=summary, finished_at=self.utc_now(),
         )
+
+    def _render_inpainted(self, job_id: str, video_path: Path, logo_path: Path, output: Path, placements,
+                          stencils: dict, width: int, height: int, fps: float, duration: float, opacity: float,
+                          *, copy_audio: bool) -> None:
+        temporary = output.with_name(f".{output.name}.part.mp4")
+
+        def progress(fraction: float) -> None:
+            self._progress(job_id, "render", fraction, "Đang khôi phục nền và chèn logo")
+            self.ensure_active(job_id)
+
+        try:
+            logo_inpaint.render_inpainted(
+                self.ffmpeg(), video_path, logo_path, temporary, placements, stencils, width=width,
+                height=height, fps=fps, duration=duration, opacity=opacity, copy_audio=copy_audio,
+                on_progress=progress,
+            )
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+        temporary.replace(output)
 
     def _render(self, job_id: str, video_path: Path, logo_path: Path, output: Path, placements, opacity: float,
                 duration: float, *, copy_audio: bool) -> None:

@@ -54,3 +54,17 @@ class AudioSceneTests(unittest.TestCase):
         self.assertEqual(counts, {"speech": 1, "singing": 1})
         self.assertEqual(segments[1]["audio_type"], "singing")
         self.assertIn("music", segments[0]["audio_scene"])
+
+
+class CaptionRescueSpanTests(unittest.TestCase):
+    def test_short_music_and_heard_music_are_skipped_but_songs_are_kept(self):
+        from pipeline.audio_scene import caption_rescue_spans
+
+        windows = [
+            window(0, 0.02, 0.0, 0.9, end=3),        # 3 s music intro: too short
+            window(3, 0.9, 0.0, 0.2, end=40),        # dialogue
+            window(40, 0.05, 0.0, 0.9, end=50),      # music-only, but Whisper heard text there
+            window(50, 0.3, 0.7, 0.9, end=60),       # song: lyrics are misheard even with text
+        ]
+        speech = [{"start": 3.0, "end": 49.0, "text": "对白"}, {"start": 50.0, "end": 60.0, "text": "歌词"}]
+        self.assertEqual(caption_rescue_spans(windows, speech), [(52.0, 60.0)])

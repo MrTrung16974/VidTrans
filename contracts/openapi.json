@@ -1404,6 +1404,20 @@
         "title": "Body_upload_series_reference_api_v1_comic_series__series_id__characters__character_id__reference_post",
         "type": "object"
       },
+      "Body_upload_template_api_v1_me_branding_template_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_template_api_v1_me_branding_template_post",
+        "type": "object"
+      },
       "BrandingConfig": {
         "additionalProperties": false,
         "properties": {
@@ -1411,6 +1425,15 @@
             "default": true,
             "title": "Auto Detect",
             "type": "boolean"
+          },
+          "cover_method": {
+            "default": "inpaint",
+            "enum": [
+              "inpaint",
+              "blur"
+            ],
+            "title": "Cover Method",
+            "type": "string"
           },
           "cover_original": {
             "default": false,
@@ -7850,6 +7873,109 @@
           }
         ],
         "summary": "Upload Logo",
+        "tags": [
+          "branding"
+        ]
+      }
+    },
+    "/api/v1/me/branding/template": {
+      "delete": {
+        "operationId": "delete_template_api_v1_me_branding_template_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete Template",
+        "tags": [
+          "branding"
+        ]
+      },
+      "get": {
+        "operationId": "get_template_api_v1_me_branding_template_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Template",
+        "tags": [
+          "branding"
+        ]
+      },
+      "post": {
+        "operationId": "upload_template_api_v1_me_branding_template_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_template_api_v1_me_branding_template_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Upload Template",
         "tags": [
           "branding"
         ]

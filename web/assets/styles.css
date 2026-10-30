@@ -46,29 +46,61 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 button, input, select, textarea { font: inherit; }
-button.is-api-loading, [role="button"].is-api-loading {
+:is(button, .button, label.button, [role="button"], #tiktokPublishButton, #tiktokResolveButton).is-api-loading,
+button.is-api-loading,
+.button.is-api-loading,
+.button.primary.is-api-loading,
+.button.secondary.is-api-loading,
+.button.danger.is-api-loading,
+.comic-danger.is-api-loading,
+label.is-api-loading,
+[role="button"].is-api-loading {
   position: relative !important;
   pointer-events: none !important;
   cursor: wait !important;
   color: transparent !important;
+  text-shadow: none !important;
+  opacity: 0.92 !important;
 }
-button.is-api-loading > *, [role="button"].is-api-loading > * { visibility: hidden !important; }
-button.is-api-loading::after, [role="button"].is-api-loading::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 16px;
-  height: 16px;
-  margin: -10px 0 0 -10px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  color: #64748b;
-  animation: api-button-spin .7s linear infinite;
+:is(button, .button, label.button, [role="button"], #tiktokPublishButton, #tiktokResolveButton).is-api-loading > *:not(input[type="file"]),
+button.is-api-loading > *:not(input[type="file"]),
+.button.is-api-loading > *:not(input[type="file"]),
+[role="button"].is-api-loading > *:not(input[type="file"]) {
+  visibility: hidden !important;
+  opacity: 0 !important;
 }
-button.primary.is-api-loading::after { color: #fff; }
+:is(button, .button, label.button, [role="button"], #tiktokPublishButton, #tiktokResolveButton).is-api-loading::after,
+button.is-api-loading::after,
+.button.is-api-loading::after,
+[role="button"].is-api-loading::after {
+  content: "" !important;
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  width: 18px !important;
+  height: 18px !important;
+  margin: -9px 0 0 -9px !important;
+  box-sizing: border-box !important;
+  border: 2.4px solid currentColor !important;
+  border-right-color: transparent !important;
+  border-radius: 50% !important;
+  color: #ea580c !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  z-index: 5 !important;
+  animation: api-button-spin .65s linear infinite !important;
+}
+:is(.button.primary, button.primary, .tiktok-button, #tiktokPublishButton, #tiktokResolveButton).is-api-loading::after {
+  color: #ffffff !important;
+}
+:is(.button.danger, button.danger, .comic-danger).is-api-loading::after {
+  color: #dc2626 !important;
+}
 @keyframes api-button-spin { to { transform: rotate(360deg); } }
+@keyframes topbar-busy-slide {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 select {
   appearance: none;
   -webkit-appearance: none;
@@ -221,15 +253,33 @@ a { color: inherit; text-decoration: none; }
   animation: pulseBadge 2s infinite;
 }
 @keyframes pulseBadge { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+.topbar.is-api-busy::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 3px;
+  background: linear-gradient(90deg, rgba(249, 115, 22, 0.15) 0%, #f97316 35%, #ea580c 50%, #f97316 65%, rgba(249, 115, 22, 0.15) 100%);
+  background-size: 200% 100%;
+  animation: topbar-busy-slide 1.2s linear infinite;
+  pointer-events: none;
+}
 .topbar-actions { justify-self: end; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.system-state { flex-shrink: 0; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; font-size: .75rem; font-weight: 700; padding: 6px 13px; border-radius: 999px; box-shadow: 0 1px 3px rgba(16,185,129,.08); letter-spacing: -.01em; }
+.system-state { flex-shrink: 0; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; font-size: .75rem; font-weight: 700; padding: 6px 13px; border-radius: 999px; box-shadow: 0 1px 3px rgba(16,185,129,.08); letter-spacing: -.01em; transition: all .18s ease; }
 .system-state .system-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.2); animation: statusPing 2.5s infinite; }
 .system-state .system-text { display: inline-block; white-space: nowrap; font-size: .75rem; font-weight: 700; color: #047857; line-height: 1.2; }
+.system-state.is-busy { background: #fff7ed; border-color: #fed7aa; color: #c2410c; box-shadow: 0 1px 4px rgba(234, 88, 12, .12); }
+.system-state.is-busy .system-dot { width: 10px; height: 10px; flex: 0 0 10px; background: transparent; border: 2px solid #ea580c; border-right-color: transparent; box-shadow: none; animation: api-button-spin .65s linear infinite; }
+.system-state.is-busy .system-text { color: #c2410c; }
 @keyframes statusPing { 0%, 100% { box-shadow: 0 0 0 3px rgba(16,185,129,.2); } 50% { box-shadow: 0 0 0 5px rgba(16,185,129,.35); } }
 .user-menu { flex-shrink: 0; position: relative; }
 .user-menu-button { display: inline-flex; align-items: center; gap: 9px; padding: 4px 12px 4px 5px; border: 1px solid #e2e8f0; border-radius: 999px; background: #ffffff; cursor: pointer; text-align: left; transition: all .16s ease; box-shadow: 0 1px 3px rgba(15,23,42,.04); }
 .user-menu-button:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15,23,42,.08); }
-.user-menu-button #userAvatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: #ffffff; background: linear-gradient(135deg, #0ea5e9, #0284c7); font-size: .8rem; font-weight: 800; box-shadow: 0 2px 6px rgba(14,165,233,.25); }
+.user-menu-button.is-active-view { border-color: var(--brand, #ea580c); background: #fff7ed; box-shadow: 0 2px 8px rgba(234, 88, 12, 0.14); }
+.user-menu-button #userAvatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: #ffffff; background: linear-gradient(135deg, #0ea5e9, #0284c7); font-size: .8rem; font-weight: 800; box-shadow: 0 2px 6px rgba(14,165,233,.25); overflow: hidden; flex-shrink: 0; }
+.user-menu-button #userAvatar.has-logo { background: #ffffff; border: 1px solid #e2e8f0; padding: 2px; box-shadow: 0 1px 4px rgba(15,23,42,.08); }
+.user-menu-button #userAvatar img { width: 100%; height: 100%; object-fit: contain; border-radius: 50%; display: block; }
 .user-menu-copy { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .user-menu-button strong { font-size: .76rem; font-weight: 700; color: #0f172a; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-menu-button small { font-size: .65rem; color: #64748b; font-weight: 600; }
@@ -1293,6 +1343,13 @@ input[type="file"]::-webkit-file-upload-button:active {
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *,*::before,*::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  .is-api-loading::after,
+  .logo-preview.is-loading::after,
+  .topbar.is-api-busy::after,
+  .system-state.is-busy .system-dot {
+    animation-duration: .75s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 
 /* TikTok: prepare after rendering, review on the left, live Studio on the right. */
@@ -6390,9 +6447,24 @@ input[type="file"]::-webkit-file-upload-button:active {
 .account-form > button { justify-self: start; }
 .logo-upload { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .logo-preview {
+  position: relative;
   width: 140px; height: 140px; flex: none; display: grid; place-items: center; gap: 4px; padding: 10px; border-radius: 14px;
   border: 1px dashed var(--line); text-align: center;
   background: repeating-conic-gradient(#eef2f6 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+}
+.logo-preview.is-loading > * { opacity: 0.25; }
+.logo-preview.is-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  border: 2.5px solid #ea580c;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: api-button-spin .65s linear infinite;
 }
 .logo-preview img { max-width: 100%; max-height: 96px; object-fit: contain; }
 .logo-preview small, .logo-preview.is-empty span { color: var(--muted); font-size: .78rem; }

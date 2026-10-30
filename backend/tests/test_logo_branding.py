@@ -17,7 +17,8 @@ from domain.branding import BrandingConfig
 from infrastructure.branding_store import BrandingError, BrandingStore
 from infrastructure.job_store import SQLiteJobStore
 from pipeline.logo_detection import Box, Candidate, Segment, Window, decide, detect_candidates
-from pipeline.logo_overlay import build_filter_graph, logo_size, plan_placements
+from pipeline import logo_inpaint, logo_tracking
+from pipeline.logo_overlay import build_filter_graph, logo_size, path_expression, plan_placements
 
 HAS_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
@@ -263,6 +264,20 @@ class BrandingApiTests(unittest.TestCase):
             response = self.client.put("/api/v1/me", json={"display_name": "Kênh A"})
         self.assertEqual(response.json()["display_name"], "Kênh A")
 
+    def test_template_upload_is_snapshotted_into_jobs(self):
+        response = self.client.post("/api/v1/me/branding/template",
+                                    files={"file": ("old.png", png_bytes((80, 30)), "image/png")})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["template"]["url"].startswith("/api/v1/me/branding/template"))
+        self.assertIsNone(self.client.get("/api/v1/me/branding", headers={"x-test-user": "b"}).json()["template"])
+        self.upload_logo()
+        job_id = self.queue().json()["job_id"]
+        template_path = Path(self.service.get(job_id)["resume_request"]["template_path"])
+        self.assertTrue(template_path.is_file())
+        self.client.delete("/api/v1/me/branding/template")
+        self.assertIsNone(self.client.get("/api/v1/me/branding").json()["template"])
+        self.assertTrue(template_path.is_file())  # the queued job keeps its own copy
+
     @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
     def test_queued_job_renders_with_logo_and_keeps_audio(self):
         source = self.root / "src.mp4"
@@ -322,6 +337,174 @@ class BrandingRunnerCancellationTests(unittest.TestCase):
             runner.run("job", {"video_path": str(source), "logo_path": str(logo), "logo_width": 200,
                                "logo_height": 100, "config": {"auto_detect": False}})
         self.assertEqual(sorted(path.name for path in root.iterdir()), ["logo.png", "src.mp4"])
+
+
+
+def evaluate_expression(expression: str, t: float) -> float:
+    """Evaluate an FFmpeg position expression the way the overlay filter would."""
+    return float(eval(expression.replace("\\,", ","), {"lt": lambda a, b: float(a < b),
+                                                        "gte": lambda a, b: float(a >= b), "t": t}))
+
+
+class TrackedPathTests(unittest.TestCase):
+    def test_path_expression_interpolates_and_holds_at_both_ends(self):
+        keyframes = [(1.0, 100, 50), (3.0, 300, 50), (4.0, 300, 150)]
+        x, y = path_expression(keyframes, 0), path_expression(keyframes, 1)
+        for t, expected in ((0.0, (100, 50)), (2.0, (200, 50)), (3.5, (300, 100)), (9.0, (300, 150))):
+            self.assertAlmostEqual(evaluate_expression(x, t), expected[0], delta=0.5)
+            self.assertAlmostEqual(evaluate_expression(y, t), expected[1], delta=0.5)
+
+    def test_simplify_path_keeps_only_the_turns(self):
+        points = [(t * 0.25, 0.1 + t * 0.01, 0.2) for t in range(20)] + [(5 + t * 0.25, 0.3, 0.2 + t * 0.01) for t in range(20)]
+        kept = logo_tracking.simplify_path(points, 0.004)
+        self.assertLessEqual(len(kept), 4)
+        self.assertEqual((kept[0], kept[-1]), (points[0], points[-1]))
+
+    def test_segments_split_on_jumps_close_small_gaps_and_drop_blips(self):
+        box = lambda x, y: Box(x, y, 0.1, 0.05)
+        samples = [(i * 0.25, 0.9, box(0.05, 0.05)) for i in range(8)]           # 0-1.75 s top-left
+        samples += [(2.0, 0.9, None)]                                             # one missed sample
+        samples += [(2.25 + i * 0.25, 0.9, box(0.05, 0.05)) for i in range(4)]   # back, same place
+        samples += [(3.25 + i * 0.25, 0.9, box(0.85, 0.9)) for i in range(8)]    # jump to bottom-right
+        samples += [(5.25, 0.9, box(0.4, 0.4))]                                   # single blip
+        segments = logo_tracking.build_segments(samples, 6.0, 0.25)
+        self.assertEqual(len([s for s in segments if s.box]), 2)
+        first, second = [s for s in segments if s.box]
+        self.assertEqual(first.start, 0.0)
+        self.assertAlmostEqual(first.end, second.start)
+        self.assertGreater(second.box.x, 0.8)
+        self.assertIsNone(first.keyframes)
+
+    def test_tracked_segment_becomes_a_moving_placement(self):
+        segment = Segment(0, 10, Box(0.1, 0.1, 0.1, 0.05), 0.9, track=0,
+                          keyframes=[(0.0, 0.15, 0.125), (10.0, 0.85, 0.125)])
+        placements = plan_placements([segment], duration=10, video_w=1000, video_h=500, logo_w=100, logo_h=100,
+                                     size_percent=10, margin_percent=0, default_position="top-right",
+                                     cover_original=True, cover_method="inpaint")
+        placement = placements[0]
+        self.assertEqual(placement.source, "tracked")
+        self.assertEqual([(t, x) for t, x, _ in placement.keyframes], [(0.0, 100), (10.0, 800)])
+        self.assertEqual(placement.cover_keyframes, tuple(segment.keyframes))
+        self.assertIsNone(placement.cover)  # inpainting, not delogo
+        self.assertIn("x='", build_filter_graph(placements, 1.0))
+
+    def test_blur_cannot_follow_a_moving_logo(self):
+        segment = Segment(0, 10, Box(0.1, 0.1, 0.1, 0.05), 0.9, keyframes=[(0.0, 0.15, 0.1), (10.0, 0.8, 0.1)])
+        placement = plan_placements([segment], duration=10, video_w=1000, video_h=500, logo_w=100, logo_h=100,
+                                    size_percent=10, margin_percent=0, default_position="top-right",
+                                    cover_original=True, cover_method="blur")[0]
+        self.assertIsNone(placement.cover)
+        self.assertIsNone(placement.cover_box)
+
+
+@unittest.skipUnless(logo_tracking.available(), "OpenCV is required")
+class TemplateTrackingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.template_path = Path(self.temp.name) / "template.png"
+        logo = Image.new("RGB", (120, 40), "white")
+        logo.paste(Image.new("RGB", (100, 30), "red"), (10, 5))
+        logo.paste(Image.new("RGB", (30, 14), "black"), (20, 13))
+        logo.paste(Image.new("RGB", (40, 14), "blue"), (64, 13))
+        logo.save(self.template_path)
+        self.logo = np.asarray(Image.open(self.template_path).convert("L").resize((64, 21)))
+
+    def fake_frames(self, positions):
+        rng = np.random.default_rng(3)
+
+        def frames(ffmpeg, video_path, fps, width, height):
+            count = max(1, int(round(8 * fps)))
+            for index in range(count):
+                t = index / fps
+                frame = (rng.random((height, width)) * 60 + 90).astype(np.uint8)
+                position = positions(t)
+                if position is not None:
+                    x, y = int(position[0] * width), int(position[1] * height)
+                    frame[y:y + 21, x:x + 64] = self.logo
+                yield t, frame
+        return frames
+
+    def track(self, positions):
+        return logo_tracking.track_template("ffmpeg", Path("unused.mp4"), self.template_path, width=640,
+                                            height=360, duration=8.0, frames=self.fake_frames(positions))
+
+    def test_moving_logo_is_followed_with_keyframes(self):
+        detection = self.track(lambda t: (0.05 + t * 0.09, 0.1 + t * 0.03))
+        self.assertEqual(detection.status, "found")
+        segment = next(s for s in detection.segments if s.box)
+        self.assertIsNotNone(segment.keyframes)
+        times = [k[0] for k in segment.keyframes]
+        cx = np.interp(4.0, times, [k[1] for k in segment.keyframes])
+        self.assertAlmostEqual(cx, 0.05 + 4.0 * 0.09 + 32 / 640, delta=0.01)
+        self.assertIn(0, detection.stencils)
+
+    def test_absent_logo_is_not_found(self):
+        detection = self.track(lambda t: None)
+        self.assertNotEqual(detection.status, "found")
+        self.assertTrue(all(segment.box is None for segment in detection.segments))
+
+
+@unittest.skipUnless(logo_inpaint.available(), "OpenCV is required")
+class InpaintTests(unittest.TestCase):
+    def test_solid_mask_fills_the_inside_of_outlined_letters(self):
+        stencil = np.zeros((20, 40), dtype=bool)
+        stencil[2, 2:38] = stencil[17, 2:38] = True
+        stencil[2:18, 2] = stencil[2:18, 37] = True
+        mask = logo_inpaint.solid_mask(stencil, 40, 20, 0)
+        self.assertEqual(mask[10, 20], 255)
+        self.assertEqual(mask[0, 0], 0)
+
+    def test_repair_replaces_logo_pixels_with_the_surrounding_background(self):
+        frame = np.full((200, 300, 3), 90, dtype=np.uint8)
+        frame[40:60, 50:110] = 250
+        placement = plan_placements(
+            [Segment(0, 5, Box(50 / 300, 40 / 200, 60 / 300, 20 / 200), 0.9, track=0)], duration=5,
+            video_w=300, video_h=200, logo_w=10, logo_h=10, size_percent=3, margin_percent=0,
+            default_position="top-right", cover_original=True, cover_method="inpaint")[0]
+        stencil = np.ones((10, 30), dtype=bool)
+        repairer = logo_inpaint.FrameRepairer([placement], {0: stencil}, 300, 200)
+        self.assertTrue(repairer.repair(frame, 1.0))
+        self.assertLess(abs(float(frame[40:60, 50:110].mean()) - 90), 6)
+
+
+@unittest.skipUnless(HAS_FFMPEG and logo_inpaint.available(), "ffmpeg and OpenCV are required")
+class InpaintRenderTests(unittest.TestCase):
+    def test_static_logo_is_inpainted_and_replaced_end_to_end(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        # Like real logos it has contrast of its own, not only against the scene behind it.
+        old_logo = root / "old.png"
+        image = Image.new("RGB", (120, 36), (255, 0, 0))
+        image.paste(Image.new("RGB", (104, 20), (255, 255, 255)), (8, 8))
+        image.paste(Image.new("RGB", (30, 10), (0, 0, 0)), (20, 13))
+        image.save(old_logo)
+        source = root / "src.mp4"
+        subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "testsrc2=s=640x360:r=25:d=8", "-f", "lavfi", "-i", "sine=f=440:d=8", "-i", str(old_logo),
+                        "-filter_complex", "[0:v]rotate=t*0.3:fillcolor=gray[bg];[bg][2:v]overlay=24:20[v]",
+                        "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+                        str(source)], check=True)
+        new_logo = root / "logo.png"
+        new_logo.write_bytes(png_bytes((40, 40), color=(0, 0, 255, 255)))
+        updates = {}
+        runner = BrandingJobRunner(
+            update_job=lambda job_id, **fields: updates.update(fields), ensure_active=lambda job_id: None,
+            output_dir=lambda owner, job_id: root, artifact_name=lambda path: path.name, get_job=lambda job_id: {},
+            ffmpeg=lambda: shutil.which("ffmpeg"), ffprobe=lambda: shutil.which("ffprobe"), utc_now=lambda: "now",
+        )
+        runner.run("job", {"video_path": str(source), "logo_path": str(new_logo), "logo_width": 40,
+                           "logo_height": 40, "config": {"cover_original": True, "logo_size": 4}})
+        self.assertEqual(updates["branding"]["cover_method"], "inpaint")
+        self.assertTrue(updates["branding"]["placements"][0]["cover_box"])
+        frame = subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-ss", "4", "-i", str(root / updates["output_video"]),
+                                "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+                               capture_output=True, check=True).stdout
+        pixels = np.frombuffer(frame, dtype=np.uint8).reshape(360, 640, 3).astype(int)
+        # The ends of the old red bar lie outside the small new logo: they must no longer be red.
+        corner = pixels[24:52, 26:40]
+        self.assertLess(float((corner[:, :, 0] - corner[:, :, 1:].mean(axis=2)).mean()), 60)
 
 
 if __name__ == "__main__":

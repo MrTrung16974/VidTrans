@@ -51,6 +51,9 @@ class OCRConfig:
     refine_fps: float = 30.0
     refine_width: int = 640
     refine_min_overlap: float = 0.5
+    # Only these (start, end) seconds are read; empty reads the whole video. Frames
+    # outside them count as caption-free, so cue building is unchanged.
+    time_ranges: tuple[tuple[float, float], ...] = ()
 
     def inference_scale(self, frame_width: int) -> float:
         if frame_width <= 0 or frame_width >= self.upscale_below_width:
@@ -78,6 +81,8 @@ class OCRConfig:
             raise ValueError("ocr blank_tolerance_frames cannot be negative")
         if self.min_stable_frames < 1:
             raise ValueError("ocr min_stable_frames must be at least 1")
+        if any(not 0 <= start < end for start, end in self.time_ranges):
+            raise ValueError("ocr time_ranges must satisfy 0 <= start < end")
         if self.upscale < 1:
             raise ValueError("ocr upscale must be at least 1")
         if self.upscale_below_width < 0:
@@ -901,27 +906,39 @@ def extract_ocr_frames(
         f"crop=iw:floor(ih*{roi_height:.6f}/2)*2:0:floor(ih*{config.roi_top:.6f}/2)*2"
     )
     output_pattern = frames_dir / "frame_%08d.jpg"
-    result = subprocess.run(
-        [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(video_path),
-            "-vf",
-            video_filter,
-            "-vsync",
-            "0",
-            "-q:v",
-            "2",
-            str(output_pattern),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg could not extract OCR frames: {result.stderr[-2000:]}")
+    # Whole video, or one seek per time range. A range starts on the sample grid and
+    # numbers its frames from there, so file N is still sample N - 1 of the video.
+    passes: list[list[str]] = [["-i", str(video_path)]]
+    if config.time_ranges:
+        passes = []
+        for start, end in config.time_ranges:
+            first = math.floor(start * config.sample_fps)
+            last = math.ceil(end * config.sample_fps)
+            passes.append([
+                "-ss", f"{first / config.sample_fps:.6f}", "-t", f"{(last - first) / config.sample_fps:.6f}",
+                "-i", str(video_path), "-start_number", str(first + 1),
+            ])
+    for input_args in passes:
+        result = subprocess.run(
+            [ffmpeg, "-y", *input_args, "-vf", video_filter, "-vsync", "0", "-q:v", "2", str(output_pattern)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg could not extract OCR frames: {result.stderr[-2000:]}")
     return sorted(frames_dir.glob("frame_*.jpg"))
+
+
+_SAMPLE_NAME = re.compile(r"frame_(\d+)")
+
+
+def sample_indexes(frame_paths: Sequence[Path]) -> dict[int, Path]:
+    """Sample number -> frame. frame_00000001.jpg is sample 0; other names keep list order."""
+    matches = [_SAMPLE_NAME.fullmatch(Path(path).stem) for path in frame_paths]
+    if all(matches):
+        return {int(match.group(1)) - 1: path for match, path in zip(matches, frame_paths)}
+    return dict(enumerate(frame_paths))
 
 
 def _subtitle_change_signature(image: Any, max_width: int = 320) -> Any:
@@ -1153,7 +1170,15 @@ def scan_subtitle_frames(
     forced_refresh_frames = max(1, math.ceil(config.sample_fps * 1.5))
     inference_scale: float | None = None
 
-    for index, frame_path in enumerate(frame_paths):
+    # Samples missing from disk (outside config.time_ranges) are read as blank.
+    frames_by_index = sample_indexes(frame_paths)
+    sample_count = max(frames_by_index, default=-1) + 1
+    for index in range(sample_count):
+        frame_path = frames_by_index.get(index)
+        if frame_path is None:
+            previous_signature = None
+            frame_metadata.append((0, 0))
+            continue
         try:
             with Image.open(frame_path) as image:
                 if inference_scale is None:
@@ -1182,7 +1207,7 @@ def scan_subtitle_frames(
     total_ocr = len(ocr_indexes)
     for offset in range(0, total_ocr, batch_size):
         batch_indexes = ocr_indexes[offset : offset + batch_size]
-        batch_paths = [frame_paths[index] for index in batch_indexes]
+        batch_paths = [frames_by_index[index] for index in batch_indexes]
         inference_paths, temporary_paths = _prepare_inference_images(
             batch_paths,
             scale=inference_scale or 1.0,
@@ -1202,8 +1227,10 @@ def scan_subtitle_frames(
             progress_callback(min(offset + len(batch_indexes), total_ocr), total_ocr)
 
     previous_lines: list[OCRLine] = []
-    for index, _frame_path in enumerate(frame_paths):
+    for index in range(sample_count):
         frame_width, frame_height = frame_metadata[index]
+        if index not in frames_by_index:
+            previous_lines = []
         if index in lines_by_index:
             previous_lines = lines_by_index[index]
         lines = previous_lines

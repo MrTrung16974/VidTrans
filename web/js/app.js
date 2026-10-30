@@ -3,26 +3,102 @@ import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-f
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261024-system-ws";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261026-delete-files";
-import { createBrandingWorkspace } from "./branding.js?v=20261029-logo";
+import { createBrandingWorkspace } from "./branding.js?v=20261029-logo-menu-loading";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-// Associate requests started synchronously by a user interaction with its
-// button. Background polling deliberately has no trigger, so it stays quiet.
+// Associate requests started by a user interaction (click, submit, file/select change,
+// or after a confirm/prompt dialog) with its button, and update topbar busy state.
 let apiActionTrigger = null;
+let apiActionTimer = null;
 const apiActionRequests = new WeakMap();
+let activeGlobalApiCount = 0;
+let globalApiStartedAt = 0;
+let globalApiHideTimer = null;
+
+function resolveActionTrigger(element) {
+  if (!element || typeof element.closest !== "function") return null;
+  if (element.matches?.('input[type="file"]')) {
+    return element.closest("label.button, .button, label") || element;
+  }
+  const candidate = element.closest('button, .button, [role="button"], input[type="submit"], input[type="button"]');
+  if (!candidate) return null;
+  if (candidate.tagName === "A") {
+    const href = candidate.getAttribute("href") || "";
+    if (href.startsWith("#") || candidate.hasAttribute("data-view-link")) return null;
+  }
+  if (candidate.id === "userMenuButton" || candidate.id === "navToggle") return null;
+  return candidate;
+}
 
 function rememberApiAction(element) {
-  apiActionTrigger = element?.closest?.("button, [role=button]") || null;
-  setTimeout(() => {
-    if (apiActionTrigger === element || apiActionTrigger === element?.closest?.("button, [role=button]")) apiActionTrigger = null;
-  }, 0);
+  const trigger = resolveActionTrigger(element);
+  if (!trigger) return;
+  apiActionTrigger = trigger;
+  clearTimeout(apiActionTimer);
+  apiActionTimer = setTimeout(() => {
+    if (apiActionTrigger === trigger) apiActionTrigger = null;
+  }, 80);
 }
+
+const nativeConfirm = window.confirm.bind(window);
+window.confirm = message => {
+  const savedTrigger = apiActionTrigger;
+  const result = nativeConfirm(message);
+  if (result && savedTrigger) rememberApiAction(savedTrigger);
+  else apiActionTrigger = null;
+  return result;
+};
+
+const nativePrompt = window.prompt.bind(window);
+window.prompt = (message, defaultValue) => {
+  const savedTrigger = apiActionTrigger;
+  const result = nativePrompt(message, defaultValue);
+  if (result !== null && savedTrigger) rememberApiAction(savedTrigger);
+  else apiActionTrigger = null;
+  return result;
+};
 
 document.addEventListener("click", event => rememberApiAction(event.target), true);
 document.addEventListener("submit", event => {
-  rememberApiAction(event.submitter || event.target.querySelector('button[type="submit"], input[type="submit"]'));
+  rememberApiAction(event.submitter || event.target.querySelector('button[type="submit"], input[type="submit"], .button'));
 }, true);
+document.addEventListener("change", event => {
+  if (event.target?.matches?.('input[type="file"], select')) rememberApiAction(event.target);
+}, true);
+
+function beginGlobalApiBusy(silent = false) {
+  if (silent) return () => {};
+  clearTimeout(globalApiHideTimer);
+  if (activeGlobalApiCount === 0) globalApiStartedAt = performance.now();
+  activeGlobalApiCount += 1;
+  const topbar = $(".topbar");
+  const systemState = $("#systemState");
+  const systemText = $("#systemState .system-text");
+  topbar?.classList.add("is-api-busy");
+  if (systemState) {
+    systemState.classList.add("is-busy");
+    systemState.title = "Đang gọi API…";
+  }
+  if (systemText) systemText.textContent = "Đang xử lý…";
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    activeGlobalApiCount = Math.max(0, activeGlobalApiCount - 1);
+    if (activeGlobalApiCount > 0) return;
+    const delay = Math.max(0, 380 - (performance.now() - globalApiStartedAt));
+    globalApiHideTimer = setTimeout(() => {
+      if (activeGlobalApiCount > 0) return;
+      topbar?.classList.remove("is-api-busy");
+      if (systemState) {
+        systemState.classList.remove("is-busy");
+        systemState.title = "Hệ thống sẵn sàng";
+      }
+      if (systemText) systemText.textContent = "Hệ thống sẵn sàng";
+    }, delay);
+  };
+}
 
 function beginElementLoading(trigger) {
   if (!trigger) return () => {};
@@ -32,10 +108,15 @@ function beginElementLoading(trigger) {
   apiActionRequests.set(trigger, action);
   trigger.classList.add("is-api-loading");
   trigger.setAttribute("aria-busy", "true");
+  let ended = false;
   return () => {
+    if (ended) return;
+    ended = true;
     const active = apiActionRequests.get(trigger);
     if (!active) return;
     active.count = Math.max(0, active.count - 1);
+    // Keep trigger available across chained `await requestJson(...)` in the same handler.
+    rememberApiAction(trigger);
     if (active.count) return;
     // Keep quick requests perceptible instead of flashing for only a few ms.
     const delay = Math.max(0, 450 - (performance.now() - active.startedAt));
@@ -48,8 +129,13 @@ function beginElementLoading(trigger) {
   };
 }
 
-function beginApiActionLoading() {
-  return beginElementLoading(apiActionTrigger);
+function beginApiActionLoading(silent = false) {
+  const endElement = beginElementLoading(apiActionTrigger);
+  const endGlobal = beginGlobalApiBusy(silent);
+  return () => {
+    endElement();
+    endGlobal();
+  };
 }
 
 const state = {
@@ -59,7 +145,7 @@ const state = {
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false, sessionRefreshTimer: null,
   sourceBrowserPlatform: "douyin", sourceBrowsers: {},
   adminAccounts: [], adminAccountSummary: null, adminRetentionDefaultDays: null, adminSearchTimer: null,
-  billing: null,
+  billing: null, userLogoUrl: null,
   auth: { enabled: false, configured: false, authenticated: false, username: null, role: "viewer", user_id: null },
 };
 const stepLabels = {
@@ -118,12 +204,19 @@ function scheduleSessionRefresh(ttlMinutes) {
 }
 
 async function apiFetch(url, options = {}) {
+  const { silent = false, ...fetchOptions } = options;
+  const method = String(fetchOptions.method || "GET").toUpperCase();
+  const isBackgroundPoll = silent || (!apiActionTrigger && method === "GET" && state.appStarted && (
+    url.startsWith("/api/v1/jobs?") ||
+    url.startsWith("/api/v1/douyin-auth/browser") ||
+    url.startsWith("/api/v1/source-auth/")
+  ));
   const send = () => {
-    const headers = new Headers(options.headers || {});
+    const headers = new Headers(fetchOptions.headers || {});
     headers.set("X-VidTrans-Request", "1");
-    return fetch(url, { ...options, headers, credentials: "same-origin" });
+    return fetch(url, { ...fetchOptions, headers, credentials: "same-origin" });
   };
-  const endLoading = beginApiActionLoading();
+  const endLoading = beginApiActionLoading(isBackgroundPoll);
   try {
     let response = await send();
     if (response.status === 401 && !url.startsWith("/api/v1/auth/") && await refreshSession()) {
@@ -186,6 +279,7 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   state.selectedJobIds.clear();
   state.files = [];
   state.links = [];
+  state.userLogoUrl = null;
   applyPermissions();
   const jobsBody = $("#jobsBody");
   if (jobsBody) renderJobs([]);
@@ -266,6 +360,19 @@ function roleLabel(role) {
   return ({ owner: "Chủ sở hữu", admin: "Quản trị viên", editor: "Biên tập viên", viewer: "Người xem" })[role] || "Thành viên";
 }
 
+function updateUserAvatar(logoUrl = state.userLogoUrl) {
+  state.userLogoUrl = logoUrl || null;
+  const avatar = $("#userAvatar");
+  if (!avatar) return;
+  if (state.userLogoUrl) {
+    avatar.classList.add("has-logo");
+    avatar.innerHTML = `<img src="${escapeHtml(state.userLogoUrl)}" alt="Logo thương hiệu" />`;
+  } else {
+    avatar.classList.remove("has-logo");
+    avatar.textContent = (state.auth.username || "U").charAt(0).toUpperCase();
+  }
+}
+
 function applyPermissions() {
   const role = state.auth.role || "viewer";
   const isAdmin = ["owner", "admin"].includes(role);
@@ -280,7 +387,7 @@ function applyPermissions() {
   if (popoverName) popoverName.textContent = state.auth.username || "Tài khoản";
   const popoverRole = $("#userPopoverRole");
   if (popoverRole) popoverRole.textContent = roleLabel(role);
-  $("#userAvatar").textContent = (state.auth.username || "U").charAt(0).toUpperCase();
+  updateUserAvatar(state.userLogoUrl);
   $("#appLogoutButton").classList.remove("is-hidden");
   $("#appLogoutButton").title = state.auth.enabled
     ? "Đăng xuất khỏi VidTrans"
@@ -288,11 +395,24 @@ function applyPermissions() {
   $("#userMenu").classList.remove("is-hidden");
 }
 
+async function refreshUserBrandingAvatar() {
+  if (state.auth.role === "viewer") return;
+  try {
+    const data = await requestJson("/api/v1/me/branding", { silent: true });
+    updateUserAvatar(data?.logo?.url || null);
+  } catch (_) {}
+}
+
 async function startProtectedApplication() {
   if (state.appStarted) return;
   state.appStarted = true;
   const canManageSources = ["owner", "admin"].includes(state.auth.role);
-  await Promise.all([loadJobs(), canManageSources ? refreshDouyinAuthStatus() : Promise.resolve(), tiktokWorkspace.refresh()]);
+  await Promise.all([
+    loadJobs(),
+    canManageSources ? refreshDouyinAuthStatus() : Promise.resolve(),
+    tiktokWorkspace.refresh(),
+    refreshUserBrandingAvatar(),
+  ]);
   clearInterval(state.pollTimer);
   state.pollTimer = null;
   jobEvents.start();
@@ -908,7 +1028,7 @@ let activeView = null;
 function showView() {
   let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : location.hash === "#account" ? "account" : "create";
   if (["admin", "douyin"].includes(view) && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
-  if (["tiktok", "comic"].includes(view) && state.auth.role === "viewer") view = "jobs";
+  if (["tiktok", "comic", "account"].includes(view) && state.auth.role === "viewer") view = "jobs";
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
   $("#comicView").classList.toggle("is-hidden", view !== "comic");
@@ -924,6 +1044,7 @@ function showView() {
   if (view === "account" && state.appStarted) brandingWorkspace.enter();
   else brandingWorkspace.leave();
   $$('[data-view-link]').forEach(link => link.classList.toggle("active", link.dataset.viewLink === view));
+  $("#userMenuButton")?.classList.toggle("is-active-view", ["account", "billing", "admin"].includes(view));
   if (window.innerWidth <= 1024) {
     const activeDockLink = $(`#mainNavigation a[data-view-link="${view}"]`);
     if (activeDockLink && activeDockLink.offsetParent !== null && activeDockLink.scrollIntoView) {
@@ -2941,7 +3062,12 @@ const tiktokWorkspace = createTikTokWorkspace({
   canManageAllVideos: () => state.auth.role === "owner",
 });
 const comicWorkspace = createComicWorkspace({ requestJson, toast, escapeHtml });
-const brandingWorkspace = createBrandingWorkspace({ requestJson, toast, escapeHtml });
+const brandingWorkspace = createBrandingWorkspace({
+  requestJson,
+  toast,
+  escapeHtml,
+  onLogoChange: logoUrl => updateUserAvatar(logoUrl),
+});
 const platformAppsSettings = createPlatformAppsSettings({
   requestJson, toast, escapeHtml, onChange: () => tiktokWorkspace.enter(),
 });

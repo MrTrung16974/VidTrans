@@ -116,15 +116,18 @@ the same queue, quota, cancellation, retention and ownership checks as the other
 
 ```text
 upload + rights confirmation -> snapshot logo/settings into the job -> probe
--> logo detection (pipeline/logo_detection.py: persistent edges over a moving scene,
-   per 6 s window, tracks across windows) -> placements per time segment
-   (pipeline/logo_overlay.py) -> one FFmpeg pass: delogo (optional) + scaled logo + opacity
+-> find the old logo: template tracking when the user uploaded a sample of it
+   (pipeline/logo_tracking.py, follows moving logos) or persistent-edge detection
+   (pipeline/logo_detection.py, per 6 s window, tracks across windows)
+-> placements per time segment, keyframed x(t)/y(t) for moving logos (pipeline/logo_overlay.py)
+-> one FFmpeg pass (delogo blur, static logos only), or decode -> OpenCV inpainting of the
+   old logo's pixels (pipeline/logo_inpaint.py) -> encode, both with the scaled logo + opacity
 ```
 
 - `domain/branding.py` holds the settings contract; `infrastructure/branding_store.py` keeps one
   row per user (`user_branding_configs`) and the logo under `work/users/<user>/branding/`.
 - `application/branding_routes.py` exposes `/api/v1/me`, `/api/v1/me/branding[/logo]` and
-  `/api/v1/branding/videos[...]`; `application/branding_service.py` runs the job.
+  `/api/v1/branding/videos[...]` and `/api/v1/me/branding/template`; `application/branding_service.py` runs the job.
 - No logo found -> default corner (top-right unless configured); low confidence -> default, or
   default plus a "needs review" flag so the user re-runs with a chosen corner.
 

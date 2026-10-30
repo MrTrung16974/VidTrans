@@ -32,12 +32,12 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
             lambda ocr, asr: self.merged.append((ocr, asr)) or [*ocr, *asr],
         ))
 
-    def recognize(self, subtitle_source: str = "auto", *, has_audio: bool = True):
+    def recognize(self, subtitle_source: str = "auto", *, has_audio: bool = True, duration: float = 10.0):
         return main.recognize_video_source(
             job_id="job-parallel",
             video_path=Path("v.mp4"),
             work_dir=Path("work"),
-            source_probe=MediaProbe(duration=10.0, width=0, height=0, fps=30.0, has_audio=has_audio),
+            source_probe=MediaProbe(duration=duration, width=0, height=0, fps=30.0, has_audio=has_audio),
             subtitle_source=subtitle_source,
             source_language="zh-CN",
             whisper_model="small",
@@ -142,28 +142,54 @@ class ParallelSourceRecognitionTests(unittest.TestCase):
         self.assertEqual(self.merged, [(OCR_SEGMENTS, ASR_SEGMENTS)])
         self.assertEqual(method, "hybrid")
 
-    def test_song_found_before_whisper_reads_captions_alongside_it(self) -> None:
-        both_running = threading.Barrier(2, timeout=5)
-        speech = [{"start": float(i), "end": float(i + 1), "text": "你好"} for i in range(8)]
+    def test_short_music_intro_does_not_trigger_ocr(self) -> None:
+        speech = [{"start": float(i), "end": float(i + 1), "text": "你好"} for i in range(3, 30)]
 
         def prepare(job_id, video_path, work_dir, duration, scenes):
-            scenes.append(main.SceneWindow(0.0, 10.0, speech=0.02, singing=0.1, music=0.9))
+            # A 3 s music-only intro, then dialogue: Whisper reads the video fine.
+            scenes.append(main.SceneWindow(0.0, 3.0, speech=0.02, singing=0.0, music=0.9))
+            scenes.append(main.SceneWindow(3.0, 30.0, speech=0.9, singing=0.0, music=0.2))
             return video_path, []
 
-        def ocr(*args, progress_callback, **kwargs):
-            both_running.wait()  # Deadlocks if OCR waits for Whisper to finish.
-            return list(OCR_SEGMENTS)
-
         def asr(model, path, language, job_id, duration, *, progress, **kwargs):
-            both_running.wait()
             return list(speech), "zh-CN", 0.99
 
         with patch.object(main, "prepare_speech_audio", prepare), \
-                patch.object(main, "extract_burned_subtitle_segments", ocr), patch.object(main, "transcribe_video", asr):
-            _segments, _language, _probability, method, _skipped = self.recognize("speech")
+                patch.object(main, "extract_burned_subtitle_segments") as ocr, \
+                patch.object(main, "transcribe_video", asr):
+            _segments, _language, _probability, method, _skipped = self.recognize("speech", duration=30.0)
 
+        ocr.assert_not_called()
+        self.assertEqual(method, "speech")
+
+    def test_song_is_read_by_ocr_only_where_it_plays_after_whisper(self) -> None:
+        speech = [{"start": float(i), "end": float(i + 1), "text": "你好"} for i in range(0, 20)]
+        song = [{"start": float(i), "end": float(i + 1), "text": "啦啦"} for i in range(20, 30)]
+        order: list[str] = []
+        ocr_ranges: list[tuple] = []
+
+        def prepare(job_id, video_path, work_dir, duration, scenes):
+            scenes.append(main.SceneWindow(0.0, 20.0, speech=0.9, singing=0.0, music=0.2))
+            scenes.append(main.SceneWindow(20.0, 30.0, speech=0.3, singing=0.7, music=0.9))
+            return video_path, []
+
+        def ocr(*args, config, progress_callback, **kwargs):
+            order.append("ocr")
+            ocr_ranges.append(config.time_ranges)
+            return list(OCR_SEGMENTS)
+
+        def asr(model, path, language, job_id, duration, *, progress, **kwargs):
+            order.append("asr")
+            return [*speech, *song], "zh-CN", 0.99
+
+        with patch.object(main, "prepare_speech_audio", prepare), \
+                patch.object(main, "extract_burned_subtitle_segments", ocr), patch.object(main, "transcribe_video", asr):
+            _segments, _language, _probability, method, _skipped = self.recognize("speech", duration=30.0)
+
+        self.assertEqual(order, ["asr", "ocr"])
+        # The song window's centre half (22.5-30 s) plus 0.5 s padding, not the whole video.
+        self.assertEqual(ocr_ranges, [((22.0, 30.0),)])
         self.assertEqual(method, "hybrid")
-        self.assertEqual(self.merged, [(OCR_SEGMENTS, speech)])
 
     def test_speech_only_job_skips_ocr_when_speech_covers_the_video(self) -> None:
         speech = [{"start": float(i), "end": float(i + 1), "text": "你好"} for i in range(8)]

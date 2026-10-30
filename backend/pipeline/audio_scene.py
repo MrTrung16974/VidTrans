@@ -223,6 +223,61 @@ def music_under_speech(windows: Sequence[SceneWindow]) -> float:
     return sum(1 for window in speech if window.music >= MUSIC_PRESENT) / len(speech)
 
 
+# A singing or music stretch shorter than this (intro, sting between lines) is not
+# worth an OCR pass: captions there are rare and Whisper's text around it stands.
+CAPTION_RESCUE_MIN_SPAN = 5.0
+
+
+def caption_rescue_spans(
+    windows: Sequence[SceneWindow],
+    speech_segments: Sequence[dict],
+    *,
+    min_span: float = CAPTION_RESCUE_MIN_SPAN,
+    padding: float = 0.5,
+) -> list[tuple[float, float]]:
+    """Stretches Whisper could not read, where burned-in captions are worth OCR.
+
+    Singing counts even when Whisper produced text (it mishears lyrics); music
+    with no speech counts only when Whisper heard nothing there. Like
+    ``music_only_regions``, a window contributes its centre half.
+    """
+
+    if not windows:
+        return []
+    video_end = windows[-1].end
+    heard = sorted(
+        (float(segment["start"]), float(segment["end"]))
+        for segment in speech_segments
+        if str(segment.get("text") or "").strip()
+    )
+
+    def heard_share(start: float, end: float) -> float:
+        covered = sum(max(0.0, min(end, b) - max(start, a)) for a, b in heard)
+        return covered / max(end - start, 1e-6)
+
+    regions: list[tuple[float, float]] = []
+    for window in windows:
+        singing = window.singing >= SINGING_PRESENT
+        music_only = window.speech < CLEAR_NO_SPEECH and window.music >= MUSIC_PRESENT
+        if not (singing or music_only):
+            continue
+        span = window.end - window.start
+        margin = 0.0 if span < WINDOW_SECONDS else (span - HOP_SECONDS) / 2
+        start = window.start + (margin if window.start > 0 else 0.0)
+        end = window.end - (margin if window.end < video_end else 0.0)
+        if not singing and heard_share(start, end) >= 0.3:
+            continue
+        if regions and start <= regions[-1][1]:
+            regions[-1] = (regions[-1][0], max(regions[-1][1], end))
+        else:
+            regions.append((start, end))
+    return [
+        (round(max(0.0, start - padding), 3), round(min(video_end, end + padding), 3))
+        for start, end in regions
+        if end - start >= min_span
+    ]
+
+
 def has_singing_or_music_only(windows: Sequence[SceneWindow]) -> bool:
     return any(
         window.singing >= SINGING_PRESENT
