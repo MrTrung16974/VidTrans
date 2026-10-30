@@ -413,6 +413,11 @@
             ],
             "title": "Background Music"
           },
+          "bible": {
+            "default": "",
+            "title": "Bible",
+            "type": "string"
+          },
           "burn_subtitles": {
             "default": "true",
             "title": "Burn Subtitles",
@@ -433,6 +438,12 @@
             "title": "Cit Narrator Voice",
             "type": "string"
           },
+          "episode_brief": {
+            "default": "",
+            "maxLength": 3000,
+            "title": "Episode Brief",
+            "type": "string"
+          },
           "file": {
             "anyOf": [
               {
@@ -449,6 +460,12 @@
             "default": 24,
             "title": "Fps",
             "type": "integer"
+          },
+          "genre": {
+            "default": "",
+            "maxLength": 40,
+            "title": "Genre",
+            "type": "string"
           },
           "image_provider": {
             "default": "placeholder",
@@ -515,6 +532,12 @@
             "default": 1.0,
             "title": "Speech Rate",
             "type": "number"
+          },
+          "story_brief": {
+            "default": "",
+            "maxLength": 6000,
+            "title": "Story Brief",
+            "type": "string"
           },
           "style": {
             "default": "manhua",
@@ -589,6 +612,11 @@
             ],
             "title": "Background Music"
           },
+          "bible": {
+            "default": "",
+            "title": "Bible",
+            "type": "string"
+          },
           "burn_subtitles": {
             "default": "true",
             "title": "Burn Subtitles",
@@ -615,6 +643,12 @@
             "title": "Description",
             "type": "string"
           },
+          "episode_brief": {
+            "default": "",
+            "maxLength": 3000,
+            "title": "Episode Brief",
+            "type": "string"
+          },
           "episode_title": {
             "default": "",
             "title": "Episode Title",
@@ -636,6 +670,12 @@
             "default": 24,
             "title": "Fps",
             "type": "integer"
+          },
+          "genre": {
+            "default": "",
+            "maxLength": 40,
+            "title": "Genre",
+            "type": "string"
           },
           "image_provider": {
             "default": "placeholder",
@@ -697,6 +737,12 @@
             "default": 1.0,
             "title": "Speech Rate",
             "type": "number"
+          },
+          "story_brief": {
+            "default": "",
+            "maxLength": 6000,
+            "title": "Story Brief",
+            "type": "string"
           },
           "style": {
             "default": "manhua",
@@ -1265,6 +1311,56 @@
         "title": "Body_save_my_platform_app_api_v1_me_platform_apps__platform__post",
         "type": "object"
       },
+      "Body_suggest_story_bible_api_v1_comic_bible_suggest_post": {
+        "properties": {
+          "file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "genre": {
+            "default": "",
+            "maxLength": 40,
+            "title": "Genre",
+            "type": "string"
+          },
+          "language": {
+            "default": "vi",
+            "title": "Language",
+            "type": "string"
+          },
+          "llm_provider": {
+            "default": "auto",
+            "title": "Llm Provider",
+            "type": "string"
+          },
+          "series_id": {
+            "default": "",
+            "title": "Series Id",
+            "type": "string"
+          },
+          "story_brief": {
+            "default": "",
+            "maxLength": 6000,
+            "title": "Story Brief",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "title": "Body_suggest_story_bible_api_v1_comic_bible_suggest_post",
+        "type": "object"
+      },
       "Body_update_admin_account_api_v1_admin_accounts__user_id__post": {
         "properties": {
           "approval_status": {
@@ -1360,6 +1456,20 @@
           "file"
         ],
         "title": "Body_upload_logo_api_v1_me_branding_logo_post",
+        "type": "object"
+      },
+      "Body_upload_place_picture_api_v1_comic_projects__job_id__locations__location_id__references_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_place_picture_api_v1_comic_projects__job_id__locations__location_id__references_post",
         "type": "object"
       },
       "Body_upload_reference_api_v1_comic_projects__job_id__characters__character_id__references_post": {
@@ -1527,6 +1637,17 @@
             ],
             "title": "Appearance"
           },
+          "appearance_vi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appearance Vi"
+          },
           "gender": {
             "anyOf": [
               {
@@ -1559,6 +1680,17 @@
               }
             ],
             "title": "Outfit"
+          },
+          "outfit_vi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outfit Vi"
           },
           "species": {
             "anyOf": [
@@ -1703,6 +1835,50 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "LocationPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "description_vi": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description Vi"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "LocationPatch",
+        "type": "object"
+      },
       "RenderRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1710,6 +1886,19 @@
             "default": false,
             "title": "Images Only",
             "type": "boolean"
+          },
+          "preview_scenes": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Scenes"
           },
           "reanalyze": {
             "default": false,
@@ -1855,6 +2044,17 @@
             ],
             "title": "Location"
           },
+          "location_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location Id"
+          },
           "narration": {
             "anyOf": [
               {
@@ -1907,6 +2107,18 @@
             ],
             "title": "Description"
           },
+          "story_brief": {
+            "anyOf": [
+              {
+                "maxLength": 6000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story Brief"
+          },
           "title": {
             "anyOf": [
               {
@@ -1919,6 +2131,30 @@
               }
             ],
             "title": "Title"
+          },
+          "world": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "World"
+          },
+          "world_vi": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "World Vi"
           }
         },
         "title": "SeriesPatch",
@@ -4175,6 +4411,55 @@
         ]
       }
     },
+    "/api/v1/comic/bible/suggest": {
+      "post": {
+        "description": "Read the story and propose characters, places and the world for the user to review.",
+        "operationId": "suggest_story_bible_api_v1_comic_bible_suggest_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_suggest_story_bible_api_v1_comic_bible_suggest_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Suggest Story Bible",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
     "/api/v1/comic/options": {
       "get": {
         "operationId": "options_api_v1_comic_options_get",
@@ -4799,6 +5084,330 @@
           }
         ],
         "summary": "Approve Reference",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/projects/{job_id}/locations/{location_id}": {
+      "patch": {
+        "description": "Fix how a place looks; every scene set there is redrawn on the next render.",
+        "operationId": "patch_location_api_v1_comic_projects__job_id__locations__location_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "title": "Location Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocationPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Patch Location",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/projects/{job_id}/locations/{location_id}/references": {
+      "get": {
+        "operationId": "list_place_pictures_api_v1_comic_projects__job_id__locations__location_id__references_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "title": "Location Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Place Pictures",
+        "tags": [
+          "Comic Video"
+        ]
+      },
+      "post": {
+        "description": "A user's own picture of the place is pinned right away.",
+        "operationId": "upload_place_picture_api_v1_comic_projects__job_id__locations__location_id__references_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "title": "Location Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_place_picture_api_v1_comic_projects__job_id__locations__location_id__references_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Upload Place Picture",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/projects/{job_id}/locations/{location_id}/references/approval": {
+      "delete": {
+        "operationId": "unpin_place_picture_api_v1_comic_projects__job_id__locations__location_id__references_approval_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "title": "Location Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Unpin Place Picture",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/projects/{job_id}/locations/{location_id}/references/{name}/approve": {
+      "post": {
+        "operationId": "approve_place_picture_api_v1_comic_projects__job_id__locations__location_id__references__name__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "title": "Location Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Approve Place Picture",
         "tags": [
           "Comic Video"
         ]
@@ -6178,6 +6787,75 @@
           }
         ],
         "summary": "Upload Series Reference",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/series/{series_id}/locations/{location_id}": {
+      "patch": {
+        "operationId": "patch_series_location_api_v1_comic_series__series_id__locations__location_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "title": "Location Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocationPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Patch Series Location",
         "tags": [
           "Comic Video"
         ]

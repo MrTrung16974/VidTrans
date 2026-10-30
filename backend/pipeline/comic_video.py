@@ -212,13 +212,28 @@ def cast_description(storyboard: Storyboard, character_ids: list[str]) -> str:
     return ("Characters: " + "; ".join(described) + ".") if described else ""
 
 
+def scene_setting(scene: ComicScene, storyboard: Storyboard) -> str:
+    """The planned description of the scene's place, so it is drawn the same in every scene."""
+    place = storyboard.location(scene.location_id)
+    if place is not None and place.description:
+        return place.description
+    return scene.location
+
+
+def world_line(storyboard: Storyboard) -> str:
+    return f"World: {storyboard.world.rstrip('.')}." if storyboard.world else ""
+
+
 def scene_image_prompt(scene: ComicScene, storyboard: Storyboard, aspect_ratio: str) -> str:
     # SDXL/SD1.5 weigh the first ~77 tokens most: the story content leads, style comes last.
     style = COMIC_STYLES.get(storyboard.style, COMIC_STYLES["anime_comic"])[1]
     lines = [without_names(scene.visual_prompt, storyboard).rstrip(".") + "."]
     # The place comes before the cast so it survives the token budget and the frame is not a lone portrait.
-    if scene.location:
-        lines.append(f"Setting: {scene.location}.")
+    setting = scene_setting(scene, storyboard)
+    if setting:
+        lines.append(f"Setting: {setting.rstrip('.')}.")
+    if storyboard.world:
+        lines.append(world_line(storyboard))
     if not is_close_up(scene.visual_prompt):
         lines.append(f"{SCENE_COMPOSITION}.")
     cast = cast_description(storyboard, scene.characters)
@@ -232,6 +247,27 @@ def scene_image_prompt(scene: ComicScene, storyboard: Storyboard, aspect_ratio: 
     lines.append(f"Single full-bleed illustration, {aspect_ratio} composition, keep the lower fifth "
                  "free of important details for subtitles, no text, no speech bubbles, no watermark.")
     return " ".join(lines)
+
+
+PLACE_KEY = "place:"
+
+
+def place_prompt(place, storyboard: Storyboard, aspect_ratio: str) -> str:
+    """An empty establishing shot of a place: the picture every scene set there is drawn from."""
+    style = COMIC_STYLES.get(storyboard.style, COMIC_STYLES["anime_comic"])[1]
+    world = f" {world_line(storyboard)}" if storyboard.world else ""
+    return (f"Establishing wide shot of {place.description.rstrip('.')}.{world} Empty location, no people, "
+            f"no characters, clear view of the architecture, props and lighting. {style}. "
+            f"{aspect_ratio} composition, no text, no watermark.")
+
+
+def split_references(refs: dict[str, tuple[Path, str]]) -> dict[str, dict[str, str]]:
+    """Manifest entries: character references and place references, by id."""
+    return {
+        "references": {key: path.name for key, (path, _k) in refs.items() if not key.startswith(PLACE_KEY)},
+        "location_references": {key[len(PLACE_KEY):]: path.name for key, (path, _k) in refs.items()
+                                if key.startswith(PLACE_KEY)},
+    }
 
 
 def reference_prompt(character: ComicCharacter, style_key: str) -> str:
@@ -379,10 +415,18 @@ class ComicVideoProducer:
         return [results[index] for index in range(total)]
 
     # ---------------------------------------------------------------- images
-    def build_references(self, storyboard: Storyboard) -> dict[str, tuple[Path, str]]:
+    def build_references(self, storyboard: Storyboard,
+                         scenes: list[ComicScene] | None = None) -> dict[str, tuple[Path, str]]:
+        """Character references by id and place pictures under ``place:<id>``, for ``scenes`` (all by default)."""
         refs: dict[str, tuple[Path, str]] = {}
+        if scenes is not None:
+            wanted = {cid for scene in scenes for cid in [*scene.characters, *(c for shot in scene.shots
+                                                                                for c in shot.characters)]}
+        else:
+            wanted = None
         # Uploaded/approved references are honoured even by providers that cannot draw new ones.
-        cast = [c for c in storyboard.characters if c.appearance or c.approved_reference]
+        cast = [c for c in storyboard.characters if (c.appearance or c.approved_reference)
+                and (wanted is None or c.id in wanted)]
         if not self.images.supports_references:
             cast = [c for c in cast if self.project.asset_path("refs", c.approved_reference or "")]
         for position, character in enumerate(cast, 1):
@@ -408,6 +452,37 @@ class ComicVideoProducer:
             ), allow_fallback=False)
             if generated is not None and not fallback:
                 refs[character.id] = (generated, key)
+        refs.update(self.build_place_references(storyboard, scenes))
+        return refs
+
+    def build_place_references(self, storyboard: Storyboard,
+                               scenes: list[ComicScene] | None = None) -> dict[str, tuple[Path, str]]:
+        used = {scene.location_id for scene in (storyboard.scenes if scenes is None else scenes) if scene.location_id}
+        places = [place for place in storyboard.locations if place.id in used
+                  and (place.description or place.approved_reference)]
+        if not self.images.supports_references:
+            places = [place for place in places if self.project.asset_path("refs", place.approved_reference or "")]
+        refs: dict[str, tuple[Path, str]] = {}
+        for position, place in enumerate(places, 1):
+            self.rt.check_active()
+            pinned = self.project.asset_path("refs", place.approved_reference or "")
+            if pinned is not None:
+                refs[PLACE_KEY + place.id] = (pinned, content_hash("approved", file_hash(pinned)))
+                continue
+            prompt = place_prompt(place, storyboard, self.settings.aspect_ratio)
+            negative = style_negative_prompt(storyboard.style, "people, person, character, crowd, text, watermark")
+            key = content_hash(PIPELINE_VERSION, "place", self.images.cache_key, prompt, negative,
+                               self.settings.seed, self.width, self.height)
+            path = self.project.dir("refs") / f"place-{place.id}-{key[:16]}.png"
+            self.rt.report("comic_references", position / max(1, len(places)),
+                           f"Ảnh bối cảnh {position}/{len(places)}: {place.name}")
+            generated, fallback = self._ensure_image(path, ImageRequest(
+                prompt=prompt, width=self.width, height=self.height, negative_prompt=negative,
+                seed=self.settings.seed, aspect_ratio=self.settings.aspect_ratio, caption=place.name,
+                display_text=place.description_vi or place.description,
+            ), allow_fallback=False)
+            if generated is not None and not fallback:
+                refs[PLACE_KEY + place.id] = (generated, key)
         return refs
 
     def _ensure_image(self, path: Path, request: ImageRequest, *,
@@ -476,13 +551,17 @@ class ComicVideoProducer:
         negative = cast_negative(storyboard, scene.characters, scene_negative(
             style_negative_prompt(storyboard.style, scene.negative_prompt), is_close_up(scene.visual_prompt)))
         scene_refs = [refs[cid] for cid in scene.characters if cid in refs]
+        place_ref = refs.get(PLACE_KEY + scene.location_id) if scene.location_id else None
         seed = self.settings.seed + scene.scene_index if self.settings.seed else 0
+        # Without a place picture the key is what it was before places existed: old caches stay valid.
         key = content_hash(PIPELINE_VERSION, "scene", self.images.cache_key, prompt, negative,
-                           [ref_key for _path, ref_key in scene_refs], seed, self.width, self.height)
+                           [ref_key for _path, ref_key in scene_refs], seed, self.width, self.height,
+                           *((place_ref[1],) if place_ref else ()))
         path = self.project.dir("images") / f"s{scene.scene_index:03d}-{key[:16]}.png"
         image, fallback = self._ensure_image(path, ImageRequest(
             prompt=prompt, width=self.width, height=self.height, negative_prompt=negative,
             seed=seed, references=tuple(ref_path for ref_path, _key in scene_refs[:3]),
+            setting_reference=place_ref[0] if place_ref else None,
             caption=f"Cảnh {scene.scene_index}", aspect_ratio=self.settings.aspect_ratio,
             display_text=scene.narration or scene.visual_prompt,
         ))
@@ -696,7 +775,7 @@ class ComicVideoProducer:
             "size": [self.width, self.height],
             "duration": round(sum(r.duration for r in results), 3),
             "image_provider": self.images.key,
-            "references": {cid: path.name for cid, (path, _key) in refs.items()},
+            **split_references(refs),
             "scenes": {str(r.scene_index): {"image": r.image, "duration": round(r.duration, 3),
                                             "clip": r.clip, "cues": r.cues} for r in results},
             "cache": {"hits": self.cache_hits, "misses": self.cache_misses},
@@ -705,15 +784,30 @@ class ComicVideoProducer:
         self.project.save_manifest(manifest)
         return manifest
 
-    def preview_images(self, storyboard: Storyboard) -> dict[str, Any]:
-        """Generate only references and scene images (storyboard review before spending on voice/render)."""
-        refs = self.build_references(storyboard)
-        images = self._map(storyboard.scenes, lambda scene: self.scene_image(scene, storyboard, refs)[0],
+    def preview_images(self, storyboard: Storyboard, scene_limit: int | None = None) -> dict[str, Any]:
+        """Generate only references and scene images (storyboard review before spending on voice/render).
+
+        ``scene_limit`` draws just the first scenes ("Vẽ thử 3 cảnh"); images already drawn for
+        later scenes stay in the manifest so the editor keeps showing them."""
+        targets = storyboard.scenes[:scene_limit] if scene_limit else storyboard.scenes
+        refs = self.build_references(storyboard, targets if scene_limit else None)
+        images = self._map(targets, lambda scene: self.scene_image(scene, storyboard, refs)[0],
                            "comic_images", lambda done, total: f"Đã sinh ảnh {done}/{total} cảnh")
-        scenes = {str(scene.scene_index): {"image": image.name} for scene, image in zip(storyboard.scenes, images)}
+        scenes = {str(scene.scene_index): {"image": image.name} for scene, image in zip(targets, images)}
+        if scene_limit:
+            previous = self.project.load_manifest()
+            if previous.get("revision") == storyboard.revision:
+                scenes = {**(previous.get("scenes") or {}), **scenes}
+                refs_names = split_references(refs)
+                for field_name in ("references", "location_references"):
+                    refs_names[field_name] = {**(previous.get(field_name) or {}), **refs_names[field_name]}
+            else:
+                refs_names = split_references(refs)
+        else:
+            refs_names = split_references(refs)
         manifest = {"revision": storyboard.revision, "size": [self.width, self.height],
                     "image_provider": self.images.key,
-                    "references": {cid: path.name for cid, (path, _key) in refs.items()}, "scenes": scenes,
+                    **refs_names, "scenes": scenes,
                     "cache": {"hits": self.cache_hits, "misses": self.cache_misses},
                     "image_fallback": self.image_report()}
         self.project.save_manifest(manifest)

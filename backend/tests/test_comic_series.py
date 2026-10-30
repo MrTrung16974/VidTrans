@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from domain.comic import ComicCharacter, ComicScene, Storyboard
+from domain.comic import ComicCharacter, ComicLocation, ComicScene, Storyboard
 from infrastructure.comic_project import ComicProject
 from infrastructure.comic_series import ComicSeriesStore
 
@@ -49,6 +49,38 @@ class ComicSeriesStoreTests(unittest.TestCase):
         redrawn = MINH.model_copy(update={"appearance": "old man"})
         self.store.absorb_episode("u1", self.series.id, episode, board(redrawn), {})
         self.assertEqual(self.store.load("u1", self.series.id).character("minh").appearance, MINH.appearance)
+
+    def test_series_keeps_the_world_and_places_its_episodes_planned(self) -> None:
+        forest = ComicLocation(id="forest", name="Rừng trúc", description="dense bamboo forest, mist")
+        episode = self.project("ep1")
+        storyboard = board(MINH).model_copy(update={"world": "Tang dynasty China", "locations": [forest]})
+        self.store.absorb_episode("u1", self.series.id, episode, storyboard, {})
+        self.assertEqual(self.store.known_world("u1", self.series.id), "Tang dynasty China")
+        self.assertEqual(self.store.known_locations("u1", self.series.id), [forest])
+
+        # A later episode adds new places but never rewrites a known one or the world.
+        palace = ComicLocation(id="palace", name="Cung điện", description="red lacquered halls")
+        later = board(MINH).model_copy(update={
+            "world": "modern city", "locations": [forest.model_copy(update={"description": "desert"}), palace]})
+        self.store.absorb_episode("u1", self.series.id, episode, later, {})
+        self.assertEqual(self.store.known_world("u1", self.series.id), "Tang dynasty China")
+        self.assertEqual(self.store.known_locations("u1", self.series.id), [forest, palace])
+
+    def test_first_drawn_place_picture_is_shared_with_later_episodes(self) -> None:
+        forest = ComicLocation(id="forest", name="Rừng", description="bamboo forest")
+        episode = self.project("ep1")
+        storyboard = episode.save_storyboard(board(MINH).model_copy(update={"locations": [forest]}), bump=False)
+        (episode.dir("refs") / "place-forest-0123.png").write_bytes(b"png")
+        self.store.absorb_episode("u1", self.series.id, episode, storyboard,
+                                  {"location_references": {"forest": "place-forest-0123.png"}})
+        series = self.store.load("u1", self.series.id)
+        self.assertEqual(series.locations[0].approved_reference, "place-forest-0123.png")
+
+        later = self.project("ep2")
+        synced = self.store.sync_into_episode("u1", self.series.id, later, later.save_storyboard(
+            board(MINH).model_copy(update={"locations": [forest]}), bump=False))
+        self.assertEqual(synced.locations[0].approved_reference, "place-forest-0123.png")
+        self.assertTrue((later.root / "refs" / "place-forest-0123.png").is_file())
 
     def test_next_episode_uses_the_series_reference_unless_it_pinned_its_own(self) -> None:
         self.store.update("u1", self.series.id, lambda s: s.set_characters([

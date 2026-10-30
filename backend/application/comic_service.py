@@ -29,7 +29,7 @@ from infrastructure.visual_prompt_translator import (
     LocalVisualPromptTranslator,
 )
 from pipeline.animation_video import AnimatedVideoProducer
-from pipeline.comic_storyboard import build_storyboard
+from pipeline.comic_storyboard import build_storyboard, fill_english, needs_english
 from pipeline.comic_video import ComicRuntime, ComicVideoProducer, remove_stale_assets
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,14 @@ ANIMATED_STAGES = {
     "comic_voice": (0.2, 0.35), "comic_animation": (0.35, 0.88), "comic_clips": (0.88, 0.95),
     "comic_export": (0.95, 0.99),
 }
+
+
+def visual_translator(llm) -> ChainedVisualPromptTranslator:
+    """Vietnamese -> English for image prompts: the offline Marian model (optional, needs
+    transformers) first, then the storyboard LLM when there is one."""
+    return ChainedVisualPromptTranslator(
+        LocalVisualPromptTranslator(), LLMVisualPromptTranslator(llm) if llm is not None else None,
+    )
 
 
 def is_comic_job(job: dict[str, Any] | None) -> bool:
@@ -133,23 +141,30 @@ class ComicJobRunner:
                         step_detail="Phân tích truyện", started_at=self.utc_now(), error=None)
         if not project.has_storyboard():
             llm = create_story_llm(settings.llm_provider)
-            prompt_translator = None
-            if settings.language == "vi":
-                # The offline Marian model is optional (needs transformers); the storyboard
-                # LLM, when there is one, writes the English prompts instead.
-                prompt_translator = ChainedVisualPromptTranslator(
-                    LocalVisualPromptTranslator(), LLMVisualPromptTranslator(llm) if llm is not None else None,
-                )
+            prompt_translator = visual_translator(llm)
             storyboard = build_storyboard(
                 project.read_story(), settings, llm,
                 progress=lambda done, total: report("comic_storyboard", done / total,
                                                     f"Chia cảnh đoạn {done}/{total}"),
                 check_active=lambda: self.ensure_active(job_id),
                 known_characters=self.series_store.known_characters(owner, series_id) if series_id else [],
-                prompt_translator=prompt_translator,
+                known_locations=self.series_store.known_locations(owner, series_id) if series_id else [],
+                known_world=self.series_store.known_world(owner, series_id) if series_id else "",
+                known_world_vi=self.series_store.known_world_vi(owner, series_id) if series_id else "",
+                # Its local model is Vietnamese -> English; other narration languages rely on the LLM.
+                prompt_translator=prompt_translator if settings.language == "vi" else None,
             )
             project.save_storyboard(storyboard, bump=False)
         storyboard = project.load_storyboard()
+        # Looks edited in Vietnamese since the last run: translate them before anything is drawn.
+        looks = [*storyboard.characters, *storyboard.locations]
+        if needs_english(looks, storyboard):
+            try:
+                llm = create_story_llm(settings.llm_provider)
+            except Exception:  # Ollama down: the offline model or the Vietnamese text still works.
+                llm = None
+            fill_english(looks, visual_translator(llm), world_holder=storyboard)
+            storyboard = project.save_storyboard(storyboard, bump=False)
         if series_id:
             storyboard = self.series_store.sync_into_episode(owner, series_id, project, storyboard)
             absorb(storyboard)
@@ -176,10 +191,13 @@ class ComicJobRunner:
                             comic=summary(storyboard, manifest), finished_at=self.utc_now())
             return
         if not render:
-            manifest = producer.preview_images(storyboard)
+            scene_limit = int(request.get("preview_scenes") or 0) or None
+            manifest = producer.preview_images(storyboard, scene_limit)
             absorb(storyboard, manifest)
             self.update_job(job_id, status="completed", step="storyboard_ready", progress=1.0,
-                            step_detail="Storyboard và ảnh đã sẵn sàng để duyệt",
+                            step_detail=(f"Đã vẽ thử {min(scene_limit, len(storyboard.scenes))} cảnh đầu — "
+                                         "duyệt rồi bấm Render video" if scene_limit
+                                         else "Storyboard và ảnh đã sẵn sàng để duyệt"),
                             comic=summary(storyboard, manifest), finished_at=self.utc_now())
             return
 

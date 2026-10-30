@@ -220,6 +220,38 @@ def _png(size=(256, 256)) -> bytes:
     return data.getvalue()
 
 
+class PlacePictureTests(unittest.TestCase):
+    def test_comfyui_chains_a_weaker_ipadapter_for_the_place(self) -> None:
+        provider = ComfyUIImageProvider(base_url="http://comfy", checkpoint="x.safetensors")
+        request = ImageRequest(prompt="hall", width=1080, height=1920)
+        both = provider._workflow(request, "hero.png", "palace.png")
+        self.assertEqual(both["12"]["inputs"]["model"], ["10", 0])  # Character first, then the place.
+        self.assertEqual(both["11"]["inputs"]["image"], "palace.png")
+        self.assertLess(both["12"]["inputs"]["weight"], both["10"]["inputs"]["weight"])
+        self.assertEqual(both["5"]["inputs"]["model"], ["12", 0])
+        place_only = provider._workflow(request, "", "palace.png")
+        self.assertNotIn("10", place_only)
+        self.assertEqual(place_only["12"]["inputs"]["model"], ["8", 0])
+        self.assertEqual(place_only["5"]["inputs"]["model"], ["12", 0])
+
+    def test_gemini_sends_the_place_after_the_characters(self) -> None:
+        import json as jsonlib
+        from unittest.mock import patch
+
+        from infrastructure.image_providers import GeminiImageProvider
+
+        with tempfile.TemporaryDirectory() as folder, patch.dict("os.environ", {"GEMINI_API_KEY": "k"}):
+            hero, palace = Path(folder) / "hero.png", Path(folder) / "palace.png"
+            Image.new("RGB", (8, 8), "red").save(hero)
+            Image.new("RGB", (8, 8), "blue").save(palace)
+            body = jsonlib.loads(GeminiImageProvider()._body(ImageRequest(
+                prompt="hall", width=8, height=8, references=(hero,), setting_reference=palace)))
+        parts = body["contents"][0]["parts"]
+        self.assertEqual(len(parts), 3)
+        self.assertIn("last image shows the location", parts[0]["text"])
+        self.assertIn("first 1 image(s) show the characters", parts[0]["text"])
+
+
 class CloudflareImageProviderTests(unittest.TestCase):
     def test_requires_account_and_token(self) -> None:
         with self.assertRaisesRegex(ImageGenerationError, "CLOUDFLARE_API_TOKEN"):

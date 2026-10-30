@@ -94,7 +94,155 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const cit = options.tts_providers.find(item => item.key === "cit");
     fillSelect(form.elements.tts_provider, options.tts_providers, cit?.configured ? "cit" : "edge");
     syncTtsVoices();
+    renderGenres();
     $("#comicStoryLimit").textContent = `Tối đa ${options.max_story_chars.toLocaleString("vi-VN")} ký tự mỗi dự án.`;
+  }
+
+  // Genre presets: one click fills the world line (in the AI request) and a matching drawing style.
+  function renderGenres() {
+    const box = $("#comicGenres");
+    if (!box) return;
+    box.innerHTML = (options.genres || []).map(genre => `<button type="button" class="comic-genre" data-genre="${escapeHtml(genre.key)}"
+      role="radio" aria-checked="false" title="${escapeHtml(genre.world_vi)}">${escapeHtml(genre.label)}</button>`).join("");
+  }
+
+  $("#comicGenres")?.addEventListener("click", event => {
+    const button = event.target.closest("[data-genre]");
+    if (!button) return;
+    const selected = form.elements.genre.value === button.dataset.genre ? "" : button.dataset.genre;
+    form.elements.genre.value = selected;
+    $$("#comicGenres [data-genre]").forEach(item => {
+      const on = item.dataset.genre === selected;
+      item.classList.toggle("is-selected", on);
+      item.setAttribute("aria-checked", String(on));
+    });
+    const preset = (options.genres || []).find(genre => genre.key === selected);
+    if (preset && [...form.elements.style.options].some(option => option.value === preset.style)) {
+      form.elements.style.value = preset.style;
+    }
+  });
+
+  // ---------------------------------------------------------------- story bible review
+  // The AI proposes characters, places and the world from the story; the user reviews them in
+  // Vietnamese. Changing a Vietnamese look clears its English prompt, which the server translates again.
+  const asciiId = (text, fallback) => (String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || fallback);
+
+  function bibleCharacterCard(character, index) {
+    const genders = { female: "Nữ", male: "Nam", unknown: "Không rõ" };
+    return `<div class="comic-bible-card" data-bible-card="characters" data-index="${index}">
+      <div class="comic-bible-card-head">
+        <input name="name" value="${escapeHtml(character.name || "")}" maxlength="120" placeholder="Tên nhân vật" aria-label="Tên nhân vật">
+        ${character.status === "new" ? '<b class="comic-bible-badge">Mới</b>' : character.status === "known" ? '<b class="comic-bible-badge known">Đã có</b>' : ""}
+        <button type="button" class="comic-bible-remove" data-bible-remove title="Bỏ nhân vật này" aria-label="Bỏ">✕</button>
+      </div>
+      <div class="comic-inline">
+        <select name="gender" aria-label="Giới tính">${Object.entries(genders).map(([value, label]) => `<option value="${value}"${(character.gender || "unknown") === value ? " selected" : ""}>${label}</option>`).join("")}</select>
+        <input name="age" value="${escapeHtml(character.age || "")}" maxlength="60" placeholder="Tuổi" aria-label="Tuổi">
+      </div>
+      <textarea name="appearance_vi" rows="3" maxlength="600" placeholder="Ngoại hình: khuôn mặt, tóc, mắt, dáng người, dấu hiệu dễ nhận ra">${escapeHtml(character.appearance_vi || "")}</textarea>
+      <input name="outfit_vi" value="${escapeHtml(character.outfit_vi || "")}" maxlength="400" placeholder="Trang phục thường mặc">
+      ${character.appearance ? `<details class="comic-bible-en"><summary>Prompt tiếng Anh (tự dịch)</summary><small>${escapeHtml([character.appearance, character.outfit].filter(Boolean).join(" · "))}</small></details>` : ""}
+    </div>`;
+  }
+
+  function bibleLocationCard(place, index) {
+    return `<div class="comic-bible-card" data-bible-card="locations" data-index="${index}">
+      <div class="comic-bible-card-head">
+        <input name="name" value="${escapeHtml(place.name || "")}" maxlength="120" placeholder="Tên bối cảnh" aria-label="Tên bối cảnh">
+        ${place.status === "new" ? '<b class="comic-bible-badge">Mới</b>' : place.status === "known" ? '<b class="comic-bible-badge known">Đã có</b>' : ""}
+        <button type="button" class="comic-bible-remove" data-bible-remove title="Bỏ bối cảnh này" aria-label="Bỏ">✕</button>
+      </div>
+      <textarea name="description_vi" rows="3" maxlength="600" placeholder="Kiến trúc/cảnh quan, vật liệu, màu sắc, đồ vật cố định, ánh sáng">${escapeHtml(place.description_vi || "")}</textarea>
+      ${place.description ? `<details class="comic-bible-en"><summary>Prompt tiếng Anh (tự dịch)</summary><small>${escapeHtml(place.description)}</small></details>` : ""}
+    </div>`;
+  }
+
+  // One editor per review box: the create-story review and the new-episode review.
+  // ``withWorld`` is off for episodes: the world belongs to the whole series and is edited there.
+  function createBibleEditor(box, { withWorld = true } = {}) {
+    let draft = null;
+    const render = () => {
+      box.innerHTML = `${withWorld ? `
+        <label class="field comic-bible-world"><span>Thế giới &amp; thời đại</span>
+          <textarea data-bible-world rows="2" maxlength="600" placeholder="Ví dụ: Trung Quốc thời Đường, cung điện mái ngói đỏ, tông màu ấm">${escapeHtml(draft.world_vi || "")}</textarea></label>` : ""}
+        <div class="comic-block-head"><h3>Nhân vật <small>(${draft.characters.length})</small></h3><button type="button" class="button secondary" data-bible-add="characters">+ Thêm nhân vật</button></div>
+        <div class="comic-bible-grid">${draft.characters.map(bibleCharacterCard).join("") || '<p class="comic-empty">Chưa có nhân vật — bấm "+ Thêm nhân vật" hoặc để AI tự nhận ra khi chia cảnh.</p>'}</div>
+        <div class="comic-block-head"><h3>Bối cảnh <small>(${draft.locations.length})</small></h3><button type="button" class="button secondary" data-bible-add="locations">+ Thêm bối cảnh</button></div>
+        <div class="comic-bible-grid">${draft.locations.map(bibleLocationCard).join("") || '<p class="comic-empty">Chưa có bối cảnh.</p>'}</div>`;
+    };
+    // Keep what is typed when the list is re-rendered (add / remove).
+    const sync = () => {
+      if (!draft) return;
+      const world = box.querySelector("[data-bible-world]");
+      if (world && world.value !== (draft.world_vi || "")) { draft.world_vi = world.value; draft.world = ""; }
+      box.querySelectorAll("[data-bible-card]").forEach(card => {
+        const item = draft[card.dataset.bibleCard][Number(card.dataset.index)];
+        card.querySelectorAll("input, select, textarea").forEach(field => {
+          const english = { appearance_vi: "appearance", outfit_vi: "outfit", description_vi: "description" }[field.name];
+          if (english && field.value !== (item[field.name] || "")) item[english] = "";
+          item[field.name] = field.value;
+        });
+      });
+    };
+    box.addEventListener("click", event => {
+      const add = event.target.closest("[data-bible-add]");
+      const remove = event.target.closest("[data-bible-remove]");
+      if (!add && !remove) return;
+      sync();
+      if (add) {
+        draft[add.dataset.bibleAdd].push(add.dataset.bibleAdd === "characters"
+          ? { name: "", gender: "unknown", age: "", appearance_vi: "", outfit_vi: "", status: "new" }
+          : { name: "", description_vi: "", status: "new" });
+      } else {
+        const card = remove.closest("[data-bible-card]");
+        draft[card.dataset.bibleCard].splice(Number(card.dataset.index), 1);
+      }
+      render();
+      if (add) box.querySelector(`[data-bible-card="${add.dataset.bibleAdd}"]:last-of-type input[name="name"]`)?.focus();
+    });
+    return {
+      show(bible) {
+        draft = JSON.parse(JSON.stringify(bible));
+        render();
+      },
+      // The approved bible as the API expects it; only "new" entries when ``onlyNew`` (episodes).
+      collect({ onlyNew = false } = {}) {
+        sync();
+        const used = new Set();
+        const uniqueId = (item, fallback) => {
+          let id = item.id || asciiId(item.name, fallback);
+          for (let n = 2; used.has(id); n += 1) id = `${asciiId(item.name, fallback)}_${n}`;
+          used.add(id);
+          return id;
+        };
+        const keep = item => String(item.name || "").trim() && (!onlyNew || item.status !== "known");
+        const strip = ({ status, ...rest }) => rest;
+        return {
+          world: withWorld ? draft.world || "" : "", world_vi: withWorld ? (draft.world_vi || "").trim() : "",
+          characters: draft.characters.filter(keep).map(item => strip({
+            ...item, id: uniqueId(item, "character"), name: item.name.trim(),
+            species: item.species || "human", appearance: item.appearance || "", outfit: item.outfit || "",
+          })),
+          locations: draft.locations.filter(keep).map(item => strip({
+            ...item, id: uniqueId(item, "place"), name: item.name.trim(), description: item.description || "",
+          })),
+        };
+      },
+      counts() {
+        return { characters: draft.characters.filter(item => item.status !== "known").length,
+                 locations: draft.locations.filter(item => item.status !== "known").length };
+      },
+    };
+  }
+
+  const bibleEditor = createBibleEditor($("#comicBibleBody"));
+  const episodeBibleEditor = createBibleEditor($("#comicEpisodeBibleBody"), { withWorld: false });
+
+  async function suggestBible(fields) {
+    const data = new FormData();
+    for (const [key, value] of Object.entries(fields)) if (value !== undefined && value !== null) data.append(key, value);
+    return api("/bible/suggest", { method: "POST", body: data });
   }
 
   // CIT Voice Studio voices come from the desktop app; the narrator list follows the narrator's gender.
@@ -411,6 +559,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       : "Storyboard đang được tạo…";
     $('[data-comic-action="images"]').textContent = animated ? "Chỉ sinh keyframe" : "Chỉ sinh ảnh";
     renderCharacters(storyboard, media, locked);
+    renderLocations(storyboard, media, locked);
     if (animated) {
       $("#comicScenes").innerHTML = renderAnimatedScenes({ storyboard, media, shots: current.shots, options, locked, escapeHtml });
     } else {
@@ -509,8 +658,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
             <label class="field"><span>Loài (tiếng Anh)</span><input name="species" value="${escapeHtml(c.species || "human")}" maxlength="80" placeholder="human, black cat, dragon…"></label>
             <label class="field"><span>Tuổi</span><input name="age" value="${escapeHtml(c.age || "")}" maxlength="60" placeholder="8, 25, elderly…"></label>
           </div>
-          <label class="field"><span>Ngoại hình cố định (tiếng Anh)</span><textarea name="appearance" rows="2" maxlength="600">${escapeHtml(c.appearance)}</textarea></label>
-          <label class="field"><span>Trang phục</span><input name="outfit" value="${escapeHtml(c.outfit)}" maxlength="400"></label>
+          ${characterLookFields(c)}
           <small class="field-hint">id: ${escapeHtml(c.id)} · ${c.reference_url ? "ảnh tham chiếu đang ghim cho các tập" : "chưa có ảnh tham chiếu — sẽ lấy ảnh của tập đầu tiên vẽ nhân vật này"}</small>
           <div class="comic-scene-actions">
             <button class="button secondary" type="submit">Lưu nhân vật</button>
@@ -519,6 +667,15 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
           </div>
         </div></form>`).join("") : '<p class="comic-empty">Nhân vật sẽ xuất hiện ở đây sau khi tập đầu tiên được phân tích.</p>';
     $("#comicEpisodes").classList.toggle("is-busy", locked);
+    const briefForm = $("#comicSeriesBriefForm");
+    for (const [name, value] of [["story_brief", settings.story_brief], ["world_vi", series.world_vi], ["world", series.world]]) {
+      briefForm.elements[name].value = briefForm.elements[name].defaultValue = value || "";
+    }
+    const places = series.locations || [];
+    $("#comicSeriesLocations").innerHTML = places.length
+      ? places.map(place => locationForm(place, "data-series-location", "",
+        place.reference_url ? { url: place.reference_url, readonly: true } : null)).join("")
+      : '<p class="comic-empty">Bối cảnh được lập từ kế hoạch hình ảnh khi tập đầu tiên được phân tích.</p>';
   }
 
   async function seriesMutate(promise, message) {
@@ -560,8 +717,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
             <label class="field"><span>Loài (tiếng Anh)</span><input name="species" value="${escapeHtml(c.species || "human")}" maxlength="80" placeholder="human, black cat, dragon…"></label>
             <label class="field"><span>Tuổi</span><input name="age" value="${escapeHtml(c.age || "")}" maxlength="60" placeholder="8, 25, elderly…"></label>
           </div>
-          <label class="field"><span>Ngoại hình cố định (tiếng Anh, giữ nhất quán)</span><textarea name="appearance" rows="2" maxlength="600">${escapeHtml(c.appearance)}</textarea></label>
-          <label class="field"><span>Trang phục</span><input name="outfit" value="${escapeHtml(c.outfit)}" maxlength="400"></label>
+          ${characterLookFields(c)}
           <small class="field-hint">id: ${escapeHtml(c.id)} · ${c.approved_reference ? "đang ghim ảnh tham chiếu đã duyệt" : "sửa ngoại hình sẽ vẽ lại ảnh tham chiếu và các cảnh có nhân vật này"}</small>
           <div class="comic-scene-actions">
             <button class="button secondary" type="submit"${locked ? " disabled" : ""}>Lưu nhân vật</button>
@@ -571,6 +727,79 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         </div></form>`;
     }).join("");
     openGalleries.forEach(id => refreshGallery(id));
+  }
+
+  // Looks are edited in Vietnamese; the English prompt (translated by the server) is advanced detail.
+  function characterLookFields(c, disabled = "") {
+    return `<label class="field"><span>Ngoại hình cố định</span><textarea name="appearance_vi" rows="2" maxlength="600"${disabled}
+        placeholder="${c.appearance_vi ? "" : "Mô tả bằng tiếng Việt: khuôn mặt, tóc, mắt, dáng người…"}">${escapeHtml(c.appearance_vi || "")}</textarea></label>
+      <label class="field"><span>Trang phục</span><input name="outfit_vi" value="${escapeHtml(c.outfit_vi || "")}" maxlength="400"${disabled}></label>
+      <details class="comic-bible-en"><summary>Prompt tiếng Anh cho AI vẽ${c.appearance_vi && !c.appearance ? " (sẽ tự dịch khi render)" : ""}</summary>
+        <label class="field"><span>Appearance</span><textarea name="appearance" rows="2" maxlength="600"${disabled}>${escapeHtml(c.appearance || "")}</textarea></label>
+        <label class="field"><span>Outfit</span><input name="outfit" value="${escapeHtml(c.outfit || "")}" maxlength="400"${disabled}></label>
+        <small class="field-hint">Sửa phần tiếng Việt thì prompt tiếng Anh được dịch lại tự động.</small>
+      </details>`;
+  }
+
+  // Only what the user changed: an untouched English prompt is not sent, so a Vietnamese edit retranslates it.
+  function lookChanges(target, names) {
+    const changes = {};
+    for (const name of names) {
+      const field = target.elements[name];
+      if (field && field.value !== field.defaultValue) changes[name] = field.value;
+    }
+    return changes;
+  }
+  const CHARACTER_FIELDS = ["name", "gender", "species", "age", "appearance_vi", "outfit_vi", "appearance", "outfit"];
+  const LOCATION_FIELDS = ["name", "description_vi", "description"];
+
+  // A planned place, editable: its English description is what every scene set there is drawn from.
+  // ``picture`` (editor only): the place's image and its pin / upload actions.
+  function locationForm(place, attribute, disabled, picture = null) {
+    const pictureBlock = picture ? `<div class="comic-location-picture">
+        ${picture.url ? `<img src="${escapeHtml(picture.url)}" alt="${escapeHtml(place.name)}" loading="lazy">`
+          : '<span>Chưa có ảnh — bấm "Vẽ thử 3 cảnh" hoặc tải ảnh lên</span>'}
+        ${place.approved_reference ? '<b class="comic-badge">Đã ghim</b>' : ""}
+      </div>
+      ${picture.readonly ? "" : `<div class="comic-scene-actions">
+        ${picture.drawn && !place.approved_reference ? `<button class="button secondary" type="button" data-place-op="approve" data-place-name="${escapeHtml(picture.drawn)}"${disabled}>Ghim ảnh này</button>` : ""}
+        ${place.approved_reference ? `<button class="button secondary" type="button" data-place-op="unpin"${disabled}>Bỏ ghim</button>` : ""}
+        <label class="button secondary comic-upload${disabled ? " is-disabled" : ""}">Tải ảnh lên<input type="file" accept="image/png,image/jpeg,image/webp" data-place-upload${disabled} hidden></label>
+      </div>`}` : "";
+    return `<form class="comic-location" ${attribute}="${escapeHtml(place.id)}">${pictureBlock}
+      <div class="comic-inline">
+        <label class="field"><span>Tên bối cảnh</span><input name="name" value="${escapeHtml(place.name)}" maxlength="120"${disabled}></label>
+        <small class="field-hint">id: ${escapeHtml(place.id)}</small>
+      </div>
+      <label class="field"><span>Mô tả hình ảnh cố định</span><textarea name="description_vi" rows="2" maxlength="600"${disabled}
+        placeholder="${place.description_vi ? "" : "Mô tả bằng tiếng Việt: kiến trúc, màu sắc, đồ vật, ánh sáng…"}">${escapeHtml(place.description_vi || "")}</textarea></label>
+      <details class="comic-bible-en"><summary>Prompt tiếng Anh cho AI vẽ${place.description_vi && !place.description ? " (sẽ tự dịch khi render)" : ""}</summary>
+        <textarea name="description" rows="2" maxlength="600"${disabled}>${escapeHtml(place.description || "")}</textarea>
+      </details>
+      <div class="comic-scene-actions"><button class="button secondary" type="submit"${disabled}>Lưu bối cảnh</button></div>
+    </form>`;
+  }
+
+  function renderLocations(storyboard, media, locked) {
+    const places = storyboard?.locations || [];
+    $("#comicLocationsBlock").classList.toggle("is-hidden", !places.length && !storyboard?.world);
+    $("#comicPlaceHint").textContent = !places.length ? "" : media.place_references_supported
+      ? "Ảnh bối cảnh được gửi kèm khi vẽ mọi cảnh ở nơi đó để giữ cảnh vật nhất quán. Ghim ảnh ưng ý để giữ cố định."
+      : "AI vẽ đang chọn chỉ đọc mô tả chữ (ảnh bối cảnh chỉ dùng được với Gemini hoặc ComfyUI).";
+    $("#comicWorld").textContent = storyboard?.world_vi || storyboard?.world ? `Thế giới: ${storyboard.world_vi || storyboard.world}` : "";
+    const disabled = locked ? " disabled" : "";
+    $("#comicLocations").innerHTML = places.map(place => locationForm(place, "data-location", disabled, {
+      url: media.location_references?.[place.id], drawn: media.location_drawn?.[place.id],
+    })).join("");
+  }
+
+  function locationSelect(storyboard, scene, disabled) {
+    const places = storyboard.locations || [];
+    if (!places.length) return "";
+    return `<label class="field"><span>Bối cảnh</span><select name="location_id"${disabled}>
+      <option value="">— Không gắn (dùng mô tả của cảnh)</option>
+      ${places.map(place => `<option value="${escapeHtml(place.id)}"${scene.location_id === place.id ? " selected" : ""}>${escapeHtml(place.name)}</option>`).join("")}
+    </select></label>`;
   }
 
   function dialogueText(lines) {
@@ -598,11 +827,12 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
           ${scene.image_override ? '<b class="comic-badge">Ảnh tải lên</b>' : ""}
         </div>
         <form class="comic-scene-body">
-          <header><strong>Cảnh ${index}</strong><small>v${scene.version}${scene.emotion ? ` · ${escapeHtml(scene.emotion)}` : ""}${scene.location ? ` · ${escapeHtml(scene.location)}` : ""}</small>
+          <header><strong>Cảnh ${index}</strong><small>v${scene.version}${scene.emotion ? ` · ${escapeHtml(scene.emotion)}` : ""}${(storyboard.locations || []).find(place => place.id === scene.location_id)?.name || scene.location ? ` · ${escapeHtml((storyboard.locations || []).find(place => place.id === scene.location_id)?.name || scene.location)}` : ""}</small>
             <select name="camera_motion" aria-label="Chuyển động camera"${disabled}>${options.camera_motions.map(m => `<option value="${m}"${scene.camera_motion === m ? " selected" : ""}>${MOTION_LABELS[m] || m}</option>`).join("")}</select></header>
           <label class="field"><span>Lời dẫn chuyện</span><textarea name="narration" rows="3" maxlength="1500"${disabled}>${escapeHtml(scene.narration)}</textarea></label>
           <label class="field"><span>Lời thoại — mỗi dòng <code>id_nhân_vật: lời</code></span><textarea name="dialogue" rows="2"${disabled}>${escapeHtml(dialogueText(scene.dialogue))}</textarea></label>
           <label class="field"><span>Nhân vật xuất hiện (id, cách nhau dấu phẩy)</span><input name="characters" value="${escapeHtml(scene.characters.join(", "))}"${disabled}></label>
+          ${locationSelect(storyboard, scene, disabled)}
           <details><summary>Prompt hình ảnh</summary>
             <label class="field"><span>Mô tả khung hình (tiếng Anh)</span><textarea name="visual_prompt" rows="3" maxlength="1500"${disabled}>${escapeHtml(scene.visual_prompt)}</textarea></label>
             <label class="field"><span>Negative prompt</span><input name="negative_prompt" value="${escapeHtml(scene.negative_prompt)}" maxlength="600"${disabled}></label>
@@ -631,21 +861,32 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     }
   }
 
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
+  function storyFormData() {
     const data = new FormData(form);
     for (const flag of ["burn_subtitles", "auto_render"]) data.set(flag, form.elements[flag].checked ? "true" : "false");
     for (const name of ["file", "background_music"]) {
       if (!form.elements[name].files.length) data.delete(name);
     }
-    const submit = form.querySelector('[type="submit"]');
-    submit.disabled = true;
+    return data;
+  }
+
+  function showStoryStep(step) {
+    form.classList.toggle("is-hidden", step !== 1);
+    $("#comicBibleReview").classList.toggle("is-hidden", step !== 2);
+    (step === 1 ? form : $("#comicBibleReview")).scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  async function createStory(bible, trigger) {
+    const data = storyFormData();
+    if (bible) data.set("bible", JSON.stringify(bible));
+    trigger.disabled = true;
     try {
       const created = await api("/series", { method: "POST", body: data });
       toast(created.job_id ? "Đã tạo truyện và tập 1, hệ thống đang chia cảnh…" : "Đã tạo truyện — hãy thêm tập 1");
       form.elements.text.value = "";
       form.elements.file.value = "";
       form.elements.episode_title.value = "";
+      showStoryStep(1);
       // Push the story's route so Back returns to the form.
       history.pushState(null, "", seriesRoute(created.series_id));
       await openSeries(created.series_id);
@@ -653,8 +894,50 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     } catch (error) {
       toast(error.message, true);
     } finally {
-      submit.disabled = false;
+      trigger.disabled = false;
     }
+  }
+
+  // Step 1 -> AI reads the story and proposes the bible -> step 2 review.
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const submit = form.querySelector('[data-comic-step="review"]');
+    const hasStory = form.elements.text.value.trim() || form.elements.file.files.length;
+    if (!hasStory && !form.elements.story_brief.value.trim()) {
+      toast("Hãy dán nội dung tập 1 (hoặc chọn file) để AI đề xuất nhân vật và bối cảnh", true);
+      return;
+    }
+    const label = submit.textContent;
+    submit.disabled = true;
+    submit.textContent = "AI đang đọc truyện…";
+    try {
+      const bible = await suggestBible({
+        text: form.elements.text.value, file: form.elements.file.files[0], story_brief: form.elements.story_brief.value,
+        genre: form.elements.genre.value, language: form.elements.language.value,
+        llm_provider: form.elements.llm_provider.value,
+      });
+      // Everything is new in a new story: the "Mới / Đã có" badges only matter for episodes.
+      [...bible.characters, ...bible.locations].forEach(item => delete item.status);
+      bibleEditor.show(bible);
+      $("#comicBibleIntro").textContent = `AI đề xuất ${bible.characters.length} nhân vật và ${bible.locations.length} bối cảnh. `
+        + "Sửa bằng tiếng Việt nếu cần — mọi cảnh sẽ được vẽ theo đúng hồ sơ này.";
+      showStoryStep(2);
+    } catch (error) {
+      if (confirm(`${error.message}\n\nTạo truyện luôn và để AI tự nhận ra nhân vật khi chia cảnh?`)) {
+        await createStory(null, submit);
+      }
+    } finally {
+      submit.disabled = false;
+      submit.textContent = label;
+    }
+  });
+
+  form.querySelector('[data-comic-step="create"]').addEventListener("click", event => createStory(null, event.currentTarget));
+
+  $("#comicBibleReview").addEventListener("click", event => {
+    const op = event.target.closest("[data-bible-op]")?.dataset.bibleOp;
+    if (op === "back") showStoryStep(1);
+    else if (op === "confirm") createStory(bibleEditor.collect(), event.target.closest("button"));
   });
 
   const syncMode = () => {
@@ -669,31 +952,88 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     $("#comicStoryCount").textContent = `${form.elements.text.value.length.toLocaleString("vi-VN")} ký tự`;
   });
 
-  episodeForm.addEventListener("submit", async event => {
-    event.preventDefault();
-    if (!currentSeries) return;
+  function episodeFormData() {
     const data = new FormData(episodeForm);
     data.set("auto_render", episodeForm.elements.auto_render.checked ? "true" : "false");
     data.set("series_id", currentSeries.series_id);
     for (const name of ["file", "background_music"]) {
       if (!episodeForm.elements[name].files.length) data.delete(name);
     }
-    if (!data.get("file") && !String(data.get("text") || "").trim()) {
-      toast("Hãy dán nội dung tập hoặc chọn file TXT/DOCX", true);
-      return;
-    }
-    const submit = episodeForm.querySelector('[type="submit"]');
-    submit.disabled = true;
+    return data;
+  }
+
+  async function createEpisode(bible, trigger) {
+    const data = episodeFormData();
+    if (bible && (bible.characters.length || bible.locations.length)) data.set("bible", JSON.stringify(bible));
+    trigger.disabled = true;
     try {
       const created = await api("/projects", { method: "POST", body: data });
       toast(`Đã tạo tập ${created.episode_number}, hệ thống đang chia cảnh…`);
       episodeForm.reset();
       $("#comicEpisodeCount").textContent = "0 ký tự";
+      $("#comicEpisodeReview").classList.add("is-hidden");
+      episodeForm.classList.remove("is-hidden");
       await openSeries(currentSeries.series_id);
     } catch (error) {
       toast(error.message, true);
     } finally {
+      trigger.disabled = false;
+    }
+  }
+
+  // A new chapter is compared with the series' bible: only new characters and places need review.
+  episodeForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!currentSeries) return;
+    const data = episodeFormData();
+    if (!data.get("file") && !String(data.get("text") || "").trim()) {
+      toast("Hãy dán nội dung tập hoặc chọn file TXT/DOCX", true);
+      return;
+    }
+    const submit = episodeForm.querySelector('[type="submit"]');
+    const label = submit.textContent;
+    submit.disabled = true;
+    submit.textContent = "AI đang tìm nhân vật & bối cảnh mới…";
+    let bible = null;
+    try {
+      bible = await suggestBible({
+        text: episodeForm.elements.text.value, file: episodeForm.elements.file.files[0],
+        story_brief: episodeForm.elements.episode_brief.value, series_id: currentSeries.series_id,
+        language: currentSeries.settings?.language || "vi", llm_provider: currentSeries.settings?.llm_provider || "auto",
+      });
+    } catch (error) {
+      // No AI available: the scene split still adds new characters on its own.
+      toast(`Bỏ qua bước duyệt: ${error.message}`);
+    } finally {
       submit.disabled = false;
+      submit.textContent = label;
+    }
+    const fresh = bible && [...bible.characters, ...bible.locations].some(item => item.status === "new");
+    if (!fresh) {
+      await createEpisode(null, submit);
+      return;
+    }
+    bible.characters = bible.characters.filter(item => item.status === "new");
+    bible.locations = bible.locations.filter(item => item.status === "new");
+    episodeBibleEditor.show(bible);
+    const { characters, locations } = episodeBibleEditor.counts();
+    $("#comicEpisodeBibleIntro").textContent = `Phát hiện ${characters} nhân vật mới và ${locations} bối cảnh mới trong tập này. `
+      + "Nhân vật và bối cảnh đã có của truyện được giữ nguyên.";
+    episodeForm.classList.add("is-hidden");
+    $("#comicEpisodeReview").classList.remove("is-hidden");
+    $("#comicEpisodeReview").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  $("#comicEpisodeReview").addEventListener("click", event => {
+    const op = event.target.closest("[data-episode-bible-op]")?.dataset.episodeBibleOp;
+    const button = event.target.closest("button");
+    if (op === "back") {
+      $("#comicEpisodeReview").classList.add("is-hidden");
+      episodeForm.classList.remove("is-hidden");
+    } else if (op === "skip") {
+      createEpisode(null, button);
+    } else if (op === "confirm") {
+      createEpisode(episodeBibleEditor.collect({ onlyNew: true }), button);
     }
   });
 
@@ -735,12 +1075,26 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   });
 
   seriesView.addEventListener("submit", async event => {
+    if (!currentSeries) return;
+    const seriesPath = `/series/${encodeURIComponent(currentSeries.series_id)}`;
+    if (event.target.id === "comicSeriesBriefForm") {
+      event.preventDefault();
+      await seriesMutate(api(seriesPath, json("PATCH", lookChanges(event.target, ["story_brief", "world_vi", "world"]))),
+        "Đã lưu cho các tập sau");
+      return;
+    }
+    const place = event.target.closest("[data-series-location]");
+    if (place) {
+      event.preventDefault();
+      await seriesMutate(api(`${seriesPath}/locations/${encodeURIComponent(place.dataset.seriesLocation)}`,
+        json("PATCH", lookChanges(place, LOCATION_FIELDS))), "Đã lưu bối cảnh chung");
+      return;
+    }
     const target = event.target.closest("[data-series-character]");
-    if (!target || !currentSeries) return;
+    if (!target) return;
     event.preventDefault();
-    const { name, gender, species, age, appearance, outfit } = Object.fromEntries(new FormData(target));
     await seriesMutate(api(`/series/${encodeURIComponent(currentSeries.series_id)}/characters/${encodeURIComponent(target.dataset.seriesCharacter)}`,
-      json("PATCH", { name, gender, species, age, appearance, outfit })), "Đã lưu nhân vật của truyện");
+      json("PATCH", lookChanges(target, CHARACTER_FIELDS))), "Đã lưu nhân vật của truyện");
   });
 
   $("#comicSeriesList").addEventListener("click", event => {
@@ -814,7 +1168,8 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const op = event.target.closest("[data-scene-op]")?.dataset.sceneOp;
     const shotOp = event.target.closest("[data-shot-op]")?.dataset.shotOp;
     const refOp = event.target.closest("[data-ref-op]")?.dataset.refOp;
-    if (!current || (!action && !op && !shotOp && !refOp)) return;
+    const placeOp = event.target.closest("[data-place-op]")?.dataset.placeOp;
+    if (!current || (!action && !op && !shotOp && !refOp && !placeOp)) return;
     const jobId = encodeURIComponent(current.job.job_id);
     if (shotOp) {
       const label = event.target.closest("[data-shot]").dataset.shot;
@@ -842,6 +1197,17 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       }
       return;
     }
+    if (placeOp) {
+      const placeId = event.target.closest("[data-location]").dataset.location;
+      const base = `/projects/${jobId}/locations/${encodeURIComponent(placeId)}/references`;
+      if (placeOp === "approve") {
+        const name = event.target.closest("[data-place-name]").dataset.placeName;
+        await mutate(api(withSceneQuery(`${base}/${encodeURIComponent(name)}/approve`), { method: "POST" }), "Đã ghim ảnh bối cảnh");
+      } else if (placeOp === "unpin") {
+        await mutate(api(withSceneQuery(`${base}/approval`), { method: "DELETE" }), "Đã bỏ ghim ảnh bối cảnh");
+      }
+      return;
+    }
     if (refOp) {
       const characterId = event.target.closest("[data-character]").dataset.character;
       const base = `/projects/${jobId}/characters/${encodeURIComponent(characterId)}/references`;
@@ -863,10 +1229,12 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     }
     if (action) {
       if (action === "reanalyze" && !confirm("Phân tích lại sẽ thay toàn bộ storyboard hiện tại (các chỉnh sửa tay sẽ mất). Tiếp tục?")) return;
-      const body = { images_only: action === "images", reanalyze: action === "reanalyze" };
+      const body = { images_only: action === "images" || action === "trial", reanalyze: action === "reanalyze" };
+      if (action === "trial") body.preview_scenes = 3;
       try {
         await api(`/projects/${jobId}/render`, json("POST", body));
-        toast(action === "images" ? "Đang sinh ảnh cho các cảnh đã đổi…" : "Đang render — chỉ tạo lại phần đã thay đổi");
+        toast(action === "trial" ? "Đang vẽ thử nhân vật, bối cảnh và 3 cảnh đầu…"
+          : action === "images" ? "Đang sinh ảnh cho các cảnh đã đổi…" : "Đang render — chỉ tạo lại phần đã thay đổi");
         if (action === "reanalyze") scenePage = 1;
         await open(current.job.job_id, { keepPage: action !== "reanalyze" });
       } catch (error) { toast(error.message, true); }
@@ -901,6 +1269,15 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const jobId = encodeURIComponent(current?.job?.job_id || "");
     const shotUpload = event.target.closest("[data-shot-upload]");
     const refUpload = event.target.closest("[data-ref-upload]");
+    const placeUpload = event.target.closest("[data-place-upload]");
+    if (placeUpload?.files.length && current) {
+      const data = new FormData();
+      data.append("file", placeUpload.files[0]);
+      const placeId = placeUpload.closest("[data-location]").dataset.location;
+      await mutate(api(withSceneQuery(`/projects/${jobId}/locations/${encodeURIComponent(placeId)}/references`),
+        { method: "POST", body: data }), "Đã tải và ghim ảnh bối cảnh");
+      return;
+    }
     for (const upload of [shotUpload, refUpload]) {
       if (!upload?.files.length || !current) continue;
       const data = new FormData();
@@ -930,9 +1307,12 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const target = event.target;
     const jobId = encodeURIComponent(current.job.job_id);
     const values = Object.fromEntries(new FormData(target));
+    if (target.dataset.location !== undefined) {
+      await mutate(api(withSceneQuery(`/projects/${jobId}/locations/${encodeURIComponent(target.dataset.location)}`), json("PATCH", lookChanges(target, LOCATION_FIELDS))), "Đã lưu bối cảnh — các cảnh ở đây sẽ được vẽ lại khi render");
+      return;
+    }
     if (target.dataset.character !== undefined) {
-      const { name, gender, species, age, appearance, outfit } = values;
-      await mutate(api(withSceneQuery(`/projects/${jobId}/characters/${encodeURIComponent(target.dataset.character)}`), json("PATCH", { name, gender, species, age, appearance, outfit })), "Đã lưu nhân vật");
+      await mutate(api(withSceneQuery(`/projects/${jobId}/characters/${encodeURIComponent(target.dataset.character)}`), json("PATCH", lookChanges(target, CHARACTER_FIELDS))), "Đã lưu nhân vật");
       return;
     }
     if (target.dataset.shot !== undefined) {
@@ -955,6 +1335,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
         negative_prompt: values.negative_prompt,
         camera_motion: values.camera_motion,
       };
+      if ("location_id" in values) patch.location_id = values.location_id;
       await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}`), json("PATCH", patch)), `Đã lưu cảnh ${sceneIndex}`);
     } catch (error) {
       toast(error.message, true);

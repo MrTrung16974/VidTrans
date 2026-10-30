@@ -5,7 +5,8 @@ episode must share so the story stays consistent from video to video:
 
 ```
 comic-series/<series_id>/
-  series.json   title, description, default settings, character bible, episode list
+  series.json   title, description, default settings, character bible, world line,
+                planned locations, episode list
   refs/         approved character reference images, shared by every episode
 ```
 
@@ -26,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from domain.comic import ComicCharacter, Storyboard
+from domain.comic import ComicCharacter, ComicLocation, Storyboard
 from infrastructure.artifact_io import write_json_atomic
 from infrastructure.comic_project import ComicProject
 
@@ -64,6 +65,17 @@ class ComicSeries:
 
     def set_characters(self, characters: list[ComicCharacter]) -> None:
         self.data["characters"] = [c.model_dump(mode="json") for c in characters]
+
+    @property
+    def locations(self) -> list[ComicLocation]:
+        return [ComicLocation.model_validate(item) for item in self.data.get("locations", [])]
+
+    def set_locations(self, locations: list[ComicLocation]) -> None:
+        self.data["locations"] = [place.model_dump(mode="json") for place in locations]
+
+    @property
+    def world(self) -> str:
+        return str(self.data.get("world") or "")
 
     def ref_path(self, name: str | None) -> Path | None:
         if not name or not _REF_NAME.fullmatch(name) or name.startswith("."):
@@ -163,6 +175,18 @@ class ComicSeriesStore:
         series = self.load(owner, series_id)
         return series.characters if series else []
 
+    def known_locations(self, owner: str, series_id: str) -> list[ComicLocation]:
+        series = self.load(owner, series_id)
+        return series.locations if series else []
+
+    def known_world(self, owner: str, series_id: str) -> str:
+        series = self.load(owner, series_id)
+        return series.world if series else ""
+
+    def known_world_vi(self, owner: str, series_id: str) -> str:
+        series = self.load(owner, series_id)
+        return str(series.data.get("world_vi") or "") if series else ""
+
     def sync_into_episode(self, owner: str, series_id: str, project: ComicProject, storyboard: Storyboard) -> Storyboard:
         """Pin the series' approved references on the episode's characters.
 
@@ -185,11 +209,23 @@ class ComicSeriesStore:
                 shutil.copy2(source, target)
             character.approved_reference = source.name
             changed = True
+        shared_places = {place.id: place for place in series.locations}
+        for place in storyboard.locations:
+            shared = shared_places.get(place.id)
+            source = series.ref_path(shared.approved_reference if shared else None)
+            own = place.approved_reference
+            if source is None or own == source.name or (own and series.ref_path(own) is None):
+                continue
+            target = project.dir("refs") / source.name
+            if not target.is_file():
+                shutil.copy2(source, target)
+            place.approved_reference = source.name
+            changed = True
         return project.save_storyboard(storyboard) if changed else storyboard
 
     def absorb_episode(self, owner: str, series_id: str, project: ComicProject, storyboard: Storyboard,
                        manifest: dict[str, Any] | None = None) -> None:
-        """Add the episode's new characters and first references to the series bible."""
+        """Add the episode's new characters, places and first references to the series bible."""
         produced = (manifest or {}).get("references", {})
 
         def change(series: ComicSeries) -> None:
@@ -201,6 +237,9 @@ class ComicSeriesStore:
                     shared = character.model_copy(update={"approved_reference": None})
                     bible.append(shared)
                     by_id[shared.id] = shared
+                for english in ("appearance", "outfit"):  # Fill a translation the series still lacks.
+                    if not getattr(shared, english) and getattr(character, english):
+                        setattr(shared, english, getattr(character, english))
                 if series.ref_path(shared.approved_reference) is not None:
                     continue
                 name = character.approved_reference or produced.get(character.id)
@@ -211,5 +250,31 @@ class ComicSeriesStore:
                     shutil.copy2(source, series.refs_dir / source.name)
                 shared.approved_reference = source.name
             series.set_characters(bible)
+            places = series.locations
+            known_places = {place.id: place for place in places}
+            # Copies: the series must never edit the episode's own storyboard objects.
+            places += [place.model_copy() for place in storyboard.locations if place.id not in known_places]
+            for place in storyboard.locations:  # An English translation the series still lacks.
+                shared = known_places.get(place.id)
+                if shared is not None and not shared.description and place.description:
+                    shared.description = place.description
+            # The first picture drawn (or pinned) for a place becomes the series' picture of it.
+            drawn = (manifest or {}).get("location_references", {})
+            by_place = {place.id: place for place in places}
+            for place in storyboard.locations:
+                shared = by_place.get(place.id)
+                if shared is None or series.ref_path(shared.approved_reference) is not None:
+                    continue
+                source = project.asset_path("refs", place.approved_reference or drawn.get(place.id) or "")
+                if source is None:
+                    continue
+                if not (series.refs_dir / source.name).is_file():
+                    shutil.copy2(source, series.refs_dir / source.name)
+                shared.approved_reference = source.name
+            series.set_locations(places)
+            if storyboard.world and not series.world:
+                series.data["world"] = storyboard.world
+            if storyboard.world_vi and not series.data.get("world_vi"):
+                series.data["world_vi"] = storyboard.world_vi
 
         self.update(owner, series_id, change)

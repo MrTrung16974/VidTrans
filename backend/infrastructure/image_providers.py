@@ -56,6 +56,8 @@ class ImageRequest:
     negative_prompt: str = ""
     seed: int = 0
     references: tuple[Path, ...] = ()
+    # An approved picture of the place: keep its architecture, materials and colours, not its framing.
+    setting_reference: Path | None = None
     caption: str = ""
     aspect_ratio: str = "9:16"
     # What a stand-in image shows; generative providers ignore it and use ``prompt``.
@@ -155,7 +157,8 @@ class ComfyUIImageProvider:
     """Generate images through ComfyUI's built-in HTTP API.
 
     The base workflow uses core nodes. When reference images are supplied it
-    applies the first one through the pinned official IP-Adapter custom node.
+    applies the first character one through the pinned official IP-Adapter custom node,
+    and the place's picture through a second, weaker IP-Adapter.
     A plain-checkpoint retry keeps renders working if IP-Adapter is unavailable
     or the local GPU cannot fit it in VRAM.
     """
@@ -188,6 +191,10 @@ class ComfyUIImageProvider:
     ipadapter_weight: float = field(default_factory=lambda: float(os.environ.get(
         "VIDTRANS_COMFYUI_IPADAPTER_WEIGHT", "0.7"
     )))
+    # Low on purpose: the place should look the same, but the camera and action follow the prompt.
+    setting_weight: float = field(default_factory=lambda: float(os.environ.get(
+        "VIDTRANS_COMFYUI_SETTING_WEIGHT", "0.35"
+    )))
 
     def __post_init__(self) -> None:
         if not self.base_url or not self.checkpoint:
@@ -199,9 +206,10 @@ class ComfyUIImageProvider:
     @property
     def cache_key(self) -> str:
         return (f"comfyui-{self.checkpoint}-{self.steps}-{self.cfg}-{self.sampler}-{self.scheduler}-"
-                f"{self.max_side}-ipadapter-{self.ipadapter_enabled}-{self.ipadapter_preset}-{self.ipadapter_weight}")
+                f"{self.max_side}-ipadapter-{self.ipadapter_enabled}-{self.ipadapter_preset}-{self.ipadapter_weight}"
+                + (f"-setting-{self.setting_weight}" if self.setting_weight != 0.35 else ""))
 
-    def _workflow(self, request: ImageRequest, reference_name: str = "") -> dict[str, Any]:
+    def _workflow(self, request: ImageRequest, reference_name: str = "", setting_name: str = "") -> dict[str, Any]:
         # Avoid exhausting consumer VRAM on a 1080x1920 final video. The result
         # is upscaled by fit_cover after generation. Latent dimensions use /8.
         scale = min(1.0, self.max_side / max(request.width, request.height))
@@ -233,6 +241,19 @@ class ComfyUIImageProvider:
                 "weight_type": "prompt is more important",
             }}
             workflow["5"]["inputs"]["model"] = ["10", 0]
+        if setting_name and self.ipadapter_enabled:
+            if "8" not in workflow:
+                workflow["8"] = {"class_type": "IPAdapterUnifiedLoader", "inputs": {
+                    "model": ["1", 0], "preset": self.ipadapter_preset,
+                }}
+            workflow["11"] = {"class_type": "LoadImage", "inputs": {"image": setting_name}}
+            workflow["12"] = {"class_type": "IPAdapter", "inputs": {
+                "model": workflow["5"]["inputs"]["model"] if "10" in workflow else ["8", 0],
+                "ipadapter": ["8", 1], "image": ["11", 0],
+                "weight": self.setting_weight, "start_at": 0.0, "end_at": 0.6,
+                "weight_type": "prompt is more important",
+            }}
+            workflow["5"]["inputs"]["model"] = ["12", 0]
         return workflow
 
     def _upload_reference(self, path: Path) -> str:
@@ -295,10 +316,11 @@ class ComfyUIImageProvider:
                 raise error from exc
         raise AssertionError("unreachable")
 
-    def _generate_workflow(self, request: ImageRequest, output_path: Path, reference_name: str = "") -> None:
+    def _generate_workflow(self, request: ImageRequest, output_path: Path, reference_name: str = "",
+                           setting_name: str = "") -> None:
         from PIL import Image
 
-        queued = self._json("/prompt", body={"prompt": self._workflow(request, reference_name)})
+        queued = self._json("/prompt", body={"prompt": self._workflow(request, reference_name, setting_name)})
         prompt_id = queued.get("prompt_id")
         if not prompt_id:
             raise ImageGenerationError(f"ComfyUI không nhận workflow: {queued.get('error', 'thiếu prompt_id')}")
@@ -351,11 +373,12 @@ class ComfyUIImageProvider:
             logger.warning("Could not cancel ComfyUI prompt %s: %s", prompt_id, exc)
 
     def generate(self, request: ImageRequest, output_path: Path) -> None:
-        reference_name = ""
-        if self.ipadapter_enabled and request.references:
+        if self.ipadapter_enabled and (request.references or request.setting_reference):
             try:
-                reference_name = self._upload_reference(request.references[0])
-                self._generate_workflow(request, output_path, reference_name)
+                reference_name = self._upload_reference(request.references[0]) if request.references else ""
+                setting_name = (self._upload_reference(request.setting_reference)
+                                if request.setting_reference and self.setting_weight > 0 else "")
+                self._generate_workflow(request, output_path, reference_name, setting_name)
                 return
             except ImageGenerationError as exc:
                 logger.warning("IP-Adapter failed; retrying the scene with the base checkpoint: %s", exc)
@@ -386,13 +409,16 @@ class GeminiImageProvider:
     def _body(self, request: ImageRequest) -> bytes:
         text = request.prompt
         if request.references:
-            text += ("\nKeep every character's face, hairstyle and outfit identical to the reference "
-                     "image(s) provided. Use them only for identity: draw the full scene described above, "
-                     "not a portrait, and do not copy their pose or plain background.")
+            text += (f"\nThe first {len(request.references)} image(s) show the characters: keep every character's "
+                     "face, hairstyle and outfit identical to them. Use them only for identity: draw the full scene "
+                     "described above, not a portrait, and do not copy their pose or plain background.")
+        if request.setting_reference:
+            text += ("\nThe last image shows the location: keep its architecture, materials, colours and fixed "
+                     "props, but frame it with the camera angle and action described above. Ignore anyone in it.")
         if request.negative_prompt:
             text += f"\nAvoid: {request.negative_prompt}."
         parts: list[dict[str, Any]] = [{"text": text}]
-        for reference in request.references:
+        for reference in (*request.references, *((request.setting_reference,) if request.setting_reference else ())):
             parts.append({"inline_data": {
                 "mime_type": "image/png",
                 "data": base64.b64encode(Path(reference).read_bytes()).decode("ascii"),
@@ -649,6 +675,10 @@ def image_provider_statuses() -> list[dict[str, Any]]:
         {"key": "gemini", "label": "Gemini Image (AI, giữ nhân vật nhất quán)",
          "configured": bool(os.environ.get("GEMINI_API_KEY", "").strip())},
     ]
+
+
+# Providers that take reference pictures (characters, places); the others draw from the prompt alone.
+REFERENCE_PROVIDERS = frozenset({ComfyUIImageProvider.key, GeminiImageProvider.key})
 
 
 def create_image_provider(key: str, *, font_path: Path | None = None) -> ImageProvider:

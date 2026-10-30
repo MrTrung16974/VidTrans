@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import shutil
@@ -14,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from application.comic_service import ACTIVE_STATUSES, COMIC_JOB_ACTION, comic_summary, is_comic_job
 from domain.comic import (
+    GENRE_PRESETS,
+    StoryBible,
     ASPECT_RATIOS,
     CAMERA_MOTIONS,
     COMIC_STYLES,
@@ -22,6 +25,7 @@ from domain.comic import (
     SHOT_MOVEMENTS,
     SHOT_TYPES,
     ComicCharacter,
+    ComicLocation,
     ComicScene,
     ComicSettings,
     DialogueLine,
@@ -37,8 +41,8 @@ from domain.plan_entitlements import (
 )
 from infrastructure.comic_project import ComicProject
 from infrastructure.comic_series import ComicSeries, ComicSeriesStore
-from infrastructure.image_providers import image_provider_statuses
-from infrastructure.llm_providers import llm_provider_statuses
+from infrastructure.image_providers import REFERENCE_PROVIDERS, image_provider_statuses
+from infrastructure.llm_providers import LLMError, create_story_llm, llm_provider_statuses
 from infrastructure.story_text import StoryTextError, normalize_story_text, read_story_upload
 from infrastructure.tts_providers import (
     default_tts_provider,
@@ -47,6 +51,7 @@ from infrastructure.tts_providers import (
     resolve_tts_voice_selection,
 )
 from infrastructure.video_providers import animation_provider_statuses
+from pipeline.comic_storyboard import suggest_bible
 
 MAX_IMAGE_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_MUSIC_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -78,6 +83,8 @@ class ScenePatch(BaseModel):
     dialogue: list[DialogueLine] | None = None
     characters: list[str] | None = None
     location: str | None = None
+    # A planned place ("" clears it); its fixed description then drives the image.
+    location_id: str | None = None
     emotion: str | None = None
     visual_prompt: str | None = None
     negative_prompt: str | None = None
@@ -104,13 +111,45 @@ class CharacterPatch(BaseModel):
     age: str | None = None
     appearance: str | None = None
     outfit: str | None = None
+    appearance_vi: str | None = None
+    outfit_vi: str | None = None
     voice: str | None = None
+
+
+def retranslate_on_edit(current: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:
+    """A changed Vietnamese look clears its English twin, which the worker translates again."""
+    for english, vietnamese in (("appearance", "appearance_vi"), ("outfit", "outfit_vi"),
+                                ("description", "description_vi"), ("world", "world_vi")):
+        if vietnamese in changes and english not in changes and changes[vietnamese] != current.get(vietnamese):
+            changes[english] = ""
+    return changes
+
+
+def parse_bible(value: str) -> StoryBible | None:
+    """The reviewed bible sent with a creation form as JSON; empty means "let the AI decide"."""
+    if not value.strip():
+        return None
+    try:
+        return StoryBible.model_validate_json(value)
+    except ValidationError as exc:
+        raise HTTPException(400, f"Hồ sơ nhân vật/bối cảnh không hợp lệ: {_validation_detail(exc)}") from exc
 
 
 class SeriesPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=20000)
+    # The visual plan shared by the next episodes (era, characters, places).
+    story_brief: str | None = Field(default=None, max_length=6000)
+    world: str | None = Field(default=None, max_length=600)
+    world_vi: str | None = Field(default=None, max_length=600)
+
+
+class LocationPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=600)
+    description_vi: str | None = Field(default=None, max_length=600)
 
 
 class ShotPatch(BaseModel):
@@ -139,6 +178,8 @@ class ShotInsert(BaseModel):
 class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     images_only: bool = False
+    # With images_only: draw just the first N scenes ("Vẽ thử 3 cảnh") to check the look cheaply.
+    preview_scenes: int | None = Field(default=None, ge=1, le=20)
     reanalyze: bool = False
     # "scene.shot" (e.g. "2.1"): render only that shot as a preview.
     shot: str | None = Field(default=None, pattern=r"^\d{1,3}\.\d{1,2}$")
@@ -173,11 +214,12 @@ def _validation_detail(exc: ValidationError) -> str:
 
 def requeue_comic_job(deps: ComicRouteDependencies, request: Request, job_id: str, job: dict[str, Any],
                       *, render: bool, preview_shot: str | None = None,
-                      idempotency_key: str | None = None) -> dict[str, Any]:
+                      idempotency_key: str | None = None, preview_scenes: int | None = None) -> dict[str, Any]:
     """Return a finished comic job to the queue; the worker reuses every unchanged asset."""
     resume_request = dict(job.get("resume_request") or {})
     resume_request["render"] = render
     resume_request["preview_shot"] = preview_shot
+    resume_request["preview_scenes"] = preview_scenes if not render else None
     deps.reserve_quota(job_id, deps.quota_account(request, job))
     try:
         deps.retry_job(
@@ -221,6 +263,11 @@ def settings_form(
     motion_strength: float = Form(0.45),
     max_animation_attempts: int = Form(2),
     animation_budget_seconds: float = Form(240.0),
+    # Visual plan: era and world, each character's look, the main places (any language).
+    story_brief: str = Form("", max_length=6000),
+    # Genre preset key and the bible the user reviewed (JSON from /bible/suggest, edited).
+    genre: str = Form("", max_length=40),
+    bible: str = Form(""),
 ) -> dict[str, Any]:
     """Creation-form fields shared by standalone projects and series."""
     return dict(locals())
@@ -266,6 +313,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         shots_media = manifest.get("shots", {})
 
         all_scenes = list(storyboard.scenes) if storyboard else []
+        storyboard_places = list(storyboard.locations) if storyboard else []
         total_scenes = len(all_scenes)
         total_shots = sum(len(s.shots) for s in all_scenes)
 
@@ -332,6 +380,17 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                     if entry.get("image") and (not paginate_scenes or index in visible_indices)
                 },
                 "references": {cid: f"{base}/refs/{name}" for cid, name in manifest.get("references", {}).items()},
+                # A pinned picture shows even before the next render; otherwise the last drawn one.
+                "location_references": {
+                    **{place_id: f"{base}/refs/{name}"
+                       for place_id, name in manifest.get("location_references", {}).items()},
+                    **{place.id: f"{base}/refs/{place.approved_reference}" for place in storyboard_places
+                       if place.approved_reference and project.asset_path("refs", place.approved_reference)},
+                },
+                "location_drawn": manifest.get("location_references", {}),
+                "place_references_supported": (
+                    ((job.get("resume_request") or {}).get("settings") or {}).get("image_provider")
+                    in REFERENCE_PROVIDERS),
                 "uploads": {
                     str(scene.scene_index): f"{base}/uploads/{scene.image_override}"
                     for scene in visible_scenes
@@ -381,15 +440,66 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             ],
             "shot_types": list(SHOT_TYPES), "shot_movements": list(SHOT_MOVEMENTS), "shot_angles": list(SHOT_ANGLES),
             "max_story_chars": MAX_STORY_CHARS,
+            "genres": [{"key": key, **preset} for key, preset in GENRE_PRESETS.items()],
         })
 
-    def build_settings(account: dict[str, Any], fields: dict[str, Any]) -> ComicSettings:
-        """Validate the creation form into settings the account may use with configured providers."""
-        llm_provider = fields["llm_provider"]
+    @router.post("/bible/suggest")
+    async def suggest_story_bible(
+        request: Request,
+        text: str = Form(""),
+        file: UploadFile | None = File(default=None),
+        story_brief: str = Form("", max_length=6000),
+        genre: str = Form("", max_length=40),
+        language: str = Form("vi"),
+        llm_provider: str = Form("auto"),
+        # For a new episode: compare with the series' bible and mark what is new.
+        series_id: str = Form(""),
+    ) -> JSONResponse:
+        """Read the story and propose characters, places and the world for the user to review."""
+        account = deps.current_account(request)
+        story = await read_story_input(text, file, required=not story_brief.strip())
+        provider = resolve_llm_provider(account, llm_provider)
+        try:
+            settings = ComicSettings(language=language, llm_provider=provider, story_brief=story_brief.strip(),
+                                     genre=genre if genre in GENRE_PRESETS else "")
+        except ValidationError as exc:
+            raise HTTPException(400, _validation_detail(exc)) from exc
+        known_characters, known_locations, known_world = [], [], ""
+        if series_id.strip():
+            series = series_store().load(str(account["user_id"]), series_id.strip())
+            if series is None:
+                raise HTTPException(404, "Không tìm thấy truyện")
+            known_characters, known_locations, known_world = series.characters, series.locations, series.world
+        try:
+            llm = create_story_llm(provider)
+        except LLMError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        if llm is None:
+            raise HTTPException(409, "Cần AI chia cảnh (Gemini hoặc Qwen3) để tự đề xuất nhân vật và bối cảnh. "
+                                     "Bạn vẫn có thể bỏ qua bước này.")
+        try:
+            bible = await asyncio.to_thread(
+                suggest_bible, llm, story, settings, known_characters=known_characters,
+                known_locations=known_locations, known_world=known_world)
+        except (LLMError, ValidationError, ValueError) as exc:
+            raise HTTPException(502, f"AI chưa đề xuất được hồ sơ ({str(exc)[:200]}). Hãy thử lại hoặc bỏ qua.") from exc
+        known_ids = {c.id for c in known_characters} | {p.id for p in known_locations}
+        payload = bible.model_dump(mode="json")
+        for item in [*payload["characters"], *payload["locations"]]:
+            item["status"] = "known" if item["id"] in known_ids else "new"
+        payload["genre"] = settings.genre
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    def resolve_llm_provider(account: dict[str, Any], llm_provider: str) -> str:
         if llm_provider == "auto" and not has_paid_features(account):
             # "Auto" prefers Gemini; free plans fall back to the next engine in its chain.
             qwen3 = next((s for s in llm_provider_statuses() if s["key"] == "qwen3"), None)
-            llm_provider = "qwen3" if qwen3 and qwen3["configured"] else "heuristic"
+            return "qwen3" if qwen3 and qwen3["configured"] else "heuristic"
+        return llm_provider
+
+    def build_settings(account: dict[str, Any], fields: dict[str, Any]) -> ComicSettings:
+        """Validate the creation form into settings the account may use with configured providers."""
+        llm_provider = resolve_llm_provider(account, fields["llm_provider"])
         tts_provider = fields["tts_provider"].strip() or default_tts_provider()
         narrator_voice = fields["narrator_voice"]
         tts_voices: dict[str, str] = {}
@@ -419,6 +529,9 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 animation_provider=fields["animation_provider"], quality=fields["quality"], fps=fields["fps"],
                 motion_strength=fields["motion_strength"], max_animation_attempts=fields["max_animation_attempts"],
                 animation_budget_seconds=fields["animation_budget_seconds"],
+                story_brief=fields["story_brief"].strip(),
+                genre=fields["genre"] if fields["genre"] in GENRE_PRESETS else "",
+                bible=parse_bible(fields["bible"]),
             )
         except ValidationError as exc:
             raise HTTPException(400, _validation_detail(exc)) from exc
@@ -501,7 +614,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         return job_id
 
     def queue_episode(account: dict[str, Any], series_id: str, story: str, music: tuple[bytes, str], *,
-                      title: str, youtube_title: str, auto_render: bool) -> tuple[str, int]:
+                      title: str, youtube_title: str, auto_render: bool,
+                      episode_brief: str = "", bible: StoryBible | None = None) -> tuple[str, int]:
         """Queue the next episode of a series with the series' settings and character bible."""
         store = series_store()
         owner = str(account["user_id"])
@@ -512,6 +626,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             settings = ComicSettings.model_validate({
                 **series.data.get("settings", {}), "title": title.strip() or "Tập mới",
                 "youtube_title": youtube_title.strip(), "auto_render": auto_render,
+                "episode_brief": episode_brief.strip(),
+                "bible": bible.model_dump(mode="json") if bible is not None else None,
             })
         except ValidationError as exc:
             raise HTTPException(400, _validation_detail(exc)) from exc
@@ -520,6 +636,15 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         number = store.add_episode(owner, series.id, job_id)
         if not title.strip():
             settings.title = f"Tập {number}"
+        if bible is not None and number > 1:
+            def adopt(target: ComicSeries) -> None:
+                # Approved for this episode: the series learns them now, even if the episode later fails.
+                known = {c.id for c in target.characters}
+                target.set_characters([*target.characters, *(c for c in bible.characters if c.id not in known)])
+                places = {place.id for place in target.locations}
+                target.set_locations([*target.locations, *(p for p in bible.locations if p.id not in places)])
+
+            store.update(owner, series.id, adopt)
         info = {"series_id": series.id, "series_title": series.data.get("title", ""), "episode_number": number}
         try:
             queue_project(account, settings, story, music, info, job_id)
@@ -537,6 +662,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         background_music: UploadFile | None = File(default=None),
         # Set to add the project as the next episode of that series; its settings then apply.
         series_id: str = Form(""),
+        # What is new in this episode: its places and characters (series episodes only).
+        episode_brief: str = Form("", max_length=3000),
     ) -> JSONResponse:
         account = deps.current_account(request)
         story = await read_story_input(text, file)
@@ -544,7 +671,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         if series_id.strip():
             job_id, number = queue_episode(account, series_id.strip(), story, music, title=fields["title"],
                                            youtube_title=fields["youtube_title"],
-                                           auto_render=form_flag(fields["auto_render"]))
+                                           auto_render=form_flag(fields["auto_render"]),
+                                           episode_brief=episode_brief, bible=parse_bible(fields["bible"]))
             return JSONResponse({"job_id": job_id, "status": "queued", "story_chars": len(story),
                                  "series_id": series_id.strip(), "episode_number": number}, status_code=202)
         settings = build_settings(account, fields)
@@ -589,6 +717,10 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             characters.append({**character.model_dump(mode="json"),
                                "reference_url": f"{base}/{ref.name}" if ref else None})
         return {**series_summary(series), "settings": series.data.get("settings", {}),
+                "world": series.world, "world_vi": series.data.get("world_vi", ""),
+                "locations": [{**place.model_dump(mode="json"), "reference_url": (
+                    f"{base}/{ref.name}" if (ref := series.ref_path(place.approved_reference)) else None)}
+                    for place in series.locations],
                 "characters": characters, "episode_list": episodes,
                 "next_episode_number": series.next_episode_number()}
 
@@ -601,6 +733,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         file: UploadFile | None = File(default=None),
         background_music: UploadFile | None = File(default=None),
         episode_title: str = Form(""),
+        episode_brief: str = Form("", max_length=3000),
     ) -> JSONResponse:
         """Create a series with the settings every episode shares; story text queues episode 1."""
         account = deps.current_account(request)
@@ -608,14 +741,25 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         settings = build_settings(account, fields)
         story = await read_story_input(text, file, required=False)
         music = await read_music(background_music)
-        stored = settings.model_dump(mode="json", exclude={"title", "youtube_title", "auto_render"})
+        # The reviewed bible belongs to episode 1; the series keeps what it produces as its own bible.
+        stored = settings.model_dump(mode="json", exclude={"title", "youtube_title", "auto_render", "bible"})
         series = store.create(str(account["user_id"]), title=settings.title, description=description.strip(),
                               settings=stored)
+        if settings.bible is not None:
+            approved = settings.bible
+
+            def seed(target: ComicSeries) -> None:
+                # Approved before any episode is analysed: later episodes see it even if episode 1 fails.
+                target.set_characters(approved.characters)
+                target.set_locations(approved.locations)
+                target.data.update(world=approved.world, world_vi=approved.world_vi)
+
+            series = store.update(str(account["user_id"]), series.id, seed)
         result: dict[str, Any] = {"series_id": series.id, "job_id": None}
         if story:
             result["job_id"], result["episode_number"] = queue_episode(
                 account, series.id, story, music, title=episode_title, youtube_title=settings.youtube_title,
-                auto_render=settings.auto_render)
+                auto_render=settings.auto_render, episode_brief=episode_brief, bible=settings.bible)
         return JSONResponse(result, status_code=201)
 
     @router.get("/series")
@@ -632,9 +776,16 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
     @router.patch("/series/{series_id}")
     def patch_series(request: Request, series_id: str, patch: SeriesPatch) -> JSONResponse:
         account, series = owned_series(request, series_id)
-        changes = patch.model_dump(exclude_none=True)
-        if changes:
-            series = series_store().update(str(account["user_id"]), series.id, lambda s: s.data.update(changes))
+        changes = retranslate_on_edit(series.data, patch.model_dump(exclude_none=True))
+        brief = changes.pop("story_brief", None)
+
+        def apply(target: ComicSeries) -> None:
+            target.data.update(changes)
+            if brief is not None:
+                target.data["settings"] = {**target.data.get("settings", {}), "story_brief": brief.strip()}
+
+        if changes or brief is not None:
+            series = series_store().update(str(account["user_id"]), series.id, apply)
         return JSONResponse(series_payload(request, series))
 
     @router.delete("/series/{series_id}")
@@ -690,9 +841,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
     @router.patch("/series/{series_id}/characters/{character_id}")
     def patch_series_character(request: Request, series_id: str, character_id: str,
                                patch: CharacterPatch) -> JSONResponse:
-        changes = patch.model_dump(exclude_none=True)
-
         def change(character: ComicCharacter, _series: ComicSeries) -> None:
+            changes = retranslate_on_edit(character.model_dump(mode="json"), patch.model_dump(exclude_none=True))
             try:
                 updated = ComicCharacter.model_validate({**character.model_dump(mode="json"), **changes,
                                                          "id": character.id})
@@ -788,6 +938,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         except KeyError:
             raise HTTPException(404, "Không có cảnh này") from None
         changes = patch.model_dump(exclude_none=True, mode="json")
+        if changes.get("location_id") and storyboard.location(changes["location_id"]) is None:
+            raise HTTPException(422, "Không có bối cảnh này trong truyện")
         if changes:
             data = storyboard.model_dump(mode="json")
             target = data["scenes"][storyboard.scenes.index(scene)]
@@ -830,7 +982,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             raise HTTPException(404, "Không có nhân vật này")
         data = storyboard.model_dump(mode="json")
         index = storyboard.characters.index(character)
-        updated = {**data["characters"][index], **patch.model_dump(exclude_none=True)}
+        changes = retranslate_on_edit(data["characters"][index], patch.model_dump(exclude_none=True))
+        updated = {**data["characters"][index], **changes}
         try:
             fixed = ComicCharacter.model_validate({**updated, "id": character.id})
         except ValidationError as exc:
@@ -840,6 +993,45 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         data["characters"][index] = fixed.model_dump(mode="json")
         save(project, data)
         return JSONResponse(project_payload(job_id, job, project, request))
+
+    @router.patch("/projects/{job_id}/locations/{location_id}")
+    def patch_location(request: Request, job_id: str, location_id: str, patch: LocationPatch) -> JSONResponse:
+        """Fix how a place looks; every scene set there is redrawn on the next render."""
+        job, project, storyboard = editable_project(request, job_id)
+        place = storyboard.location(location_id)
+        if place is None:
+            raise HTTPException(404, "Không có bối cảnh này")
+        data = storyboard.model_dump(mode="json")
+        index = storyboard.locations.index(place)
+        try:
+            changes = retranslate_on_edit(data["locations"][index], patch.model_dump(exclude_none=True))
+            fixed = ComicLocation.model_validate({**data["locations"][index], **changes, "id": place.id})
+        except ValidationError as exc:
+            raise HTTPException(422, _validation_detail(exc)) from exc
+        data["locations"][index] = fixed.model_dump(mode="json")
+        save(project, data)
+        return JSONResponse(project_payload(job_id, job, project, request))
+
+    @router.patch("/series/{series_id}/locations/{location_id}")
+    def patch_series_location(request: Request, series_id: str, location_id: str,
+                              patch: LocationPatch) -> JSONResponse:
+        account, series = owned_series(request, series_id)
+        if not any(place.id == location_id for place in series.locations):
+            raise HTTPException(404, "Không có bối cảnh này")
+
+        def apply(target: ComicSeries) -> None:
+            target.set_locations([
+                ComicLocation.model_validate({**place.model_dump(), **retranslate_on_edit(
+                    place.model_dump(), patch.model_dump(exclude_none=True))})
+                if place.id == location_id else place
+                for place in target.locations
+            ])
+
+        try:
+            series = series_store().update(str(account["user_id"]), series.id, apply)
+        except ValidationError as exc:
+            raise HTTPException(422, _validation_detail(exc)) from exc
+        return JSONResponse(series_payload(request, series))
 
     @router.post("/projects/{job_id}/scenes/{scene_index}/image")
     async def upload_scene_image(request: Request, job_id: str, scene_index: int,
@@ -1010,6 +1202,61 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         set_approved(project, storyboard, character_or_404(storyboard, character_id).id, None)
         return JSONResponse(project_payload(job_id, job, project, request))
 
+    # ------------------------------------------------------------ place pictures
+    def place_or_404(storyboard: Storyboard, location_id: str) -> ComicLocation:
+        place = storyboard.location(location_id)
+        if place is None:
+            raise HTTPException(404, "Không có bối cảnh này")
+        return place
+
+    def set_place_picture(project: ComicProject, storyboard: Storyboard, location_id: str, name: str | None) -> None:
+        data = storyboard.model_dump(mode="json")
+        for place in data["locations"]:
+            if place["id"] == location_id:
+                place["approved_reference"] = name
+        save(project, data)
+
+    @router.get("/projects/{job_id}/locations/{location_id}/references")
+    def list_place_pictures(request: Request, job_id: str, location_id: str) -> JSONResponse:
+        _job, project = owned_project(request, job_id)
+        if not project.has_storyboard():
+            raise HTTPException(409, "Storyboard chưa được tạo")
+        place = place_or_404(project.load_storyboard(), location_id)
+        refs_dir = project.root / "refs"
+        files = sorted(refs_dir.glob(f"place-{place.id}-*.png"), key=lambda p: p.stat().st_mtime) \
+            if refs_dir.is_dir() else []
+        base = f"/api/v1/comic/projects/{job_id}/media/refs"
+        return JSONResponse({"location_id": place.id, "approved": place.approved_reference, "variants": [
+            {"name": path.name, "url": f"{base}/{path.name}", "approved": path.name == place.approved_reference,
+             "uploaded": "-upload-" in path.name, "version": version}
+            for version, path in enumerate(files, 1)]})
+
+    @router.post("/projects/{job_id}/locations/{location_id}/references")
+    async def upload_place_picture(request: Request, job_id: str, location_id: str,
+                                   file: UploadFile = File(...)) -> JSONResponse:
+        """A user's own picture of the place is pinned right away."""
+        job, project, storyboard = editable_project(request, job_id)
+        place = place_or_404(storyboard, location_id)
+        name = read_upload_png(await file.read(MAX_IMAGE_UPLOAD_BYTES + 1), project.dir("refs"),
+                               f"place-{place.id}-upload")
+        set_place_picture(project, storyboard, place.id, name)
+        return JSONResponse(project_payload(job_id, job, project, request))
+
+    @router.post("/projects/{job_id}/locations/{location_id}/references/{name}/approve")
+    def approve_place_picture(request: Request, job_id: str, location_id: str, name: str) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        place = place_or_404(storyboard, location_id)
+        if not name.startswith(f"place-{place.id}-") or project.asset_path("refs", name) is None:
+            raise HTTPException(404, "Không có ảnh bối cảnh này")
+        set_place_picture(project, storyboard, place.id, name)
+        return JSONResponse(project_payload(job_id, job, project, request))
+
+    @router.delete("/projects/{job_id}/locations/{location_id}/references/approval")
+    def unpin_place_picture(request: Request, job_id: str, location_id: str) -> JSONResponse:
+        job, project, storyboard = editable_project(request, job_id)
+        set_place_picture(project, storyboard, place_or_404(storyboard, location_id).id, None)
+        return JSONResponse(project_payload(job_id, job, project, request))
+
     # ----------------------------------------------------------------- render
     @router.post("/projects/{job_id}/render")
     def render(request: Request, job_id: str, body: RenderRequest | None = None,
@@ -1042,7 +1289,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 resume["settings"] = settings_data
                 job = {**job, "resume_request": resume}
         return JSONResponse(requeue_comic_job(deps, request, job_id, job, render=not body.images_only,
-                                              preview_shot=body.shot, idempotency_key=idempotency_key),
+                                              preview_shot=body.shot, idempotency_key=idempotency_key,
+                                              preview_scenes=body.preview_scenes if body.images_only else None),
                             status_code=202)
 
     @router.get("/projects/{job_id}/media/{kind}/{name}")

@@ -78,7 +78,8 @@ A second pipeline turns prose into a narrated comic video. It is an ordinary job
 quota and ownership are shared with video translation.
 
 ```text
-TXT/DOCX/text -> story_text (normalise, chunk) -> comic_storyboard (LLM JSON + Pydantic
+TXT/DOCX/text -> story_text (normalise, chunk) -> [story brief -> visual bible: world line,
+characters, locations (one LLM call)] -> comic_storyboard (LLM JSON + Pydantic
 validation + bounded repair, or sentence splitter) -> storyboard.json (versioned, editable)
 -> comic_video: character references -> scene images -> voice -> subtitle cues
 -> per-scene clip (zoompan, fades, burned cues) -> concat + music -> MP4 + SRT
@@ -89,6 +90,23 @@ validation + bounded repair, or sentence splitter) -> storyboard.json (versioned
 - Providers sit behind interfaces: `infrastructure/llm_providers.py` (Gemini, Qwen3 via
   Ollama) and `infrastructure/image_providers.py` (Gemini image with reference images,
   offline placeholder).
+- Creation is two steps: `POST /api/v1/comic/bible/suggest` reads the story (up to 3 chunks) and
+  proposes a bilingual bible — Vietnamese for the user, English for image models — which the user
+  reviews and sends back as `bible` (`settings.bible`, authoritative, no second planning pass). For a
+  new episode the same call compares the chapter with the series and marks entries `new`/`known`;
+  only new ones are reviewed. Editing a Vietnamese look clears its English twin, and the worker
+  translates it again (`fill_english`) before anything is drawn. Genre presets fill the world line.
+- Without a reviewed bible, the user's notes (`settings.story_brief`, plus `episode_brief`) are turned
+  into a bible before scenes are split: a world line, characters with fixed English looks and
+  locations with fixed English descriptions. Scenes point at a location (`location_id`); image
+  prompts use its description and the world line, so one place is drawn alike in every scene.
+  A series keeps world and locations like its character bible.
+- Each planned place gets a picture: an empty establishing shot drawn once (content-addressed,
+  `refs/place-<id>-*.png`) or a pinned upload. Scene images and keyframes pass it as
+  `ImageRequest.setting_reference` — Gemini as a last reference image, ComfyUI through a second,
+  weaker IP-Adapter (`VIDTRANS_COMFYUI_SETTING_WEIGHT`, default 0.35). Providers without
+  reference support skip it and keep the text description. A series shares pinned place pictures
+  like character references. `RenderRequest.preview_scenes` draws only the first N scenes.
 - Every derived asset is content-addressed by the inputs it depends on, so editing one
   scene regenerates only that scene's image/voice/clip; images and voice survive edits
   so reverting is free. The storyboard can only be edited while the job is idle.

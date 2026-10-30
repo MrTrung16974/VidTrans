@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from domain.comic import ComicCharacter, ComicScene, ComicSettings, DialogueLine, Storyboard
+from domain.comic import ComicCharacter, ComicLocation, ComicScene, ComicSettings, DialogueLine, Storyboard
 from infrastructure.comic_project import ComicProject
 from infrastructure.image_providers import ImageRequest, PlaceholderImageProvider
 from pipeline.comic_video import (
@@ -147,6 +147,60 @@ class ProducerTests(unittest.TestCase):
         runtime = ComicRuntime(FFMPEG, run, duration, self.synthesize, FONT,
                                report=lambda step, progress, detail: self.reports.append((step, progress)))
         return ComicVideoProducer(self.project, ComicSettings(aspect_ratio="16:9", **settings), images, runtime)
+
+    def test_place_picture_is_drawn_once_and_passed_to_every_scene_set_there(self) -> None:
+        images = RecordingImages()
+        board = storyboard().model_copy(update={
+            "world": "Tang dynasty China",
+            "locations": [ComicLocation(id="forest", name="Rừng", description="dense bamboo forest, mist")]})
+        for scene in board.scenes[:2]:
+            scene.location_id = "forest"
+        board = self.project.save_storyboard(board, bump=False)
+        manifest = self.producer(images).preview_images(board)
+        place_requests = [r for r in images.requests if "Establishing wide shot of dense bamboo forest" in r.prompt]
+        self.assertEqual(len(place_requests), 1)
+        self.assertIn("no people", place_requests[0].prompt)
+        # Scenes are drawn in parallel: compare in scene order.
+        scene_requests = sorted((r for r in images.requests if r.caption.startswith("Cảnh")), key=lambda r: r.caption)
+        self.assertEqual([r.setting_reference is not None for r in scene_requests], [True, True, False])
+        self.assertIn("forest", manifest["location_references"])
+        self.assertNotIn("place:forest", manifest["references"])
+
+        # A pinned upload replaces the drawn picture without drawing a new one.
+        pinned = self.project.dir("refs") / "place-forest-upload-1.png"
+        shutil.copy(scene_requests[0].setting_reference, pinned)
+        board.locations[0].approved_reference = pinned.name
+        board = self.project.save_storyboard(board, bump=False)
+        before = len(images.requests)
+        self.producer(images).preview_images(board)
+        new_scene_requests = [r for r in images.requests[before:] if r.caption.startswith("Cảnh")]
+        self.assertTrue(new_scene_requests)
+        self.assertTrue(all(r.setting_reference is None or Path(r.setting_reference).resolve() == pinned.resolve()
+                            for r in new_scene_requests))
+        self.assertFalse(any("Establishing" in r.prompt for r in images.requests[before:]))
+
+    def test_providers_without_references_get_no_place_picture(self) -> None:
+        images = RecordingImages()
+        images.supports_references = False
+        board = storyboard().model_copy(update={
+            "locations": [ComicLocation(id="forest", name="Rừng", description="bamboo forest")]})
+        board.scenes[0].location_id = "forest"
+        self.producer(images).preview_images(self.project.save_storyboard(board, bump=False))
+        self.assertFalse(any("Establishing" in r.prompt for r in images.requests))
+
+    def test_trial_preview_draws_only_the_first_scenes_and_keeps_later_images(self) -> None:
+        images = RecordingImages()
+        board = self.project.save_storyboard(storyboard(), bump=False)
+        full = self.producer(images).preview_images(board)
+        self.assertEqual(sorted(full["scenes"]), ["1", "2", "3"])
+        board.scenes[0].visual_prompt = "Minh runs"
+        board = self.project.save_storyboard(board, bump=False)
+        before = len(images.requests)
+        trial = self.producer(images).preview_images(board, scene_limit=1)
+        drawn = [r.caption for r in images.requests[before:]]
+        self.assertEqual(drawn.count("Cảnh 1"), 1)
+        self.assertNotIn("Cảnh 3", drawn)
+        self.assertEqual(sorted(trial["scenes"]), ["1", "2", "3"])  # Scenes 2-3 keep their earlier images.
 
     def test_render_then_edit_regenerates_only_the_edited_scene(self) -> None:
         images = RecordingImages()

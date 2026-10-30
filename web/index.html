@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261029-logo-menu-loading" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261030-place-pictures" />
   </head>
   <body>
     <div class="app-shell">
@@ -682,16 +682,14 @@
             <form id="comicForm" class="card comic-form" novalidate>
               <div class="step-heading">
                 <span class="step-badge">1</span>
-                <div><h2>Truyện mới</h2><p>Cài đặt bên dưới áp dụng cho mọi tập của truyện. Có thể dán ngay nội dung tập 1 hoặc thêm tập sau.</p></div>
+                <div><h2>Truyện mới</h2><p>Dán truyện, chọn thể loại — AI sẽ đề xuất nhân vật và bối cảnh để bạn duyệt trước khi vẽ.</p></div>
               </div>
               <label class="field"><span>Tên truyện</span><input name="title" value="Truyện mới" maxlength="200" required /></label>
-              <label class="field"><span>Giới thiệu truyện (tùy chọn)</span><textarea name="description" rows="2" maxlength="10000" placeholder="Bối cảnh, thể loại, ghi chú cho cả bộ truyện"></textarea></label>
-              <div class="field-grid">
-                <label class="field"><span>Tên tập 1</span><input name="episode_title" maxlength="200" placeholder="Để trống: Tập 1" /></label>
-                <label class="field">
-                  <span>Tiêu đề video YouTube tập 1</span>
-                  <input name="youtube_title" maxlength="100" placeholder="Để trống để AI đề xuất từ nội dung" />
-                </label>
+              <div class="field">
+                <span>Thể loại</span>
+                <div id="comicGenres" class="comic-genres" role="radiogroup" aria-label="Thể loại truyện"></div>
+                <input type="hidden" name="genre" value="" />
+                <small class="field-hint">Chọn thể loại để AI tự điền thế giới và phong cách vẽ phù hợp.</small>
               </div>
               <label class="field">
                 <span class="field-label-group"><span>Nội dung tập 1 (có thể để trống, thêm sau)</span><small id="comicStoryCount" class="field-hint">0 ký tự</small></span>
@@ -699,11 +697,30 @@
                 <small id="comicStoryLimit" class="field-hint"></small>
               </label>
               <label class="field"><span>Hoặc tải file truyện (.txt, .docx)</span><input name="file" type="file" accept=".txt,.md,.docx" /></label>
-
               <div class="comic-mode-switch" role="radiogroup" aria-label="Loại video">
                 <label><input type="radio" name="video_mode" value="comic" checked /><span><strong>Truyện tranh</strong><small>Ảnh tĩnh + pan/zoom, nhanh và rẻ</small></span></label>
                 <label><input type="radio" name="video_mode" value="animated" /><span><strong>Hoạt hình AI</strong><small>Chia shot, keyframe → Image-to-Video</small></span></label>
               </div>
+              <div class="field-grid">
+                <label class="field"><span>Khung hình</span>
+                  <select name="aspect_ratio"><option value="9:16" selected>Dọc 9:16 (TikTok, Shorts)</option><option value="16:9">Ngang 16:9 (YouTube)</option></select></label>
+              </div>
+              <details class="comic-advanced">
+                <summary>Cài đặt nâng cao (giới thiệu, AI vẽ, giọng đọc, nhạc nền…)</summary>
+              <label class="field"><span>Giới thiệu truyện (tùy chọn)</span><textarea name="description" rows="2" maxlength="10000" placeholder="Bối cảnh, thể loại, ghi chú cho cả bộ truyện"></textarea></label>
+              <label class="field">
+                <span class="field-label-group"><span>Ghi chú thêm cho AI (tùy chọn)</span><small class="field-hint">tiếng Việt</small></span>
+                <textarea name="story_brief" rows="4" maxlength="6000" placeholder="Ví dụ:&#10;Thế giới: Trung Quốc cổ đại thời nhà Đường, cung điện mái ngói đỏ, tông màu ấm.&#10;Nhân vật:&#10;- Minh: nam 18 tuổi, thư sinh gầy, tóc búi, áo trắng viền xanh.&#10;- Lan: nữ 17 tuổi, tóc dài đen, váy hồng phấn, cài trâm ngọc.&#10;Bối cảnh:&#10;- Rừng trúc: lối đá rêu phong, sương mờ buổi sớm.&#10;- Hoàng cung: điện son đỏ, cột rồng vàng, đèn lồng."></textarea>
+                <small class="field-hint">Điều bạn muốn AI tuân theo khi đề xuất nhân vật/bối cảnh, ví dụ "Minh luôn mặc áo trắng", "truyện diễn ra vào mùa đông".</small>
+              </label>
+              <div class="field-grid">
+                <label class="field"><span>Tên tập 1</span><input name="episode_title" maxlength="200" placeholder="Để trống: Tập 1" /></label>
+                <label class="field">
+                  <span>Tiêu đề video YouTube tập 1</span>
+                  <input name="youtube_title" maxlength="100" placeholder="Để trống để AI đề xuất từ nội dung" />
+                </label>
+              </div>
+
               <div class="field-grid comic-animated-only is-hidden">
                 <label class="field"><span>AI tạo chuyển động</span><select name="animation_provider"></select></label>
                 <label class="field"><span>Chất lượng</span>
@@ -717,8 +734,6 @@
 
               <div class="field-grid">
                 <label class="field"><span>Phong cách hình ảnh</span><select name="style"></select></label>
-                <label class="field"><span>Khung hình</span>
-                  <select name="aspect_ratio"><option value="9:16" selected>Dọc 9:16 (TikTok, Shorts)</option><option value="16:9">Ngang 16:9 (YouTube)</option></select></label>
                 <label class="field"><span>AI chia cảnh</span><select name="llm_provider"></select></label>
                 <label class="field"><span>AI vẽ ảnh</span><select name="image_provider"></select></label>
                 <label class="field"><span>Ngôn ngữ lời đọc</span><select name="language"></select></label>
@@ -737,8 +752,23 @@
               </div>
               <label class="comic-check"><input name="burn_subtitles" type="checkbox" checked /> Ghép phụ đề vào video</label>
               <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước khi lồng tiếng</small></label>
-              <button class="button primary full" type="submit">Tạo truyện</button>
+              </details>
+              <div class="comic-form-actions">
+                <button class="button primary" type="submit" data-comic-step="review">Tiếp: AI đề xuất nhân vật &amp; bối cảnh →</button>
+                <button class="button secondary" type="button" data-comic-step="create">Tạo ngay, bỏ qua bước duyệt</button>
+              </div>
             </form>
+            <section id="comicBibleReview" class="card comic-form comic-bible is-hidden" aria-live="polite">
+              <div class="step-heading">
+                <span class="step-badge">2</span>
+                <div><h2 id="comicBibleHeading">Duyệt nhân vật &amp; bối cảnh</h2><p id="comicBibleIntro">AI đã đọc truyện và đề xuất bên dưới. Sửa bằng tiếng Việt nếu cần — mọi cảnh sẽ được vẽ theo đúng hồ sơ này.</p></div>
+              </div>
+              <div id="comicBibleBody"></div>
+              <div class="comic-form-actions">
+                <button class="button secondary" type="button" data-bible-op="back">← Sửa nội dung</button>
+                <button class="button primary" type="button" data-bible-op="confirm">Tạo truyện</button>
+              </div>
+            </section>
 
           <section id="comicSeries" class="comic-editor is-hidden" aria-live="polite">
             <div class="card comic-editor-head">
@@ -766,6 +796,11 @@
                 <span class="field-label-group"><span>Nội dung tập</span><small id="comicEpisodeCount" class="field-hint">0 ký tự</small></span>
                 <textarea name="text" rows="8" placeholder="Ba ngày sau, Minh trở lại khu rừng…"></textarea>
               </label>
+              <label class="field">
+                <span>Ghi chú cho AI về tập này (tùy chọn)</span>
+                <textarea name="episode_brief" rows="4" maxlength="3000" placeholder="Ví dụ:&#10;Tập này diễn ra ở kinh thành vào đêm hội hoa đăng.&#10;Nhân vật mới: Tướng quân Triệu — nam 40 tuổi, râu quai nón, giáp bạc.&#10;Bối cảnh mới: Phố đèn lồng — phố lát đá, hàng trăm đèn lồng đỏ, người đông."></textarea>
+                <small class="field-hint">Khi bấm tạo tập, AI tự tìm nhân vật và bối cảnh mới trong chương này để bạn duyệt; ghi chú giúp AI làm đúng ý bạn.</small>
+              </label>
               <div class="field-grid">
                 <label class="field"><span>Hoặc tải file (.txt, .docx)</span><input name="file" type="file" accept=".txt,.md,.docx" /></label>
                 <label class="field"><span>Nhạc nền (tùy chọn)</span><input name="background_music" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg" /></label>
@@ -773,6 +808,18 @@
               <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước</small></label>
               <button class="button primary full" type="submit">Tạo tập</button>
             </form>
+            <section id="comicEpisodeReview" class="card comic-form comic-bible is-hidden" aria-live="polite">
+              <div class="step-heading">
+                <span class="step-badge">+</span>
+                <div><h2>Nhân vật &amp; bối cảnh mới</h2><p id="comicEpisodeBibleIntro"></p></div>
+              </div>
+              <div id="comicEpisodeBibleBody"></div>
+              <div class="comic-form-actions">
+                <button class="button secondary" type="button" data-episode-bible-op="back">← Sửa nội dung</button>
+                <button class="button secondary" type="button" data-episode-bible-op="skip">Bỏ qua, để AI tự làm</button>
+                <button class="button primary" type="button" data-episode-bible-op="confirm">Tạo tập</button>
+              </div>
+            </section>
             <div class="comic-block">
               <div class="comic-block-head"><h3>Các tập</h3></div>
               <div id="comicEpisodes" class="comic-episodes"></div>
@@ -781,6 +828,16 @@
               <div class="comic-block-head"><h3>Nhân vật chung của truyện</h3></div>
               <p class="comic-meta">Nhân vật được tự thêm sau khi mỗi tập được phân tích. Ảnh tham chiếu ghim ở đây được dùng cho mọi tập dựng từ nay về sau (trừ khi một tập ghim ảnh riêng).</p>
               <div id="comicSeriesCharacters" class="comic-characters"></div>
+            </div>
+            <div class="comic-block">
+              <div class="comic-block-head"><h3>Thế giới &amp; bối cảnh chung</h3></div>
+              <form id="comicSeriesBriefForm" class="comic-brief-form">
+                <label class="field"><span>Thế giới &amp; thời đại</span><textarea name="world_vi" rows="2" maxlength="600" placeholder="Ví dụ: Trung Quốc thời Đường, cung điện mái ngói đỏ, tông màu ấm"></textarea></label>
+                <label class="field"><span>Ghi chú cho AI (áp dụng cho các tập tạo từ nay)</span><textarea name="story_brief" rows="3" maxlength="6000"></textarea></label>
+                <details class="comic-bible-en"><summary>Prompt tiếng Anh của thế giới</summary><input name="world" maxlength="600"></details>
+                <button class="button secondary" type="submit">Lưu</button>
+              </form>
+              <div id="comicSeriesLocations" class="comic-locations"></div>
             </div>
           </section>
 
@@ -797,6 +854,7 @@
               <p id="comicStale" class="comic-stale is-hidden">Storyboard có thay đổi chưa render. Bấm "Render video" để cập nhật — các cảnh không đổi được dùng lại.</p>
               <div class="comic-actions">
                 <button class="button primary" type="button" data-comic-action="render">Render video</button>
+                <button class="button secondary" type="button" data-comic-action="trial" title="Chỉ vẽ ảnh tham chiếu và 3 cảnh đầu để kiểm tra nhân vật, bối cảnh trước khi render cả video">Vẽ thử 3 cảnh</button>
                 <button class="button secondary" type="button" data-comic-action="images">Chỉ sinh ảnh</button>
                 <button class="button secondary" type="button" data-comic-action="reanalyze">Phân tích lại truyện</button>
                 <button class="button secondary comic-danger" type="button" data-comic-action="cancel">Dừng</button>
@@ -810,6 +868,12 @@
                 <h3>Nhân vật</h3>
               </div>
               <div id="comicCharacters" class="comic-characters"></div>
+            </div>
+            <div id="comicLocationsBlock" class="comic-block is-hidden">
+              <div class="comic-block-head"><h3>Bối cảnh</h3></div>
+              <p id="comicWorld" class="comic-meta"></p>
+              <p id="comicPlaceHint" class="comic-meta"></p>
+              <div id="comicLocations" class="comic-locations"></div>
             </div>
             <div class="comic-block">
               <div class="comic-block-head">
@@ -2309,6 +2373,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261029-logo-menu-loading"></script>
+    <script type="module" src="/js/app.js?v=20261030-place-pictures"></script>
   </body>
 </html>

@@ -43,6 +43,10 @@ from pipeline.comic_video import (
     SceneResult,
     cast_description,
     cast_negative,
+    PLACE_KEY,
+    scene_setting,
+    split_references,
+    world_line,
     content_hash,
     file_hash,
     scene_negative,
@@ -84,9 +88,11 @@ def keyframe_prompt(scene: ComicScene, shot: Shot, storyboard: Storyboard, aspec
     parts = [without_names(shot.keyframe_prompt, storyboard).rstrip(".") + ".",
              f"{SHOT_FRAMING[shot.camera.shot_type]}, {SHOT_ANGLE[shot.camera.angle]}."]
     # The place comes before the cast so it survives the token budget and the frame is not a lone portrait.
-    setting = scene.location or without_names(scene.visual_prompt, storyboard)
+    setting = scene_setting(scene, storyboard) or without_names(scene.visual_prompt, storyboard)
     if setting:
-        parts.append(f"Setting: {setting[:300]}.")
+        parts.append(f"Setting: {setting[:400].rstrip('.')}.")
+    if storyboard.world:
+        parts.append(world_line(storyboard))
     if shot.camera.shot_type not in CLOSE_SHOTS:
         parts.append(f"{SCENE_COMPOSITION}.")
     cast = cast_description(storyboard, shot.characters)
@@ -159,15 +165,18 @@ class AnimatedVideoProducer(ComicVideoProducer):
             return path, key
         prompt = keyframe_prompt(scene, shot, storyboard, self.settings.aspect_ratio)
         shot_refs = [refs[cid] for cid in shot.characters if cid in refs]
+        place_ref = refs.get(PLACE_KEY + scene.location_id) if scene.location_id else None
         seed = self._seed(shot, f"{scene.scene_index}.{shot.shot_index}") if self.settings.seed else 0
         negative = cast_negative(storyboard, shot.characters, scene_negative(
             style_negative_prompt(storyboard.style, shot.negative_prompt), shot.camera.shot_type in CLOSE_SHOTS))
         key = content_hash(ANIMATION_VERSION, "keyframe", self.images.cache_key, prompt, negative,
-                           [ref_key for _p, ref_key in shot_refs], seed, self.width, self.height)
+                           [ref_key for _p, ref_key in shot_refs], seed, self.width, self.height,
+                           *((place_ref[1],) if place_ref else ()))
         path = self.project.dir("keyframes") / f"{stem}-{key[:16]}.png"
         image, fallback = self._ensure_image(path, ImageRequest(
             prompt=prompt, width=self.width, height=self.height, negative_prompt=negative, seed=seed,
             references=tuple(ref_path for ref_path, _k in shot_refs[:3]), aspect_ratio=self.settings.aspect_ratio,
+            setting_reference=place_ref[0] if place_ref else None,
             caption=f"Shot {shot_label(scene, shot)}", display_text=shot.narration or shot.action or shot.keyframe_prompt,
         ))
         return image, f"{key}-fallback" if fallback else key
@@ -369,7 +378,7 @@ class AnimatedVideoProducer(ComicVideoProducer):
         return {
             "mode": "animated", "revision": storyboard.revision, "size": [self.width, self.height], "fps": self.fps,
             "image_provider": self.images.key, "animation_provider": self.video.key,
-            "references": {cid: path.name for cid, (path, _key) in refs.items()}, "shots": shots,
+            **split_references(refs), "shots": shots,
             "metrics": {"ai_seconds": round(self.ai_seconds, 2), "attempts": self.attempts,
                         "fallback_shots": sum(1 for s in shots.values() if s.get("fallback"))},
             "cache": {"hits": self.cache_hits, "misses": self.cache_misses},
@@ -396,14 +405,18 @@ class AnimatedVideoProducer(ComicVideoProducer):
         self.project.save_manifest(manifest)
         return manifest
 
-    def preview_images(self, storyboard: Storyboard) -> dict[str, Any]:
+    def preview_images(self, storyboard: Storyboard, scene_limit: int | None = None) -> dict[str, Any]:
         """Keyframes only: review composition and characters before paying for motion."""
-        pairs = list(storyboard.iter_shots())
-        refs = self.build_references(storyboard)
+        targets = storyboard.scenes[:scene_limit] if scene_limit else storyboard.scenes
+        pairs = [(scene, shot) for scene in targets for shot in scene.shots]
+        refs = self.build_references(storyboard, targets if scene_limit else None)
         keyframes = self._map(pairs, lambda pair: self.shot_keyframe(*pair, storyboard, refs)[0], "comic_keyframes",
                               lambda done, total: f"Đã sinh keyframe {done}/{total} shot")
         shots = {shot_label(scene, shot): {"keyframe": keyframe.name}
                  for (scene, shot), keyframe in zip(pairs, keyframes)}
+        previous = self.project.load_manifest() if scene_limit else {}
+        if previous.get("revision") == storyboard.revision:  # Keep keyframes already drawn for later shots.
+            shots = {**(previous.get("shots") or {}), **shots}
         manifest = self._manifest(storyboard, refs, shots)
         self.project.save_manifest(manifest)
         return manifest
@@ -420,6 +433,6 @@ class AnimatedVideoProducer(ComicVideoProducer):
             manifest = self._manifest(storyboard, refs, {})
         manifest.setdefault("shots", {})[label] = entry
         manifest.setdefault("previews", {})[label] = {"clip": entry["clip"], "revision": storyboard.revision}
-        manifest["references"] = {cid: path.name for cid, (path, _key) in refs.items()}
+        manifest.update(split_references(refs))
         self.project.save_manifest(manifest)
         return manifest

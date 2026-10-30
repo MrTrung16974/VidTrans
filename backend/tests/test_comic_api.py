@@ -106,6 +106,129 @@ class ComicApiTests(unittest.TestCase):
         self.assertEqual(job["comic"]["rendered_revision"], 2)
         self.assertGreater(job["comic"]["cache"]["hits"], 0)
 
+    def test_story_brief_is_stored_and_planned_places_can_be_fixed(self) -> None:
+        from domain.comic import ComicLocation
+        from infrastructure.comic_project import ComicProject
+
+        created = self.create(story_brief="Thời nhà Đường. Rừng trúc: lối đá rêu phong.")
+        job_id = created.json()["job_id"]
+        settings = self.service.get(job_id)["resume_request"]["settings"]
+        self.assertEqual(settings["story_brief"], "Thời nhà Đường. Rừng trúc: lối đá rêu phong.")
+        job = self.run_job(job_id)
+        self.assertEqual(job["status"], "completed", job.get("error"))
+
+        project = ComicProject(main.comic_project_root("user-a", job_id))
+        storyboard = project.load_storyboard()
+        storyboard.locations = [ComicLocation(id="forest", name="Rừng trúc", description="bamboo forest")]
+        storyboard.scenes[0].location_id = "forest"
+        project.save_storyboard(storyboard)
+
+        fixed = self.client.patch(f"/api/v1/comic/projects/{job_id}/locations/forest",
+                                  json={"description": "dense bamboo forest, mossy stone path"})
+        self.assertEqual(fixed.status_code, 200, fixed.text)
+        self.assertEqual(fixed.json()["storyboard"]["locations"][0]["description"], "dense bamboo forest, mossy stone path")
+        self.assertEqual(self.client.patch(f"/api/v1/comic/projects/{job_id}/locations/moon",
+                                           json={"description": "x"}).status_code, 404)
+        self.assertEqual(self.client.patch(f"/api/v1/comic/projects/{job_id}/scenes/1",
+                                           json={"location_id": "moon"}).status_code, 422)
+        # Another account cannot touch it.
+        other = self.client.patch(f"/api/v1/comic/projects/{job_id}/locations/forest",
+                                  json={"description": "x"}, headers={"x-test-user": "b"})
+        self.assertEqual(other.status_code, 404)
+
+    def test_bible_suggestion_marks_new_entries_and_creation_seeds_the_series(self) -> None:
+        import json as jsonlib
+
+        answer = jsonlib.dumps({
+            "world": "Tang dynasty China", "world_vi": "Trung Quốc thời Đường",
+            "characters": [{"id": "minh", "name": "Minh", "gender": "male", "species": "human",
+                            "appearance": "young scholar", "appearance_vi": "thư sinh trẻ"}],
+            "locations": [{"id": "forest", "name": "Rừng", "description": "forest", "description_vi": "rừng"}],
+        })
+        fake = Mock()
+        fake.generate_json.return_value = answer
+        with patch("application.comic_routes.create_story_llm", return_value=fake):
+            response = self.client.post("/api/v1/comic/bible/suggest", data={"text": STORY, "genre": "co_trang",
+                                                                             "llm_provider": "gemini"})
+        self.assertEqual(response.status_code, 200, response.text)
+        bible = response.json()
+        self.assertEqual(bible["characters"][0]["status"], "new")
+        self.assertEqual(bible["genre"], "co_trang")
+
+        with patch("application.comic_routes.create_story_llm", return_value=None):
+            refused = self.client.post("/api/v1/comic/bible/suggest", data={"text": STORY, "llm_provider": "heuristic"})
+        self.assertEqual(refused.status_code, 409)
+
+        bible["characters"][0]["appearance_vi"] = "thư sinh tóc bạc"
+        bible["characters"][0]["appearance"] = ""
+        for item in [*bible["characters"], *bible["locations"]]:
+            item.pop("status")
+        bible.pop("genre")
+        created = self.client.post("/api/v1/comic/series", data={
+            "title": "Rừng đêm", "text": STORY, "llm_provider": "heuristic", "image_provider": "placeholder",
+            "bible": jsonlib.dumps(bible), "genre": "co_trang", "auto_render": "false"})
+        self.assertEqual(created.status_code, 201, created.text)
+        series = self.client.get(f"/api/v1/comic/series/{created.json()['series_id']}").json()
+        self.assertEqual(series["characters"][0]["appearance_vi"], "thư sinh tóc bạc")
+        self.assertEqual(series["world_vi"], "Trung Quốc thời Đường")
+        self.assertNotIn("bible", series["settings"])
+        settings = self.service.get(created.json()["job_id"])["resume_request"]["settings"]
+        self.assertEqual(settings["bible"]["characters"][0]["id"], "minh")
+
+        with patch("application.comic_routes.create_story_llm", return_value=fake):
+            episode = self.client.post("/api/v1/comic/bible/suggest", data={
+                "text": STORY, "llm_provider": "gemini", "series_id": created.json()["series_id"]})
+        self.assertEqual(episode.json()["characters"][0]["status"], "known")
+
+        bad = self.client.post("/api/v1/comic/series", data={"title": "x", "bible": "{not json"})
+        self.assertEqual(bad.status_code, 400)
+
+    def test_editing_a_look_in_vietnamese_clears_its_english_for_retranslation(self) -> None:
+        from application.comic_routes import retranslate_on_edit
+
+        current = {"appearance": "old", "appearance_vi": "cũ", "description": "x", "description_vi": "y"}
+        self.assertEqual(retranslate_on_edit(current, {"appearance_vi": "mới"}), {"appearance_vi": "mới", "appearance": ""})
+        self.assertEqual(retranslate_on_edit(current, {"appearance_vi": "cũ"}), {"appearance_vi": "cũ"})
+        self.assertEqual(retranslate_on_edit(current, {"appearance_vi": "mới", "appearance": "new"}),
+                         {"appearance_vi": "mới", "appearance": "new"})
+
+    def test_place_pictures_can_be_uploaded_pinned_and_trial_renders_queue_few_scenes(self) -> None:
+        from domain.comic import ComicLocation
+        from infrastructure.comic_project import ComicProject
+
+        job_id = self.create(auto_render="false").json()["job_id"]
+        self.assertEqual(self.run_job(job_id)["status"], "completed")
+        project = ComicProject(main.comic_project_root("user-a", job_id))
+        storyboard = project.load_storyboard()
+        storyboard.locations = [ComicLocation(id="forest", name="Rừng", description="bamboo forest")]
+        storyboard.scenes[0].location_id = "forest"
+        project.save_storyboard(storyboard)
+
+        png = io.BytesIO()
+        __import__("PIL.Image", fromlist=["Image"]).new("RGB", (32, 32), "green").save(png, "PNG")
+        uploaded = self.client.post(f"/api/v1/comic/projects/{job_id}/locations/forest/references",
+                                    files={"file": ("forest.png", png.getvalue(), "image/png")})
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        name = uploaded.json()["storyboard"]["locations"][0]["approved_reference"]
+        self.assertTrue(name.startswith("place-forest-upload-"))
+        self.assertIn("forest", uploaded.json()["media"]["location_references"])
+        self.assertFalse(uploaded.json()["media"]["place_references_supported"])  # Placeholder images.
+        variants = self.client.get(f"/api/v1/comic/projects/{job_id}/locations/forest/references").json()
+        self.assertEqual([v["name"] for v in variants["variants"]], [name])
+        unpinned = self.client.delete(f"/api/v1/comic/projects/{job_id}/locations/forest/references/approval")
+        self.assertIsNone(unpinned.json()["storyboard"]["locations"][0]["approved_reference"])
+        approved = self.client.post(f"/api/v1/comic/projects/{job_id}/locations/forest/references/{name}/approve")
+        self.assertEqual(approved.json()["storyboard"]["locations"][0]["approved_reference"], name)
+        self.assertEqual(self.client.post(
+            f"/api/v1/comic/projects/{job_id}/locations/forest/references/minh-x.png/approve").status_code, 404)
+
+        trial = self.client.post(f"/api/v1/comic/projects/{job_id}/render",
+                                 json={"images_only": True, "preview_scenes": 3})
+        self.assertEqual(trial.status_code, 202, trial.text)
+        self.assertEqual(self.service.get(job_id)["resume_request"]["preview_scenes"], 3)
+        job = self.run_job(job_id)
+        self.assertIn("Đã vẽ thử", job["step_detail"])
+
     def test_cit_voices_are_resolved_and_stored_with_the_project(self) -> None:
         from infrastructure.tts_providers import CITVoice
 

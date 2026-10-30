@@ -260,3 +260,142 @@ class StoryboardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FOREST = {"id": "forest", "name": "Rừng trúc", "description": "dense bamboo forest, mossy stone path, pale mist"}
+BRIEF = "Thời nhà Đường. Minh: thư sinh 18 tuổi, áo trắng. Rừng trúc: lối đá rêu phong, sương mờ."
+
+
+class StoryBibleTests(unittest.TestCase):
+    def bible(self, **extra):
+        return json.dumps({"world": "Tang dynasty China, ink-wash palette",
+                           "characters": [{**MINH, "appearance": "18-year-old scholar, pale face",
+                                           "outfit": "white hanfu"}],
+                           "locations": [FOREST], **extra})
+
+    def test_brief_is_planned_first_and_every_chunk_sees_world_and_places(self):
+        llm = FakeLLM([self.bible(), json.dumps({"characters": [MINH],
+                                                 "scenes": [scene(location_id="forest")]})])
+        storyboard = build_storyboard(STORY, ComicSettings(story_brief=BRIEF), llm)
+        self.assertIn("PRODUCTION BRIEF", llm.prompts[0])
+        self.assertIn("WORLD: Tang dynasty China", llm.prompts[1])
+        self.assertIn("KNOWN LOCATIONS", llm.prompts[1])
+        self.assertEqual(storyboard.world, "Tang dynasty China, ink-wash palette")
+        self.assertEqual([place.id for place in storyboard.locations], ["forest"])
+        self.assertEqual(storyboard.scenes[0].location_id, "forest")
+        # The author's description beats what the chunk analysis said about Minh.
+        self.assertEqual(storyboard.character("minh").outfit, "white hanfu")
+        self.assertIn("bible", storyboard.analysis_method)
+
+    def test_unknown_location_ids_are_dropped_and_new_places_kept(self):
+        cave = {"id": "cave", "name": "Hang", "description": "wet limestone cave lit by torches"}
+        llm = FakeLLM([json.dumps({"characters": [MINH], "locations": [cave],
+                                   "scenes": [scene(location_id="cave"), scene("Không ai trả lời.", location_id="moon")]})])
+        storyboard = build_storyboard(STORY, ComicSettings(), llm)
+        self.assertEqual([s.location_id for s in storyboard.scenes], ["cave", ""])
+        self.assertEqual([place.id for place in storyboard.locations], ["cave"])
+
+    def test_failed_planning_keeps_the_raw_brief_in_scene_prompts(self):
+        llm = FakeLLM(["not json"] * (MAX_REPAIR_ROUNDS + 1) + [json.dumps({"characters": [MINH], "scenes": [scene()]})])
+        storyboard = build_storyboard(STORY, ComicSettings(story_brief=BRIEF), llm)
+        self.assertIn(BRIEF, llm.prompts[-1])
+        self.assertTrue(any("kế hoạch" in warning for warning in storyboard.warnings))
+
+    def test_without_llm_the_translated_brief_becomes_the_world(self):
+        class Translator:
+            def translate_lines(self, lines):
+                return ["Tang dynasty, bamboo forest"]
+
+        storyboard = build_storyboard(STORY, ComicSettings(story_brief=BRIEF, llm_provider="heuristic"), None,
+                                      prompt_translator=Translator())
+        self.assertEqual(storyboard.world, "Tang dynasty, bamboo forest")
+
+    def test_episode_brief_is_added_to_the_series_brief(self):
+        from pipeline.comic_storyboard import story_brief
+
+        text = story_brief(ComicSettings(story_brief="Thời Đường.", episode_brief="Tập này ở kinh thành."))
+        self.assertTrue(text.startswith("Thời Đường."))
+        self.assertIn("Tập này ở kinh thành.", text)
+
+    def test_image_prompt_uses_the_planned_place_and_world(self):
+        from pipeline.comic_video import scene_image_prompt
+
+        storyboard = Storyboard.model_validate({
+            "world": "Tang dynasty China", "locations": [FOREST], "characters": [MINH],
+            "scenes": [{**scene(location_id="forest"), "scene_index": 1}],
+        })
+        prompt = scene_image_prompt(storyboard.scenes[0], storyboard, "9:16")
+        self.assertIn("Setting: dense bamboo forest, mossy stone path, pale mist.", prompt)
+        self.assertIn("World: Tang dynasty China.", prompt)
+        self.assertNotIn("Setting: dark forest", prompt)
+
+
+SUGGESTED = {
+    "world": "Tang dynasty China", "world_vi": "Trung Quốc thời Đường",
+    "characters": [{"id": "minh", "name": "Minh", "gender": "male", "species": "human", "age": "18",
+                    "appearance": "slim young scholar", "appearance_vi": "thư sinh gầy",
+                    "outfit": "white robe", "outfit_vi": "áo trắng"}],
+    "locations": [{"id": "forest", "name": "Rừng trúc", "description": "bamboo forest",
+                   "description_vi": "rừng trúc sương mờ"}],
+}
+
+
+class SuggestBibleTests(unittest.TestCase):
+    def test_bible_is_read_from_the_story_in_both_languages(self):
+        from pipeline.comic_storyboard import suggest_bible
+
+        llm = FakeLLM([json.dumps(SUGGESTED)])
+        bible = suggest_bible(llm, STORY, ComicSettings(genre="co_trang", story_brief="Minh luôn mặc áo trắng"))
+        self.assertEqual(bible.characters[0].appearance_vi, "thư sinh gầy")
+        self.assertEqual(bible.locations[0].description, "bamboo forest")
+        self.assertEqual(bible.world_vi, "Trung Quốc thời Đường")
+        self.assertIn("GENRE: Cổ trang", llm.prompts[0])
+        self.assertIn("Minh luôn mặc áo trắng", llm.prompts[0])
+        self.assertIn("STORY:", llm.prompts[0])
+
+    def test_known_entries_keep_their_description_and_genre_fills_an_empty_world(self):
+        from pipeline.comic_storyboard import suggest_bible
+
+        known = ComicCharacter(id="minh", name="Minh", appearance="old look", appearance_vi="cũ")
+        llm = FakeLLM([json.dumps({**SUGGESTED, "world": "", "world_vi": ""})])
+        bible = suggest_bible(llm, STORY, ComicSettings(genre="tien_hiep"), known_characters=[known])
+        self.assertEqual(bible.characters[0].appearance, "old look")
+        self.assertIn("cultivation", bible.world)
+
+    def test_vietnamese_edits_are_translated_and_a_failed_translation_keeps_the_text(self):
+        from pipeline.comic_storyboard import fill_english, needs_english
+
+        character = ComicCharacter(id="minh", name="Minh", appearance="", appearance_vi="tóc bạc")
+        self.assertTrue(needs_english([character]))
+
+        class Translator:
+            def translate_lines(self, lines):
+                return [f"EN:{line}" for line in lines]
+
+        self.assertEqual(fill_english([character], Translator()), [])
+        self.assertEqual(character.appearance, "EN:tóc bạc")
+        self.assertFalse(needs_english([character]))
+
+        other = ComicCharacter(id="lan", name="Lan", appearance_vi="váy hồng")
+        warnings = fill_english([other], None)
+        self.assertEqual(other.appearance, "váy hồng")
+        self.assertTrue(warnings)
+
+    def test_reviewed_bible_drives_the_storyboard_without_a_second_planning_call(self):
+        from domain.comic import StoryBible
+
+        bible = StoryBible.model_validate(SUGGESTED)
+        bible.characters[0].appearance = ""  # The user edited it in Vietnamese.
+
+        class Translator:
+            def translate_lines(self, lines):
+                return ["skinny scholar" for _ in lines]
+
+        llm = FakeLLM([json.dumps({"characters": [MINH], "scenes": [scene(location_id="forest")]})])
+        storyboard = build_storyboard(STORY, ComicSettings(bible=bible, story_brief="ghi chú"), llm,
+                                      prompt_translator=Translator())
+        self.assertEqual(len(llm.prompts), 1)  # Only the scene split; no planning pass.
+        self.assertEqual(storyboard.character("minh").appearance, "skinny scholar")
+        self.assertEqual(storyboard.character("minh").outfit_vi, "áo trắng")
+        self.assertEqual(storyboard.world_vi, "Trung Quốc thời Đường")
+        self.assertEqual(storyboard.locations[0].id, "forest")

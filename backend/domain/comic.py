@@ -100,6 +100,10 @@ class ComicCharacter(_Model):
     age: str = Field(default="", max_length=60)
     appearance: str = Field(default="", max_length=600)
     outfit: str = Field(default="", max_length=400)
+    # What the user reads and edits. The English fields above are what image models get;
+    # an empty English field next to Vietnamese text is filled by translation before drawing.
+    appearance_vi: str = Field(default="", max_length=600)
+    outfit_vi: str = Field(default="", max_length=400)
     voice: Literal["female", "male"] | None = None
     # Pinned reference image (file name in refs/). While set, every keyframe uses exactly
     # this version; editing the profile creates new variants but never replaces it.
@@ -123,6 +127,59 @@ class ComicCharacter(_Model):
     @property
     def voice_gender(self) -> str | None:
         return self.voice or (self.gender if self.gender != "unknown" else None)
+
+
+class ComicLocation(_Model):
+    """A recurring place, described once so every scene set there is drawn the same way."""
+
+    id: str = Field(min_length=1, max_length=60)
+    name: str = Field(min_length=1, max_length=120)
+    # ENGLISH: architecture, materials, colours, fixed props, typical light.
+    description: str = Field(default="", max_length=600)
+    description_vi: str = Field(default="", max_length=600)
+    # Pinned picture of the place (file name in refs/), passed to every scene set here.
+    approved_reference: str | None = Field(default=None, max_length=120)
+
+    @field_validator("id")
+    @classmethod
+    def _slug(cls, value: str) -> str:
+        return slugify_id(value)
+
+
+class StoryBible(_Model):
+    """What the art director plans from the user's brief before scenes are split."""
+
+    # ENGLISH, one line: era, culture, architecture, palette shared by every image.
+    world: str = Field(default="", max_length=600)
+    world_vi: str = Field(default="", max_length=600)
+    characters: list[ComicCharacter] = Field(default_factory=list, max_length=30)
+    locations: list[ComicLocation] = Field(default_factory=list, max_length=40)
+
+
+# Genre presets: a ready world line and a matching drawing style, so nobody starts from a blank box.
+GENRE_PRESETS: dict[str, dict[str, str]] = {
+    "co_trang": {"label": "Cổ trang", "style": "manhua",
+                 "world_vi": "Trung Quốc cổ đại, cung điện mái ngói đỏ, phố cổ lát đá, y phục cổ trang, tông màu ấm",
+                 "world": "ancient China, red-tiled palaces, stone-paved old towns, traditional hanfu, warm palette"},
+    "tien_hiep": {"label": "Tiên hiệp", "style": "xianxia",
+                  "world_vi": "Thế giới tu tiên, núi non mây mù, tông môn trên đỉnh núi, pháp bảo phát sáng",
+                  "world": "Chinese cultivation fantasy world, misty floating mountains, sect halls on peaks, glowing magic artifacts"},
+    "hien_dai": {"label": "Hiện đại đô thị", "style": "manhwa",
+                 "world_vi": "Thành phố hiện đại, cao ốc kính, quán cà phê, đường phố về đêm, trang phục thường ngày",
+                 "world": "modern city, glass skyscrapers, cafes, night streets with neon, contemporary casual clothing"},
+    "hoc_duong": {"label": "Học đường", "style": "anime_comic",
+                  "world_vi": "Trường trung học, lớp học, sân trường có hoa anh đào, đồng phục học sinh, ánh nắng dịu",
+                  "world": "high school, classrooms, schoolyard with cherry blossoms, student uniforms, soft sunlight"},
+    "kinh_di": {"label": "Kinh dị", "style": "realistic",
+                "world_vi": "Không khí u ám, nhà hoang, rừng đêm sương mù, ánh sáng lạnh và bóng tối sâu",
+                "world": "eerie atmosphere, abandoned houses, foggy night forests, cold light and deep shadows"},
+    "co_tich": {"label": "Cổ tích Việt Nam", "style": "storybook",
+                "world_vi": "Làng quê Việt Nam xưa, lũy tre, mái đình, đồng lúa, áo tứ thân, áo nâu",
+                "world": "old Vietnamese countryside, bamboo hedges, communal house roofs, rice fields, traditional ao tu than and brown peasant clothes"},
+    "fantasy": {"label": "Fantasy phương Tây", "style": "western_comic",
+                "world_vi": "Vương quốc trung cổ phép thuật, lâu đài đá, rừng cổ thụ, hiệp sĩ và pháp sư",
+                "world": "medieval magical kingdom, stone castles, ancient forests, knights and wizards"},
+}
 
 
 def _coerce_choice(value: object, choices: tuple[str, ...], aliases: dict[str, str], default: str) -> str:
@@ -199,6 +256,8 @@ class ComicScene(_Model):
     dialogue: list[DialogueLine] = Field(default_factory=list, max_length=12)
     characters: list[str] = Field(default_factory=list, max_length=8)
     location: str = Field(default="", max_length=200)
+    # Id of a planned ``ComicLocation``; its fixed description replaces ``location`` in image prompts.
+    location_id: str = Field(default="", max_length=60)
     emotion: str = Field(default="", max_length=60)
     visual_prompt: str = Field(min_length=3, max_length=1500)
     negative_prompt: str = Field(default="", max_length=600)
@@ -250,6 +309,7 @@ class StoryboardDraft(_Model):
 
     youtube_title: str = Field(default="", max_length=100)
     characters: list[ComicCharacter] = Field(default_factory=list, max_length=30)
+    locations: list[ComicLocation] = Field(default_factory=list, max_length=40)
     scenes: list[ComicScene] = Field(min_length=1, max_length=120)
 
 
@@ -263,6 +323,10 @@ class Storyboard(_Model):
     mode: Literal["comic", "animated"] = "comic"
     analysis_method: str = "heuristic"
     characters: list[ComicCharacter] = Field(default_factory=list)
+    # The planned look of the story: one world line and the recurring places.
+    world: str = Field(default="", max_length=600)
+    world_vi: str = Field(default="", max_length=600)
+    locations: list[ComicLocation] = Field(default_factory=list)
     scenes: list[ComicScene] = Field(min_length=1, max_length=400)
     warnings: list[str] = Field(default_factory=list)
 
@@ -292,6 +356,9 @@ class Storyboard(_Model):
 
     def character(self, character_id: str | None) -> ComicCharacter | None:
         return next((c for c in self.characters if c.id == character_id), None)
+
+    def location(self, location_id: str | None) -> ComicLocation | None:
+        return next((place for place in self.locations if location_id and place.id == location_id), None)
 
     def scene(self, scene_index: int) -> ComicScene:
         for scene in self.scenes:
@@ -329,6 +396,14 @@ class ComicSettings(_Model):
     # Bounded retries and a per-render budget of AI-generated seconds: video models are expensive.
     max_animation_attempts: int = Field(default=2, ge=1, le=4)
     animation_budget_seconds: float = Field(default=240.0, ge=0.0, le=3600.0)
+    # The user's own plan, any language: era and world, each character's look, the main places.
+    # For a series this is shared by every episode; ``episode_brief`` adds what is new in one episode.
+    story_brief: str = Field(default="", max_length=6000)
+    episode_brief: str = Field(default="", max_length=3000)
+    # The bible the user reviewed before creating the project (suggested by AI from the story,
+    # then edited). It is authoritative: no second planning pass, its looks win over guesses.
+    bible: StoryBible | None = None
+    genre: str = Field(default="", max_length=40)
 
     @field_validator("language")
     @classmethod

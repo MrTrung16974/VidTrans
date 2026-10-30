@@ -27,6 +27,15 @@ _HEURISTIC_CAMERA = (
 )
 DEFAULT_MOTION_PROMPT = "subtle natural character motion, hair and clothes move gently, smooth camera"
 
+LOCATION_RULE = """Places: "location_id" names the KNOWN LOCATIONS entry the scene happens in; draw the place exactly as
+   that entry describes it and keep the WORLD (era, culture, architecture). A recurring place that is not
+   known yet goes to "locations" with a lowercase ascii id, a name and a fixed ENGLISH "description"
+   (architecture, materials, colours, fixed props, typical light). Leave "location_id" empty for a one-off place.
+Brief: the PRODUCTION BRIEF, when given, is the author's own plan: follow it for every look and setting it states."""
+_LOCATIONS = {"type": "array", "items": {"type": "object", "properties": {
+    "id": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"},
+}, "required": ["id", "name", "description"]}}
+
 _DIALOGUE = {"type": "array", "items": {"type": "object", "properties": {
     "character": {"type": "string"}, "text": {"type": "string"}}, "required": ["character", "text"]}}
 ANIMATED_DRAFT_SCHEMA: dict[str, Any] = {
@@ -39,7 +48,7 @@ ANIMATED_DRAFT_SCHEMA: dict[str, Any] = {
             "age": {"type": "string"}, "appearance": {"type": "string"}, "outfit": {"type": "string"},
         }, "required": ["id", "name", "gender", "species", "appearance"]}},
         "scenes": {"type": "array", "items": {"type": "object", "properties": {
-            "location": {"type": "string"}, "emotion": {"type": "string"},
+            "location": {"type": "string"}, "location_id": {"type": "string"}, "emotion": {"type": "string"},
             "visual_prompt": {"type": "string"}, "source_excerpt": {"type": "string"},
             "characters": {"type": "array", "items": {"type": "string"}},
             "shots": {"type": "array", "items": {"type": "object", "properties": {
@@ -59,6 +68,7 @@ ANIMATED_DRAFT_SCHEMA: dict[str, Any] = {
     },
     "required": ["characters", "scenes"],
 }
+ANIMATED_DRAFT_SCHEMA["properties"]["locations"] = _LOCATIONS
 
 
 def animated_system_prompt(settings: ComicSettings, chars_per_second: float) -> str:
@@ -67,7 +77,8 @@ def animated_system_prompt(settings: ComicSettings, chars_per_second: float) -> 
     return f"""You are an animation director turning prose into a short 2D animated film.
 Answer with ONE JSON object only, no markdown:
 {{"characters": [{{"id", "name", "gender": "female|male|unknown", "species", "age", "appearance", "outfit"}}],
- "scenes": [{{"location", "emotion", "visual_prompt", "source_excerpt", "characters": ["<id>"],
+ "locations": [{{"id", "name", "description"}}],
+ "scenes": [{{"location", "location_id", "emotion", "visual_prompt", "source_excerpt", "characters": ["<id>"],
    "shots": [{{"duration_seconds", "characters": ["<id>"], "action", "emotion",
      "camera": {{"shot_type", "movement", "angle"}}, "narration", "dialogue": [{{"character": "<id>", "text"}}],
      "keyframe_prompt", "motion_prompt"}}]}}]}}
@@ -102,7 +113,8 @@ Rules:
    "white fox spirit", "dragon", "robot"); never turn an animal, spirit or monster into a person.
    "age" is a number of years or a life stage ("8", "teenager", "elderly").
 9. "source_excerpt" copies verbatim the first 8-15 words of the source passage the scene covers.
-10. "emotion" is one English word; "location" is a short English place description."""
+10. "emotion" is one English word; "location" is a short English place description.
+{LOCATION_RULE}"""
 
 
 def prepare_animated_draft(data: Any) -> Any:
