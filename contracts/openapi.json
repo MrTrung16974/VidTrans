@@ -1612,6 +1612,47 @@
         "title": "BrandingConfig",
         "type": "object"
       },
+      "BulkScenes": {
+        "additionalProperties": false,
+        "properties": {
+          "draw_now": {
+            "default": false,
+            "title": "Draw Now",
+            "type": "boolean"
+          },
+          "location_id": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location Id"
+          },
+          "redraw": {
+            "default": false,
+            "title": "Redraw",
+            "type": "boolean"
+          },
+          "scene_indexes": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 400,
+            "minItems": 1,
+            "title": "Scene Indexes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "scene_indexes"
+        ],
+        "title": "BulkScenes",
+        "type": "object"
+      },
       "CharacterPatch": {
         "additionalProperties": false,
         "properties": {
@@ -1905,6 +1946,22 @@
             "title": "Reanalyze",
             "type": "boolean"
           },
+          "scenes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 40,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenes"
+          },
           "shot": {
             "anyOf": [
               {
@@ -1949,6 +2006,100 @@
           }
         },
         "title": "ReprocessRequest",
+        "type": "object"
+      },
+      "SceneFix": {
+        "additionalProperties": false,
+        "description": "A quick fix from the scene card: what was wrong with the image, then redraw it.",
+        "properties": {
+          "apply_to_all": {
+            "default": false,
+            "title": "Apply To All",
+            "type": "boolean"
+          },
+          "character_id": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Character Id"
+          },
+          "characters": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Characters"
+          },
+          "draw_now": {
+            "default": true,
+            "title": "Draw Now",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "redraw",
+              "characters",
+              "location",
+              "outfit"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "location_id": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location Id"
+          },
+          "note_vi": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Vi"
+          },
+          "outfit_vi": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outfit Vi"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "SceneFix",
         "type": "object"
       },
       "SceneInsert": {
@@ -5625,6 +5776,67 @@
         ]
       }
     },
+    "/api/v1/comic/projects/{job_id}/scenes/bulk": {
+      "post": {
+        "description": "Change the place of many scenes at once, and/or redraw them.",
+        "operationId": "bulk_scenes_api_v1_comic_projects__job_id__scenes_bulk_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkScenes"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Bulk Scenes",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
     "/api/v1/comic/projects/{job_id}/scenes/{scene_index}": {
       "delete": {
         "operationId": "delete_scene_api_v1_comic_projects__job_id__scenes__scene_index__delete",
@@ -5746,6 +5958,76 @@
           }
         ],
         "summary": "Patch Scene",
+        "tags": [
+          "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/projects/{job_id}/scenes/{scene_index}/fix": {
+      "post": {
+        "description": "\"Sai nhân vật / Sai bối cảnh / Sai trang phục / Vẽ lại\": correct the scene, then redraw only it.",
+        "operationId": "fix_scene_api_v1_comic_projects__job_id__scenes__scene_index__fix_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scene_index",
+            "required": true,
+            "schema": {
+              "title": "Scene Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SceneFix"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Fix Scene",
         "tags": [
           "Comic Video"
         ]

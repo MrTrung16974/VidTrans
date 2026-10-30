@@ -157,7 +157,7 @@ class ComicJobRunner:
             project.save_storyboard(storyboard, bump=False)
         storyboard = project.load_storyboard()
         # Looks edited in Vietnamese since the last run: translate them before anything is drawn.
-        looks = [*storyboard.characters, *storyboard.locations]
+        looks = [*storyboard.characters, *storyboard.locations, *storyboard.scenes]  # Scenes: fix notes.
         if needs_english(looks, storyboard):
             try:
                 llm = create_story_llm(settings.llm_provider)
@@ -192,10 +192,12 @@ class ComicJobRunner:
             return
         if not render:
             scene_limit = int(request.get("preview_scenes") or 0) or None
-            manifest = producer.preview_images(storyboard, scene_limit)
+            scene_indexes = [int(index) for index in request.get("preview_scene_indexes") or []] or None
+            manifest = producer.preview_images(storyboard, scene_limit, scene_indexes)
             absorb(storyboard, manifest)
             self.update_job(job_id, status="completed", step="storyboard_ready", progress=1.0,
-                            step_detail=(f"Đã vẽ thử {min(scene_limit, len(storyboard.scenes))} cảnh đầu — "
+                            step_detail=(f"Đã vẽ lại cảnh {', '.join(map(str, scene_indexes))}" if scene_indexes
+                                         else f"Đã vẽ thử {min(scene_limit, len(storyboard.scenes))} cảnh đầu — "
                                          "duyệt rồi bấm Render video" if scene_limit
                                          else "Storyboard và ảnh đã sẵn sàng để duyệt"),
                             comic=summary(storyboard, manifest), finished_at=self.utc_now())

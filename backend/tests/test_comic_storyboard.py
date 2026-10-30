@@ -399,3 +399,29 @@ class SuggestBibleTests(unittest.TestCase):
         self.assertEqual(storyboard.character("minh").outfit_vi, "áo trắng")
         self.assertEqual(storyboard.world_vi, "Trung Quốc thời Đường")
         self.assertEqual(storyboard.locations[0].id, "forest")
+
+
+class QuickFixPromptTests(unittest.TestCase):
+    def test_fix_note_leads_the_image_prompt_and_is_translated_first(self):
+        from pipeline.comic_storyboard import fill_english
+        from pipeline.comic_video import scene_image_prompt
+
+        board = Storyboard.model_validate({"characters": [MINH], "scenes": [{
+            **scene(fix_note_vi="Minh cầm kiếm"), "scene_index": 1}]})
+
+        class Translator:
+            def translate_lines(self, lines):
+                return ["Minh holds a sword" for _ in lines]
+
+        fill_english(board.scenes, Translator())
+        self.assertEqual(board.scenes[0].fix_note, "Minh holds a sword")
+        prompt = scene_image_prompt(board.scenes[0], board, "9:16")
+        self.assertLess(prompt.index("Important:"), prompt.index("Setting:"))
+
+    def test_a_new_take_changes_the_seed_and_the_first_take_keeps_the_old_one(self):
+        from pipeline.comic_video import scene_seed
+
+        self.assertEqual(scene_seed(0, 3), 0)
+        self.assertEqual(scene_seed(100, 3), 103)
+        self.assertNotEqual(scene_seed(0, 3, 2), scene_seed(0, 3, 3))
+        self.assertNotEqual(scene_seed(100, 3, 2), 103)

@@ -229,6 +229,62 @@ class ComicApiTests(unittest.TestCase):
         job = self.run_job(job_id)
         self.assertIn("Đã vẽ thử", job["step_detail"])
 
+    def test_quick_fixes_correct_the_scene_and_redraw_only_it(self) -> None:
+        from domain.comic import ComicLocation
+        from infrastructure.comic_project import ComicProject
+
+        job_id = self.create(auto_render="false").json()["job_id"]
+        self.assertEqual(self.run_job(job_id)["status"], "completed")
+        project = ComicProject(main.comic_project_root("user-a", job_id))
+        storyboard = project.load_storyboard()
+        storyboard.characters = [*storyboard.characters,
+                                 __import__("domain.comic", fromlist=["ComicCharacter"]).ComicCharacter(
+                                     id="minh", name="Minh", outfit_vi="áo trắng", outfit="white robe")]
+        storyboard.locations = [ComicLocation(id="forest", name="Rừng", description="forest")]
+        project.save_storyboard(storyboard)
+
+        def images() -> dict:
+            # Comic projects have one image per scene; animated ones a keyframe per shot ("1.1").
+            media = self.project(job_id).json()["media"]
+            return media["scenes"] or {label.split(".")[0]: url for label, url in sorted(media["keyframes"].items())
+                                       if label.endswith(".1")}
+
+        before = images()
+
+        fixed = self.client.post(f"/api/v1/comic/projects/{job_id}/scenes/1/fix",
+                                 json={"kind": "location", "location_id": "forest", "note_vi": "trời mưa"})
+        self.assertEqual(fixed.status_code, 200, fixed.text)
+        scene = fixed.json()["storyboard"]["scenes"][0]
+        self.assertEqual((scene["location_id"], scene["take"], scene["fix_note_vi"], scene["fix_note"]),
+                         ("forest", 2, "trời mưa", ""))
+        self.assertEqual(self.service.get(job_id)["resume_request"]["preview_scene_indexes"], [1])
+        job = self.run_job(job_id)
+        self.assertIn("Đã vẽ lại cảnh 1", job["step_detail"])
+        after = images()
+        self.assertNotEqual(after["1"], before["1"])  # Redrawn.
+        self.assertEqual(after["2"], before["2"])  # Untouched.
+
+        outfit = self.client.post(f"/api/v1/comic/projects/{job_id}/scenes/2/fix", json={
+            "kind": "outfit", "character_id": "minh", "outfit_vi": "áo giáp bạc", "apply_to_all": True,
+            "draw_now": False})
+        minh = next(c for c in outfit.json()["storyboard"]["characters"] if c["id"] == "minh")
+        self.assertEqual((minh["outfit_vi"], minh["outfit"]), ("áo giáp bạc", ""))
+        self.assertIsNone(outfit.json()["queued"])
+
+        local = self.client.post(f"/api/v1/comic/projects/{job_id}/scenes/2/fix", json={
+            "kind": "outfit", "character_id": "minh", "outfit_vi": "áo đỏ", "draw_now": False}).json()
+        self.assertIn("Minh mặc áo đỏ", local["storyboard"]["scenes"][1]["fix_note_vi"])
+        self.assertEqual(self.client.post(f"/api/v1/comic/projects/{job_id}/scenes/2/fix", json={
+            "kind": "characters", "characters": ["ghost"], "draw_now": False}).status_code, 422)
+
+        bulk = self.client.post(f"/api/v1/comic/projects/{job_id}/scenes/bulk",
+                                json={"scene_indexes": [1, 2, 99], "location_id": "forest", "redraw": True})
+        self.assertEqual(bulk.status_code, 200, bulk.text)
+        self.assertEqual(bulk.json()["changed"], [1, 2])
+        self.assertTrue(all(s["location_id"] == "forest" for s in bulk.json()["storyboard"]["scenes"][:2]))
+        self.assertEqual(self.client.post(f"/api/v1/comic/projects/{job_id}/scenes/bulk",
+                                          json={"scene_indexes": [1], "location_id": "moon"}).status_code, 422)
+
     def test_cit_voices_are_resolved_and_stored_with_the_project(self) -> None:
         from infrastructure.tts_providers import CITVoice
 

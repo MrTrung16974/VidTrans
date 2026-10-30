@@ -6606,3 +6606,33 @@ input[type="file"]::-webkit-file-upload-button:active {
 .comic-location-picture img { width: 100%; height: 100%; object-fit: cover; }
 .comic-location-picture span { padding: 12px; color: var(--muted); font-size: .8rem; text-align: center; }
 .comic-location-picture .comic-badge { position: absolute; top: 8px; left: 8px; }
+
+/* Quick fixes on a scene image, and bulk changes for ticked scenes. */
+.comic-scene-media { position: relative; }
+.comic-scene-select {
+  position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; background: rgba(15, 23, 42, .65); color: #fff; font-size: .78rem; cursor: pointer;
+}
+.comic-scene-select input { accent-color: var(--brand); }
+.comic-fix-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.comic-fix-chips button {
+  padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--ink); font: inherit; font-size: .78rem; font-weight: 600; cursor: pointer;
+}
+.comic-fix-chips button:hover:not(:disabled) { border-color: var(--brand); color: var(--brand-dark); }
+.comic-fix-chips button:disabled { opacity: .5; cursor: not-allowed; }
+.comic-fix-note { margin: 6px 0 0; font-size: .78rem; color: var(--muted); }
+.comic-fix-panel { display: grid; gap: 10px; margin-top: 10px; padding: 12px; border: 1px solid var(--brand-light); border-radius: 12px; background: #fffaf5; }
+.comic-fix-options { display: flex; flex-wrap: wrap; gap: 8px 14px; border: 0; padding: 0; margin: 0; }
+.comic-fix-options legend { font-weight: 600; margin-bottom: 6px; }
+.comic-fix-options label { display: inline-flex; align-items: center; gap: 6px; }
+.comic-bulk-bar {
+  position: sticky; top: 72px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-bottom: 12px; padding: 10px 14px; border: 1px solid var(--brand); border-radius: 14px; background: var(--brand-light);
+}
+.comic-bulk-bar select { min-height: 36px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font: inherit; }
+/* Image, quick-fix chips and the fix panel share the first column of the scene card. */
+.comic-scene-visual { display: grid; gap: 0; align-self: start; min-width: 0; }
+.comic-fix-chips button { align-self: start; }
+@media (max-width: 960px) { .comic-scene-visual { max-width: 360px; margin: 0 auto; width: 100%; } }
+.comic-scene-body { align-content: start; }

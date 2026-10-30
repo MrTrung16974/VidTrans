@@ -7,7 +7,7 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -119,7 +119,8 @@ class CharacterPatch(BaseModel):
 def retranslate_on_edit(current: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:
     """A changed Vietnamese look clears its English twin, which the worker translates again."""
     for english, vietnamese in (("appearance", "appearance_vi"), ("outfit", "outfit_vi"),
-                                ("description", "description_vi"), ("world", "world_vi")):
+                                ("description", "description_vi"), ("world", "world_vi"),
+                                ("fix_note", "fix_note_vi")):
         if vietnamese in changes and english not in changes and changes[vietnamese] != current.get(vietnamese):
             changes[english] = ""
     return changes
@@ -143,6 +144,31 @@ class SeriesPatch(BaseModel):
     story_brief: str | None = Field(default=None, max_length=6000)
     world: str | None = Field(default=None, max_length=600)
     world_vi: str | None = Field(default=None, max_length=600)
+
+
+class SceneFix(BaseModel):
+    """A quick fix from the scene card: what was wrong with the image, then redraw it."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["redraw", "characters", "location", "outfit"]
+    characters: list[str] | None = Field(default=None, max_length=8)
+    location_id: str | None = Field(default=None, max_length=60)
+    character_id: str | None = Field(default=None, max_length=60)
+    outfit_vi: str | None = Field(default=None, max_length=400)
+    # Outfit: change the character in every scene, not just this one.
+    apply_to_all: bool = False
+    # What else to tell the image model, in Vietnamese (translated before drawing); "" clears it.
+    note_vi: str | None = Field(default=None, max_length=400)
+    draw_now: bool = True
+
+
+class BulkScenes(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scene_indexes: list[int] = Field(min_length=1, max_length=400)
+    # A planned place for all of them ("" clears it).
+    location_id: str | None = Field(default=None, max_length=60)
+    redraw: bool = False
+    draw_now: bool = False
 
 
 class LocationPatch(BaseModel):
@@ -178,8 +204,10 @@ class ShotInsert(BaseModel):
 class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     images_only: bool = False
-    # With images_only: draw just the first N scenes ("Vẽ thử 3 cảnh") to check the look cheaply.
+    # With images_only: draw just the first N scenes ("Vẽ thử 3 cảnh") to check the look cheaply,
+    # or just these scene numbers.
     preview_scenes: int | None = Field(default=None, ge=1, le=20)
+    scenes: list[int] | None = Field(default=None, min_length=1, max_length=40)
     reanalyze: bool = False
     # "scene.shot" (e.g. "2.1"): render only that shot as a preview.
     shot: str | None = Field(default=None, pattern=r"^\d{1,3}\.\d{1,2}$")
@@ -214,12 +242,14 @@ def _validation_detail(exc: ValidationError) -> str:
 
 def requeue_comic_job(deps: ComicRouteDependencies, request: Request, job_id: str, job: dict[str, Any],
                       *, render: bool, preview_shot: str | None = None,
-                      idempotency_key: str | None = None, preview_scenes: int | None = None) -> dict[str, Any]:
+                      idempotency_key: str | None = None, preview_scenes: int | None = None,
+                      preview_scene_indexes: list[int] | None = None) -> dict[str, Any]:
     """Return a finished comic job to the queue; the worker reuses every unchanged asset."""
     resume_request = dict(job.get("resume_request") or {})
     resume_request["render"] = render
     resume_request["preview_shot"] = preview_shot
     resume_request["preview_scenes"] = preview_scenes if not render else None
+    resume_request["preview_scene_indexes"] = preview_scene_indexes if not render else None
     deps.reserve_quota(job_id, deps.quota_account(request, job))
     try:
         deps.retry_job(
@@ -948,6 +978,84 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             save(project, data)
         return JSONResponse(project_payload(job_id, job, project, request))
 
+    def queue_scene_images(request: Request, job_id: str, scene_indexes: list[int]) -> dict[str, Any]:
+        job = deps.job_for_request(request, job_id)
+        try:  # Same plan check as the Render button: a quick fix must not bypass it.
+            ensure_comic_settings_allowed(
+                deps.quota_account(request, job), (job.get("resume_request") or {}).get("settings") or {})
+        except PlanEntitlementError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        return requeue_comic_job(deps, request, job_id, job, render=False, preview_scene_indexes=scene_indexes)
+
+    @router.post("/projects/{job_id}/scenes/{scene_index}/fix")
+    def fix_scene(request: Request, job_id: str, scene_index: int, fix: SceneFix) -> JSONResponse:
+        """"Sai nhân vật / Sai bối cảnh / Sai trang phục / Vẽ lại": correct the scene, then redraw only it."""
+        job, project, storyboard = editable_project(request, job_id)
+        try:
+            scene = storyboard.scene(scene_index)
+        except KeyError:
+            raise HTTPException(404, "Không có cảnh này") from None
+        data = storyboard.model_dump(mode="json")
+        target = data["scenes"][storyboard.scenes.index(scene)]
+        note = fix.note_vi.strip() if fix.note_vi is not None else None
+        if fix.kind == "characters":
+            unknown = [cid for cid in fix.characters or [] if storyboard.character(cid) is None]
+            if unknown:
+                raise HTTPException(422, f"Không có nhân vật: {', '.join(unknown)}")
+            target["characters"] = list(dict.fromkeys(fix.characters or []))
+        elif fix.kind == "location":
+            if fix.location_id and storyboard.location(fix.location_id) is None:
+                raise HTTPException(422, "Không có bối cảnh này trong truyện")
+            target["location_id"] = fix.location_id or ""
+        elif fix.kind == "outfit":
+            character = storyboard.character(fix.character_id)
+            if character is None or not (fix.outfit_vi or "").strip():
+                raise HTTPException(422, "Hãy chọn nhân vật và nhập trang phục đúng")
+            outfit = fix.outfit_vi.strip()
+            if fix.apply_to_all:
+                for item in data["characters"]:
+                    if item["id"] == character.id:
+                        item.update(outfit_vi=outfit, outfit="")  # Translated again before drawing.
+            else:
+                note = "; ".join(part for part in (note, f"{character.name} mặc {outfit}") if part)
+        if note is not None:
+            target.update(fix_note_vi=note, fix_note="")
+        target["take"] = scene.take + 1
+        target["version"] = scene.version + 1
+        save(project, data)
+        queued = None
+        if fix.draw_now:
+            queued = queue_scene_images(request, job_id, [scene.scene_index])
+            job = deps.job_for_request(request, job_id)
+        return JSONResponse({**project_payload(job_id, job, project, request, focus_scene=scene.scene_index),
+                             "queued": queued})
+
+    @router.post("/projects/{job_id}/scenes/bulk")
+    def bulk_scenes(request: Request, job_id: str, body: BulkScenes) -> JSONResponse:
+        """Change the place of many scenes at once, and/or redraw them."""
+        job, project, storyboard = editable_project(request, job_id)
+        if body.location_id and storyboard.location(body.location_id) is None:
+            raise HTTPException(422, "Không có bối cảnh này trong truyện")
+        chosen = set(body.scene_indexes)
+        data = storyboard.model_dump(mode="json")
+        changed: list[int] = []
+        for scene, target in zip(storyboard.scenes, data["scenes"]):
+            if scene.scene_index not in chosen:
+                continue
+            if body.location_id is not None:
+                target["location_id"] = body.location_id
+            if body.redraw:
+                target["take"] = scene.take + 1
+            target["version"] = scene.version + 1
+            changed.append(scene.scene_index)
+        if not changed:
+            raise HTTPException(404, "Không có cảnh nào trong danh sách")
+        save(project, data)
+        queued = queue_scene_images(request, job_id, changed[:40]) if body.draw_now else None
+        if queued:
+            job = deps.job_for_request(request, job_id)
+        return JSONResponse({**project_payload(job_id, job, project, request), "changed": changed, "queued": queued})
+
     @router.post("/projects/{job_id}/scenes")
     def insert_scene(request: Request, job_id: str, body: SceneInsert) -> JSONResponse:
         job, project, storyboard = editable_project(request, job_id)
@@ -1290,7 +1398,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 job = {**job, "resume_request": resume}
         return JSONResponse(requeue_comic_job(deps, request, job_id, job, render=not body.images_only,
                                               preview_shot=body.shot, idempotency_key=idempotency_key,
-                                              preview_scenes=body.preview_scenes if body.images_only else None),
+                                              preview_scenes=body.preview_scenes if body.images_only else None,
+                                              preview_scene_indexes=body.scenes if body.images_only else None),
                             status_code=202)
 
     @router.get("/projects/{job_id}/media/{kind}/{name}")

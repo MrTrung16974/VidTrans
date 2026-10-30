@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261030-place-pictures" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261030-quick-fix-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -886,6 +886,13 @@
                     <button type="button" class="comic-layout-btn" data-comic-view-mode="list" title="Bố cục danh sách ngang">Danh sách ngang</button>
                   </div>
                 </div>
+              </div>
+              <div id="comicBulkBar" class="comic-bulk-bar is-hidden" role="region" aria-label="Thao tác với các cảnh đã chọn">
+                <strong id="comicBulkCount">0 cảnh đã chọn</strong>
+                <select id="comicBulkLocation" aria-label="Bối cảnh cho các cảnh đã chọn"></select>
+                <button class="button secondary" type="button" data-bulk-op="location">Đổi bối cảnh</button>
+                <button class="button secondary" type="button" data-bulk-op="redraw">Vẽ lại các cảnh này</button>
+                <button class="button secondary" type="button" data-bulk-op="clear">Bỏ chọn</button>
               </div>
               <div id="comicScenes" class="comic-scenes" data-view-mode="grid"></div>
               <div id="comicScenesPagination" class="jobs-pagination comic-scenes-pagination is-hidden"></div>
@@ -2373,6 +2380,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261030-place-pictures"></script>
+    <script type="module" src="/js/app.js?v=20261030-quick-fix-2"></script>
   </body>
 </html>

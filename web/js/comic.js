@@ -36,6 +36,8 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   let current = null;
   let currentSeries = null;
   let sidebarTab = "series";
+  const selectedScenes = new Set();  // Scene numbers ticked for a bulk change.
+  let openFix = null;  // { scene, kind } of the quick-fix panel shown in a scene card.
   try {
     if (localStorage.getItem("vidtrans_comic_sidebar_tab") === "videos") sidebarTab = "videos";
   } catch (_) {}
@@ -399,6 +401,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
 
   async function open(jobId, { reveal = false, keepPage = false, scrollScenes = false } = {}) {
     if (!keepPage && current?.job?.job_id !== jobId) scenePage = 1;
+    if (current?.job?.job_id !== jobId) { selectedScenes.clear(); openFix = null; }
     current = await api(withSceneQuery(`/projects/${encodeURIComponent(jobId)}`));
     currentSeries = null;
     if (current?.scenes_pagination?.page) scenePage = current.scenes_pagination.page;
@@ -566,6 +569,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       renderScenes(storyboard, media, locked);
     }
     renderScenesPagination(storyboard, pagination);
+    renderBulkBar(storyboard, locked);
   }
 
   function renderScenesPagination(storyboard, pagination) {
@@ -802,6 +806,63 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     </select></label>`;
   }
 
+  // ------------------------------------------------------------ quick fixes
+  function fixPanel(storyboard, scene, kind) {
+    const note = `<label class="field"><span>Ghi chú thêm cho AI vẽ (tùy chọn)</span>
+      <textarea name="note_vi" rows="2" maxlength="400" placeholder="Ví dụ: trời đang mưa, Minh quay lưng lại">${escapeHtml(scene.fix_note_vi || "")}</textarea></label>`;
+    let body = "";
+    if (kind === "characters") {
+      body = `<fieldset class="comic-fix-options"><legend>Ai có mặt trong cảnh này?</legend>
+        ${storyboard.characters.map(c => `<label><input type="checkbox" name="characters" value="${escapeHtml(c.id)}"${scene.characters.includes(c.id) ? " checked" : ""}> ${escapeHtml(c.name)}</label>`).join("")}
+        </fieldset><small class="field-hint">Nếu đúng người nhưng vẽ sai mặt, hãy ghim ảnh tham chiếu ở phần Nhân vật.</small>`;
+    } else if (kind === "location") {
+      body = `<label class="field"><span>Cảnh này diễn ra ở đâu?</span><select name="location_id">
+        <option value="">— Không gắn bối cảnh</option>
+        ${storyboard.locations.map(place => `<option value="${escapeHtml(place.id)}"${scene.location_id === place.id ? " selected" : ""}>${escapeHtml(place.name)}</option>`).join("")}
+        </select></label>`;
+    } else if (kind === "outfit") {
+      const cast = [...storyboard.characters].sort((a, b) => scene.characters.includes(b.id) - scene.characters.includes(a.id));
+      body = `<label class="field"><span>Nhân vật</span><select name="character_id">
+        ${cast.map(c => `<option value="${escapeHtml(c.id)}" data-outfit="${escapeHtml(c.outfit_vi || "")}">${escapeHtml(c.name)}</option>`).join("")}
+        </select></label>
+        <label class="field"><span>Trang phục đúng</span><input name="outfit_vi" maxlength="400" value="${escapeHtml(cast[0]?.outfit_vi || "")}" placeholder="Ví dụ: áo giáp bạc, áo choàng đỏ"></label>
+        <label class="comic-check"><input type="checkbox" name="apply_to_all"> Sửa cho nhân vật này ở mọi cảnh (không chỉ cảnh này)</label>`;
+    }
+    return `<form class="comic-fix-panel" data-fix-form="${kind}">
+      ${body}${note}
+      <div class="comic-scene-actions">
+        <button class="button primary" type="submit">Sửa &amp; vẽ lại cảnh này</button>
+        <button class="button secondary" type="button" data-fix-cancel>Đóng</button>
+      </div></form>`;
+  }
+
+  async function submitFix(sceneIndex, payload) {
+    try {
+      current = await api(withSceneQuery(`/projects/${encodeURIComponent(current.job.job_id)}/scenes/${sceneIndex}/fix`),
+        json("POST", payload));
+      openFix = null;
+      toast(payload.draw_now === false ? `Đã sửa cảnh ${sceneIndex}` : `Đang vẽ lại cảnh ${sceneIndex}…`);
+      await open(current.job.job_id, { keepPage: true });
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
+  function renderBulkBar(storyboard, locked) {
+    const bar = $("#comicBulkBar");
+    if (!bar) return;
+    const animated = storyboard?.mode === "animated";
+    bar.classList.toggle("is-hidden", !selectedScenes.size || animated);
+    $("#comicBulkCount").textContent = `${selectedScenes.size} cảnh đã chọn`;
+    const places = storyboard?.locations || [];
+    const select = $("#comicBulkLocation");
+    select.innerHTML = '<option value="">— Không gắn bối cảnh</option>'
+      + places.map(place => `<option value="${escapeHtml(place.id)}">${escapeHtml(place.name)}</option>`).join("");
+    select.classList.toggle("is-hidden", !places.length);
+    bar.querySelector('[data-bulk-op="location"]').classList.toggle("is-hidden", !places.length);
+    bar.querySelectorAll("button, select").forEach(control => { control.disabled = locked; });
+  }
+
   function dialogueText(lines) {
     return (lines || []).map(line => `${line.character}: ${line.text}`).join("\n");
   }
@@ -822,9 +883,20 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       const index = String(scene.scene_index);
       const image = media.uploads?.[index] || media.scenes?.[index];
       return `<article class="comic-scene card" data-scene="${index}">
+        <div class="comic-scene-visual">
         <div class="comic-scene-media">
           ${image ? `<img src="${escapeHtml(image)}" alt="Cảnh ${index}" loading="lazy">` : '<span class="comic-scene-noimg">Chưa có ảnh — bấm "Chỉ sinh ảnh" hoặc "Render video"</span>'}
           ${scene.image_override ? '<b class="comic-badge">Ảnh tải lên</b>' : ""}
+          <label class="comic-scene-select" title="Chọn để đổi bối cảnh hoặc vẽ lại nhiều cảnh"><input type="checkbox" data-scene-select value="${index}"${selectedScenes.has(Number(index)) ? " checked" : ""}${disabled}> Chọn</label>
+        </div>
+        ${scene.image_override ? "" : `<div class="comic-fix-chips" role="group" aria-label="Sửa nhanh ảnh cảnh ${index}">
+          <button type="button" data-fix="redraw"${disabled}>↻ Vẽ lại</button>
+          <button type="button" data-fix="characters"${disabled}>Sai nhân vật</button>
+          ${(storyboard.locations || []).length ? `<button type="button" data-fix="location"${disabled}>Sai bối cảnh</button>` : ""}
+          ${storyboard.characters.length ? `<button type="button" data-fix="outfit"${disabled}>Sai trang phục</button>` : ""}
+        </div>
+        ${scene.fix_note_vi ? `<p class="comic-fix-note">Đã ghi chú sửa: ${escapeHtml(scene.fix_note_vi)}</p>` : ""}
+        ${openFix?.scene === Number(index) ? fixPanel(storyboard, scene, openFix.kind) : ""}`}
         </div>
         <form class="comic-scene-body">
           <header><strong>Cảnh ${index}</strong><small>v${scene.version}${scene.emotion ? ` · ${escapeHtml(scene.emotion)}` : ""}${(storyboard.locations || []).find(place => place.id === scene.location_id)?.name || scene.location ? ` · ${escapeHtml((storyboard.locations || []).find(place => place.id === scene.location_id)?.name || scene.location)}` : ""}</small>
@@ -1169,6 +1241,42 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const shotOp = event.target.closest("[data-shot-op]")?.dataset.shotOp;
     const refOp = event.target.closest("[data-ref-op]")?.dataset.refOp;
     const placeOp = event.target.closest("[data-place-op]")?.dataset.placeOp;
+    const fixKind = event.target.closest("[data-fix]")?.dataset.fix;
+    const bulkOp = event.target.closest("[data-bulk-op]")?.dataset.bulkOp;
+    if (current && event.target.closest("[data-fix-cancel]")) {
+      openFix = null;
+      render();
+      return;
+    }
+    if (current && fixKind) {
+      const sceneIndex = Number(event.target.closest("[data-scene]").dataset.scene);
+      if (fixKind === "redraw") {
+        await submitFix(sceneIndex, { kind: "redraw" });
+      } else {
+        openFix = openFix?.scene === sceneIndex && openFix.kind === fixKind ? null : { scene: sceneIndex, kind: fixKind };
+        render();
+      }
+      return;
+    }
+    if (current && bulkOp) {
+      if (bulkOp === "clear") {
+        selectedScenes.clear();
+        render();
+        return;
+      }
+      const body = { scene_indexes: [...selectedScenes].sort((a, b) => a - b), draw_now: true };
+      if (bulkOp === "location") body.location_id = $("#comicBulkLocation").value;
+      if (bulkOp === "redraw") body.redraw = true;
+      try {
+        current = await api(withSceneQuery(`/projects/${encodeURIComponent(current.job.job_id)}/scenes/bulk`), json("POST", body));
+        toast(`Đang vẽ lại ${body.scene_indexes.length} cảnh…`);
+        selectedScenes.clear();
+        await open(current.job.job_id, { keepPage: true });
+      } catch (error) {
+        toast(error.message, true);
+      }
+      return;
+    }
     if (!current || (!action && !op && !shotOp && !refOp && !placeOp)) return;
     const jobId = encodeURIComponent(current.job.job_id);
     if (shotOp) {
@@ -1269,6 +1377,17 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const jobId = encodeURIComponent(current?.job?.job_id || "");
     const shotUpload = event.target.closest("[data-shot-upload]");
     const refUpload = event.target.closest("[data-ref-upload]");
+    const select = event.target.closest("[data-scene-select]");
+    if (select) {
+      if (select.checked) selectedScenes.add(Number(select.value)); else selectedScenes.delete(Number(select.value));
+      renderBulkBar(current?.storyboard, false);
+      return;
+    }
+    const outfitCharacter = event.target.closest('[data-fix-form="outfit"] [name="character_id"]');
+    if (outfitCharacter) {
+      outfitCharacter.form.elements.outfit_vi.value = outfitCharacter.selectedOptions[0]?.dataset.outfit || "";
+      return;
+    }
     const placeUpload = event.target.closest("[data-place-upload]");
     if (placeUpload?.files.length && current) {
       const data = new FormData();
@@ -1307,6 +1426,20 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     const target = event.target;
     const jobId = encodeURIComponent(current.job.job_id);
     const values = Object.fromEntries(new FormData(target));
+    if (target.dataset.fixForm !== undefined) {
+      const sceneIndex = Number(target.closest("[data-scene]").dataset.scene);
+      const kind = target.dataset.fixForm;
+      const payload = { kind, note_vi: target.elements.note_vi.value };
+      if (kind === "characters") payload.characters = [...target.querySelectorAll('[name="characters"]:checked')].map(box => box.value);
+      if (kind === "location") payload.location_id = target.elements.location_id.value;
+      if (kind === "outfit") {
+        payload.character_id = target.elements.character_id.value;
+        payload.outfit_vi = target.elements.outfit_vi.value;
+        payload.apply_to_all = target.elements.apply_to_all.checked;
+      }
+      await submitFix(sceneIndex, payload);
+      return;
+    }
     if (target.dataset.location !== undefined) {
       await mutate(api(withSceneQuery(`/projects/${jobId}/locations/${encodeURIComponent(target.dataset.location)}`), json("PATCH", lookChanges(target, LOCATION_FIELDS))), "Đã lưu bối cảnh — các cảnh ở đây sẽ được vẽ lại khi render");
       return;

@@ -228,6 +228,9 @@ def scene_image_prompt(scene: ComicScene, storyboard: Storyboard, aspect_ratio: 
     # SDXL/SD1.5 weigh the first ~77 tokens most: the story content leads, style comes last.
     style = COMIC_STYLES.get(storyboard.style, COMIC_STYLES["anime_comic"])[1]
     lines = [without_names(scene.visual_prompt, storyboard).rstrip(".") + "."]
+    if scene.fix_note:
+        # The user's correction of a wrong drawing comes right after the action, inside the strong tokens.
+        lines.append(f"Important: {without_names(scene.fix_note, storyboard).rstrip('.')}.")
     # The place comes before the cast so it survives the token budget and the frame is not a lone portrait.
     setting = scene_setting(scene, storyboard)
     if setting:
@@ -250,6 +253,22 @@ def scene_image_prompt(scene: ComicScene, storyboard: Storyboard, aspect_ratio: 
 
 
 PLACE_KEY = "place:"
+
+
+def select_scenes(storyboard: Storyboard, limit: int | None = None,
+                  indexes: list[int] | None = None) -> list[ComicScene]:
+    """The scenes a partial preview draws: chosen ones, else the first ``limit``, else all."""
+    if indexes:
+        wanted = set(indexes)
+        return [scene for scene in storyboard.scenes if scene.scene_index in wanted]
+    return storyboard.scenes[:limit] if limit else list(storyboard.scenes)
+
+
+def scene_seed(base: int, scene_index: int, take: int = 1) -> int:
+    """Seed of a scene image; "Vẽ lại" (a new take) moves it so the provider draws something new."""
+    if take <= 1:
+        return base + scene_index if base else 0
+    return (base or 7919) + scene_index + 1009 * take
 
 
 def place_prompt(place, storyboard: Storyboard, aspect_ratio: str) -> str:
@@ -552,11 +571,11 @@ class ComicVideoProducer:
             style_negative_prompt(storyboard.style, scene.negative_prompt), is_close_up(scene.visual_prompt)))
         scene_refs = [refs[cid] for cid in scene.characters if cid in refs]
         place_ref = refs.get(PLACE_KEY + scene.location_id) if scene.location_id else None
-        seed = self.settings.seed + scene.scene_index if self.settings.seed else 0
-        # Without a place picture the key is what it was before places existed: old caches stay valid.
+        seed = scene_seed(self.settings.seed, scene.scene_index, scene.take)
+        # Without a place picture or a new take the key is what it was before: old caches stay valid.
         key = content_hash(PIPELINE_VERSION, "scene", self.images.cache_key, prompt, negative,
                            [ref_key for _path, ref_key in scene_refs], seed, self.width, self.height,
-                           *((place_ref[1],) if place_ref else ()))
+                           *((place_ref[1],) if place_ref else ()), *((f"take{scene.take}",) if scene.take > 1 else ()))
         path = self.project.dir("images") / f"s{scene.scene_index:03d}-{key[:16]}.png"
         image, fallback = self._ensure_image(path, ImageRequest(
             prompt=prompt, width=self.width, height=self.height, negative_prompt=negative,
@@ -784,30 +803,30 @@ class ComicVideoProducer:
         self.project.save_manifest(manifest)
         return manifest
 
-    def preview_images(self, storyboard: Storyboard, scene_limit: int | None = None) -> dict[str, Any]:
+    def preview_images(self, storyboard: Storyboard, scene_limit: int | None = None,
+                       scene_indexes: list[int] | None = None) -> dict[str, Any]:
         """Generate only references and scene images (storyboard review before spending on voice/render).
 
-        ``scene_limit`` draws just the first scenes ("Vẽ thử 3 cảnh"); images already drawn for
-        later scenes stay in the manifest so the editor keeps showing them."""
-        targets = storyboard.scenes[:scene_limit] if scene_limit else storyboard.scenes
-        refs = self.build_references(storyboard, targets if scene_limit else None)
+        ``scene_limit`` draws the first scenes ("Vẽ thử 3 cảnh") and ``scene_indexes`` chosen ones
+        (a quick fix). A partial preview keeps the images of the other scenes and does not claim
+        the whole storyboard is up to date."""
+        targets = select_scenes(storyboard, scene_limit, scene_indexes)
+        partial = len(targets) < len(storyboard.scenes)
+        refs = self.build_references(storyboard, targets if partial else None)
         images = self._map(targets, lambda scene: self.scene_image(scene, storyboard, refs)[0],
                            "comic_images", lambda done, total: f"Đã sinh ảnh {done}/{total} cảnh")
         scenes = {str(scene.scene_index): {"image": image.name} for scene, image in zip(targets, images)}
-        if scene_limit:
+        names = split_references(refs)
+        revision = storyboard.revision
+        if partial:
             previous = self.project.load_manifest()
-            if previous.get("revision") == storyboard.revision:
-                scenes = {**(previous.get("scenes") or {}), **scenes}
-                refs_names = split_references(refs)
-                for field_name in ("references", "location_references"):
-                    refs_names[field_name] = {**(previous.get(field_name) or {}), **refs_names[field_name]}
-            else:
-                refs_names = split_references(refs)
-        else:
-            refs_names = split_references(refs)
-        manifest = {"revision": storyboard.revision, "size": [self.width, self.height],
+            scenes = {**(previous.get("scenes") or {}), **scenes}
+            for field_name in ("references", "location_references"):
+                names[field_name] = {**(previous.get(field_name) or {}), **names[field_name]}
+            revision = previous.get("revision", revision)
+        manifest = {"revision": revision, "size": [self.width, self.height],
                     "image_provider": self.images.key,
-                    **refs_names, "scenes": scenes,
+                    **names, "scenes": scenes,
                     "cache": {"hits": self.cache_hits, "misses": self.cache_misses},
                     "image_fallback": self.image_report()}
         self.project.save_manifest(manifest)

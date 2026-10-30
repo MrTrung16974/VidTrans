@@ -107,6 +107,12 @@ validation + bounded repair, or sentence splitter) -> storyboard.json (versioned
   weaker IP-Adapter (`VIDTRANS_COMFYUI_SETTING_WEIGHT`, default 0.35). Providers without
   reference support skip it and keep the text description. A series shares pinned place pictures
   like character references. `RenderRequest.preview_scenes` draws only the first N scenes.
+- Quick fixes (`POST /projects/{id}/scenes/{n}/fix`: redraw, wrong characters, wrong place, wrong
+  outfit) correct the scene, store an optional Vietnamese note (`fix_note_vi`, translated into
+  `fix_note` and placed right after the action in the image prompt), bump `take` (a new seed) and
+  queue an images-only job for that scene alone (`preview_scene_indexes`). `POST .../scenes/bulk`
+  changes the place of many scenes and/or redraws them. Partial previews keep the other scenes'
+  images and the manifest's earlier revision.
 - Every derived asset is content-addressed by the inputs it depends on, so editing one
   scene regenerates only that scene's image/voice/clip; images and voice survive edits
   so reverting is free. The storyboard can only be edited while the job is idle.

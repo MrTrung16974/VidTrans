@@ -266,6 +266,11 @@ class ComicScene(_Model):
     source_excerpt: str = Field(default="", max_length=2000)
     version: int = Field(default=1, ge=1)
     image_override: str | None = None
+    # Quick fixes from the editor: what was wrong with the drawn image, in the user's words and
+    # in English for the image model (put ahead of everything else), and which take to draw.
+    fix_note_vi: str = Field(default="", max_length=400)
+    fix_note: str = Field(default="", max_length=400)
+    take: int = Field(default=1, ge=1, le=999)
     shots: list[Shot] = Field(default_factory=list, max_length=8)
 
     @field_validator("characters")

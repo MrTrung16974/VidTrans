@@ -560,7 +560,8 @@ def suggest_bible(llm, text: str, settings: ComicSettings, *, known_characters: 
                       characters=list(characters.values())[:30], locations=list(places.values())[:40])
 
 
-_LOOK_PAIRS = (("appearance", "appearance_vi"), ("outfit", "outfit_vi"), ("description", "description_vi"))
+_LOOK_PAIRS = (("appearance", "appearance_vi"), ("outfit", "outfit_vi"), ("description", "description_vi"),
+               ("fix_note", "fix_note_vi"))
 
 
 def needs_english(items: list[Any], world_holder: Any = None) -> bool:
@@ -597,7 +598,7 @@ def fill_english(items: list[Any], translator, *, world_holder: Any = None) -> l
         # Better a Vietnamese prompt than an empty one; the image is drawn either way.
         translated = [text for _, _, text in targets]
         warnings.append("Chưa dịch được mô tả tiếng Việt sang tiếng Anh; ảnh được vẽ theo mô tả tiếng Việt.")
-    limits = {"appearance": 600, "outfit": 400, "description": 600, "world": 600}
+    limits = {"appearance": 600, "outfit": 400, "description": 600, "world": 600, "fix_note": 400}
     for (item, field_name, _), text in zip(targets, translated):
         setattr(item, field_name, " ".join(str(text).split())[:limits[field_name]])
     return warnings
