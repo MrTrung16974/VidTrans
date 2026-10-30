@@ -68,7 +68,7 @@ class ProfileScreen extends ConsumerWidget {
           await ref.read(sessionProvider.notifier).reload();
         },
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 108),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
           children: [
             StudioCard(
               padding: const EdgeInsets.all(16),

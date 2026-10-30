@@ -32,7 +32,7 @@ class SocialHubScreen extends ConsumerWidget {
           await ref.read(publishableJobsProvider.future).catchError((_) => const <Never>[]);
         },
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 108),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
           children: [
             const StudioStepHeader(
               stepNumber: 1,

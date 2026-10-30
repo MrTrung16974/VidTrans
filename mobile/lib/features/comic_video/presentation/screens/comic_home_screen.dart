@@ -34,13 +34,10 @@ class ComicHomeScreen extends ConsumerWidget {
         ),
         floatingActionButton: readOnly
             ? null
-            : Padding(
-                padding: const EdgeInsets.only(bottom: 76),
-                child: FloatingActionButton.extended(
-                  onPressed: () => context.push('/comic/new'),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Tạo truyện mới'),
-                ),
+            : FloatingActionButton.extended(
+                onPressed: () => context.push('/comic/new'),
+                icon: const Icon(Icons.add),
+                label: const Text('Tạo truyện mới'),
               ),
         body: const TabBarView(children: [_SeriesTab(), _VideosTab()]),
       ),

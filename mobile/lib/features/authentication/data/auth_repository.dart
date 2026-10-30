@@ -41,6 +41,7 @@ class AuthRepository {
   Future<Account> login({
     required String username,
     required String password,
+    bool remember = true,
   }) async {
     final data = await _api.post<Map<String, dynamic>>(
       '/api/v1/auth/token',
@@ -48,7 +49,7 @@ class AuthRepository {
         'username': username,
         'password': password,
         'client': 'native',
-        'remember': 'true',
+        'remember': remember ? 'true' : 'false',
       },
       options: ApiClient.anonymous.copyWith(
         contentType: Headers.formUrlEncodedContentType,
@@ -61,6 +62,60 @@ class AuthRepository {
       ),
     );
     return me();
+  }
+
+  /// Creates a new Free account and signs in immediately with native tokens.
+  Future<Account> register({
+    required String displayName,
+    required String email,
+    required String password,
+  }) async {
+    await _api.post<Map<String, dynamic>>(
+      '/api/v1/auth/register',
+      data: {
+        'display_name': displayName,
+        'email': email,
+        'password': password,
+      },
+      options: ApiClient.anonymous.copyWith(
+        contentType: Headers.formUrlEncodedContentType,
+      ),
+    );
+    return login(username: email, password: password);
+  }
+
+  /// Sends a 6-digit password reset code to [email].
+  Future<String> requestPasswordReset(String email) async {
+    final data = await _api.post<Map<String, dynamic>>(
+      '/api/v1/auth/password-reset/request',
+      data: {'email': email},
+      options: ApiClient.anonymous.copyWith(
+        contentType: Headers.formUrlEncodedContentType,
+      ),
+    );
+    return (data['message'] as String?) ??
+        'Mã xác nhận 6 chữ số đã được gửi tới email của bạn.';
+  }
+
+  /// Confirms password reset with the 6-digit [code] and sets [newPassword].
+  Future<String> confirmPasswordReset({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final data = await _api.post<Map<String, dynamic>>(
+      '/api/v1/auth/password-reset/confirm',
+      data: {
+        'email': email,
+        'code': code,
+        'new_password': newPassword,
+      },
+      options: ApiClient.anonymous.copyWith(
+        contentType: Headers.formUrlEncodedContentType,
+      ),
+    );
+    return (data['message'] as String?) ??
+        'Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.';
   }
 
   Future<Account> me() async =>

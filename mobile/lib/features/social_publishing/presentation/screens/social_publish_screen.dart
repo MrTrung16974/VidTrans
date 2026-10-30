@@ -202,169 +202,346 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
     final text = Theme.of(context).textTheme;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
       children: [
         StudioCard(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             children: [
-              const Icon(Icons.movie_rounded, color: AppColors.brand),
-              const SizedBox(width: 12),
-              Expanded(child: Text(widget.draft.filename, style: text.titleSmall, maxLines: 2, overflow: TextOverflow.ellipsis)),
-              TextButton(onPressed: () => context.push('/jobs/$_jobId/player'), child: const Text('Xem')),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        const StudioStepHeader(stepNumber: 1, icon: Icons.edit_note_rounded, title: 'Nội dung bài đăng'),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _caption,
-          enabled: !readOnly,
-          minLines: 4,
-          maxLines: 10,
-          maxLength: 2200,
-          onChanged: (_) => _changed(() {}),
-          decoration: const InputDecoration(
-            hintText: 'Caption, hashtag…',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        if (!readOnly)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _suggesting ? null : _suggestCaption,
-              icon: _suggesting
-                  ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.auto_awesome_rounded, size: 18),
-              label: const Text('Gợi ý caption từ bản dịch'),
-            ),
-          ),
-        const SizedBox(height: 12),
-        const StudioStepHeader(stepNumber: 2, icon: Icons.share_rounded, title: 'Nền tảng & tài khoản'),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final platform in SocialPlatform.all)
-              ChoiceChip(
-                avatar: Icon(platform.icon, size: 18, color: platform == _platform ? Colors.white : platform.color),
-                label: Text(platform.name),
-                selected: platform == _platform,
-                selectedColor: platform.color,
-                labelStyle: TextStyle(color: platform == _platform ? Colors.white : null),
-                onSelected: (_) => _changed(() {
-                  _platform = platform;
-                  _accountKey = null;
-                  if (!platform.modes.contains(_mode)) _mode = PublishMode.directNow;
-                }),
-              ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        auth.when(
-          loading: () => const LinearProgressIndicator(),
-          error: (error, _) => Text(errorMessage(error), style: const TextStyle(color: AppColors.redDark)),
-          data: (status) => status.accounts.isEmpty
-              ? OutlinedButton.icon(
-                  onPressed: () => context.go('/social'),
-                  icon: const Icon(Icons.add_link_rounded),
-                  label: Text('Kết nối tài khoản ${_platform.name}'),
-                )
-              : DropdownButtonFormField<String>(
-                  initialValue: account?.key,
-                  decoration: const InputDecoration(labelText: 'Tài khoản', border: OutlineInputBorder()),
-                  items: [
-                    for (final item in status.accounts) DropdownMenuItem(value: item.key, child: Text(item.name)),
-                  ],
-                  onChanged: readOnly ? null : (value) => _changed(() => _accountKey = value),
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.brandSoft,
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: AppColors.brandBorder),
                 ),
-        ),
-        const SizedBox(height: 12),
-        SegmentedButton<String>(
-          segments: [
-            for (final mode in _platform.modes)
-              ButtonSegment(value: mode, label: Text(PublishMode.labels[mode]!, textAlign: TextAlign.center)),
-          ],
-          selected: {_mode},
-          onSelectionChanged: readOnly ? null : (value) => _changed(() => _mode = value.first),
-        ),
-        if (_mode == PublishMode.scheduleLocal) ...[
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: readOnly ? null : _pickSchedule,
-            icon: const Icon(Icons.schedule_rounded),
-            label: Text(_scheduledFor == null
-                ? 'Chọn thời gian đăng'
-                : 'Đăng lúc ${DateFormat('HH:mm dd/MM/yyyy').format(_scheduledFor!)}'),
-          ),
-        ],
-        if (_platform.code == 'TIKTOK') ...[
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: _tiktokPrivacy,
-            decoration: const InputDecoration(labelText: 'Ai được xem', border: OutlineInputBorder()),
-            items: [
-              for (final entry in tiktokPrivacyLabels.entries)
-                DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.movie_rounded,
+                  color: AppColors.brand,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  widget.draft.filename,
+                  style: text.titleSmall,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => context.push('/jobs/$_jobId/player'),
+                icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
+                label: const Text('Xem'),
+              ),
             ],
-            onChanged: readOnly ? null : (value) => _changed(() => _tiktokPrivacy = value!),
           ),
-        ],
-        if (_platform.code == 'YOUTUBE') ...[
-          const SizedBox(height: 12),
-          TextField(
-            controller: _youtubeTitle,
-            enabled: !readOnly,
-            maxLength: 100,
-            onChanged: (_) => _changed(() {}),
-            decoration: const InputDecoration(labelText: 'Tiêu đề YouTube', border: OutlineInputBorder()),
-          ),
-          DropdownButtonFormField<String>(
-            initialValue: _youtubePrivacy,
-            decoration: const InputDecoration(labelText: 'Chế độ hiển thị', border: OutlineInputBorder()),
-            items: [
-              for (final entry in youtubePrivacyLabels.entries)
-                DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+        ),
+        const SizedBox(height: 14),
+        StudioCard(
+          leftAccentColor: AppColors.brand,
+          padding: const EdgeInsets.fromLTRB(18, 18, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const StudioStepHeader(
+                stepNumber: 1,
+                icon: Icons.edit_note_rounded,
+                title: 'Nội dung bài đăng',
+                subtitle: 'Nhập caption, mô tả ngắn và bộ hashtag cho video',
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _caption,
+                enabled: !readOnly,
+                minLines: 4,
+                maxLines: 10,
+                maxLength: 2200,
+                onChanged: (_) => _changed(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Caption & Hashtag',
+                  hintText: 'Nhập nội dung bài đăng, kèm #hashtag xu hướng…',
+                ),
+              ),
+              if (!readOnly) ...[
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _suggesting ? null : _suggestCaption,
+                    icon: _suggesting
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.auto_awesome_rounded, size: 18),
+                    label: const Text('Gợi ý caption từ bản dịch'),
+                  ),
+                ),
+              ],
             ],
-            onChanged: readOnly ? null : (value) => _changed(() => _youtubePrivacy = value!),
           ),
-        ],
-        if (!readOnly) ...[
-          const SizedBox(height: 8),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            value: _reviewed,
-            onChanged: (value) => setState(() => _reviewed = value ?? false),
-            title: const Text('Tôi đã xem lại video, nội dung và tài khoản đăng'),
+        ),
+        const SizedBox(height: 14),
+        StudioCard(
+          leftAccentColor: AppColors.teal,
+          padding: const EdgeInsets.fromLTRB(18, 18, 16, 18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const StudioStepHeader(
+                stepNumber: 2,
+                icon: Icons.share_rounded,
+                title: 'Nền tảng & tài khoản',
+                subtitle: 'Chọn mạng xã hội, chế độ hiển thị và xác nhận đăng',
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final platform in SocialPlatform.all)
+                    ChoiceChip(
+                      showCheckmark: false,
+                      avatar: Icon(
+                        platform.icon,
+                        size: 18,
+                        color: platform == _platform
+                            ? Colors.white
+                            : platform.color,
+                      ),
+                      label: Text(platform.name),
+                      selected: platform == _platform,
+                      selectedColor: platform.color,
+                      backgroundColor: AppColors.surfaceSubtle,
+                      side: BorderSide(
+                        color: platform == _platform
+                            ? platform.color
+                            : AppColors.lineStrong,
+                      ),
+                      labelStyle: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: platform == _platform
+                            ? Colors.white
+                            : AppColors.ink,
+                      ),
+                      onSelected: (_) => _changed(() {
+                        _platform = platform;
+                        _accountKey = null;
+                        if (!platform.modes.contains(_mode)) {
+                          _mode = PublishMode.directNow;
+                        }
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              auth.when(
+                loading: () => const LinearProgressIndicator(),
+                error: (error, _) => Text(
+                  errorMessage(error),
+                  style: const TextStyle(color: AppColors.redDark),
+                ),
+                data: (status) => status.accounts.isEmpty
+                    ? OutlinedButton.icon(
+                        onPressed: () => context.go('/social'),
+                        icon: const Icon(Icons.add_link_rounded),
+                        label: Text('Kết nối tài khoản ${_platform.name}'),
+                      )
+                    : DropdownButtonFormField<String>(
+                        initialValue: account?.key,
+                        decoration:
+                            const InputDecoration(labelText: 'Tài khoản'),
+                        items: [
+                          for (final item in status.accounts)
+                            DropdownMenuItem(
+                              value: item.key,
+                              child: Text(item.name),
+                            ),
+                        ],
+                        onChanged: readOnly
+                            ? null
+                            : (value) => _changed(() => _accountKey = value),
+                      ),
+              ),
+              const SizedBox(height: 14),
+              SegmentedButton<String>(
+                segments: [
+                  for (final mode in _platform.modes)
+                    ButtonSegment(
+                      value: mode,
+                      label: Text(
+                        PublishMode.labels[mode]!,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                ],
+                selected: {_mode},
+                onSelectionChanged: readOnly
+                    ? null
+                    : (value) => _changed(() => _mode = value.first),
+              ),
+              if (_mode == PublishMode.scheduleLocal) ...[
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: readOnly ? null : _pickSchedule,
+                  icon: const Icon(Icons.schedule_rounded),
+                  label: Text(
+                    _scheduledFor == null
+                        ? 'Chọn thời gian đăng'
+                        : 'Đăng lúc ${DateFormat('HH:mm dd/MM/yyyy').format(_scheduledFor!)}',
+                  ),
+                ),
+              ],
+              if (_platform.code == 'TIKTOK') ...[
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  initialValue: _tiktokPrivacy,
+                  decoration: const InputDecoration(labelText: 'Ai được xem'),
+                  items: [
+                    for (final entry in tiktokPrivacyLabels.entries)
+                      DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(entry.value),
+                      ),
+                  ],
+                  onChanged: readOnly
+                      ? null
+                      : (value) => _changed(() => _tiktokPrivacy = value!),
+                ),
+              ],
+              if (_platform.code == 'YOUTUBE') ...[
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _youtubeTitle,
+                  enabled: !readOnly,
+                  maxLength: 100,
+                  onChanged: (_) => _changed(() {}),
+                  decoration:
+                      const InputDecoration(labelText: 'Tiêu đề YouTube'),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _youtubePrivacy,
+                  decoration:
+                      const InputDecoration(labelText: 'Chế độ hiển thị'),
+                  items: [
+                    for (final entry in youtubePrivacyLabels.entries)
+                      DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(entry.value),
+                      ),
+                  ],
+                  onChanged: readOnly
+                      ? null
+                      : (value) => _changed(() => _youtubePrivacy = value!),
+                ),
+              ],
+              if (!readOnly) ...[
+                const SizedBox(height: 10),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _reviewed,
+                  onChanged: (value) =>
+                      setState(() => _reviewed = value ?? false),
+                  title: const Text(
+                    'Tôi đã xem lại video, nội dung và tài khoản đăng',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (blocker != null &&
+                    blocker != 'Hãy xác nhận đã xem lại video và nội dung')
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      blocker,
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                StudioGradientButton(
+                  onPressed: blocker != null || _submitting || status == null
+                      ? null
+                      : () => _publish(status),
+                  isLoading: _submitting,
+                  icon: Icons.send_rounded,
+                  label: _mode == PublishMode.scheduleLocal
+                      ? 'Đặt lịch ${_platform.name}'
+                      : _mode == PublishMode.draft
+                          ? 'Gửi bản nháp ${_platform.name}'
+                          : 'Đăng lên ${_platform.name}',
+                ),
+              ],
+            ],
           ),
-          if (blocker != null && blocker != 'Hãy xác nhận đã xem lại video và nội dung')
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(blocker, style: const TextStyle(color: AppColors.muted)),
-            ),
-          StudioGradientButton(
-            onPressed: blocker != null || _submitting || status == null ? null : () => _publish(status),
-            isLoading: _submitting,
-            icon: Icons.send_rounded,
-            label: _mode == PublishMode.scheduleLocal
-                ? 'Đặt lịch ${_platform.name}'
-                : _mode == PublishMode.draft
-                    ? 'Gửi bản nháp ${_platform.name}'
-                    : 'Đăng lên ${_platform.name}',
+        ),
+        const SizedBox(height: 14),
+        StudioCard(
+          leftAccentColor: const Color(0xFF6366F1),
+          padding: const EdgeInsets.fromLTRB(18, 18, 16, 18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const StudioStepHeader(
+                stepNumber: 3,
+                icon: Icons.history_rounded,
+                title: 'Các lần đăng của video này',
+                subtitle: 'Lịch sử đẩy bài và trạng thái xuất bản trên các kênh',
+              ),
+              const SizedBox(height: 12),
+              attempts.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => Text(errorMessage(error)),
+                data: (items) => items.isEmpty
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 16,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceSubtle,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppColors.line),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(
+                              Icons.history_toggle_off_rounded,
+                              size: 18,
+                              color: AppColors.muted,
+                            ),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Chưa có lượt đăng nào cho video này.',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.muted,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          for (final attempt in items)
+                            _AttemptTile(attempt: attempt, jobId: _jobId),
+                        ],
+                      ),
+              ),
+            ],
           ),
-        ],
-        const SizedBox(height: 24),
-        const StudioStepHeader(stepNumber: 3, icon: Icons.history_rounded, title: 'Các lần đăng của video này'),
-        const SizedBox(height: 8),
-        attempts.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => Text(errorMessage(error)),
-          data: (items) => items.isEmpty
-              ? const Text('Chưa đăng lần nào.', style: TextStyle(color: AppColors.muted))
-              : Column(children: [for (final attempt in items) _AttemptTile(attempt: attempt, jobId: _jobId)]),
         ),
       ],
     );

@@ -49,32 +49,38 @@ class HomeShell extends ConsumerWidget {
     ];
 
     final bottomInset = MediaQuery.paddingOf(context).bottom;
-    final bottomMargin = math.max(12.0, bottomInset + 6.0);
+    final bottomMargin = math.max(10.0, bottomInset + 4.0);
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
 
     return Scaffold(
-      extendBody: true,
+      backgroundColor: AppColors.bg,
       body: shell,
-      bottomNavigationBar: Padding(
-        padding: EdgeInsets.fromLTRB(12, 0, 12, bottomMargin),
-        child: Align(
-          alignment: Alignment.bottomCenter,
-          heightFactor: 1.0,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400),
-            child: _FloatingNetflixDock(
-              items: items,
-              currentIndex: shell.currentIndex,
-              onSelect: (index) {
-                HapticFeedback.selectionClick();
-                shell.goBranch(
-                  index,
-                  initialLocation: index == shell.currentIndex,
-                );
-              },
+      bottomNavigationBar: keyboardOpen
+          ? const SizedBox.shrink()
+          : ColoredBox(
+              color: AppColors.bg,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(12, 6, 12, bottomMargin),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  heightFactor: 1.0,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 400),
+                    child: _FloatingNetflixDock(
+                      items: items,
+                      currentIndex: shell.currentIndex,
+                      onSelect: (index) {
+                        HapticFeedback.selectionClick();
+                        shell.goBranch(
+                          index,
+                          initialLocation: index == shell.currentIndex,
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
-        ),
-      ),
     );
   }
 }

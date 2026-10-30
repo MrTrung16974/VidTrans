@@ -39,8 +39,29 @@ class SessionController extends AsyncNotifier<Account?> {
     }
   }
 
-  Future<void> login(String username, String password) async {
-    final account = await _auth.login(username: username, password: password);
+  Future<void> login(
+    String username,
+    String password, {
+    bool remember = true,
+  }) async {
+    final account = await _auth.login(
+      username: username,
+      password: password,
+      remember: remember,
+    );
+    state = AsyncData(account);
+  }
+
+  Future<void> register({
+    required String displayName,
+    required String email,
+    required String password,
+  }) async {
+    final account = await _auth.register(
+      displayName: displayName,
+      email: email,
+      password: password,
+    );
     state = AsyncData(account);
   }
 

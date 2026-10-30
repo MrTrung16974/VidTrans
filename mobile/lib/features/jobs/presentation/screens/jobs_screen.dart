@@ -176,7 +176,7 @@ class JobsScreen extends ConsumerWidget {
                           return false;
                         },
                         child: ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 108),
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                           itemCount: list.jobs.length + (list.hasMore ? 1 : 0),
                           separatorBuilder: (_, _) =>
                               const SizedBox(height: 10),

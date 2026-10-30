@@ -184,7 +184,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       body: AbsorbPointer(
         absorbing: state.busy,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 112),
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
           children: [
             _heroHeader(),
             const SizedBox(height: 16),
