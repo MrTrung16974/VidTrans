@@ -133,6 +133,69 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _startGuestTrial() async {
+    if (_submitting) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final guest = await ref.read(authRepositoryProvider).createGuest();
+      if (!mounted) return;
+      // Show the credentials before signing in: the router leaves this screen
+      // as soon as a session exists, and the password cannot be recovered.
+      await _showGuestCredentials(guest);
+      await ref.read(sessionProvider.notifier).login(guest.email, guest.password);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = errorMessage(error));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
+  }
+
+  Future<void> _showGuestCredentials(GuestCredentials guest) {
+    final text = 'Email: ${guest.email}\nMật khẩu: ${guest.password}';
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Tài khoản dùng thử'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Gói dùng thử: ${guest.quotaMinutes ?? 0} phút video. '
+              'Lưu lại thông tin dưới đây để đăng nhập lần sau — '
+              'mật khẩu chỉ hiển thị một lần.',
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              text,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Clipboard.setData(ClipboardData(text: text)),
+            child: const Text('Sao chép'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Bắt đầu dùng thử'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _resendResetCode() async {
     final email = _resetEmail.text.trim();
     if (email.isEmpty || _submitting) return;
@@ -446,11 +509,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   children: [
                     Row(
                       children: [
-                        const StudioEyebrow(
-                          label: 'SECURE WORKSPACE',
-                          icon: Icons.verified_user_outlined,
+                        // Scales down instead of overflowing on narrow cards.
+                        const Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: StudioEyebrow(
+                              label: 'SECURE WORKSPACE',
+                              icon: Icons.verified_user_outlined,
+                            ),
+                          ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
@@ -616,7 +686,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     SizedBox(height: compact ? 8 : 10),
                     _buildBottomModeLinks(),
-                    SizedBox(height: compact ? 8 : 10),
+                    SizedBox(height: compact ? 6 : 10),
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
@@ -749,7 +819,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       SizedBox(height: compact ? 6 : 8),
       Row(
         children: [
-          InkWell(
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: InkWell(
             onTap: () => setState(() => _remember = !_remember),
             borderRadius: BorderRadius.circular(8),
             child: Padding(
@@ -771,19 +844,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                   const SizedBox(width: 7),
-                  const Text(
-                    'Ghi nhớ đăng nhập',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.inkSoft,
+                  const Flexible(
+                    child: Text(
+                      'Ghi nhớ đăng nhập',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.inkSoft,
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
+              ),
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           TextButton(
             onPressed: _submitting
                 ? null
@@ -1030,21 +1109,40 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
 
     return switch (_mode) {
-      _AuthMode.login => Center(
-          child: TextButton(
-            style: compactStyle,
-            onPressed: _submitting
-                ? null
-                : () => _switchMode(_AuthMode.register),
-            child: const Text(
-              'Chưa có tài khoản? Đăng ký miễn phí',
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w800,
-                color: AppColors.brandDark,
+      // Wrap, not Row: the two links share a line when they fit and stack otherwise.
+      _AuthMode.login => Wrap(
+          alignment: WrapAlignment.center,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            TextButton(
+              style: compactStyle,
+              onPressed: _submitting
+                  ? null
+                  : () => _switchMode(_AuthMode.register),
+              child: const Text(
+                'Đăng ký',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.brandDark,
+                ),
               ),
             ),
-          ),
+            const Text('·', style: TextStyle(color: AppColors.muted)),
+            TextButton.icon(
+              style: compactStyle,
+              onPressed: _submitting ? null : _startGuestTrial,
+              icon: const Icon(Icons.bolt_rounded, size: 16, color: AppColors.brandDark),
+              label: const Text(
+                'Dùng thử',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.brandDark,
+                ),
+              ),
+            ),
+          ],
         ),
       _AuthMode.register => Center(
           child: TextButton(

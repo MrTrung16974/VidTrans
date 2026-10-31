@@ -5,6 +5,15 @@ import 'package:vidtrans_mobile/features/video_translation/domain/options.dart';
 import 'package:vidtrans_mobile/features/video_translation/domain/translation_config.dart';
 
 void main() {
+  test('download-only mode skips the language check and sends mode 4', () {
+    const config = TranslationConfig(mode: 4, sourceLanguage: 'vi', targetLanguage: 'vi');
+    expect(config.downloadOnly, isTrue);
+    expect(config.hasVoice, isFalse);
+    expect(config.validate(), isNull);
+    expect(config.toFormFields(), containsPair('mode', '4'));
+    expect(const TranslationConfig(sourceLanguage: 'vi', targetLanguage: 'vi').validate(), isNotNull);
+  });
+
   group('toFormFields matches the web form', () {
     test('mode 1 leaves out the voice and music controls the web disables', () {
       final fields = const TranslationConfig().toFormFields();

@@ -32,7 +32,8 @@ class TranslationConfig {
 
   final String batchName;
 
-  /// 1 subtitles only, 2 subtitles + dubbing, 3 dubbing + background music.
+  /// 1 subtitles only, 2 subtitles + dubbing, 3 dubbing + background music,
+  /// 4 download only (the source is handed back untouched, logo optional).
   final int mode;
   final String sourceLanguage;
   final String targetLanguage;
@@ -65,13 +66,14 @@ class TranslationConfig {
 
   bool get hasVoice => mode == 2 || mode == 3;
   bool get needsMusic => mode == 3;
+  bool get downloadOnly => mode == 4;
 
   /// OCR-based subtitle sources only work for Chinese sources (web rule).
   bool get ocrAllowed => sourceLanguage == 'zh-CN';
 
   /// Returns an error message, or null when the settings can be submitted.
   String? validate() {
-    if (sourceLanguage != 'auto' && sourceLanguage == targetLanguage) {
+    if (!downloadOnly && sourceLanguage != 'auto' && sourceLanguage == targetLanguage) {
       return 'Ngôn ngữ nguồn và đầu ra phải khác nhau';
     }
     if (ocrRoiTop >= ocrRoiBottom) return 'Mép trên vùng OCR phải nhỏ hơn mép dưới';

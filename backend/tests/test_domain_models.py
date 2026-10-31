@@ -69,8 +69,18 @@ class ProcessingRequestTests(unittest.TestCase):
                 voice_style="unknown",
             )
 
+    def test_download_only_ignores_ocr_and_tiktok_options(self) -> None:
+        request = ProcessingRequest.from_form(
+            mode=4, subtitle_source="burned", ocr_sample_fps=5.0, ocr_roi_top=0.68, ocr_roi_bottom=0.96,
+            voice_mode="auto", voice_type="female", source_language="en", auto_publish_tiktok=True,
+        )
+        self.assertIs(request.mode, ProcessingMode.DOWNLOAD_ONLY)
+        self.assertFalse(request.mode.dubbing)
+        self.assertEqual(request.subtitle_source, SubtitleSource.SPEECH)
+        self.assertFalse(request.tiktok.enabled or request.tiktok.auto_publish)
+
     def test_rejects_unknown_mode(self) -> None:
-        with self.assertRaisesRegex(ValueError, "mode must be 1, 2, or 3"):
+        with self.assertRaisesRegex(ValueError, "mode must be 1, 2, 3, or 4"):
             ProcessingRequest.from_form(
                 mode=99,
                 subtitle_source="auto",

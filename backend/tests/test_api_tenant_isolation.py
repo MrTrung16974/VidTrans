@@ -202,6 +202,24 @@ class ApiTenantIsolationTests(unittest.TestCase):
         job = self.service.get_for_user(payload["jobs"][0]["job_id"], "user-a")
         self.assertEqual(job["source_platform"].lower(), "youtube")
 
+    def test_download_only_job_hands_back_the_source(self) -> None:
+        source = self.upload_dir / "source.mp4"
+        source.write_bytes(b"source-video")
+        self.service.create("job-d", {"status": "queued", "mode": 4}, owner_user_id="user-a")
+        governance = Mock()
+        with patch.object(main, "TENANT_GOVERNANCE", governance), \
+                patch.object(main, "validate_video_file"), \
+                patch.object(main, "stamp_account_logo") as stamp:
+            main.resume_process_video("job-d", {"mode": 4, "video_path": str(source), "apply_logo": True})
+        job = self.service.get("job-d")
+        self.assertEqual(job["status"], "completed", job.get("error"))
+        delivered = self.output_dir / job["output_video"]
+        self.assertEqual(delivered.read_bytes(), b"source-video")
+        stamp.assert_called_once_with("job-d", "user-a", delivered, detect=True)
+        governance.consume.assert_called_once_with("job-d")
+        # The upload stays in place for retries; the copy is what the user downloads.
+        self.assertTrue(source.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

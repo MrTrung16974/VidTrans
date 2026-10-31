@@ -4020,11 +4020,49 @@ def prepare_job_source_video(job_id: str, resume_request: dict[str, Any]) -> Pat
         resume_request=stored_request,
         step="source-ready",
         progress=0.1,
-        step_detail="Video nguồn đã tải xong, chuẩn bị nhận diện",
+        step_detail=(
+            "Video nguồn đã tải xong"
+            if int(stored_request.get("mode") or 1) == ProcessingMode.DOWNLOAD_ONLY
+            else "Video nguồn đã tải xong, chuẩn bị nhận diện"
+        ),
     )
     resume_request.clear()
     resume_request.update(stored_request)
     return result.path
+
+
+def deliver_source_video(job_id: str, video_path: Path, *, apply_logo: bool) -> None:
+    """Mode 4 ("Chỉ tải video"): the fetched source is the result, optionally with the logo.
+
+    Nothing is transcoded, so the quota keeps the one-minute reservation made at upload.
+    """
+    owner_user_id = str((JOB_SERVICE.get(job_id) or {}).get("owner_user_id") or _bootstrap_owner["user_id"])
+    try:
+        ensure_job_active(job_id)
+        update_job(job_id, status="processing", step="delivering", progress=0.9,
+                   step_detail="Đang chuẩn bị file video để tải về")
+        output_video = tenant_job_dir(OUTPUT_DIR, owner_user_id, job_id) / (
+            f"output_{job_id}{video_path.suffix.lower() or '.mp4'}"
+        )
+        copy_file_atomic(video_path, output_video)
+        if apply_logo:
+            stamp_account_logo(job_id, owner_user_id, output_video, detect=True)
+        ensure_job_active(job_id)
+        update_job(
+            job_id, status="completed", step="completed", progress=1.0, finished_at=utc_now(),
+            step_detail="Video đã sẵn sàng để tải về", output_video=stored_artifact_name(output_video),
+            job_action=None, publish_request=None,
+        )
+        TENANT_GOVERNANCE.consume(job_id)
+    except JobCancelled:
+        current = JOB_SERVICE.get(job_id) or {}
+        update_job(job_id, status="cancelled", step="cancelled", progress=float(current.get("progress", 0.0)),
+                   step_detail="Đã hủy theo yêu cầu", finished_at=utc_now())
+        TENANT_GOVERNANCE.release(job_id)
+    except Exception as exc:
+        logger.exception("Delivering the source video failed for job %s", job_id)
+        update_job(job_id, status="failed", step="failed", error=public_error_message(exc), finished_at=utc_now())
+        TENANT_GOVERNANCE.release(job_id)
 
 
 def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
@@ -4043,6 +4081,9 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
         if job_action != "process_video":
             raise ValueError("Stored background action is invalid")
         video_path = prepare_job_source_video(job_id, resume_request)
+        if int(resume_request["mode"]) == ProcessingMode.DOWNLOAD_ONLY:
+            deliver_source_video(job_id, video_path, apply_logo=bool(resume_request.get("apply_logo", False)))
+            return
         background_music_value = resume_request.get("background_music_path")
         background_music_path = Path(str(background_music_value)) if background_music_value else None
         if int(resume_request["mode"]) == 3 and (
@@ -6040,9 +6081,11 @@ async def process_video_endpoint(
     tts_provider = tts_provider.strip().lower() or default_tts_provider()
     translation_provider = translation_provider.strip().lower() or default_translation_provider()
     try:
-        ensure_video_providers_allowed(
-            account, translation_provider=translation_provider, tts_provider=tts_provider, dubbing=mode != 1
-        )
+        if mode != ProcessingMode.DOWNLOAD_ONLY:  # Download-only uses no AI provider.
+            ensure_video_providers_allowed(
+                account, translation_provider=translation_provider, tts_provider=tts_provider,
+                dubbing=mode != ProcessingMode.SUBTITLES,
+            )
     except PlanEntitlementError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     video_ext = Path(file.filename or "video.mp4").suffix.lower() or ".mp4"
@@ -6079,7 +6122,7 @@ async def process_video_endpoint(
     if request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
     tts_voices: dict[str, str] = {}
-    if request.mode is not ProcessingMode.SUBTITLES:
+    if request.mode.dubbing:
         try:
             ensure_provider_configured(request.tts_provider)
             tts_voices = resolve_tts_voice_selection(
@@ -6090,7 +6133,8 @@ async def process_video_endpoint(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        ensure_translation_provider_configured(request.translation_provider)
+        if request.mode is not ProcessingMode.DOWNLOAD_ONLY:
+            ensure_translation_provider_configured(request.translation_provider)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -6268,9 +6312,11 @@ async def create_batch_endpoint(
     tts_provider = tts_provider.strip().lower() or default_tts_provider()
     translation_provider = translation_provider.strip().lower() or default_translation_provider()
     try:
-        ensure_video_providers_allowed(
-            account, translation_provider=translation_provider, tts_provider=tts_provider, dubbing=mode != 1
-        )
+        if mode != ProcessingMode.DOWNLOAD_ONLY:  # Download-only uses no AI provider.
+            ensure_video_providers_allowed(
+                account, translation_provider=translation_provider, tts_provider=tts_provider,
+                dubbing=mode != ProcessingMode.SUBTITLES,
+            )
     except PlanEntitlementError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     # Browsers serialize an untouched <input type="file"> as an empty UploadFile.
@@ -6350,7 +6396,7 @@ async def create_batch_endpoint(
     if processing_request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
         raise HTTPException(status_code=400, detail="background_music is required for mode 3")
     tts_voices: dict[str, str] = {}
-    if processing_request.mode is not ProcessingMode.SUBTITLES:
+    if processing_request.mode.dubbing:
         try:
             ensure_provider_configured(processing_request.tts_provider)
             tts_voices = resolve_tts_voice_selection(
@@ -6361,7 +6407,8 @@ async def create_batch_endpoint(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        ensure_translation_provider_configured(processing_request.translation_provider)
+        if processing_request.mode is not ProcessingMode.DOWNLOAD_ONLY:
+            ensure_translation_provider_configured(processing_request.translation_provider)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     validate_tiktok_auto_publish(processing_request, owner_user_id)

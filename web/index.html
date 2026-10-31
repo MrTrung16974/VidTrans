@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261031-apply-logo" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261031-download-only" />
   </head>
   <body>
     <div class="app-shell">
@@ -131,11 +131,11 @@
               <span class="step-nav-badge">2</span>
               <div><strong>Cấu hình xử lý</strong><small>Chế độ, ngôn ngữ, giọng</small></div>
             </a>
-            <a href="#workflow-subtitle" data-step-nav="3">
+            <a href="#workflow-subtitle" data-step-nav="3" data-translation-only>
               <span class="step-nav-badge">3</span>
               <div><strong>Vị trí phụ đề</strong><small>Cỡ chữ & xem trước</small></div>
             </a>
-            <a href="#workflow-publish" data-step-nav="4">
+            <a href="#workflow-publish" data-step-nav="4" data-translation-only>
               <span class="step-nav-badge">4</span>
               <div><strong>Nội dung đăng</strong><small>Caption & hashtag</small></div>
             </a>
@@ -275,6 +275,15 @@
                         <strong class="mode-card-title">Voice + Nhạc nền</strong>
                         <p class="mode-card-desc">Lồng tiếng AI kèm ghép nhạc nền tự động cân bằng âm lượng, dựng hoàn chỉnh.</p>
                       </button>
+
+                      <button type="button" class="mode-card" data-mode-card="4" aria-checked="false">
+                        <div class="mode-card-header">
+                          <span class="mode-card-icon mode-icon-download">⬇️</span>
+                          <span class="mode-card-pill">Không dịch</span>
+                        </div>
+                        <strong class="mode-card-title">Chỉ tải video</strong>
+                        <p class="mode-card-desc">Tải video gốc từ link TikTok, Douyin, YouTube, Facebook về máy, không nhận diện, dịch hay lồng tiếng.</p>
+                      </button>
                     </div>
 
                     <!-- Native Select hidden or synced for robust form submission -->
@@ -285,15 +294,20 @@
                           <option value="1" selected>Chỉ phụ đề — giữ âm thanh gốc</option>
                           <option value="2">Phụ đề + lồng tiếng</option>
                           <option value="3">Phụ đề + lồng tiếng + nhạc nền</option>
+                          <option value="4">Chỉ tải video — không dịch</option>
                         </select>
                       </label>
                     </div>
 
                     <p id="modeHint" class="mode-hint wide"></p>
+                    <label class="field checkbox-field wide">
+                      <input type="checkbox" name="apply_logo" value="true" disabled />
+                      <span>Chèn logo thương hiệu vào video thành phẩm <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></span>
+                    </label>
                   </div>
 
                   <!-- Ngôn ngữ và Nhận diện -->
-                  <div class="field-cluster">
+                  <div class="field-cluster" data-translation-only>
                     <div class="cluster-header">
                       <span class="cluster-badge">NGÔN NGỮ & AI</span>
                       <h3>Ngôn ngữ và nhận diện</h3>
@@ -371,7 +385,7 @@
                   </div>
 
                   <!-- Giọng đọc & Âm thanh -->
-                  <div id="voiceAudioCluster" class="field-cluster voice-audio-cluster">
+                  <div id="voiceAudioCluster" class="field-cluster voice-audio-cluster" data-translation-only>
                     <div class="cluster-header">
                       <span class="cluster-badge">ÂM THANH & GIỌNG ĐỌC</span>
                       <div class="cluster-title-wrap">
@@ -476,10 +490,6 @@
                             <input type="checkbox" name="keep_original_audio" value="true" checked />
                             <span>Giữ âm thanh ban đầu của video dưới giọng thuyết minh</span>
                           </label>
-                          <label class="field checkbox-field wide">
-                            <input type="checkbox" name="apply_logo" value="true" disabled />
-                            <span>Chèn logo thương hiệu vào video thành phẩm <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></span>
-                          </label>
                           <label id="musicField" class="field wide is-hidden">
                             <span>Nhạc nền dùng chung</span>
                             <input type="file" name="background_music" accept="audio/*" />
@@ -490,7 +500,7 @@
                   </div>
                 </div>
 
-                <details class="advanced">
+                <details class="advanced" data-translation-only>
                   <summary>Thiết lập OCR nâng cao</summary>
                   <div class="field-grid details-body">
                     <label class="field"><span>Frame OCR mỗi giây</span><input type="number" name="ocr_sample_fps" min="1" max="15" step="0.5" value="5" /></label>
@@ -501,7 +511,7 @@
               </section>
 
               <!-- BƯỚC 3: VỊ TRÍ VÀ CỠ PHỤ ĐỀ -->
-              <section id="workflow-subtitle" class="card step-card subtitle-step-card">
+              <section id="workflow-subtitle" class="card step-card subtitle-step-card" data-translation-only>
                 <div class="step-heading">
                   <span class="step-badge">3</span>
                   <div>
@@ -551,7 +561,7 @@
               </section>
 
               <!-- BƯỚC 4: NỘI DUNG TIKTOK -->
-              <section id="workflow-publish" class="card step-card tiktok-setup-card publish-step-card">
+              <section id="workflow-publish" class="card step-card tiktok-setup-card publish-step-card" data-translation-only>
                 <div class="step-heading">
                   <span class="step-badge">4</span>
                   <div>
@@ -625,8 +635,8 @@
                 <dl class="summary-list">
                   <div><dt>Số video</dt><dd><b id="fileCount" class="summary-count">0</b> video</dd></div>
                   <div><dt>Chế độ</dt><dd id="modeSummary" class="summary-mode">Phụ đề</dd></div>
-                  <div><dt>Ngôn ngữ</dt><dd id="languageSummary">Trung → Việt</dd></div>
-                  <div><dt>Vị trí sub</dt><dd id="placementSummary">Thay chữ gốc</dd></div>
+                  <div data-translation-only><dt>Ngôn ngữ</dt><dd id="languageSummary">Trung → Việt</dd></div>
+                  <div data-translation-only><dt>Vị trí sub</dt><dd id="placementSummary">Thay chữ gốc</dd></div>
                 </dl>
 
                 <input id="subtitleStyle" type="hidden" name="subtitle_style" />
@@ -2363,6 +2373,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261031-apply-logo"></script>
+    <script type="module" src="/js/app.js?v=20261031-download-only"></script>
   </body>
 </html>

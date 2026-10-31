@@ -754,7 +754,7 @@ function formatScheduledTime(value) {
 
 
 function updateFormSummary() {
-  const modes = { "1": "Phụ đề", "2": "Phụ đề + voice", "3": "Voice + nhạc" };
+  const modes = { "1": "Phụ đề", "2": "Phụ đề + voice", "3": "Voice + nhạc", "4": "Chỉ tải video" };
   const languageLabels = { auto: "Tự nhận diện", vi: "Việt", en: "Anh", "zh-CN": "Trung", ja: "Nhật", ko: "Hàn", th: "Thái", id: "Indonesia", es: "Tây Ban Nha" };
   const previewTexts = { vi: "Tôi muốn trở thành phiên bản tốt nhất", en: "I want to become my best self", "zh-CN": "我想成为最好的自己", ja: "最高の自分になりたい", ko: "최고의 내가 되고 싶어요", th: "ฉันอยากเป็นตัวเองในแบบที่ดีที่สุด", id: "Saya ingin menjadi versi terbaik diri saya", es: "Quiero ser mi mejor versión" };
   const placements = { replace_original: "Thay chữ gốc", above_original: "Trên chữ gốc", bottom_safe: "Vùng an toàn" };
@@ -789,8 +789,12 @@ function updateFormSummary() {
     "1": "Giữ nguyên âm thanh gốc, chỉ dịch và chèn phụ đề theo ngôn ngữ đầu ra. Nhanh nhất và không chạy TTS.",
     "2": "Tạo giọng đọc theo ngôn ngữ đầu ra, đồng bộ từng câu và có thể giữ tiếng gốc ở mức nhỏ.",
     "3": "Giống chế độ lồng tiếng, đồng thời lặp nhạc nền vừa đủ thời lượng và tự cân bằng âm lượng.",
+    "4": "Chỉ tải video nguồn về (link hoặc file), giữ nguyên hình và tiếng. Không nhận diện, dịch, lồng tiếng hay tạo caption TikTok.",
   };
   $("#modeHint").textContent = hints[mode];
+  // Download-only: the language, voice, subtitle and TikTok steps do not apply.
+  $$("[data-translation-only]").forEach(section => section.classList.toggle("is-hidden", mode === "4"));
+  $("#submitButton span").textContent = mode === "4" ? "Bắt đầu tải video" : "Bắt đầu xử lý";
   $$(".mode-card").forEach(card => {
     const isSelected = card.dataset.modeCard === mode;
     card.classList.toggle("is-selected", isSelected);
@@ -2012,7 +2016,7 @@ async function submitBatch(event) {
     return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
-  if ($("#sourceLanguage").value !== "auto" && $("#sourceLanguage").value === $("#targetLanguage").value) {
+  if ($("#mode").value !== "4" && $("#sourceLanguage").value !== "auto" && $("#sourceLanguage").value === $("#targetLanguage").value) {
     return toast("Ngôn ngữ nguồn và đầu ra phải khác nhau", true);
   }
   updateFormSummary();

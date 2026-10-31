@@ -11,6 +11,13 @@ class ProcessingMode(IntEnum):
     SUBTITLES = 1
     DUBBED = 2
     DUBBED_WITH_MUSIC = 3
+    # Fetch the source (link or upload) and hand it back as is: no recognition,
+    # translation, voice or TikTok caption. The account logo can still be stamped.
+    DOWNLOAD_ONLY = 4
+
+    @property
+    def dubbing(self) -> bool:
+        return self in (ProcessingMode.DUBBED, ProcessingMode.DUBBED_WITH_MUSIC)
 
 
 class SubtitleSource(StrEnum):
@@ -89,7 +96,7 @@ class ProcessingRequest:
         try:
             resolved_mode = ProcessingMode(mode)
         except ValueError as exc:
-            raise ValueError("mode must be 1, 2, or 3") from exc
+            raise ValueError("mode must be 1, 2, 3, or 4") from exc
         try:
             resolved_source = SubtitleSource(subtitle_source)
         except ValueError as exc:
@@ -110,6 +117,11 @@ class ProcessingRequest:
         resolved_source_language, resolved_target_language = validate_language_pair(
             source_language, target_language
         )
+        if resolved_mode is ProcessingMode.DOWNLOAD_ONLY:
+            # Nothing is recognised or captioned: OCR and TikTok options do not apply.
+            resolved_source = SubtitleSource.SPEECH
+            generate_tiktok_post = auto_publish_tiktok = False
+            tiktok_publish_at = None
         if resolved_source in {SubtitleSource.BURNED, SubtitleSource.INDEPENDENT}:
             if resolved_source_language == "auto" or not language_profile(resolved_source_language).ocr_supported:
                 raise ValueError("selected subtitle OCR mode currently requires source_language=zh-CN")

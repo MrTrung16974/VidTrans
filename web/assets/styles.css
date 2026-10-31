@@ -3838,7 +3838,7 @@ input[type="file"]::-webkit-file-upload-button:active {
 .cluster-header h3 { margin: 2px 0 3px; font-size: 0.96rem; font-weight: 800; color: var(--ink); }
 .cluster-header p { margin: 0; font-size: 0.78rem; color: var(--muted); line-height: 1.45; }
 
-.mode-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.mode-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .mode-card { position: relative; display: flex; flex-direction: column; align-items: flex-start; text-align: left; padding: 16px 15px; border: 2px solid #e2e8f0; border-radius: 14px; background: #ffffff; cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); outline: none; }
 .mode-card:hover { border-color: #cbd5e1; transform: translateY(-2px); box-shadow: 0 6px 18px -3px rgba(15, 23, 42, 0.06); }
 .mode-card.is-selected { border-color: var(--brand); background: linear-gradient(180deg, #fff7ed 0%, #ffffff 42%); box-shadow: 0 0 0 1px var(--brand), 0 8px 22px -4px rgba(239, 107, 58, 0.16); transform: translateY(-2px); }

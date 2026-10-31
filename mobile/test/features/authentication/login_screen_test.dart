@@ -33,6 +33,8 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(find.text('Đăng nhập VidTrans'), findsOneWidget);
+      // The guest trial entry must stay reachable without scrolling.
+      expect(find.text('Dùng thử'), findsOneWidget);
 
       final scrollable = tester.state<ScrollableState>(find.byType(Scrollable).first);
       expect(

@@ -218,20 +218,25 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 ],
               ),
             ),
-            _languageSection(config, translation),
-            _recognitionSection(config),
-            if (config.hasVoice) _voiceSection(config, tts),
-            _audioSection(config),
+            // Download-only skips every translation step; the logo still applies.
+            if (!config.downloadOnly) ...[
+              _languageSection(config, translation),
+              _recognitionSection(config),
+              if (config.hasVoice) _voiceSection(config, tts),
+              _audioSection(config),
+            ],
             _logoSection(config),
-            KeyedSubtree(
-              key: _step3Key,
-              child: _subtitleStyleSection(config),
-            ),
-            KeyedSubtree(
-              key: _step4Key,
-              child: _tiktokSection(config),
-            ),
-            _ocrSection(config),
+            if (!config.downloadOnly) ...[
+              KeyedSubtree(
+                key: _step3Key,
+                child: _subtitleStyleSection(config),
+              ),
+              KeyedSubtree(
+                key: _step4Key,
+                child: _tiktokSection(config),
+              ),
+              _ocrSection(config),
+            ],
             const SizedBox(height: 4),
             _submitCard(state),
           ],
@@ -286,7 +291,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   }
 
   Widget _workflowStepsNav() {
-    final steps = <({int step, String label, String sub, GlobalKey key})>[
+    final downloadOnly = ref.watch(translateFormProvider).config.downloadOnly;
+    final allSteps = <({int step, String label, String sub, GlobalKey key})>[
       (step: 1, label: 'Nguồn video', sub: 'File hoặc link', key: _step1Key),
       (
         step: 2,
@@ -307,6 +313,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         key: _step4Key,
       ),
     ];
+    // Subtitle and caption steps are hidden in download-only mode.
+    final steps = downloadOnly ? allSteps.where((s) => s.step <= 2).toList() : allSteps;
 
     return Container(
       padding: const EdgeInsets.all(7),
@@ -640,6 +648,13 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         badge: 'Studio Pro',
         desc: 'Kết hợp phụ đề, giọng thuyết minh AI và nhạc nền tùy chọn.',
         icon: Icons.library_music_outlined,
+      ),
+      (
+        value: 4,
+        title: 'Chỉ tải video',
+        badge: 'Không dịch',
+        desc: 'Tải video gốc từ link hoặc file về, không nhận diện, dịch hay lồng tiếng.',
+        icon: Icons.download_rounded,
       ),
     ];
 
@@ -1195,6 +1210,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final modeLabel = switch (config.mode) {
       1 => 'Chỉ phụ đề',
       2 => 'Phụ đề + Thuyết minh',
+      4 => 'Chỉ tải video',
       _ => 'Phụ đề + Dub + Nhạc',
     };
 
@@ -1243,8 +1259,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 Expanded(
                   child: _SummaryItem(
                     label: 'Ngôn ngữ',
-                    value:
-                        '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
+                    value: config.downloadOnly
+                        ? 'Giữ nguyên'
+                        : '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
                   ),
                 ),
               ],
