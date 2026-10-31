@@ -68,8 +68,23 @@ class ProfileScreen extends ConsumerWidget {
           await ref.read(sessionProvider.notifier).reload();
         },
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
           children: [
+            StudioPageHeader(
+              eyebrow: 'Tài khoản & gắn logo',
+              eyebrowIcon: Icons.manage_accounts_outlined,
+              title: 'Quản lý tài khoản và thương hiệu',
+              subtitle:
+                  'Theo dõi quyền hạn, gói dịch vụ và tự động gắn logo thương hiệu của bạn vào video.',
+              actions: [
+                StudioStatusPill(
+                  status: 'active',
+                  label: (_roleLabels[account.role] ?? account.role).toUpperCase(),
+                  compact: true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             StudioCard(
               padding: const EdgeInsets.all(16),
               child: Row(

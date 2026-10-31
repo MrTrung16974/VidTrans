@@ -2,8 +2,8 @@ import { createTikTokWorkspace } from "./tiktok.js?v=20261025-youtube-title-vi";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261024-system-ws";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
-import { createComicWorkspace } from "./comic.js?v=20261030-quick-fix-2";
-import { createBrandingWorkspace } from "./branding.js?v=20261029-logo-menu-loading";
+import { createComicWorkspace } from "./comic.js?v=20261031-apply-logo";
+import { createBrandingWorkspace } from "./branding.js?v=20261031-apply-logo";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -362,8 +362,22 @@ function roleLabel(role) {
   return ({ owner: "Chủ sở hữu", admin: "Quản trị viên", editor: "Biên tập viên", viewer: "Người xem" })[role] || "Thành viên";
 }
 
+// "Chèn logo" in the translation and comic forms needs an account logo. It is ticked
+// when a logo becomes available; after that the user's own choice is kept.
+function syncLogoOptions() {
+  const hasLogo = Boolean(state.userLogoUrl);
+  $$('input[name="apply_logo"]').forEach(input => {
+    // defaultChecked too, so form.reset() after a submit keeps the logo ticked.
+    if (!hasLogo) input.checked = input.defaultChecked = false;
+    else if (input.disabled) input.checked = input.defaultChecked = true;
+    input.disabled = !hasLogo;
+  });
+  $$("[data-logo-hint]").forEach(hint => hint.classList.toggle("is-hidden", hasLogo));
+}
+
 function updateUserAvatar(logoUrl = state.userLogoUrl) {
   state.userLogoUrl = logoUrl || null;
+  syncLogoOptions();
   const avatar = $("#userAvatar");
   if (!avatar) return;
   if (state.userLogoUrl) {

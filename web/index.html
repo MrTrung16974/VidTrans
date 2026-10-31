@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261030-quick-fix-2" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261031-apply-logo" />
   </head>
   <body>
     <div class="app-shell">
@@ -476,6 +476,10 @@
                             <input type="checkbox" name="keep_original_audio" value="true" checked />
                             <span>Giữ âm thanh ban đầu của video dưới giọng thuyết minh</span>
                           </label>
+                          <label class="field checkbox-field wide">
+                            <input type="checkbox" name="apply_logo" value="true" disabled />
+                            <span>Chèn logo thương hiệu vào video thành phẩm <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></span>
+                          </label>
                           <label id="musicField" class="field wide is-hidden">
                             <span>Nhạc nền dùng chung</span>
                             <input type="file" name="background_music" accept="audio/*" />
@@ -752,6 +756,7 @@
               </div>
               <label class="comic-check"><input name="burn_subtitles" type="checkbox" checked /> Ghép phụ đề vào video</label>
               <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước khi lồng tiếng</small></label>
+              <label class="comic-check"><input name="apply_logo" type="checkbox" disabled /> Chèn logo thương hiệu <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></label>
               </details>
               <div class="comic-form-actions">
                 <button class="button primary" type="submit" data-comic-step="review">Tiếp: AI đề xuất nhân vật &amp; bối cảnh →</button>
@@ -806,6 +811,7 @@
                 <label class="field"><span>Nhạc nền (tùy chọn)</span><input name="background_music" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg" /></label>
               </div>
               <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước</small></label>
+              <label class="comic-check"><input name="apply_logo" type="checkbox" disabled /> Chèn logo thương hiệu <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></label>
               <button class="button primary full" type="submit">Tạo tập</button>
             </form>
             <section id="comicEpisodeReview" class="card comic-form comic-bible is-hidden" aria-live="polite">
@@ -2038,7 +2044,7 @@
           <div class="account-header">
             <span class="eyebrow-chip">ACCOUNT · BRANDING SETTINGS</span>
             <h1>Tài khoản & logo thương hiệu</h1>
-            <p>Logo và cấu hình dưới đây chỉ thuộc tài khoản của bạn. Video gửi lên sẽ được tự động nhận diện logo có sẵn; không tìm thấy thì logo được chèn ở vị trí mặc định.</p>
+            <p>Logo và cấu hình dưới đây chỉ thuộc tài khoản của bạn. Khi tạo video dịch hoặc video truyện, tick "Chèn logo thương hiệu" để logo được chèn vào video thành phẩm. Video dịch sẽ tự nhận diện logo có sẵn; không tìm thấy (hoặc video truyện) thì logo nằm ở vị trí mặc định.</p>
           </div>
 
           <div class="account-grid">
@@ -2137,30 +2143,6 @@
             </section>
           </div>
 
-          <section class="card account-card branding-process-card">
-            <h2>Gắn logo vào video</h2>
-            <form id="brandingVideoForm" class="account-form branding-video-form">
-              <label>Video
-                <input id="brandingVideoInput" name="file" type="file" accept="video/*" required />
-              </label>
-              <label>Vị trí
-                <select name="override">
-                  <option value="auto">Tự động theo cấu hình</option>
-                  <option value="top-right">Ép góc trên bên phải</option>
-                  <option value="top-left">Ép góc trên bên trái</option>
-                  <option value="bottom-right">Ép góc dưới bên phải</option>
-                  <option value="bottom-left">Ép góc dưới bên trái</option>
-                </select>
-              </label>
-              <label class="check-row"><input type="checkbox" name="rights_confirmed" value="true" required /> Tôi có quyền chỉnh sửa video này (kể cả thay/che logo có sẵn)</label>
-              <button class="button primary" type="submit">Gửi xử lý</button>
-            </form>
-            <div class="branding-history-head">
-              <h3>Lịch sử xử lý</h3>
-              <button id="brandingHistoryRefresh" class="button secondary small-btn" type="button">Làm mới</button>
-            </div>
-            <div id="brandingHistory" class="branding-history"><div class="empty-state"><strong>Chưa có video nào</strong></div></div>
-          </section>
         </section>
 
         <section id="billingView" class="view billing-view is-hidden">
@@ -2381,6 +2363,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261030-quick-fix-2"></script>
+    <script type="module" src="/js/app.js?v=20261031-apply-logo"></script>
   </body>
 </html>

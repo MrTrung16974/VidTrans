@@ -25,9 +25,12 @@ class CreateEpisodeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final series = ref.watch(seriesDetailProvider(seriesId));
     return series.when(
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      loading: () => const Scaffold(
+        appBar: StudioSubBar(title: 'Thêm tập mới'),
+        body: Center(child: CircularProgressIndicator()),
+      ),
       error: (error, _) => Scaffold(
-        appBar: AppBar(),
+        appBar: const StudioSubBar(title: 'Thêm tập mới'),
         body: ErrorView(message: errorMessage(error), onRetry: () => ref.invalidate(seriesDetailProvider(seriesId))),
       ),
       data: (series) => _CreateEpisode(series: series),
@@ -129,7 +132,10 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
         if (!didPop) setState(() => _bible = null);
       },
       child: Scaffold(
-        appBar: AppBar(title: Text(bible == null ? 'Thêm tập $number' : 'Nhân vật & bối cảnh mới')),
+        appBar: StudioSubBar(
+          title: bible == null ? 'Thêm tập $number' : 'Nhân vật & bối cảnh mới',
+          subtitle: widget.series.summary.title,
+        ),
         body: Column(children: [
           if (_busy) LinearProgressIndicator(value: _upload),
           Expanded(

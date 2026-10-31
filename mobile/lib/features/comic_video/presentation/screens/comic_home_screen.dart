@@ -52,69 +52,115 @@ class _SeriesTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final series = ref.watch(comicSeriesListProvider);
     final options = ref.watch(comicOptionsProvider).valueOrNull;
+    final readOnly = comicReadOnly(ref);
     return series.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, _) =>
           ErrorView(message: errorMessage(error), onRetry: () => ref.invalidate(comicSeriesListProvider)),
       data: (items) => RefreshIndicator(
         onRefresh: () => ref.refresh(comicSeriesListProvider.future),
-        child: items.isEmpty
-            ? ListView(
-                padding: const EdgeInsets.all(24),
-                children: const [
-                  SizedBox(height: 60),
-                  StudioEmptyState(
-                    icon: Icons.auto_stories_rounded,
-                    title: 'Chưa có truyện nào. Bấm "Tạo truyện mới" để bắt đầu.',
-                    subtitle: 'AI tự động thiết kế nhân vật, bối cảnh, chia cảnh và dựng video có lồng tiếng.',
-                  ),
-                ],
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 96),
+          children: [
+            StudioPageHeader(
+              eyebrow: 'Truyện → Video',
+              eyebrowIcon: Icons.palette_outlined,
+              eyebrowNote: 'Nhân vật đồng nhất · Lồng tiếng',
+              title: 'Chuyển truyện thành video',
+              subtitle:
+                  'Dán nội dung truyện hoặc tải file để AI phân tích nhân vật, chia cảnh, sinh hình ảnh nhất quán và dựng video có lồng tiếng.',
+              actions: readOnly
+                  ? null
+                  : [
+                      StudioGradientButton(
+                        expanded: false,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 9,
+                        ),
+                        icon: Icons.add_rounded,
+                        label: 'Tạo truyện mới',
+                        onPressed: () => context.push('/comic/new'),
+                      ),
+                    ],
+            ),
+            const SizedBox(height: 14),
+            if (items.isEmpty)
+              const StudioEmptyState(
+                icon: Icons.auto_stories_rounded,
+                title: 'Chưa có truyện nào. Bấm "Tạo truyện mới" để bắt đầu.',
+                subtitle:
+                    'AI tự động thiết kế nhân vật, bối cảnh, chia cảnh và dựng video có lồng tiếng.',
               )
-            : ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-                itemCount: items.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 10),
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  final meta = [
-                    '${item.episodes} tập',
-                    if (options != null && item.style != null) options.styleLabel(item.style),
-                    item.videoMode == 'animated' ? 'Hoạt hình AI' : 'Truyện tranh',
-                    ?item.aspectRatio,
-                  ].join(' · ');
-                  final isAnimated = item.videoMode == 'animated';
-                  return StudioCard(
-                    padding: EdgeInsets.zero,
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                      leading: Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: isAnimated ? AppColors.secondarySoft : AppColors.primarySoft,
-                          borderRadius: BorderRadius.circular(10),
+            else
+              for (var i = 0; i < items.length; i++) ...[
+                if (i > 0) const SizedBox(height: 10),
+                Builder(
+                  builder: (context) {
+                    final item = items[i];
+                    final meta = [
+                      '${item.episodes} tập',
+                      if (options != null && item.style != null)
+                        options.styleLabel(item.style),
+                      item.videoMode == 'animated'
+                          ? 'Hoạt hình AI'
+                          : 'Truyện tranh',
+                      ?item.aspectRatio,
+                    ].join(' · ');
+                    final isAnimated = item.videoMode == 'animated';
+                    return StudioCard(
+                      leftAccentColor:
+                          isAnimated ? AppColors.teal : AppColors.brand,
+                      padding: EdgeInsets.zero,
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.fromLTRB(16, 6, 12, 6),
+                        leading: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: isAnimated
+                                ? AppColors.secondarySoft
+                                : AppColors.primarySoft,
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                          child: Icon(
+                            isAnimated
+                                ? Icons.movie_filter_rounded
+                                : Icons.auto_stories_rounded,
+                            color: isAnimated
+                                ? AppColors.secondary
+                                : AppColors.primary,
+                          ),
                         ),
-                        child: Icon(
-                          isAnimated ? Icons.movie_filter_rounded : Icons.auto_stories_rounded,
-                          color: isAnimated ? AppColors.secondary : AppColors.primary,
+                        title: Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            meta,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppColors.textMuted,
+                        ),
+                        onTap: () =>
+                            context.push('/comic/series/${item.seriesId}'),
                       ),
-                      title: Text(
-                        item.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(meta, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                      ),
-                      trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
-                      onTap: () => context.push('/comic/series/${item.seriesId}'),
-                    ),
-                  );
-                },
-              ),
+                    );
+                  },
+                ),
+              ],
+          ],
+        ),
       ),
     );
   }

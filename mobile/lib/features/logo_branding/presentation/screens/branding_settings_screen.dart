@@ -21,7 +21,10 @@ class BrandingSettingsScreen extends ConsumerWidget {
     final settings = ref.watch(brandingSettingsProvider);
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: const Text('Cấu hình logo')),
+      appBar: const StudioSubBar(
+        title: 'Cấu hình logo thương hiệu',
+        subtitle: 'Logo mặc định, vị trí & xóa logo cũ',
+      ),
       body: settings.when(
         skipLoadingOnRefresh: true,
         skipLoadingOnReload: true,

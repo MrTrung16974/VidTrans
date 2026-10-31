@@ -935,7 +935,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
 
   function storyFormData() {
     const data = new FormData(form);
-    for (const flag of ["burn_subtitles", "auto_render"]) data.set(flag, form.elements[flag].checked ? "true" : "false");
+    for (const flag of ["burn_subtitles", "auto_render", "apply_logo"]) data.set(flag, form.elements[flag].checked ? "true" : "false");
     for (const name of ["file", "background_music"]) {
       if (!form.elements[name].files.length) data.delete(name);
     }
@@ -1027,6 +1027,7 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   function episodeFormData() {
     const data = new FormData(episodeForm);
     data.set("auto_render", episodeForm.elements.auto_render.checked ? "true" : "false");
+    data.set("apply_logo", episodeForm.elements.apply_logo.checked ? "true" : "false");
     data.set("series_id", currentSeries.series_id);
     for (const name of ["file", "background_music"]) {
       if (!episodeForm.elements[name].files.length) data.delete(name);

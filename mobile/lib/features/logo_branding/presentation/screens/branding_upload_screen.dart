@@ -105,7 +105,10 @@ class _BrandingUploadScreenState extends ConsumerState<BrandingUploadScreen> {
       canPop: !_uploading,
       child: Scaffold(
         backgroundColor: AppColors.bg,
-        appBar: AppBar(title: const Text('Gửi video gắn logo')),
+        appBar: const StudioSubBar(
+          title: 'Gửi video gắn logo',
+          subtitle: 'Tự động nhận diện & đóng dấu thương hiệu',
+        ),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
           children: [

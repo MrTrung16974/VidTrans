@@ -1,21 +1,9 @@
-// Account & branding page: display name, the account's logo and how it is stamped,
-// plus "stamp my logo on this video" jobs and their history. Everything is per user.
-const ACTIVE = new Set(["queued", "scheduled", "processing", "cancelling"]);
-const STATUS_LABELS = {
-  queued: "Đang chờ", processing: "Đang xử lý", cancelling: "Đang hủy",
-  completed: "Hoàn tất", failed: "Thất bại", cancelled: "Đã hủy",
-};
-const POSITION_LABELS = {
-  "top-right": "góc trên phải", "top-left": "góc trên trái", "bottom-right": "góc dưới phải", "bottom-left": "góc dưới trái",
-};
-const POLL_MS = 2000;
-
+// Account & branding page: display name, the account's logo and how it is stamped.
+// Translation and comic forms choose per video whether to stamp it ("Chèn logo").
 export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogoChange }) {
   const $ = selector => document.querySelector(selector);
   const $$ = selector => [...document.querySelectorAll(selector)];
   const form = $("#brandingForm");
-  let branding = null;
-  let pollTimer = null;
   let active = false;
 
   function percentFields(config) {
@@ -75,7 +63,6 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogo
   }
 
   function renderBranding(data) {
-    branding = data;
     const config = percentFields(data.config);
     for (const [name, value] of Object.entries(config)) {
       const field = form.elements[name];
@@ -104,65 +91,6 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogo
     updateOutputs();
   }
 
-  function placementText(job) {
-    const info = job.branding;
-    if (!info) return "";
-    if (info.override && info.override !== "auto") return `Ép ${POSITION_LABELS[info.override] || info.override}`;
-    const detection = info.detection;
-    if (!detection) return "Không nhận diện · vị trí mặc định";
-    const cover = info.cover_method === "inpaint" ? " · đã khôi phục nền logo cũ" : info.cover_method === "blur" ? " · đã làm mờ logo cũ" : "";
-    const via = detection.method === "template" ? " theo mẫu" : "";
-    const moving = info.placements.some(item => item.source === "tracked") ? " · logo di chuyển, đã bám theo" : "";
-    if (detection.status === "found") {
-      const spans = info.placements.length > 1 ? ` · ${info.placements.length} đoạn` : "";
-      return `Tìm thấy logo${via} (độ tin cậy ${Math.round(detection.confidence * 100)}%)${spans}${moving}${cover}`;
-    }
-    if (detection.status === "uncertain") return "Không chắc chắn · dùng vị trí mặc định";
-    return "Không có logo · vị trí mặc định";
-  }
-
-  function renderHistory(payload) {
-    const list = $("#brandingHistory");
-    if (!payload.items.length) {
-      list.innerHTML = '<div class="empty-state"><strong>Chưa có video nào</strong></div>';
-      return;
-    }
-    list.innerHTML = payload.items.map(job => {
-      const status = job.status || "queued";
-      const progress = Math.round((job.progress || 0) * 100);
-      const review = job.branding?.needs_review
-        ? `<div class="branding-review">Cần xác nhận vị trí logo. Chọn lại:
-            ${Object.entries(POSITION_LABELS).map(([value, label]) =>
-              `<button class="button secondary small-btn" type="button" data-reprocess="${escapeHtml(job.job_id)}" data-override="${value}">${label}</button>`).join("")}
-          </div>`
-        : "";
-      const actions = [];
-      if (status === "completed") actions.push(`<a class="button primary small-btn" href="/api/v1/branding/videos/${encodeURIComponent(job.job_id)}/download">Tải video</a>`);
-      if (["completed", "failed", "cancelled"].includes(status)) actions.push(`<button class="button secondary small-btn" type="button" data-reprocess="${escapeHtml(job.job_id)}" data-override="auto">Xử lý lại</button>`);
-      if (["queued", "processing"].includes(status)) actions.push(`<button class="button danger small-btn" type="button" data-cancel="${escapeHtml(job.job_id)}">Hủy</button>`);
-      return `<article class="branding-job">
-        <div class="branding-job-main">
-          <strong title="${escapeHtml(job.filename)}">${escapeHtml(job.filename || job.job_id)}</strong>
-          <small>${escapeHtml(new Date(job.created_at || Date.now()).toLocaleString("vi-VN"))} · <span class="status-pill status-${escapeHtml(status)}">${STATUS_LABELS[status] || escapeHtml(status)}</span>
-            ${job.error ? ` · ${escapeHtml(job.error)}` : ""}</small>
-          <small>${escapeHtml(placementText(job) || job.step_detail || "")}</small>
-          ${ACTIVE.has(status) ? `<div class="progress-track progress-${escapeHtml(status)}"><span style="width:${progress}%"></span></div>` : ""}
-          ${review}
-        </div>
-        <div class="branding-job-actions">${actions.join("")}</div>
-      </article>`;
-    }).join("");
-  }
-
-  async function loadHistory({ silent = false } = {}) {
-    const payload = await requestJson("/api/v1/branding/videos?limit=20", { silent });
-    renderHistory(payload);
-    clearTimeout(pollTimer);
-    if (active && payload.items.some(job => ACTIVE.has(job.status))) {
-      pollTimer = setTimeout(() => loadHistory({ silent: true }).catch(() => {}), POLL_MS);
-    }
-  }
-
   async function load() {
     $("#logoPreview")?.classList.add("is-loading");
     $("#templatePreview")?.classList.add("is-loading");
@@ -171,7 +99,6 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogo
       $("#accountEmail").value = account.email || "";
       $("#accountDisplayName").value = account.display_name || "";
       renderBranding(data);
-      await loadHistory();
     } finally {
       $("#logoPreview")?.classList.remove("is-loading");
       $("#templatePreview")?.classList.remove("is-loading");
@@ -245,43 +172,6 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogo
     () => navigator.clipboard.writeText(JSON.stringify(formConfig(), null, 2)), "Đã sao chép cấu hình",
   ));
 
-  $("#brandingVideoForm").addEventListener("submit", event => {
-    event.preventDefault();
-    const videoForm = event.currentTarget;
-    if (!branding?.logo) {
-      toast("Hãy tải logo lên trước", true);
-      return;
-    }
-    const button = videoForm.querySelector('[type="submit"]');
-    button.disabled = true;
-    run(async () => {
-      await requestJson("/api/v1/branding/videos", { method: "POST", body: new FormData(videoForm) });
-      videoForm.reset();
-      await loadHistory();
-    }, "Đã gửi video, đang chèn logo").finally(() => { button.disabled = false; });
-  });
-
-  $("#brandingHistoryRefresh").addEventListener("click", () => run(loadHistory));
-
-  $("#brandingHistory").addEventListener("click", event => {
-    const reprocess = event.target.closest("[data-reprocess]");
-    const cancel = event.target.closest("[data-cancel]");
-    if (reprocess) {
-      run(async () => {
-        await requestJson(`/api/v1/branding/videos/${encodeURIComponent(reprocess.dataset.reprocess)}/reprocess`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ override: reprocess.dataset.override }),
-        });
-        await loadHistory();
-      }, "Đã đưa video vào hàng đợi xử lý lại");
-    } else if (cancel) {
-      run(async () => {
-        await requestJson(`/api/v1/jobs/${encodeURIComponent(cancel.dataset.cancel)}/cancel`, { method: "POST" });
-        await loadHistory();
-      }, "Đã yêu cầu hủy");
-    }
-  });
-
   return {
     enter() {
       if (active) return;
@@ -290,7 +180,6 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogo
     },
     leave() {
       active = false;
-      clearTimeout(pollTimer);
     },
   };
 }

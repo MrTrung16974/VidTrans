@@ -311,6 +311,23 @@ class ComicApiTests(unittest.TestCase):
         self.assertEqual(created.status_code, 400)
         self.assertIn("CIT Voice Studio", created.json()["detail"])
 
+    def test_apply_logo_needs_a_logo_and_stamps_the_rendered_video(self) -> None:
+        with patch.object(main.COMIC_ROUTE_DEPS, "has_logo", lambda user_id: False):
+            refused = self.create(apply_logo="true")
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("logo", refused.json()["detail"])
+        with patch.object(main.COMIC_ROUTE_DEPS, "has_logo", lambda user_id: True):
+            created = self.create(apply_logo="true")
+        self.assertEqual(created.status_code, 202, created.text)
+        job_id = created.json()["job_id"]
+        stamp = Mock()
+        with patch.object(main.COMIC_RUNNER, "stamp_logo", stamp):
+            job = self.run_job(job_id)
+        self.assertEqual(job["status"], "completed", job.get("error"))
+        stamp.assert_called_once()
+        self.assertEqual(stamp.call_args.args[:2], (job_id, "user-a"))
+        self.assertTrue(str(stamp.call_args.args[2]).endswith(f"comic_{job_id}.mp4"))
+
     def test_validation_errors_are_rejected(self) -> None:
         self.assertEqual(self.create(text="   ").status_code, 400)
         self.assertEqual(self.create(style="pixel_art").status_code, 400)

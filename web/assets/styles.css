@@ -6537,21 +6537,8 @@ input[type="file"]::-webkit-file-upload-button:active {
 .branding-frame.portrait { width: 76px; aspect-ratio: 9 / 16; }
 .branding-frame .frame-label { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,.5); font-size: .75rem; }
 .branding-frame .preview-logo { position: absolute; height: auto; }
-.branding-video-form { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: end; }
-.branding-video-form .check-row, .branding-video-form button { grid-column: 1 / -1; justify-self: start; }
-.branding-history-head { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
-.branding-history-head h3 { margin: 0; font-size: 1rem; }
-.branding-history { display: grid; gap: 10px; }
-.branding-job { display: flex; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
-.branding-job-main { display: grid; gap: 4px; min-width: 0; flex: 1; }
-.branding-job-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.branding-job-main small { color: var(--muted); }
-.branding-job-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
-.branding-review { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--brand-light); font-size: .85rem; }
 @media (max-width: 860px) {
-  .account-grid, .branding-video-form { grid-template-columns: 1fr; }
-  .branding-job { flex-direction: column; }
-  .branding-job-actions { justify-content: flex-start; }
+  .account-grid { grid-template-columns: 1fr; }
 }
 
 /* Story bible: planned places shared by every scene set there. */

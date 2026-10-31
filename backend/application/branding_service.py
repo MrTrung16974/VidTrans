@@ -71,17 +71,34 @@ class BrandingJobRunner:
         job = self.get_job(job_id) or {}
         owner = str(job.get("owner_user_id") or "__legacy__")
         config = BrandingConfig.model_validate(request["config"])
-        override = str(request.get("override") or "auto")
         video_path = Path(str(request["video_path"]))
-        logo_path = Path(str(request["logo_path"]))
         if not video_path.is_file():
             raise FileNotFoundError("Video nguồn không còn trên máy chủ")
+        template_path = Path(str(request["template_path"])) if request.get("template_path") else None
+        output = self.output_dir(owner, job_id) / f"{video_path.stem}.branded.mp4"
+        summary = self.stamp(
+            job_id, video_path, output, logo_path=Path(str(request["logo_path"])),
+            logo_width=int(request["logo_width"]), logo_height=int(request["logo_height"]), config=config,
+            template_path=template_path, override=str(request.get("override") or "auto"),
+            progress=lambda stage, fraction, detail: self._progress(job_id, stage, fraction, detail),
+        )
+        self.update_job(
+            job_id, status="completed", step="completed", progress=1.0,
+            step_detail="Cần xác nhận vị trí logo" if summary["needs_review"] else "Đã chèn logo",
+            output_video=self.artifact_name(output), branding=summary, finished_at=self.utc_now(),
+        )
+
+    def stamp(self, job_id: str, video_path: Path, output: Path, *, logo_path: Path, logo_width: int,
+              logo_height: int, config: BrandingConfig, template_path: Path | None = None,
+              override: str = "auto", progress: Callable[[str, float, str], None]) -> dict[str, Any]:
+        """Stamp the logo on ``video_path`` into ``output`` and return the placement summary.
+
+        Shared by logo jobs and by translation/comic jobs that asked for the account logo;
+        ``progress(stage, fraction, detail)`` lets each caller map stages onto its own bar.
+        """
         if not logo_path.is_file():
             raise FileNotFoundError("Logo của job không còn trên máy chủ")
-
-        template_path = Path(str(request["template_path"])) if request.get("template_path") else None
-
-        self._progress(job_id, "probe", 0.0, "Đang đọc thông tin video")
+        progress("probe", 0.0, "Đang đọc thông tin video")
         probe = probe_media_file(video_path, ffprobe=self.ffprobe())
         width, height = decoded_size(self.ffmpeg(), video_path) or (probe.width, probe.height)
         fps = probe.fps if 1.0 <= probe.fps <= 120.0 else 30.0
@@ -91,10 +108,10 @@ class BrandingJobRunner:
         if config.auto_detect and override == "auto":
             if template_path is not None and template_path.is_file() and logo_tracking.available():
                 # The user named the logo to replace: follow it, and never replace another one instead.
-                self._progress(job_id, "detect", 0.0, "Đang dò logo theo mẫu")
+                progress("detect", 0.0, "Đang dò logo theo mẫu")
 
                 def tracking_progress(fraction: float) -> None:
-                    self._progress(job_id, "detect", fraction, "Đang dò logo theo mẫu")
+                    progress("detect", fraction, "Đang dò logo theo mẫu")
                     self.ensure_active(job_id)
 
                 detection = logo_tracking.track_template(
@@ -102,7 +119,7 @@ class BrandingJobRunner:
                     duration=probe.duration, progress=tracking_progress,
                 )
             else:
-                self._progress(job_id, "detect", 0.0, "Đang nhận diện logo có sẵn trong video")
+                progress("detect", 0.0, "Đang nhận diện logo có sẵn trong video")
                 detection = detect_logo(
                     self.ffmpeg(), video_path, width=width, height=height, duration=probe.duration,
                     strategy=config.multi_logo_strategy, default_position=config.default_position,
@@ -113,7 +130,7 @@ class BrandingJobRunner:
         placements = plan_placements(
             detection.segments if detection else None,
             duration=probe.duration, video_w=width, video_h=height,
-            logo_w=int(request["logo_width"]), logo_h=int(request["logo_height"]),
+            logo_w=logo_width, logo_h=logo_height,
             size_percent=config.logo_size, margin_percent=config.margin,
             default_position=config.default_position, cover_original=config.cover_original,
             cover_method="inpaint" if inpaint else "blur", override=override,
@@ -131,45 +148,41 @@ class BrandingJobRunner:
         }
         self.update_job(job_id, branding=summary)
 
-        output = self.output_dir(owner, job_id) / f"{video_path.stem}.branded.mp4"
         detail = f"Đang chèn logo ({len(placements)} vị trí)" if len(placements) > 1 else "Đang chèn logo"
-        self._progress(job_id, "render", 0.0, detail)
+        progress("render", 0.0, detail)
         repaired = inpaint and any(placement.cover_box for placement in placements)
         for copy_audio in (True, False):
             try:
                 if repaired:
                     self._render_inpainted(job_id, video_path, logo_path, output, placements,
                                            detection.stencils if detection else {}, width, height, fps,
-                                           probe.duration, config.opacity, copy_audio=copy_audio)
+                                           probe.duration, config.opacity, copy_audio=copy_audio,
+                                           progress=progress)
                 else:
                     self._render(job_id, video_path, logo_path, output, placements, config.opacity,
-                                 probe.duration, copy_audio=copy_audio)
+                                 probe.duration, copy_audio=copy_audio, progress=progress)
                 break
             except subprocess.CalledProcessError:
                 if not copy_audio:
                     raise
                 # Some source audio codecs (Vorbis, PCM in MKV...) cannot go into MP4 as-is.
                 logger.info("Logo job %s: audio copy failed, re-encoding audio to AAC", job_id)
-        self.update_job(
-            job_id, status="completed", step="completed", progress=1.0,
-            step_detail="Cần xác nhận vị trí logo" if needs_review else "Đã chèn logo",
-            output_video=self.artifact_name(output), branding=summary, finished_at=self.utc_now(),
-        )
+        return summary
 
     def _render_inpainted(self, job_id: str, video_path: Path, logo_path: Path, output: Path, placements,
                           stencils: dict, width: int, height: int, fps: float, duration: float, opacity: float,
-                          *, copy_audio: bool) -> None:
+                          *, copy_audio: bool, progress: Callable[[str, float, str], None]) -> None:
         temporary = output.with_name(f".{output.name}.part.mp4")
 
-        def progress(fraction: float) -> None:
-            self._progress(job_id, "render", fraction, "Đang khôi phục nền và chèn logo")
+        def render_progress(fraction: float) -> None:
+            progress("render", fraction, "Đang khôi phục nền và chèn logo")
             self.ensure_active(job_id)
 
         try:
             logo_inpaint.render_inpainted(
                 self.ffmpeg(), video_path, logo_path, temporary, placements, stencils, width=width,
                 height=height, fps=fps, duration=duration, opacity=opacity, copy_audio=copy_audio,
-                on_progress=progress,
+                on_progress=render_progress,
             )
         except BaseException:
             temporary.unlink(missing_ok=True)
@@ -177,7 +190,7 @@ class BrandingJobRunner:
         temporary.replace(output)
 
     def _render(self, job_id: str, video_path: Path, logo_path: Path, output: Path, placements, opacity: float,
-                duration: float, *, copy_audio: bool) -> None:
+                duration: float, *, copy_audio: bool, progress: Callable[[str, float, str], None]) -> None:
         temporary = output.with_name(f".{output.name}.part.mp4")
         command = build_ffmpeg_command(self.ffmpeg(), video_path, logo_path, temporary, placements,
                                        opacity=opacity, copy_audio=copy_audio)
@@ -187,7 +200,7 @@ class BrandingJobRunner:
             for line in process.stdout:
                 key, _, value = line.strip().partition("=")
                 if key == "out_time_us" and value.isdigit() and duration > 0:
-                    self._progress(job_id, "render", int(value) / 1_000_000 / duration, "Đang chèn logo")
+                    progress("render", int(value) / 1_000_000 / duration, "Đang chèn logo")
                     self.ensure_active(job_id)
             stderr = process.stderr.read()
             if process.wait() != 0:

@@ -24,9 +24,12 @@ class SeriesDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final series = ref.watch(seriesDetailProvider(seriesId));
     return series.when(
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      loading: () => const Scaffold(
+        appBar: StudioSubBar(title: 'Chi tiết bộ truyện'),
+        body: Center(child: CircularProgressIndicator()),
+      ),
       error: (error, _) => Scaffold(
-        appBar: AppBar(),
+        appBar: const StudioSubBar(title: 'Chi tiết bộ truyện'),
         body: ErrorView(message: errorMessage(error), onRetry: () => ref.invalidate(seriesDetailProvider(seriesId))),
       ),
       data: (series) => _SeriesView(series: series),
@@ -193,8 +196,9 @@ class _SeriesView extends ConsumerWidget {
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(series.summary.title),
+      appBar: StudioSubBar(
+        title: series.summary.title,
+        subtitle: '${series.summary.episodes} tập · ${series.characters.length} nhân vật',
         actions: [
           if (!readOnly)
             PopupMenuButton<String>(

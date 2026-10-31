@@ -26,9 +26,12 @@ class ProjectEditorScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final project = ref.watch(comicProjectProvider(jobId));
     return project.when(
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      loading: () => const Scaffold(
+        appBar: StudioSubBar(title: 'Storyboard tập truyện'),
+        body: Center(child: CircularProgressIndicator()),
+      ),
       error: (error, _) => Scaffold(
-        appBar: AppBar(),
+        appBar: const StudioSubBar(title: 'Storyboard tập truyện'),
         body: ErrorView(message: errorMessage(error), onRetry: () => ref.invalidate(comicProjectProvider(jobId))),
       ),
       data: (project) => _Editor(project: project),
@@ -121,13 +124,16 @@ class _EditorState extends ConsumerState<_Editor> {
     return DefaultTabController(
       length: 3,
       child: Scaffold(
-        appBar: AppBar(
-          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        appBar: StudioSubBar(
+          title: title,
+          subtitle: comic.seriesTitle.isNotEmpty
+              ? '${comic.seriesTitle} · Tập ${comic.episodeNumber}'
+              : 'Storyboard dự án',
           actions: [
             if (comic.seriesId != null)
               IconButton(
                 tooltip: comic.seriesTitle.isEmpty ? 'Truyện' : comic.seriesTitle,
-                icon: const Icon(Icons.auto_stories_outlined),
+                icon: const Icon(Icons.auto_stories_outlined, size: 20),
                 onPressed: () => context.push('/comic/series/${comic.seriesId}'),
               ),
             PopupMenuButton<String>(

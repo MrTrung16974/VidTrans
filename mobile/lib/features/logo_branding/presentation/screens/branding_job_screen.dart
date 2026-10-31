@@ -22,7 +22,11 @@ class BrandingJobScreen extends ConsumerWidget {
     final job = ref.watch(brandingJobProvider(jobId));
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: const Text('Video gắn logo')),
+      appBar: StudioSubBar(
+        title: 'Chi tiết video gắn logo',
+        subtitle:
+            'Job #${jobId.substring(0, jobId.length.clamp(0, 8)).toUpperCase()}',
+      ),
       body: job.when(
         loading: () => const Center(
           child: CircularProgressIndicator(color: AppColors.brand),

@@ -108,6 +108,8 @@ class ComicJobRunner:
     font_path: Path | None
     utc_now: Callable[[], str]
     series_store: ComicSeriesStore | None = None
+    # (job_id, owner, video): stamps the account logo in place when the settings ask for it.
+    stamp_logo: Callable[[str, str, Path], None] | None = None
 
     def run(self, job_id: str, request: dict[str, Any]) -> None:
         job = self.get_job(job_id) or {}
@@ -207,6 +209,8 @@ class ComicJobRunner:
         video = output_dir / f"comic_{job_id}.mp4"
         srt = output_dir / f"comic_{job_id}.srt"
         manifest = producer.produce(storyboard, video, srt, music)
+        if settings.apply_logo and self.stamp_logo is not None:
+            self.stamp_logo(job_id, owner, video)
         remove_stale_assets(project, manifest)
         absorb(storyboard, manifest)
         self.update_job(

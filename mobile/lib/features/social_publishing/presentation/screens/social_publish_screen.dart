@@ -28,7 +28,11 @@ class SocialPublishScreen extends ConsumerWidget {
     final draft = ref.watch(socialDraftProvider(jobId));
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: const Text('Đăng video')),
+      appBar: StudioSubBar(
+        title: 'Đăng video mạng xã hội',
+        subtitle:
+            'Job #${jobId.substring(0, jobId.length.clamp(0, 8)).toUpperCase()}',
+      ),
       body: draft.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => ErrorView(

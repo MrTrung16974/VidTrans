@@ -41,7 +41,7 @@ from application.idempotency import IdempotentRequest, idempotency_guard
 from application.comic_routes import ComicRouteDependencies, create_comic_router, requeue_comic_job
 from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
 from application.branding_routes import BrandingRouteDependencies, create_branding_router
-from application.branding_service import BRANDING_JOB_ACTION, BrandingJobRunner
+from application.branding_service import BRANDING_JOB_ACTION, STAGES as BRANDING_STAGES, BrandingJobRunner
 from application.instagram_routes import create_instagram_router
 from application.seo_routes import create_seo_router
 from application.threads_routes import create_threads_router
@@ -3065,6 +3065,7 @@ def process_video(
     tts_provider: str = "edge",
     translation_provider: str = "google",
     tts_voices: dict[str, str] | None = None,
+    apply_logo: bool = False,
 ) -> None:
     _job_context.job_id = job_id
     current_job = JOB_SERVICE.get(job_id) or {}
@@ -3675,6 +3676,9 @@ def process_video(
         record_job_stage_cache(job_id, "render", render_cache_hit)
         copy_file_atomic(render_artifact, output_video)
         ensure_job_active(job_id)
+        if apply_logo:
+            # After the render checkpoint, so a logo change never invalidates the cached render.
+            stamp_account_logo(job_id, owner_user_id, output_video, detect=True)
 
         artifact_fields: dict[str, Any] = {
             "output_video": stored_artifact_name(output_video),
@@ -4083,6 +4087,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
                 if resume_request.get("tiktok_publish_at")
                 else None
             ),
+            apply_logo=bool(resume_request.get("apply_logo", False)),
         )
     except (JobCancelled, SocialVideoDownloadCancelled) as exc:
         logger.info("Source download cancelled for job %s", job_id)
@@ -4172,6 +4177,8 @@ COMIC_RUNNER = ComicJobRunner(
     font_path=BUNDLED_FONT if BUNDLED_FONT.is_file() else None,
     utc_now=utc_now,
     series_store=COMIC_SERIES,
+    # Comic videos have no logo of their own: stamp the default corner, no detection.
+    stamp_logo=lambda job_id, owner, video: stamp_account_logo(job_id, owner, video, detect=False),
 )
 
 
@@ -4211,6 +4218,56 @@ BRANDING_RUNNER = BrandingJobRunner(
     ffprobe=lambda: FFPROBE,
     utc_now=utc_now,
 )
+
+
+def require_account_logo(owner_user_id: str) -> None:
+    """Reject ``apply_logo`` up front instead of failing after a long render."""
+    if BRANDING_STORE.logo_path(owner_user_id) is None:
+        raise HTTPException(status_code=400, detail="Hãy tải logo lên trong trang Tài khoản & logo trước khi chọn chèn logo")
+
+
+def stamp_account_logo(job_id: str, owner_user_id: str, video: Path, *, detect: bool,
+                       low: float = 0.95, high: float = 0.99) -> None:
+    """Stamp the account logo onto a finished video in place.
+
+    ``detect`` looks for a logo already in the video (translated sources) and puts the
+    new one there; without it the logo goes to the default corner (comic videos have
+    no logo of their own). A failure keeps the video unbranded instead of losing the
+    whole job; the reason is stored in the job's ``branding`` field.
+    """
+    try:
+        stored = BRANDING_STORE.get(owner_user_id)
+        logo_source = BRANDING_STORE.logo_path(owner_user_id)
+        if logo_source is None or stored["logo"] is None:
+            raise FileNotFoundError("Tài khoản chưa có logo")
+        config = stored["config"]
+        work = tenant_job_dir(WORK_DIR, owner_user_id, job_id) / "branding"
+        work.mkdir(parents=True, exist_ok=True)
+        # Snapshot: replacing the account logo deletes the old file, maybe mid-render.
+        logo_path = work / "logo.png"
+        shutil.copyfile(logo_source, logo_path)
+        template_source = BRANDING_STORE.template_path(owner_user_id) if detect else None
+        template_path = work / "template.png" if template_source else None
+        if template_source and template_path:
+            shutil.copyfile(template_source, template_path)
+
+        def progress(stage: str, fraction: float, detail: str) -> None:
+            stage_low, stage_high = BRANDING_STAGES[stage]
+            share = stage_low + (stage_high - stage_low) * max(0.0, min(1.0, fraction))
+            update_job(job_id, step="branding", step_detail=detail, progress=round(low + (high - low) * share, 3))
+
+        branded = video.with_name(f"{video.stem}.branded{video.suffix}")
+        BRANDING_RUNNER.stamp(
+            job_id, video, branded, logo_path=logo_path, logo_width=int(stored["logo"]["width"]),
+            logo_height=int(stored["logo"]["height"]), config=config, template_path=template_path,
+            override="auto" if detect else config.default_position, progress=progress,
+        )
+        branded.replace(video)
+    except JobCancelled:
+        raise
+    except Exception as exc:
+        logger.exception("Logo stamping failed for job %s; keeping the unbranded video", job_id)
+        update_job(job_id, branding={"error": f"Không chèn được logo: {public_error_message(exc)}"})
 
 
 def run_branding_job(job_id: str, request: dict[str, Any]) -> None:
@@ -5974,9 +6031,12 @@ async def process_video_endpoint(
     auto_publish_tiktok: bool = Form(False),
     tiktok_privacy_level: str = Form("SELF_ONLY"),
     tiktok_publish_at: str | None = Form(default=None),
+    apply_logo: bool = Form(False),
 ) -> JSONResponse:
     account = current_account(http_request)
     owner_user_id = str(account["user_id"])
+    if apply_logo:
+        require_account_logo(owner_user_id)
     tts_provider = tts_provider.strip().lower() or default_tts_provider()
     translation_provider = translation_provider.strip().lower() or default_translation_provider()
     try:
@@ -6097,6 +6157,7 @@ async def process_video_endpoint(
         "auto_publish_tiktok": request.tiktok.auto_publish,
         "tiktok_privacy_level": request.tiktok.privacy_level,
         "tiktok_publish_at": request.tiktok.publish_at,
+        "apply_logo": apply_logo,
     }
 
     created_job = JOB_SERVICE.create(job_id, {
@@ -6196,11 +6257,14 @@ async def create_batch_endpoint(
     auto_publish_tiktok: bool = Form(False),
     tiktok_privacy_level: str = Form("SELF_ONLY"),
     tiktok_publish_at: str | None = Form(default=None),
+    apply_logo: bool = Form(False),
 ) -> JSONResponse:
     if idempotent.replay is not None:
         return JSONResponse(idempotent.replay)
     account = current_account(request)
     owner_user_id = str(account["user_id"])
+    if apply_logo:
+        require_account_logo(owner_user_id)
     tts_provider = tts_provider.strip().lower() or default_tts_provider()
     translation_provider = translation_provider.strip().lower() or default_translation_provider()
     try:
@@ -6349,6 +6413,7 @@ async def create_batch_endpoint(
         "auto_publish_tiktok": processing_request.tiktok.auto_publish,
         "tiktok_privacy_level": processing_request.tiktok.privacy_level,
         "tiktok_publish_at": processing_request.tiktok.publish_at,
+        "apply_logo": apply_logo,
         "background_music_path": str(background_music_path) if background_music_path else None,
     }
     prepared_uploads: list[tuple[str, UploadFile, Path]] = []
@@ -7108,6 +7173,7 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     list_projects=list_comic_projects_for_request,
     series_store=COMIC_SERIES,
     delete_project=delete_comic_project_permanently,
+    has_logo=lambda user_id: BRANDING_STORE.logo_path(user_id) is not None,
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
 DEVICE_ROUTE_DEPS = DeviceRouteDependencies(
@@ -7123,20 +7189,6 @@ BRANDING_ROUTE_DEPS = BrandingRouteDependencies(
     current_account=lambda request: current_account(request),
     update_display_name=lambda user_id, name: ADMIN_ACCOUNTS.update(user_id, display_name=name),
     public_account=public_admin_account,
-    job_for_request=lambda request, job_id: job_for_request(request, job_id),
-    job_response=lambda job_id, job: job_response(job_id, job),
-    list_jobs=lambda **query: JOB_SERVICE.list_jobs(**query),
-    create_job=lambda job_id, payload, owner_user_id: JOB_SERVICE.create(job_id, payload, owner_user_id=owner_user_id),
-    retry_job=lambda job_id, **fields: JOB_SERVICE.retry(job_id, **fields),
-    reserve_quota=lambda job_id, account: reserve_job_quota(job_id, account),
-    release_quota=lambda job_id: TENANT_GOVERNANCE.release(job_id),
-    notify_scheduler=lambda: notify_scheduler(),
-    upload_dir=lambda owner_user_id, job_id: tenant_job_dir(UPLOAD_DIR, owner_user_id, job_id),
-    validate_video=lambda path: validate_video_file(path, ffprobe=FFPROBE),
-    artifact_path=lambda filename: stored_artifact_path(filename),
-    video_idempotency=idempotency_guard(
-        lambda: JOB_SERVICE, lambda request: current_account(request), "branding_videos", job_replay_valid
-    ),
 )
 app.include_router(create_branding_router(BRANDING_ROUTE_DEPS))
 

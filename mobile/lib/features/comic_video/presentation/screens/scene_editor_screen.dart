@@ -73,16 +73,19 @@ class SceneEditorScreen extends ConsumerWidget {
     final project = ref.watch(comicProjectProvider(jobId));
     final options = ref.watch(comicOptionsProvider).valueOrNull ?? const ComicOptions();
     return project.when(
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      loading: () => Scaffold(
+        appBar: StudioSubBar(title: 'Cảnh $sceneIndex'),
+        body: const Center(child: CircularProgressIndicator()),
+      ),
       error: (error, _) => Scaffold(
-        appBar: AppBar(),
+        appBar: StudioSubBar(title: 'Cảnh $sceneIndex'),
         body: ErrorView(message: errorMessage(error), onRetry: () => ref.invalidate(comicProjectProvider(jobId))),
       ),
       data: (project) {
         final scene = project.storyboard?.scenes.where((s) => s.sceneIndex == sceneIndex).firstOrNull;
         if (scene == null) {
           return Scaffold(
-            appBar: AppBar(title: Text('Cảnh $sceneIndex')),
+            appBar: StudioSubBar(title: 'Cảnh $sceneIndex'),
             body: const Center(child: Text('Cảnh này không còn trong trang hiện tại.')),
           );
         }
@@ -189,8 +192,11 @@ class _SceneEditorState extends ConsumerState<_SceneEditor> {
   Widget build(BuildContext context) {
     final canEdit = !comicReadOnly(ref) && !project.locked;
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Cảnh ${scene.sceneIndex}'),
+      appBar: StudioSubBar(
+        title: 'Cảnh ${scene.sceneIndex}',
+        subtitle: storyboard.animated
+            ? '${scene.shots.length} shot hoạt hình'
+            : 'Phiên bản v${scene.version}',
         actions: [
           if (canEdit)
             PopupMenuButton<String>(

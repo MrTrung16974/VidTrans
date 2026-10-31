@@ -202,7 +202,7 @@ class BrandingApiTests(unittest.TestCase):
             patch.object(main, "reserve_job_quota", Mock()),
             patch.object(main, "notify_scheduler", Mock()),
             patch.object(deps, "store", store),
-            patch.object(deps, "validate_video", Mock()),
+            patch.object(main, "BRANDING_STORE", store),
             patch.object(main, "current_account",
                          lambda request: self.users[request.headers.get("x-test-user", "a")]),
         ]
@@ -217,11 +217,6 @@ class BrandingApiTests(unittest.TestCase):
     def upload_logo(self, user="a"):
         return self.client.post("/api/v1/me/branding/logo", headers={"x-test-user": user},
                                 files={"file": ("logo.png", png_bytes(), "image/png")})
-
-    def queue(self, user="a", rights="true", content=b"fake video"):
-        return self.client.post("/api/v1/branding/videos", headers={"x-test-user": user},
-                                data={"rights_confirmed": rights},
-                                files={"file": ("clip.mp4", content, "video/mp4")})
 
     def test_settings_and_logo_are_isolated_per_account(self):
         response = self.client.put("/api/v1/me/branding", json={"default_position": "bottom-left", "logo_size": 15})
@@ -242,21 +237,17 @@ class BrandingApiTests(unittest.TestCase):
         response = self.client.post("/api/v1/me/branding/logo", files={"file": ("x.png", b"nope", "image/png")})
         self.assertEqual(response.status_code, 400)
 
-    def test_queueing_requires_logo_and_rights_confirmation(self):
-        self.assertEqual(self.queue().status_code, 400)  # no logo yet
+    def test_standalone_logo_video_endpoints_are_gone(self):
+        # Logos are stamped by translation/comic jobs (apply_logo); there is no upload-to-brand flow.
+        self.assertIn(self.client.post("/api/v1/branding/videos").status_code, {404, 405})
+        self.assertEqual(self.client.get("/api/v1/branding/videos").status_code, 404)
+
+    def test_apply_logo_requires_an_account_logo(self):
+        with self.assertRaises(main.HTTPException) as caught:
+            main.require_account_logo("user-a")
+        self.assertEqual(caught.exception.status_code, 400)
         self.upload_logo()
-        self.assertEqual(self.queue(rights="false").status_code, 400)
-        response = self.queue()
-        self.assertEqual(response.status_code, 202)
-        job_id = response.json()["job_id"]
-        job = self.service.get(job_id)
-        self.assertEqual(job["job_action"], "logo_branding")
-        self.assertTrue(Path(job["resume_request"]["logo_path"]).is_file())
-        self.assertNotIn("resume_request", self.client.get(f"/api/v1/branding/videos/{job_id}").json())
-        # Another account can neither see the job nor find it in its history.
-        self.assertEqual(self.client.get(f"/api/v1/branding/videos/{job_id}", headers={"x-test-user": "b"}).status_code, 404)
-        self.assertEqual(self.client.get("/api/v1/branding/videos", headers={"x-test-user": "b"}).json()["total"], 0)
-        self.assertEqual(self.client.get("/api/v1/branding/videos").json()["total"], 1)
+        main.require_account_logo("user-a")
 
     def test_display_name_update(self):
         with patch.object(main.BRANDING_ROUTE_DEPS, "update_display_name",
@@ -264,45 +255,48 @@ class BrandingApiTests(unittest.TestCase):
             response = self.client.put("/api/v1/me", json={"display_name": "Kênh A"})
         self.assertEqual(response.json()["display_name"], "Kênh A")
 
-    def test_template_upload_is_snapshotted_into_jobs(self):
+    def test_template_upload_is_per_account(self):
         response = self.client.post("/api/v1/me/branding/template",
                                     files={"file": ("old.png", png_bytes((80, 30)), "image/png")})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["template"]["url"].startswith("/api/v1/me/branding/template"))
         self.assertIsNone(self.client.get("/api/v1/me/branding", headers={"x-test-user": "b"}).json()["template"])
-        self.upload_logo()
-        job_id = self.queue().json()["job_id"]
-        template_path = Path(self.service.get(job_id)["resume_request"]["template_path"])
-        self.assertTrue(template_path.is_file())
         self.client.delete("/api/v1/me/branding/template")
         self.assertIsNone(self.client.get("/api/v1/me/branding").json()["template"])
-        self.assertTrue(template_path.is_file())  # the queued job keeps its own copy
 
-    @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
-    def test_queued_job_renders_with_logo_and_keeps_audio(self):
-        source = self.root / "src.mp4"
+    def finished_video(self, job_id: str) -> Path:
+        self.service.create(job_id, {"status": "processing", "step": "rendering", "progress": 0.9},
+                            owner_user_id="user-a")
+        video = self.root / "outputs" / f"output_{job_id}.mp4"
         subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-y", "-f", "lavfi", "-i",
                         "testsrc2=s=640x360:r=25:d=3", "-f", "lavfi", "-i", "sine=f=440:d=3",
-                        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(source)],
+                        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(video)],
                        check=True)
+        return video
+
+    @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
+    def test_finished_video_is_stamped_in_place_and_keeps_audio(self):
         self.upload_logo()
-        job_id = self.queue(content=source.read_bytes()).json()["job_id"]
-        request = dict(self.service.get(job_id)["resume_request"])
-        main.run_branding_job(job_id, request)
-        job = self.client.get(f"/api/v1/branding/videos/{job_id}").json()
-        self.assertEqual(job["status"], "completed", job.get("error"))
+        video = self.finished_video("job1")
+        before = video.read_bytes()
+        main.stamp_account_logo("job1", "user-a", video, detect=False)
+        job = self.service.get("job1")
+        self.assertNotIn("error", job["branding"])
+        self.assertEqual(job["branding"]["override"], "top-right")
         self.assertEqual(len(job["branding"]["placements"]), 1)
-        download = self.client.get(f"/api/v1/branding/videos/{job_id}/download")
-        self.assertEqual(download.status_code, 200)
-        output = self.root / "out.mp4"
-        output.write_bytes(download.content)
+        self.assertNotEqual(video.read_bytes(), before)
+        self.assertEqual(sorted(path.name for path in video.parent.iterdir()), [video.name])
         streams = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type",
-                                  "-of", "csv=p=0", str(output)], capture_output=True, text=True).stdout.split()
+                                  "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout.split()
         self.assertEqual(sorted(streams), ["audio", "video"])
-        # Re-run with a manual corner after review.
-        response = self.client.post(f"/api/v1/branding/videos/{job_id}/reprocess", json={"override": "bottom-left"})
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(self.service.get(job_id)["resume_request"]["override"], "bottom-left")
+
+    @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
+    def test_stamping_failure_keeps_the_unbranded_video(self):
+        video = self.finished_video("job2")  # no logo uploaded
+        before = video.read_bytes()
+        main.stamp_account_logo("job2", "user-a", video, detect=True)
+        self.assertIn("Không chèn được logo", self.service.get("job2")["branding"]["error"])
+        self.assertEqual(video.read_bytes(), before)
 
 
 @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")

@@ -75,6 +75,8 @@ class ComicRouteDependencies:
     series_store: ComicSeriesStore | None = None
     # Removes the job and every file it produced (uploads, renders, work directory).
     delete_project: Callable[[str, dict[str, Any]], None] | None = None
+    # Whether the user has a logo to stamp; ``apply_logo`` is refused without one.
+    has_logo: Callable[[str], bool] | None = None
 
 
 class ScenePatch(BaseModel):
@@ -298,6 +300,7 @@ def settings_form(
     # Genre preset key and the bible the user reviewed (JSON from /bible/suggest, edited).
     genre: str = Form("", max_length=40),
     bible: str = Form(""),
+    apply_logo: str = Form("false"),
 ) -> dict[str, Any]:
     """Creation-form fields shared by standalone projects and series."""
     return dict(locals())
@@ -562,6 +565,7 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 story_brief=fields["story_brief"].strip(),
                 genre=fields["genre"] if fields["genre"] in GENRE_PRESETS else "",
                 bible=parse_bible(fields["bible"]),
+                apply_logo=form_flag(fields["apply_logo"]),
             )
         except ValidationError as exc:
             raise HTTPException(400, _validation_detail(exc)) from exc
@@ -569,6 +573,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         return settings
 
     def ensure_settings_usable(account: dict[str, Any], settings: ComicSettings) -> None:
+        if settings.apply_logo and deps.has_logo is not None and not deps.has_logo(str(account["user_id"])):
+            raise HTTPException(400, "Hãy tải logo lên trong trang Tài khoản & logo trước khi chọn chèn logo")
         chosen = {settings.llm_provider, settings.image_provider}
         statuses = [*llm_provider_statuses(), *image_provider_statuses()]
         if settings.video_mode == "animated":
@@ -645,7 +651,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
 
     def queue_episode(account: dict[str, Any], series_id: str, story: str, music: tuple[bytes, str], *,
                       title: str, youtube_title: str, auto_render: bool,
-                      episode_brief: str = "", bible: StoryBible | None = None) -> tuple[str, int]:
+                      episode_brief: str = "", bible: StoryBible | None = None,
+                      apply_logo: bool | None = None) -> tuple[str, int]:
         """Queue the next episode of a series with the series' settings and character bible."""
         store = series_store()
         owner = str(account["user_id"])
@@ -658,6 +665,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                 "youtube_title": youtube_title.strip(), "auto_render": auto_render,
                 "episode_brief": episode_brief.strip(),
                 "bible": bible.model_dump(mode="json") if bible is not None else None,
+                # None: keep the series' choice; the episode form can override it.
+                **({} if apply_logo is None else {"apply_logo": apply_logo}),
             })
         except ValidationError as exc:
             raise HTTPException(400, _validation_detail(exc)) from exc
@@ -702,7 +711,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             job_id, number = queue_episode(account, series_id.strip(), story, music, title=fields["title"],
                                            youtube_title=fields["youtube_title"],
                                            auto_render=form_flag(fields["auto_render"]),
-                                           episode_brief=episode_brief, bible=parse_bible(fields["bible"]))
+                                           episode_brief=episode_brief, bible=parse_bible(fields["bible"]),
+                                           apply_logo=form_flag(fields["apply_logo"]))
             return JSONResponse({"job_id": job_id, "status": "queued", "story_chars": len(story),
                                  "series_id": series_id.strip(), "episode_number": number}, status_code=202)
         settings = build_settings(account, fields)

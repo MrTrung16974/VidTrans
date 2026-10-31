@@ -409,6 +409,8 @@ class ComicSettings(_Model):
     # then edited). It is authoritative: no second planning pass, its looks win over guesses.
     bible: StoryBible | None = None
     genre: str = Field(default="", max_length=40)
+    # Stamp the account logo (Tài khoản & logo) on the rendered video, in its default corner.
+    apply_logo: bool = False
 
     @field_validator("language")
     @classmethod

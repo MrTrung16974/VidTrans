@@ -23,15 +23,15 @@ class BrandingScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        title: const VidTransBrandTitle(subtitle: 'LOGO BRANDING STUDIO'),
+      appBar: StudioSubBar(
+        title: 'Chèn logo thương hiệu',
+        subtitle: 'Logo Branding Studio',
         actions: [
           IconButton(
             tooltip: 'Cấu hình logo',
-            icon: const Icon(Icons.tune_rounded),
+            icon: const Icon(Icons.tune_rounded, size: 20),
             onPressed: () => context.push('/branding/settings'),
           ),
-          const SizedBox(width: 4),
         ],
       ),
       floatingActionButton: readOnly
@@ -52,33 +52,64 @@ class BrandingScreen extends ConsumerWidget {
         data: (history) => RefreshIndicator(
           color: AppColors.brand,
           onRefresh: () => ref.read(brandingHistoryProvider.notifier).refresh(),
-          child: history.items.isEmpty
-              ? ListView(
-                  children: [
-                    const SizedBox(height: 40),
-                    StudioEmptyState(
-                      icon: Icons.branding_watermark_outlined,
-                      title: 'Chưa có video gắn logo nào',
-                      subtitle:
-                          'Cấu hình logo thương hiệu và gửi video để tự động nhận diện, che logo cũ và đóng dấu logo mới.',
-                      action: readOnly
-                          ? null
-                          : StudioGradientButton(
-                              expanded: false,
-                              icon: Icons.upload_file_rounded,
-                              label: 'Gửi video gắn logo',
-                              onPressed: () => context.push('/branding/new'),
-                            ),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 96),
+            children: [
+              StudioPageHeader(
+                eyebrow: 'Gắn logo thương hiệu',
+                eyebrowIcon: Icons.branding_watermark_outlined,
+                title: 'Tự động nhận diện & chèn logo',
+                subtitle:
+                    'Tải video lên để hệ thống tự động phát hiện vị trí logo cũ, làm mờ/xóa và đóng dấu logo thương hiệu của bạn.',
+                actions: [
+                  if (!readOnly)
+                    StudioGradientButton(
+                      expanded: false,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 9,
+                      ),
+                      icon: Icons.upload_file_rounded,
+                      label: 'Gửi video mới',
+                      onPressed: () => context.push('/branding/new'),
                     ),
-                  ],
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 9,
+                      ),
+                    ),
+                    onPressed: () => context.push('/branding/settings'),
+                    icon: const Icon(Icons.tune_rounded, size: 16),
+                    label: const Text('Cấu hình logo'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              if (history.items.isEmpty)
+                StudioEmptyState(
+                  icon: Icons.branding_watermark_outlined,
+                  title: 'Chưa có video gắn logo nào',
+                  subtitle:
+                      'Cấu hình logo thương hiệu và gửi video để tự động nhận diện, che logo cũ và đóng dấu logo mới.',
+                  action: readOnly
+                      ? null
+                      : StudioGradientButton(
+                          expanded: false,
+                          icon: Icons.upload_file_rounded,
+                          label: 'Gửi video gắn logo',
+                          onPressed: () => context.push('/branding/new'),
+                        ),
                 )
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 96),
-                  itemCount: history.items.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) =>
-                      _BrandingJobTile(job: history.items[index]),
-                ),
+              else
+                for (var i = 0; i < history.items.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 10),
+                  _BrandingJobTile(job: history.items[i]),
+                ],
+            ],
+          ),
         ),
       ),
     );

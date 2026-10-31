@@ -32,8 +32,17 @@ class SocialHubScreen extends ConsumerWidget {
           await ref.read(publishableJobsProvider.future).catchError((_) => const <Never>[]);
         },
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
           children: [
+            const StudioPageHeader(
+              eyebrow: 'Đăng bài mạng xã hội',
+              eyebrowIcon: Icons.share_rounded,
+              eyebrowNote: 'TikTok · YouTube · Facebook',
+              title: 'Đăng bài mạng xã hội',
+              subtitle:
+                  'Kết nối tài khoản mạng xã hội, chọn video đã hoàn tất để đăng ngay, lưu nháp hoặc hẹn giờ xuất bản.',
+            ),
+            const SizedBox(height: 14),
             const StudioStepHeader(
               stepNumber: 1,
               icon: Icons.link_rounded,

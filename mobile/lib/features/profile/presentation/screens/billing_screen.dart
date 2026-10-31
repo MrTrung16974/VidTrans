@@ -23,7 +23,10 @@ class BillingScreen extends ConsumerWidget {
     final overview = ref.watch(billingOverviewProvider);
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: const Text('Gói dịch vụ & thanh toán')),
+      appBar: const StudioSubBar(
+        title: 'Gói dịch vụ & thanh toán',
+        subtitle: 'Nâng cấp hạn mức · VietQR 24/7',
+      ),
       body: overview.when(
         skipLoadingOnRefresh: true,
         loading: () => const Center(
@@ -178,8 +181,16 @@ class _BillingBody extends ConsumerWidget {
     final currentPlan = overview.account.plan ?? 'free';
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
       children: [
+        const StudioPageHeader(
+          eyebrow: 'Gói dịch vụ & thanh toán',
+          eyebrowIcon: Icons.workspace_premium_outlined,
+          title: 'Chọn gói dịch vụ phù hợp',
+          subtitle:
+              'Theo dõi hạn mức phút xử lý trong tháng, nâng cấp gói Studio qua VietQR 24/7 và tra cứu lịch sử đơn.',
+        ),
+        const SizedBox(height: 12),
         if (overview.quota != null)
           QuotaCard(
             quota: overview.quota!,

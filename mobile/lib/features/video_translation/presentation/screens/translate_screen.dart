@@ -184,12 +184,12 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       body: AbsorbPointer(
         absorbing: state.busy,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
           children: [
             _heroHeader(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
             _workflowStepsNav(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
             KeyedSubtree(
               key: _step1Key,
               child: _sourcesSection(state),
@@ -205,8 +205,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     controller: _batchName,
                     maxLength: 120,
                     decoration: const InputDecoration(
-                      hintText: 'Batch video mới',
-                      labelText: 'Tên batch',
+                      hintText: 'Ví dụ: Review phim tập 1-10',
+                      labelText: 'Tên batch (tùy chọn)',
+                      counterText: '',
                       prefixIcon: Icon(Icons.folder_outlined, size: 19),
                     ),
                     onChanged: (value) =>
@@ -238,70 +239,44 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   }
 
   Widget _heroHeader() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 10,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF7ED),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: const Color(0xFFFED7AA)),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.bolt_rounded,
-                    size: 14,
-                    color: AppColors.brand,
-                  ),
-                  SizedBox(width: 4),
-                  Text(
-                    'STUDIO TỰ ĐỘNG HÓA',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.45,
-                      color: AppColors.brandDark,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Text(
-              'Dịch video AI & Lồng tiếng',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.muted,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          'Cấu hình một lần,\nxử lý cả batch',
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.w900,
-            color: AppColors.ink,
-            height: 1.14,
-            letterSpacing: -0.75,
-          ),
-        ),
-        const SizedBox(height: 10),
-        const Text(
+    return StudioPageHeader(
+      eyebrow: 'Studio tự động hóa',
+      eyebrowIcon: Icons.bolt_rounded,
+      eyebrowNote: 'Tối đa 50 video / batch',
+      title: 'Cấu hình một lần, xử lý cả batch',
+      subtitle:
           'Thêm video từ thiết bị hoặc link Douyin/TikTok/Facebook/Youtube, chọn ngôn ngữ và phụ đề để hệ thống tự động xử lý dưới nền.',
-          style: TextStyle(
-            fontSize: 13.8,
-            color: AppColors.muted,
-            height: 1.45,
+      actions: [
+        const StudioSystemBadge(label: 'Hàng đợi sẵn sàng'),
+        InkWell(
+          onTap: () => context.go('/jobs'),
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: AppColors.lineStrong),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Xem tiến trình',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink,
+                  ),
+                ),
+                SizedBox(width: 4),
+                Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 13,
+                  color: AppColors.brand,
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -309,17 +284,32 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   }
 
   Widget _workflowStepsNav() {
-    final steps = <({int step, String label, GlobalKey key})>[
-      (step: 1, label: 'Nguồn video', key: _step1Key),
-      (step: 2, label: 'Cấu hình xử lý', key: _step2Key),
-      (step: 3, label: 'Vị trí phụ đề', key: _step3Key),
-      (step: 4, label: 'Nội dung đăng', key: _step4Key),
+    final steps = <({int step, String label, String sub, GlobalKey key})>[
+      (step: 1, label: 'Nguồn video', sub: 'File hoặc link', key: _step1Key),
+      (
+        step: 2,
+        label: 'Cấu hình xử lý',
+        sub: 'Chế độ & giọng',
+        key: _step2Key,
+      ),
+      (
+        step: 3,
+        label: 'Vị trí phụ đề',
+        sub: 'Cỡ chữ & xem trước',
+        key: _step3Key,
+      ),
+      (
+        step: 4,
+        label: 'Nội dung đăng',
+        sub: 'Caption & hashtag',
+        key: _step4Key,
+      ),
     ];
 
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(7),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.88),
+        color: Colors.white.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppColors.line),
         boxShadow: AppColors.cardShadow,
@@ -329,15 +319,15 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           Row(
             children: [
               Expanded(child: _stepNavItem(steps[0])),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Expanded(child: _stepNavItem(steps[1])),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Row(
             children: [
               Expanded(child: _stepNavItem(steps[2])),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Expanded(child: _stepNavItem(steps[3])),
             ],
           ),
@@ -346,7 +336,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     );
   }
 
-  Widget _stepNavItem(({int step, String label, GlobalKey key}) item) {
+  Widget _stepNavItem(
+      ({int step, String label, String sub, GlobalKey key}) item) {
     final active = _activeStep == item.step;
     return Material(
       color: Colors.transparent,
@@ -355,22 +346,13 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         borderRadius: BorderRadius.circular(13),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
           decoration: BoxDecoration(
-            color: active ? Colors.white : Colors.transparent,
+            color: active ? AppColors.brandTint : Colors.transparent,
             borderRadius: BorderRadius.circular(13),
             border: Border.all(
-              color: active ? const Color(0xFFF1F5F9) : Colors.transparent,
+              color: active ? AppColors.brandBorder : Colors.transparent,
             ),
-            boxShadow: active
-                ? const [
-                    BoxShadow(
-                      color: Color(0x140F172A),
-                      blurRadius: 14,
-                      offset: Offset(0, 4),
-                    ),
-                  ]
-                : null,
           ),
           child: Row(
             children: [
@@ -386,24 +368,39 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 child: Text(
                   '${item.step}',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w800,
                     color: active ? Colors.white : AppColors.inkSoft,
                   ),
                 ),
               ),
-              const SizedBox(width: 9),
+              const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  item.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: active ? FontWeight.w800 : FontWeight.w600,
-                    color: active ? AppColors.ink : AppColors.muted,
-                    letterSpacing: -0.15,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      item.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.2,
+                        fontWeight: active ? FontWeight.w800 : FontWeight.w700,
+                        color: active ? AppColors.brandDark : AppColors.ink,
+                        letterSpacing: -0.15,
+                      ),
+                    ),
+                    Text(
+                      item.sub,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        color: AppColors.muted,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -419,11 +416,14 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       stepNumber: 1,
       title: 'Thêm video nguồn',
       subtitle:
-          'Tải file từ máy tính hoặc dán liên kết TikTok, Douyin, YouTube hoặc Facebook — tối đa 50 video mỗi batch.',
+          'Tải file từ thiết bị hoặc dán liên kết TikTok, Douyin, YouTube hoặc Facebook — tối đa 50 video mỗi batch.',
+      trailing: StudioEyebrow(
+        label: '${state.sourceCount}/50 nguồn',
+      ),
       children: [
         StudioDashedBox(
           onTap: _pickVideos,
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
           backgroundColor: const Color(0xFFFCFDFE),
           borderColor: const Color(0xFFCBD5E1),
           borderRadius: 16,
@@ -434,63 +434,76 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text(
-                    'TỪ THIẾT BỊ',
+                    '1A · TỪ THIẾT BỊ',
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0.55,
                       color: AppColors.brandDark,
                     ),
                   ),
-                  if (state.sourceCount > 0)
-                    StudioEyebrow(label: '${state.sourceCount}/50 video'),
+                  if (state.files.isNotEmpty)
+                    Text(
+                      '${state.files.length} file đã chọn',
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.teal,
+                      ),
+                    ),
                 ],
               ),
-              const SizedBox(height: 16),
-              Center(
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFFFEDD5)),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x1AEA580C),
-                        blurRadius: 14,
-                        offset: Offset(0, 5),
-                      ),
-                    ],
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(color: const Color(0xFFFFEDD5)),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x1AEA580C),
+                          blurRadius: 12,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.file_upload_outlined,
+                      size: 22,
+                      color: AppColors.brand,
+                    ),
                   ),
-                  alignment: Alignment.center,
-                  child: const Icon(
-                    Icons.file_upload_outlined,
-                    size: 24,
-                    color: AppColors.brand,
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Chạm để chọn video từ máy',
+                          style: TextStyle(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.ink,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Hỗ trợ MP4, MOV, MKV · Tối đa 50 video',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Kéo thả video vào đây hoặc bấm\nchọn file',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.ink,
-                  height: 1.3,
-                  letterSpacing: -0.2,
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Hỗ trợ MP4, MOV, MKV · Tối đa 50 video',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  color: AppColors.muted,
-                ),
+                ],
               ),
             ],
           ),
@@ -544,20 +557,53 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               ],
             ),
           ),
-        TextField(
-          controller: _links,
-          minLines: 3,
-          maxLines: 6,
-          maxLength: 12000,
-          keyboardType: TextInputType.multiline,
-          decoration: InputDecoration(
-            labelText: 'Link video (TikTok, Douyin, YouTube, Facebook)',
-            hintText:
-                'Dán link TikTok, Douyin, YouTube hoặc Facebook — mỗi link một dòng',
-            helperText: links.isEmpty ? null : 'Đã nhận ${links.length} link',
-            prefixIcon: const Icon(Icons.link_rounded, color: AppColors.teal),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceSubtle,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.line),
           ),
-          onChanged: _form.setLinks,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    '1B · TỪ LIÊN KẾT MẠNG XÃ HỘI',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                      color: AppColors.teal,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (links.isNotEmpty)
+                    StudioStatusPill(
+                      status: 'ready',
+                      label: '${links.length} link',
+                      compact: true,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _links,
+                minLines: 2,
+                maxLines: 5,
+                maxLength: 12000,
+                keyboardType: TextInputType.multiline,
+                decoration: const InputDecoration(
+                  hintText:
+                      'Dán link TikTok, Douyin, YouTube hoặc Facebook — mỗi link một dòng',
+                  counterText: '',
+                  prefixIcon: Icon(Icons.link_rounded, color: AppColors.teal),
+                ),
+                onChanged: _form.setLinks,
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -565,55 +611,66 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
   Widget _modeBody(TranslateFormState state) {
     final config = state.config;
+    const modes = <({
+      int value,
+      String title,
+      String badge,
+      String desc,
+      IconData icon,
+    })>[
+      (
+        value: 1,
+        title: 'Chỉ phụ đề',
+        badge: 'Tốc độ cao',
+        desc: 'Giữ nguyên âm thanh gốc, tạo và gắn phụ đề dịch vào video.',
+        icon: Icons.subtitles_outlined,
+      ),
+      (
+        value: 2,
+        title: 'Phụ đề + Thuyết minh',
+        badge: 'Phổ biến',
+        desc: 'Tạo phụ đề kết hợp giọng đọc AI tự nhiên theo ngữ cảnh.',
+        icon: Icons.record_voice_over_outlined,
+      ),
+      (
+        value: 3,
+        title: 'Phụ đề + Thuyết minh + Nhạc',
+        badge: 'Studio Pro',
+        desc: 'Kết hợp phụ đề, giọng thuyết minh AI và nhạc nền tùy chọn.',
+        icon: Icons.library_music_outlined,
+      ),
+    ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SegmentedButton<int>(
-          segments: const [
-            ButtonSegment(value: 1, label: Text('Phụ đề')),
-            ButtonSegment(value: 2, label: Text('+ Lồng tiếng')),
-            ButtonSegment(value: 3, label: Text('+ Nhạc nền')),
-          ],
-          selected: {config.mode},
-          onSelectionChanged: (value) =>
-              _update((c) => c.copyWith(mode: value.single)),
-        ),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: AppColors.tealSoft,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.tealBorder),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.info_outline_rounded,
-                size: 16,
-                color: AppColors.teal,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  modeHints[config.mode]!,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.tealText,
-                  ),
-                ),
-              ),
-            ],
+        const Text(
+          'Chế độ xử lý đầu ra',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: AppColors.inkSoft,
           ),
         ),
+        const SizedBox(height: 8),
+        for (var i = 0; i < modes.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _ModeChoiceCard(
+            title: modes[i].title,
+            badge: modes[i].badge,
+            description: modes[i].desc,
+            icon: modes[i].icon,
+            selected: config.mode == modes[i].value,
+            onTap: () => _update((c) => c.copyWith(mode: modes[i].value)),
+          ),
+        ],
         if (config.needsMusic) ...[
           const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: _pickMusic,
             icon: const Icon(Icons.music_note_outlined),
             label: Text(
-              state.music?.name ?? 'Chọn nhạc nền dùng chung',
+              state.music?.name ?? 'Chọn nhạc nền dùng chung (MP3/WAV/M4A)',
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -634,23 +691,77 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         (value: key, label: byKey[key]?.label ?? key),
     ];
     return FormSection(
-      title: 'Ngôn ngữ & dịch',
+      title: 'Ngôn ngữ & dịch thuật',
+      subtitle: 'Chọn cặp ngôn ngữ chuyển đổi và mô hình AI dịch thuật',
       icon: Icons.translate_rounded,
       children: [
-        SelectField(
-          label: 'Ngôn ngữ nguồn',
-          value: config.sourceLanguage,
-          options: sourceLanguageOptions,
-          onChanged: (v) => _update((c) => c.copyWith(sourceLanguage: v)),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceSubtle,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.line),
+          ),
+          child: Column(
+            children: [
+              SelectField(
+                label: 'Ngôn ngữ nguồn (trong video)',
+                value: config.sourceLanguage,
+                options: sourceLanguageOptions,
+                onChanged: (v) => _update((c) => c.copyWith(sourceLanguage: v)),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    const Expanded(child: Divider()),
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.brandSoft,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: AppColors.brandBorder),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.south_rounded,
+                            size: 13,
+                            color: AppColors.brandDark,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'CHUYỂN ĐỔI SANG',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: AppColors.brandDark,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Expanded(child: Divider()),
+                  ],
+                ),
+              ),
+              SelectField(
+                label: 'Ngôn ngữ đầu ra',
+                value: config.targetLanguage,
+                options: targetLanguageOptions,
+                onChanged: (v) => _update((c) => c.copyWith(targetLanguage: v)),
+              ),
+            ],
+          ),
         ),
         SelectField(
-          label: 'Ngôn ngữ đầu ra',
-          value: config.targetLanguage,
-          options: targetLanguageOptions,
-          onChanged: (v) => _update((c) => c.copyWith(targetLanguage: v)),
-        ),
-        SelectField(
-          label: 'Bộ dịch',
+          label: 'Bộ dịch AI',
           value: config.translationProvider,
           options: options,
           disabled: {
@@ -669,6 +780,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   Widget _recognitionSection(TranslationConfig config) {
     return FormSection(
       title: 'Nhận diện lời thoại',
+      subtitle: 'Tách chữ bằng giọng nói (Whisper) hoặc quét phụ đề gốc (OCR)',
       icon: Icons.closed_caption_outlined,
       children: [
         SelectField(
@@ -703,7 +815,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final selected = byKey[config.ttsProvider];
     final voices = selected?.voiceChoices ?? const <TtsVoice>[];
     return FormSection(
-      title: 'Giọng đọc',
+      title: 'Giọng đọc AI (TTS)',
+      subtitle: 'Chọn nhà cung cấp giọng đọc, nhân vật và tốc độ lồng tiếng',
       icon: Icons.record_voice_over_outlined,
       children: [
         SelectField(
@@ -735,7 +848,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           },
         ),
         SelectField(
-          label: 'Chọn giọng',
+          label: 'Chế độ chọn giọng',
           value: config.voiceMode,
           options: [
             (
@@ -769,11 +882,13 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               ),
             ),
             if (voicePreviewProviders.contains(config.ttsProvider) &&
-                voices.isNotEmpty)
+                voices.isNotEmpty) ...[
+              const SizedBox(width: 8),
               VoicePreviewButton(
                 provider: config.ttsProvider,
                 voiceKey: config.voiceKey,
               ),
+            ],
           ],
         ),
         SelectField(
@@ -800,12 +915,16 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   Widget _audioSection(TranslationConfig config) {
     String percent(double v) => '${(v * 100).round()}%';
     return FormSection(
-      title: 'Âm thanh',
+      title: 'Trộn âm thanh (Audio Mix)',
+      subtitle: 'Điều chỉnh tỷ lệ âm lượng gốc và nhạc nền',
       icon: Icons.graphic_eq_rounded,
       children: [
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          title: const Text('Giữ âm thanh gốc dưới giọng thuyết minh'),
+          title: const Text(
+            'Giữ âm thanh gốc dưới giọng thuyết minh',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+          ),
           value: config.keepOriginalAudio,
           onChanged: config.hasVoice
               ? (v) => _update((c) => c.copyWith(keepOriginalAudio: v))
@@ -895,13 +1014,19 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          title: const Text('Khớp cỡ chữ trên video'),
+          title: const Text(
+            'Khớp cỡ chữ trên video',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+          ),
           value: style.matchSourceSize,
           onChanged: (v) => set((s) => s.copyWith(matchSourceSize: v)),
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          title: const Text('Che chữ nguồn khi thay thế'),
+          title: const Text(
+            'Che chữ nguồn khi thay thế',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+          ),
           value: style.maskOriginal,
           onChanged: (v) => set((s) => s.copyWith(maskOriginal: v)),
         ),
@@ -911,7 +1036,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           min: 8,
           max: 100,
           divisions: 92,
-          format: (v) => '${v.round()}',
+          format: (v) => '${v.round()} px',
           onChanged: (v) => set((s) => s.copyWith(minFontSize: v.round())),
         ),
         SliderField(
@@ -920,16 +1045,16 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           min: 12,
           max: 200,
           divisions: 188,
-          format: (v) => '${v.round()}',
+          format: (v) => '${v.round()} px',
           onChanged: (v) => set((s) => s.copyWith(maxFontSize: v.round())),
         ),
         SliderField(
-          label: 'Khoảng cách phía trên',
+          label: 'Khoảng cách phía dưới',
           value: style.positionGap.toDouble(),
           min: 0,
           max: 300,
           divisions: 300,
-          format: (v) => '${v.round()}',
+          format: (v) => '${v.round()} px',
           onChanged: (v) => set((s) => s.copyWith(positionGap: v.round())),
         ),
         ColorChoiceField(
@@ -960,7 +1085,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       children: [
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          title: const Text('Tự tạo caption và hashtag'),
+          title: const Text(
+            'Tự tạo caption và hashtag',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+          ),
           value: config.generateTiktokPost,
           onChanged: (v) => _update((c) => c.copyWith(generateTiktokPost: v)),
         ),
@@ -1028,19 +1156,79 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   }
 
   Widget _submitCard(TranslateFormState state) {
+    final config = state.config;
+    final modeLabel = switch (config.mode) {
+      1 => 'Chỉ phụ đề',
+      2 => 'Phụ đề + Thuyết minh',
+      _ => 'Phụ đề + Dub + Nhạc',
+    };
+
     return StudioCard(
+      topAccentColor: AppColors.brand,
       padding: const EdgeInsets.all(16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Row(
+            children: [
+              const StudioEyebrow(
+                label: 'SẴN SÀNG KHỞI CHẠY',
+                icon: Icons.rocket_launch_outlined,
+              ),
+              const Spacer(),
+              Text(
+                '${state.sourceCount}/50 nguồn',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.inkSoft,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceSubtle,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _SummaryItem(
+                    label: 'Chế độ',
+                    value: modeLabel,
+                  ),
+                ),
+                Container(width: 1, height: 26, color: AppColors.line),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _SummaryItem(
+                    label: 'Ngôn ngữ',
+                    value:
+                        '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
           if (state.error != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: AppColors.redSoft,
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: AppColors.redBorder),
+              ),
               child: Text(
                 state.error!,
                 style: const TextStyle(
-                  color: AppColors.red,
+                  color: AppColors.redText,
                   fontWeight: FontWeight.w600,
                   fontSize: 12.5,
                 ),
@@ -1091,6 +1279,174 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   }
 }
 
+class _ModeChoiceCard extends StatelessWidget {
+  const _ModeChoiceCard({
+    required this.title,
+    required this.badge,
+    required this.description,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String badge;
+  final String description;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.brandTint : AppColors.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? AppColors.brand : AppColors.line,
+              width: selected ? 1.5 : 1.0,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: selected ? AppColors.brand : AppColors.surfaceMuted,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  icon,
+                  size: 19,
+                  color: selected ? Colors.white : AppColors.inkSoft,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 13.8,
+                            fontWeight: FontWeight.w800,
+                            color:
+                                selected ? AppColors.brandDark : AppColors.ink,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? AppColors.brandSoft
+                                : AppColors.surfaceMuted,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: selected
+                                  ? AppColors.brandBorder
+                                  : AppColors.line,
+                            ),
+                          ),
+                          child: Text(
+                            badge,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: selected
+                                  ? AppColors.brandDark
+                                  : AppColors.muted,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      description,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.muted,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                selected
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_off_rounded,
+                size: 20,
+                color: selected ? AppColors.brand : AppColors.mutedLight,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryItem extends StatelessWidget {
+  const _SummaryItem({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: const TextStyle(
+            fontSize: 9.5,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.4,
+            color: AppColors.muted,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w800,
+            color: AppColors.ink,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _SubtitlePreviewMonitor extends StatelessWidget {
   const _SubtitlePreviewMonitor({required this.style});
 
@@ -1102,7 +1458,7 @@ class _SubtitlePreviewMonitor extends StatelessWidget {
     final bg = ColorChoiceField.parse(style.backgroundColor);
 
     return Container(
-      height: 116,
+      height: 124,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         gradient: AppColors.subtitlePreviewGradient,
@@ -1111,18 +1467,34 @@ class _SubtitlePreviewMonitor extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          const Positioned(
-            top: 0,
-            left: 0,
-            child: Text(
-              'MÀN HÌNH XEM TRƯỚC PHỤ ĐỀ',
-              style: TextStyle(
-                fontSize: 9.5,
-                fontWeight: FontWeight.w800,
-                color: Colors.white60,
-                letterSpacing: 0.5,
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'XEM TRƯỚC PHỤ ĐỀ · 16:9',
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white70,
+                    letterSpacing: 0.5,
+                  ),
+                ),
               ),
-            ),
+              const Spacer(),
+              Text(
+                '${style.minFontSize}–${style.maxFontSize}px',
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white60,
+                ),
+              ),
+            ],
           ),
           Align(
             alignment: Alignment.bottomCenter,

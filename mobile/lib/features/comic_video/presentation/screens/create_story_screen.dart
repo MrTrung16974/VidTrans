@@ -25,9 +25,12 @@ class CreateStoryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final options = ref.watch(comicOptionsProvider);
     return options.when(
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      loading: () => const Scaffold(
+        appBar: StudioSubBar(title: 'Tạo truyện mới'),
+        body: Center(child: CircularProgressIndicator()),
+      ),
       error: (error, _) => Scaffold(
-        appBar: AppBar(),
+        appBar: const StudioSubBar(title: 'Tạo truyện mới'),
         body: ErrorView(message: errorMessage(error), onRetry: () => ref.invalidate(comicOptionsProvider)),
       ),
       data: (options) => _CreateStory(options: options),
@@ -123,7 +126,12 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
         if (!didPop) setState(() => _bible = null);
       },
       child: Scaffold(
-        appBar: AppBar(title: Text(bible == null ? 'Tạo truyện mới' : 'Duyệt nhân vật & bối cảnh')),
+        appBar: StudioSubBar(
+          title: bible == null ? 'Tạo truyện mới' : 'Duyệt nhân vật & bối cảnh',
+          subtitle: bible == null
+              ? 'Thiết lập thế giới, phong cách & tập 1'
+              : 'Bước 2 · Kiểm tra hồ sơ nhân vật AI đề xuất',
+        ),
         body: Column(children: [
           if (_busy) LinearProgressIndicator(value: _upload),
           Expanded(child: bible == null ? _storyStep() : _reviewStep(bible)),

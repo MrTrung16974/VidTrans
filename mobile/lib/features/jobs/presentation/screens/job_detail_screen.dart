@@ -23,7 +23,18 @@ class JobDetailScreen extends ConsumerWidget {
     final job = ref.watch(jobDetailProvider(jobId));
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: const Text('Chi tiết công việc')),
+      appBar: StudioSubBar(
+        title: 'Chi tiết tiến trình',
+        subtitle:
+            'Job #${jobId.substring(0, jobId.length.clamp(0, 8)).toUpperCase()}',
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            tooltip: 'Làm mới',
+            onPressed: () => ref.invalidate(jobDetailProvider(jobId)),
+          ),
+        ],
+      ),
       body: job.when(
         loading: () => const Center(
           child: CircularProgressIndicator(color: AppColors.brand),
