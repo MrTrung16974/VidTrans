@@ -42,7 +42,10 @@ void main() {
         'music_volume': '0.15',
         'burn_subtitles': 'true',
         'auto_render': 'true',
+        // Off unless the caller says the account has a logo.
+        'apply_logo': 'false',
       });
+      expect(StoryForm().toFields(hasLogo: true)['apply_logo'], 'true');
       // No max_scenes: the web lets the story decide the number of scenes.
       expect(fields.containsKey('max_scenes'), isFalse);
     });
@@ -96,8 +99,10 @@ void main() {
       'text': 'Ba ngày sau',
       'episode_brief': '',
       'auto_render': 'false',
+      'apply_logo': 'false',
       'series_id': 's1',
     });
+    expect(form.toFields(hasLogo: true)['apply_logo'], 'true');
     expect(form.suggestFields(language: 'en', llmProvider: 'gemini'), {
       'text': 'Ba ngày sau',
       'story_brief': '',

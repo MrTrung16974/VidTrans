@@ -34,6 +34,7 @@ class StoryForm {
     this.musicVolume = 0.15,
     this.burnSubtitles = true,
     this.autoRender = true,
+    this.applyLogo = true,
   });
 
   /// Defaults that depend on what the server has configured (loadOptions on the web).
@@ -74,6 +75,10 @@ class StoryForm {
   bool burnSubtitles;
   bool autoRender;
 
+  /// Stamp the account logo on the video; sent as true only when [toFields]
+  /// is told the account has a logo (the server refuses it otherwise).
+  bool applyLogo;
+
   bool get animated => videoMode == 'animated';
   bool get usesCit => ttsProvider == 'cit';
 
@@ -100,7 +105,7 @@ class StoryForm {
 
   /// The multipart fields, exactly as the web form posts them. [bible] is the
   /// reviewed bible JSON, omitted to let the AI decide.
-  Map<String, String> toFields({String? bible}) => {
+  Map<String, String> toFields({String? bible, bool hasLogo = false}) => {
         'title': title,
         'genre': genre,
         'text': text,
@@ -132,6 +137,7 @@ class StoryForm {
         'music_volume': _num(musicVolume),
         'burn_subtitles': burnSubtitles ? 'true' : 'false',
         'auto_render': autoRender ? 'true' : 'false',
+        'apply_logo': applyLogo && hasLogo ? 'true' : 'false',
         'bible': ?bible,
       };
 
@@ -155,6 +161,7 @@ class EpisodeForm {
     this.text = '',
     this.episodeBrief = '',
     this.autoRender = true,
+    this.applyLogo = true,
   });
 
   final String seriesId;
@@ -163,15 +170,17 @@ class EpisodeForm {
   String text;
   String episodeBrief;
   bool autoRender;
+  bool applyLogo;
 
   /// [bible]: only the new characters and places the user approved; omitted
   /// when there is nothing new.
-  Map<String, String> toFields({String? bible}) => {
+  Map<String, String> toFields({String? bible, bool hasLogo = false}) => {
         'title': title,
         'youtube_title': youtubeTitle,
         'text': text,
         'episode_brief': episodeBrief,
         'auto_render': autoRender ? 'true' : 'false',
+        'apply_logo': applyLogo && hasLogo ? 'true' : 'false',
         'series_id': seriesId,
         'bible': ?bible,
       };

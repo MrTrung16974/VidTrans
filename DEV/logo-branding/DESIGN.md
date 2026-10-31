@@ -26,14 +26,15 @@ hàng đợi job PostgreSQL/SQLite, quota, hủy job, retention, lưu trữ theo
 | GET/PUT | `/api/v1/me/branding` | Đọc / lưu cấu hình logo |
 | GET/POST/DELETE | `/api/v1/me/branding/logo` | Xem / tải lên / xóa logo |
 | GET/POST/DELETE | `/api/v1/me/branding/template` | Logo mẫu cần thay (tùy chọn) |
-| POST | `/api/v1/branding/videos` | Gửi video (multipart: `file`, `rights_confirmed`, `override`) |
-| GET | `/api/v1/branding/videos` | Lịch sử của chính người dùng |
-| GET | `/api/v1/branding/videos/{job_id}` | Trạng thái, tiến độ, kết quả nhận diện |
-| GET | `/api/v1/branding/videos/{job_id}/download` | Tải video thành phẩm |
-| POST | `/api/v1/branding/videos/{job_id}/reprocess` | Chạy lại với vị trí xác nhận / ép góc |
+| POST | `/api/v1/batches` | Trường `apply_logo=true`: chèn logo vào video dịch thành phẩm |
+| POST | `/api/v1/comic/projects`, `/api/v1/comic/series` | Trường `apply_logo=true`: chèn logo vào video truyện |
 
-Hủy job dùng `POST /api/v1/jobs/{job_id}/cancel` sẵn có. Trạng thái: `queued` (PENDING),
-`processing`, `completed`, `failed`, `cancelled`.
+(2026-10-31) Đã bỏ luồng riêng "gửi video để gắn logo" (`/api/v1/branding/videos[...]`). Người dùng
+chọn "Chèn logo thương hiệu" ngay khi tạo video dịch hoặc video truyện; bước chèn chạy sau khi
+render, trên chính file thành phẩm. Video dịch nhận diện logo có sẵn như trước; video truyện đặt logo
+ở vị trí mặc định. Thiếu logo thì API từ chối `apply_logo` (400); chèn lỗi thì giữ video không logo
+và ghi lý do vào `branding.error` của job. Tập mới của truyện dài kỳ kế thừa lựa chọn của truyện,
+form tập có thể ghi đè.
 
 ## Thuật toán nhận diện (MVP, không cần huấn luyện)
 

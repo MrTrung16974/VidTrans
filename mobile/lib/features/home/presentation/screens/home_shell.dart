@@ -637,7 +637,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                     _UserMenuTile(
                       icon: Icons.branding_watermark_outlined,
                       title: 'Cấu hình gắn logo thương hiệu',
-                      subtitle: 'Tải lên logo, chọn góc hiển thị và chèn vào video',
+                      subtitle: 'Tải lên logo và chọn góc hiển thị khi chèn vào video',
                       onTap: () {
                         Navigator.of(sheetContext).pop();
                         context.push('/branding');

@@ -151,9 +151,11 @@ upload + rights confirmation -> snapshot logo/settings into the job -> probe
 - `domain/branding.py` holds the settings contract; `infrastructure/branding_store.py` keeps one
   row per user (`user_branding_configs`) and the logo under `work/users/<user>/branding/`.
 - `application/branding_routes.py` exposes `/api/v1/me`, `/api/v1/me/branding[/logo]` and
-  `/api/v1/branding/videos[...]` and `/api/v1/me/branding/template`; `application/branding_service.py` runs the job.
-- No logo found -> default corner (top-right unless configured); low confidence -> default, or
-  default plus a "needs review" flag so the user re-runs with a chosen corner.
+  `/api/v1/me/branding/template`. There is no separate logo job: translation batches and comic
+  projects take `apply_logo`, and `stamp_account_logo` (main.py) runs `BrandingJobRunner.stamp`
+  on the finished video in place. Translation videos detect an existing logo first; comic videos
+  use the default corner. A stamping failure keeps the unbranded video and records `branding.error`.
+- No logo found -> default corner (top-right unless configured).
 
 ## Job state
 

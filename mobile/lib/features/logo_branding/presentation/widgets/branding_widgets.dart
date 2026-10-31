@@ -3,33 +3,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../core/widgets/studio_widgets.dart';
 import '../../domain/branding_models.dart';
 import 'auth_image.dart';
-
-const brandingStatusLabels = {
-  'queued': 'Đang chờ',
-  'scheduled': 'Đã lên lịch',
-  'processing': 'Đang xử lý',
-  'cancelling': 'Đang hủy',
-  'completed': 'Hoàn tất',
-  'failed': 'Thất bại',
-  'cancelled': 'Đã hủy',
-};
-
-class BrandingStatusChip extends StatelessWidget {
-  const BrandingStatusChip(this.status, {super.key});
-
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    return StudioStatusPill(
-      status: status,
-      label: brandingStatusLabels[status] ?? status,
-    );
-  }
-}
 
 /// Where the logo lands at the default position, on a landscape and a
 /// portrait frame. Same geometry as renderPreview() in web/js/branding.js.

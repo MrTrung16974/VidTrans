@@ -23,6 +23,8 @@ void main() {
       expect(fields, containsPair('tiktok_max_summary_chars', '350'));
       expect(fields, containsPair('tiktok_hashtag_count', '5'));
       expect(fields, containsPair('auto_publish_tiktok', 'false'));
+      expect(fields, containsPair('apply_logo', 'true'));
+      expect(const TranslationConfig(applyLogo: false).toFormFields(), containsPair('apply_logo', 'false'));
       for (final key in [
         'tts_provider', 'voice_mode', 'voice_type', 'voice_style', 'speech_rate',
         'original_audio_volume', 'music_volume', 'tts_female_voice', 'elevenlabs_female_voice',

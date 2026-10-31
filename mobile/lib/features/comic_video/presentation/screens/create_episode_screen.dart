@@ -6,6 +6,7 @@ import '../../../../app/theme/app_theme.dart';
 import '../../../../core/errors/api_exception.dart';
 import '../../../../core/widgets/error_view.dart';
 import '../../../../core/widgets/studio_widgets.dart';
+import '../../../logo_branding/presentation/providers/branding_providers.dart';
 import '../../data/comic_repository.dart';
 import '../../domain/comic_forms.dart';
 import '../../domain/comic_models.dart';
@@ -48,6 +49,10 @@ class _CreateEpisode extends ConsumerStatefulWidget {
 }
 
 class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
+  // Watch while building; read in callbacks (ref.watch is only allowed in build).
+  bool get _hasLogo => ref.watch(brandingSettingsProvider).valueOrNull?.logo != null;
+  bool get _hasLogoNow => ref.read(brandingSettingsProvider).valueOrNull?.logo != null;
+
   late final EpisodeForm form = EpisodeForm(seriesId: widget.series.id);
   late final int number = widget.series.nextEpisodeNumber;
   LocalFile? _file;
@@ -103,7 +108,10 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
     _idempotencyKey ??= const Uuid().v4();
     try {
       final created = await ref.read(comicRepositoryProvider).createProject(
-            form.toFields(bible: hasNew ? bible!.toJsonString(onlyNew: true, withWorld: false) : null),
+            form.toFields(
+              bible: hasNew ? bible!.toJsonString(onlyNew: true, withWorld: false) : null,
+              hasLogo: _hasLogoNow,
+            ),
             file: _file,
             music: _music,
             idempotencyKey: _idempotencyKey,
@@ -200,6 +208,15 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
                               title: const Text('Tự render video sau khi chia cảnh'),
                               value: form.autoRender,
                               onChanged: (v) => setState(() => form.autoRender = v),
+                            ),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Chèn logo thương hiệu'),
+                              subtitle: Text(_hasLogo
+                                  ? 'Đặt logo của tài khoản ở góc mặc định'
+                                  : 'Chưa có logo — tải logo ở mục Logo & cấu hình chèn logo'),
+                              value: _hasLogo && form.applyLogo,
+                              onChanged: _hasLogo ? (v) => setState(() => form.applyLogo = v) : null,
                             ),
                           ],
                         ),

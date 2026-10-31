@@ -189,25 +189,13 @@ class ProfileScreen extends ConsumerWidget {
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(
-                      Icons.branding_watermark_outlined,
-                      color: AppColors.teal,
-                    ),
-                    title: const Text('Chèn logo vào video'),
-                    subtitle: const Text(
-                      'Gửi video, theo dõi và tải video đã gắn logo',
-                    ),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () => context.push('/branding'),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(
                       Icons.tune_rounded,
                       color: AppColors.teal,
                     ),
-                    title: const Text('Logo mặc định & cấu hình chèn logo'),
+                    title: const Text('Logo & cấu hình chèn logo'),
+                    subtitle: const Text('Chọn "Chèn logo" khi tạo video dịch hoặc video truyện'),
                     trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () => context.push('/branding/settings'),
+                    onTap: () => context.push('/branding'),
                   ),
                 ],
               ),

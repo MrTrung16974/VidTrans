@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../../core/errors/api_exception.dart';
+import '../../../logo_branding/presentation/providers/branding_providers.dart';
 import '../../data/translation_repository.dart';
 import '../../domain/options.dart';
 import '../../domain/translation_config.dart';
@@ -141,7 +142,10 @@ class TranslateFormController extends Notifier<TranslateFormState> {
       final batch = await _repo.createBatch(
         files: state.files,
         sourceLinks: state.linksText,
-        config: state.config,
+        // The choice is remembered, but only honoured while the account has a logo.
+        config: state.config.copyWith(
+          applyLogo: state.config.applyLogo && ref.read(brandingSettingsProvider).valueOrNull?.logo != null,
+        ),
         backgroundMusic: state.music,
         idempotencyKey: _idempotencyKey!,
         cancelToken: _cancelToken,

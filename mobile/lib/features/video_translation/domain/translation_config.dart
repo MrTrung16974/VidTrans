@@ -27,6 +27,7 @@ class TranslationConfig {
     this.generateTiktokPost = true,
     this.tiktokMaxSummaryChars = 350,
     this.tiktokHashtagCount = 5,
+    this.applyLogo = true,
   });
 
   final String batchName;
@@ -57,6 +58,10 @@ class TranslationConfig {
   final bool generateTiktokPost;
   final int tiktokMaxSummaryChars;
   final int tiktokHashtagCount;
+
+  /// Stamp the account logo on the finished video. Only sent as true when the
+  /// account has a logo (the server refuses it otherwise).
+  final bool applyLogo;
 
   bool get hasVoice => mode == 2 || mode == 3;
   bool get needsMusic => mode == 3;
@@ -96,6 +101,7 @@ class TranslationConfig {
       'tiktok_hashtag_count': '$tiktokHashtagCount',
       'auto_publish_tiktok': 'false',
       'subtitle_style': jsonEncode(subtitle.toJson()),
+      'apply_logo': '$applyLogo',
     };
     if (hasVoice) {
       final hasVoiceList = ttsProvider == 'elevenlabs' || ttsProvider == 'cit';
@@ -146,6 +152,7 @@ class TranslationConfig {
     bool? generateTiktokPost,
     int? tiktokMaxSummaryChars,
     int? tiktokHashtagCount,
+    bool? applyLogo,
   }) =>
       TranslationConfig(
         batchName: batchName ?? this.batchName,
@@ -171,6 +178,7 @@ class TranslationConfig {
         generateTiktokPost: generateTiktokPost ?? this.generateTiktokPost,
         tiktokMaxSummaryChars: tiktokMaxSummaryChars ?? this.tiktokMaxSummaryChars,
         tiktokHashtagCount: tiktokHashtagCount ?? this.tiktokHashtagCount,
+        applyLogo: applyLogo ?? this.applyLogo,
       );
 
   /// Saved form state (remembered between sessions). The batch name is not kept.
@@ -197,6 +205,7 @@ class TranslationConfig {
         'generate_tiktok_post': generateTiktokPost,
         'tiktok_max_summary_chars': tiktokMaxSummaryChars,
         'tiktok_hashtag_count': tiktokHashtagCount,
+        'apply_logo': applyLogo,
       };
 
   factory TranslationConfig.fromPrefs(Map<String, dynamic> json) {
@@ -227,6 +236,7 @@ class TranslationConfig {
       generateTiktokPost: json['generate_tiktok_post'] as bool? ?? d.generateTiktokPost,
       tiktokMaxSummaryChars: (json['tiktok_max_summary_chars'] as num?)?.toInt() ?? d.tiktokMaxSummaryChars,
       tiktokHashtagCount: (json['tiktok_hashtag_count'] as num?)?.toInt() ?? d.tiktokHashtagCount,
+      applyLogo: json['apply_logo'] as bool? ?? d.applyLogo,
     );
   }
 }

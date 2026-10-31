@@ -300,7 +300,8 @@ def settings_form(
     # Genre preset key and the bible the user reviewed (JSON from /bible/suggest, edited).
     genre: str = Form("", max_length=40),
     bible: str = Form(""),
-    apply_logo: str = Form("false"),
+    # Empty: off for a new story, the series' choice for an episode.
+    apply_logo: str = Form(""),
 ) -> dict[str, Any]:
     """Creation-form fields shared by standalone projects and series."""
     return dict(locals())
@@ -712,7 +713,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
                                            youtube_title=fields["youtube_title"],
                                            auto_render=form_flag(fields["auto_render"]),
                                            episode_brief=episode_brief, bible=parse_bible(fields["bible"]),
-                                           apply_logo=form_flag(fields["apply_logo"]))
+                                           apply_logo=form_flag(fields["apply_logo"])
+                                           if fields["apply_logo"].strip() else None)
             return JSONResponse({"job_id": job_id, "status": "queued", "story_chars": len(story),
                                  "series_id": series_id.strip(), "episode_number": number}, status_code=202)
         settings = build_settings(account, fields)

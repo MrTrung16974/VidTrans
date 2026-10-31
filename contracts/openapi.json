@@ -567,6 +567,11 @@
       },
       "Body_create_batch_endpoint_api_v1_batches_post": {
         "properties": {
+          "apply_logo": {
+            "default": false,
+            "title": "Apply Logo",
+            "type": "boolean"
+          },
           "auto_publish_tiktok": {
             "default": false,
             "title": "Auto Publish Tiktok",
@@ -804,6 +809,11 @@
             "title": "Animation Provider",
             "type": "string"
           },
+          "apply_logo": {
+            "default": "",
+            "title": "Apply Logo",
+            "type": "string"
+          },
           "aspect_ratio": {
             "default": "9:16",
             "title": "Aspect Ratio",
@@ -1001,6 +1011,11 @@
           "animation_provider": {
             "default": "camera_2_5d",
             "title": "Animation Provider",
+            "type": "string"
+          },
+          "apply_logo": {
+            "default": "",
+            "title": "Apply Logo",
             "type": "string"
           },
           "aspect_ratio": {
@@ -1218,6 +1233,11 @@
       },
       "Body_process_video_endpoint_convert_post": {
         "properties": {
+          "apply_logo": {
+            "default": false,
+            "title": "Apply Logo",
+            "type": "boolean"
+          },
           "auto_publish_tiktok": {
             "default": false,
             "title": "Auto Publish Tiktok",
@@ -1396,6 +1416,11 @@
       },
       "Body_process_video_endpoint_process_video_post": {
         "properties": {
+          "apply_logo": {
+            "default": false,
+            "title": "Apply Logo",
+            "type": "boolean"
+          },
           "auto_publish_tiktok": {
             "default": false,
             "title": "Auto Publish Tiktok",
@@ -1583,37 +1608,6 @@
           "reviewed"
         ],
         "title": "Body_publish_api_v1_tiktok_browser_attempts__attempt_id__publish_post",
-        "type": "object"
-      },
-      "Body_queue_video_api_v1_branding_videos_post": {
-        "properties": {
-          "file": {
-            "contentMediaType": "application/octet-stream",
-            "title": "File",
-            "type": "string"
-          },
-          "override": {
-            "default": "auto",
-            "enum": [
-              "auto",
-              "top-right",
-              "top-left",
-              "bottom-right",
-              "bottom-left"
-            ],
-            "title": "Override",
-            "type": "string"
-          },
-          "rights_confirmed": {
-            "default": false,
-            "title": "Rights Confirmed",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "file"
-        ],
-        "title": "Body_queue_video_api_v1_branding_videos_post",
         "type": "object"
       },
       "Body_register_account_api_v1_auth_register_post": {
@@ -2892,37 +2886,6 @@
         "title": "LocationPatch",
         "type": "object"
       },
-      "QueuedJob": {
-        "additionalProperties": true,
-        "properties": {
-          "duplicate": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "True when an Idempotency-Key replay returned an earlier job.",
-            "title": "Duplicate"
-          },
-          "job_id": {
-            "title": "Job Id",
-            "type": "string"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "job_id",
-          "status"
-        ],
-        "title": "QueuedJob",
-        "type": "object"
-      },
       "RegisteredDevice": {
         "additionalProperties": true,
         "properties": {
@@ -3025,36 +2988,6 @@
           }
         },
         "title": "RenderRequest",
-        "type": "object"
-      },
-      "ReprocessRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "cover_original": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cover Original"
-          },
-          "override": {
-            "default": "auto",
-            "enum": [
-              "auto",
-              "top-right",
-              "top-left",
-              "bottom-right",
-              "bottom-left"
-            ],
-            "title": "Override",
-            "type": "string"
-          }
-        },
-        "title": "ReprocessRequest",
         "type": "object"
       },
       "SceneFix": {
@@ -4645,6 +4578,23 @@
         "summary": "Check Admin Proxy Auth"
       }
     },
+    "/api/v1/auth/guest": {
+      "post": {
+        "description": "Create a random trial account and sign it in.\n\nThe generated password is returned once so the guest can sign in again on\nanother device; it is never stored in plain text.",
+        "operationId": "create_guest_account_api_v1_auth_guest_post",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Guest Account"
+      }
+    },
     "/api/v1/auth/password-reset/confirm": {
       "post": {
         "description": "Set a new password with the e-mailed code and end every existing session.",
@@ -5380,311 +5330,6 @@
           }
         ],
         "summary": "Switch Free Plan"
-      }
-    },
-    "/api/v1/branding/videos": {
-      "get": {
-        "operationId": "history_api_v1_branding_videos_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": [
-              "admin"
-            ]
-          },
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "History",
-        "tags": [
-          "branding"
-        ]
-      },
-      "post": {
-        "operationId": "queue_video_api_v1_branding_videos_post",
-        "parameters": [
-          {
-            "description": "Optional. Retrying with the same key returns the first result instead of creating again.",
-            "in": "header",
-            "name": "idempotency-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 128,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Optional. Retrying with the same key returns the first result instead of creating again.",
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_queue_video_api_v1_branding_videos_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueuedJob"
-                }
-              }
-            },
-            "description": "Idempotency-Key replay of an earlier job"
-          },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueuedJob"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": [
-              "admin"
-            ]
-          },
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "Queue Video",
-        "tags": [
-          "branding"
-        ]
-      }
-    },
-    "/api/v1/branding/videos/{job_id}": {
-      "get": {
-        "operationId": "video_status_api_v1_branding_videos__job_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": [
-              "admin"
-            ]
-          },
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "Video Status",
-        "tags": [
-          "branding"
-        ]
-      }
-    },
-    "/api/v1/branding/videos/{job_id}/download": {
-      "get": {
-        "operationId": "download_api_v1_branding_videos__job_id__download_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": [
-              "admin"
-            ]
-          },
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "Download",
-        "tags": [
-          "branding"
-        ]
-      }
-    },
-    "/api/v1/branding/videos/{job_id}/reprocess": {
-      "post": {
-        "description": "Re-render with a confirmed placement (after a \"needs review\" result) or another choice.",
-        "operationId": "reprocess_api_v1_branding_videos__job_id__reprocess_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReprocessRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": [
-              "admin"
-            ]
-          },
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "Reprocess",
-        "tags": [
-          "branding"
-        ]
       }
     },
     "/api/v1/comic/bible/suggest": {

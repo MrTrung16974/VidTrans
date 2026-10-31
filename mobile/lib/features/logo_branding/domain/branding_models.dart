@@ -10,15 +10,6 @@ const positionLabels = {
   'bottom-left': 'Góc dưới bên trái',
 };
 
-/// Placement choices when queueing a video (`override` form field).
-const overrideLabels = {
-  'auto': 'Tự động theo cấu hình',
-  'top-right': 'Ép góc trên bên phải',
-  'top-left': 'Ép góc trên bên trái',
-  'bottom-right': 'Ép góc dưới bên phải',
-  'bottom-left': 'Ép góc dưới bên trái',
-};
-
 const multiLogoStrategyLabels = {
   'nearest-default': 'Gần vị trí mặc định nhất',
   'largest': 'Lớn nhất',
@@ -158,81 +149,3 @@ class BrandingSettings {
       );
 }
 
-/// A logo job from `/api/v1/branding/videos`.
-class BrandingJob {
-  const BrandingJob(this.raw);
-
-  final Map<String, dynamic> raw;
-
-  String get id => raw['job_id'].toString();
-  String get status => raw['status'] as String? ?? 'queued';
-  String get title => (raw['filename'] as String?) ?? id;
-  String? get error => raw['error'] as String?;
-  String? get stepDetail => raw['step_detail'] as String?;
-  DateTime? get createdAt => DateTime.tryParse(raw['created_at']?.toString() ?? '')?.toLocal();
-
-  /// Logo jobs report progress as a 0..1 fraction (branding_service.py).
-  double get progress => ((raw['progress'] as num?)?.toDouble() ?? 0).clamp(0, 1);
-
-  Map<String, dynamic>? get _info => raw['branding'] is Map ? Map<String, dynamic>.from(raw['branding'] as Map) : null;
-
-  bool get isActive => const {'queued', 'scheduled', 'processing', 'cancelling'}.contains(status);
-  bool get canCancel => status == 'queued' || status == 'processing';
-  bool get canReprocess => const {'completed', 'failed', 'cancelled'}.contains(status);
-  bool get canDownload => status == 'completed';
-  bool get needsReview => _info?['needs_review'] == true;
-
-  /// Same wording as placementText() in web/js/branding.js.
-  String? get placementText {
-    final info = _info;
-    if (info == null) return null;
-    final override = info['override'];
-    if (override is String && override != 'auto') {
-      return 'Ép ${(positionLabels[override] ?? override).toLowerCase()}';
-    }
-    final detection = info['detection'];
-    if (detection is! Map) return 'Không nhận diện · vị trí mặc định';
-    final cover = switch (info['cover_method']) {
-      'inpaint' => ' · đã khôi phục nền logo cũ',
-      'blur' => ' · đã làm mờ logo cũ',
-      _ => '',
-    };
-    final via = detection['method'] == 'template' ? ' theo mẫu' : '';
-    final placements = (info['placements'] as List?) ?? const [];
-    final moving = placements.any((p) => p is Map && p['source'] == 'tracked') ? ' · logo di chuyển, đã bám theo' : '';
-    switch (detection['status']) {
-      case 'found':
-        final spans = placements.length > 1 ? ' · ${placements.length} đoạn' : '';
-        final confidence = (((detection['confidence'] as num?) ?? 0) * 100).round();
-        return 'Tìm thấy logo$via (độ tin cậy $confidence%)$spans$moving$cover';
-      case 'uncertain':
-        return 'Không chắc chắn · dùng vị trí mặc định';
-      default:
-        return 'Không có logo · vị trí mặc định';
-    }
-  }
-}
-
-class BrandingHistory {
-  const BrandingHistory({required this.items, required this.total});
-
-  final List<BrandingJob> items;
-  final int total;
-
-  bool get hasActive => items.any((job) => job.isActive);
-
-  factory BrandingHistory.fromJson(Map<String, dynamic> json) => BrandingHistory(
-        items: [
-          for (final item in (json['items'] as List? ?? const []))
-            BrandingJob(Map<String, dynamic>.from(item as Map)),
-        ],
-        total: (json['total'] as num?)?.toInt() ?? 0,
-      );
-}
-
-/// Text fields of `POST /api/v1/branding/videos` besides the `file` part
-/// (the web form sends `override` and `rights_confirmed=true`).
-Map<String, String> brandingVideoFields({required String override, required bool rightsConfirmed}) {
-  assert(overrideLabels.containsKey(override));
-  return {'override': override, 'rights_confirmed': rightsConfirmed ? 'true' : 'false'};
-}

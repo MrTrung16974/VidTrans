@@ -8,6 +8,7 @@ import '../../../../app/theme/app_theme.dart';
 import '../../../../core/auth/session_controller.dart';
 import '../../../../core/widgets/studio_widgets.dart';
 import '../../../home/presentation/screens/home_shell.dart';
+import '../../../logo_branding/presentation/providers/branding_providers.dart';
 import '../../data/translation_repository.dart';
 import '../../domain/options.dart';
 import '../../domain/providers.dart';
@@ -221,6 +222,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             _recognitionSection(config),
             if (config.hasVoice) _voiceSection(config, tts),
             _audioSection(config),
+            _logoSection(config),
             KeyedSubtree(
               key: _step3Key,
               child: _subtitleStyleSection(config),
@@ -908,6 +910,39 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             (c) => c.copyWith(speechRate: double.parse(v.toStringAsFixed(2))),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _logoSection(TranslationConfig config) {
+    final hasLogo = ref.watch(brandingSettingsProvider).valueOrNull?.logo != null;
+    return FormSection(
+      title: 'Logo thương hiệu',
+      subtitle: 'Chèn logo của tài khoản vào video thành phẩm',
+      icon: Icons.branding_watermark_outlined,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text(
+            'Chèn logo thương hiệu',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            hasLogo
+                ? 'Tự nhận diện logo có sẵn trong video, không thấy thì đặt ở góc mặc định'
+                : 'Chưa có logo — tải logo ở mục Logo & cấu hình chèn logo',
+          ),
+          value: hasLogo && config.applyLogo,
+          onChanged: hasLogo ? (v) => _update((c) => c.copyWith(applyLogo: v)) : null,
+        ),
+        if (!hasLogo)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => context.push('/branding'),
+              child: const Text('Tải logo lên'),
+            ),
+          ),
       ],
     );
   }
