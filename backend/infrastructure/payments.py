@@ -21,6 +21,8 @@ from zoneinfo import ZoneInfo
 
 
 PLAN_CATALOG = {
+    # Auto-generated guest accounts: a tiny taste of the pipeline, never sold.
+    "trial": {"name": "Dùng thử", "amount": 0, "minutes": 5},
     "free": {"name": "Free", "amount": 0, "minutes": 30},
     "creator": {"name": "Creator", "amount": 199_000, "minutes": 300},
     "pro": {"name": "Pro", "amount": 499_000, "minutes": 1_000},

@@ -49,7 +49,9 @@ class HomeShell extends ConsumerWidget {
     ];
 
     final bottomInset = MediaQuery.paddingOf(context).bottom;
-    final bottomMargin = math.max(10.0, bottomInset + 4.0);
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final isCompactHeight = screenHeight < 700;
+    final bottomMargin = math.max(isCompactHeight ? 6.0 : 10.0, bottomInset + 2.0);
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
 
     return Scaffold(
@@ -60,15 +62,21 @@ class HomeShell extends ConsumerWidget {
           : ColoredBox(
               color: AppColors.bg,
               child: Padding(
-                padding: EdgeInsets.fromLTRB(12, 6, 12, bottomMargin),
+                padding: EdgeInsets.fromLTRB(
+                  12,
+                  isCompactHeight ? 4 : 6,
+                  12,
+                  bottomMargin,
+                ),
                 child: Align(
                   alignment: Alignment.bottomCenter,
                   heightFactor: 1.0,
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 400),
+                    constraints: const BoxConstraints(maxWidth: 420),
                     child: _FloatingNetflixDock(
                       items: items,
                       currentIndex: shell.currentIndex,
+                      compact: isCompactHeight,
                       onSelect: (index) {
                         HapticFeedback.selectionClick();
                         shell.goBranch(
@@ -109,11 +117,13 @@ class _FloatingNetflixDock extends StatelessWidget {
     required this.items,
     required this.currentIndex,
     required this.onSelect,
+    this.compact = false,
   });
 
   final List<_DockItem> items;
   final int currentIndex;
   final ValueChanged<int> onSelect;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -141,7 +151,7 @@ class _FloatingNetflixDock extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
           child: Container(
-            height: 64,
+            height: compact ? 58 : 64,
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.94),
@@ -444,24 +454,42 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                     InkWell(
                       onTap: () => context.go('/translate'),
                       borderRadius: BorderRadius.circular(10),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
                           horizontal: 2,
                           vertical: 4,
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            VidTransLogo(size: 32),
-                            SizedBox(width: 9),
-                            Text(
-                              'VidTrans',
-                              style: TextStyle(
-                                fontSize: 17.5,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.45,
-                                color: AppColors.ink,
-                              ),
+                            const VidTransLogo(size: 32),
+                            const SizedBox(width: 9),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'VidTrans',
+                                  style: TextStyle(
+                                    fontSize: 16.5,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.45,
+                                    color: AppColors.ink,
+                                    height: 1.05,
+                                  ),
+                                ),
+                                if (MediaQuery.sizeOf(context).width >= 350)
+                                  const Text(
+                                    'CREATOR STUDIO',
+                                    style: TextStyle(
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.75,
+                                      color: AppColors.muted,
+                                      height: 1.15,
+                                    ),
+                                  ),
+                              ],
                             ),
                           ],
                         ),

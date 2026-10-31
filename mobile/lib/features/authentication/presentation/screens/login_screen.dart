@@ -157,35 +157,96 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  InputDecoration _compactInputDecoration({
+    required String labelText,
+    String? hintText,
+    required IconData prefixIcon,
+    Widget? suffixIcon,
+    required bool compact,
+  }) {
+    final vPad = compact ? 10.0 : 12.0;
+    return InputDecoration(
+      isDense: true,
+      labelText: labelText,
+      hintText: hintText,
+      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: vPad),
+      prefixIconConstraints: const BoxConstraints(minWidth: 38, minHeight: 36),
+      prefixIcon: Icon(
+        prefixIcon,
+        size: 18,
+        color: AppColors.muted,
+      ),
+      suffixIconConstraints: const BoxConstraints(minWidth: 38, minHeight: 36),
+      suffixIcon: suffixIcon,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+
     return Scaffold(
       backgroundColor: const Color(0xFF0B1120),
+      resizeToAvoidBottomInset: true,
       body: Stack(
         fit: StackFit.expand,
         children: [
           const _StudioCinematicBackdrop(),
           SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 20,
-                ),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 430),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildHeroShowcase(),
-                      const SizedBox(height: 18),
-                      _buildAuthCard(),
-                      const SizedBox(height: 16),
-                      _buildBottomStudioHighlights(),
-                    ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final maxH = constraints.maxHeight;
+                final maxW = constraints.maxWidth;
+                final isMultiField = _mode == _AuthMode.register ||
+                    _mode == _AuthMode.resetConfirm;
+                final compact = maxH < 730 || isMultiField;
+                final ultraCompact = maxH < 640;
+                final showBottomPills =
+                    !keyboardOpen && (!isMultiField || maxH >= 760) && maxH >= 580;
+
+                return SingleChildScrollView(
+                  physics: keyboardOpen
+                      ? const ClampingScrollPhysics()
+                      : const BouncingScrollPhysics(),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: maxW < 360 ? 14 : 18,
+                    vertical: ultraCompact ? 8 : 12,
                   ),
-                ),
-              ),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: math.max(
+                        0.0,
+                        maxH - (ultraCompact ? 16 : 24),
+                      ),
+                    ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _buildHeroShowcase(
+                              compact: compact,
+                              ultraCompact: ultraCompact,
+                            ),
+                            SizedBox(height: ultraCompact ? 8 : (compact ? 10 : 14)),
+                            _buildAuthCard(
+                              compact: compact,
+                              ultraCompact: ultraCompact,
+                              maxW: maxW,
+                            ),
+                            if (showBottomPills) ...[
+                              SizedBox(height: compact ? 10 : 12),
+                              _buildBottomStudioHighlights(maxW: maxW),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -193,32 +254,84 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Widget _buildHeroShowcase() {
+  Widget _buildHeroShowcase({
+    required bool compact,
+    required bool ultraCompact,
+  }) {
+    if (ultraCompact) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.15),
+              ),
+            ),
+            child: const VidTransLogo(size: 30),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0x26F97316),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: const Color(0x59FB923C)),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 12,
+                  color: Color(0xFFFDBA74),
+                ),
+                SizedBox(width: 5),
+                Text(
+                  'VIDTRANS CREATOR STUDIO',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.7,
+                    color: Color(0xFFFFEDD5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    final logoSize = compact ? 40.0 : 46.0;
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        // Glowing logo pedestal
         Container(
-          padding: const EdgeInsets.all(10),
+          padding: EdgeInsets.all(compact ? 7 : 9),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(compact ? 17 : 20),
             border: Border.all(
               color: Colors.white.withValues(alpha: 0.14),
             ),
             boxShadow: [
               BoxShadow(
-                color: AppColors.brand.withValues(alpha: 0.32),
-                blurRadius: 28,
+                color: AppColors.brand.withValues(alpha: 0.30),
+                blurRadius: 22,
                 spreadRadius: -2,
-                offset: const Offset(0, 10),
+                offset: const Offset(0, 8),
               ),
             ],
           ),
-          child: const VidTransLogo(size: 52),
+          child: VidTransLogo(size: logoSize),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: compact ? 8 : 10),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4.5),
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
           decoration: BoxDecoration(
             color: const Color(0x26F97316),
             borderRadius: BorderRadius.circular(999),
@@ -231,16 +344,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             children: [
               Icon(
                 Icons.auto_awesome_rounded,
-                size: 13,
+                size: 12.5,
                 color: Color(0xFFFDBA74),
               ),
-              SizedBox(width: 6),
+              SizedBox(width: 5),
               Text(
                 'VIDTRANS CREATOR STUDIO',
                 style: TextStyle(
-                  fontSize: 10.5,
+                  fontSize: 10,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
+                  letterSpacing: 0.75,
                   color: Color(0xFFFFEDD5),
                 ),
               ),
@@ -251,7 +364,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Widget _buildAuthCard() {
+  Widget _buildAuthCard({
+    required bool compact,
+    required bool ultraCompact,
+    required double maxW,
+  }) {
     final isTabMode =
         _mode == _AuthMode.login || _mode == _AuthMode.register;
 
@@ -274,10 +391,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ),
     };
 
+    final hPad = maxW < 360 ? 16.0 : 20.0;
+    final vPadTop = compact ? 15.0 : 18.0;
+    final vPadBottom = compact ? 14.0 : 16.0;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.98),
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
           color: Colors.white.withValues(alpha: 0.85),
           width: 1.2,
@@ -285,24 +406,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         boxShadow: const [
           BoxShadow(
             color: Color(0x52000000),
-            blurRadius: 48,
+            blurRadius: 42,
             spreadRadius: -4,
-            offset: Offset(0, 24),
+            offset: Offset(0, 20),
           ),
           BoxShadow(
             color: Color(0x24EA580C),
-            blurRadius: 24,
-            offset: Offset(0, 8),
+            blurRadius: 20,
+            offset: Offset(0, 6),
           ),
         ],
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Top orange-to-amber studio accent bar
+          // Top orange-to-teal studio accent bar matching `.auth-card::before`
           Container(
-            height: 4,
+            height: 3.5,
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -314,12 +436,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+            padding: EdgeInsets.fromLTRB(hPad, vPadTop, hPad, vPadBottom),
             child: Form(
               key: _formKey,
               child: AutofillGroup(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Row(
                       children: [
@@ -360,57 +483,59 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
+                    SizedBox(height: compact ? 10 : 12),
                     Text(
                       title,
-                      style: const TextStyle(
-                        fontSize: 24,
+                      style: TextStyle(
+                        fontSize: compact ? 20.5 : 22.5,
                         fontWeight: FontWeight.w900,
                         color: AppColors.ink,
-                        letterSpacing: -0.6,
+                        letterSpacing: -0.55,
                         height: 1.15,
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      style: const TextStyle(
-                        fontSize: 13,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: compact ? 12.2 : 12.8,
                         color: AppColors.muted,
-                        height: 1.45,
+                        height: 1.38,
                       ),
                     ),
                     if (isTabMode) ...[
-                      const SizedBox(height: 18),
-                      _buildModeSegmentedControl(),
+                      SizedBox(height: compact ? 12 : 14),
+                      _buildModeSegmentedControl(compact: compact),
                     ],
-                    const SizedBox(height: 18),
+                    SizedBox(height: compact ? 12 : 14),
                     if (_infoMessage != null) ...[
                       Container(
-                        margin: const EdgeInsets.only(bottom: 14),
+                        margin: const EdgeInsets.only(bottom: 10),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
+                          horizontal: 11,
+                          vertical: 8,
                         ),
                         decoration: BoxDecoration(
                           color: AppColors.tealSoft,
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(11),
                           border: Border.all(color: AppColors.tealBorder),
                         ),
                         child: Row(
                           children: [
                             const Icon(
                               Icons.check_circle_outline_rounded,
-                              size: 18,
+                              size: 16,
                               color: AppColors.teal,
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 7),
                             Expanded(
                               child: Text(
                                 _infoMessage!,
                                 style: const TextStyle(
                                   color: AppColors.tealText,
-                                  fontSize: 12.5,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -420,37 +545,46 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ],
                     ...switch (_mode) {
-                      _AuthMode.login => _buildLoginFields(),
-                      _AuthMode.register => _buildRegisterFields(),
-                      _AuthMode.resetRequest => _buildResetRequestFields(),
-                      _AuthMode.resetConfirm => _buildResetConfirmFields(),
+                      _AuthMode.login => _buildLoginFields(compact: compact),
+                      _AuthMode.register => _buildRegisterFields(
+                          compact: compact,
+                          maxW: maxW,
+                        ),
+                      _AuthMode.resetRequest =>
+                        _buildResetRequestFields(compact: compact),
+                      _AuthMode.resetConfirm => _buildResetConfirmFields(
+                          compact: compact,
+                          maxW: maxW,
+                        ),
                     },
                     if (_error != null) ...[
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 10),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
+                          horizontal: 11,
+                          vertical: 8,
                         ),
                         decoration: BoxDecoration(
                           color: AppColors.redSoft,
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(11),
                           border: Border.all(color: AppColors.redBorder),
                         ),
                         child: Row(
                           children: [
                             const Icon(
                               Icons.error_outline_rounded,
-                              size: 18,
+                              size: 16,
                               color: AppColors.red,
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 7),
                             Expanded(
                               child: Text(
                                 _error!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: AppColors.redText,
-                                  fontSize: 12.5,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -459,10 +593,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 20),
+                    SizedBox(height: compact ? 12 : 14),
                     StudioGradientButton(
                       onPressed: _submitting ? null : _submit,
                       isLoading: _submitting,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: compact ? 11.5 : 13,
+                      ),
                       icon: switch (_mode) {
                         _AuthMode.login => Icons.login_rounded,
                         _AuthMode.register => Icons.rocket_launch_rounded,
@@ -476,17 +614,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         _AuthMode.resetConfirm => 'Đặt lại mật khẩu',
                       },
                     ),
-                    const SizedBox(height: 12),
+                    SizedBox(height: compact ? 8 : 10),
                     _buildBottomModeLinks(),
-                    const SizedBox(height: 14),
+                    SizedBox(height: compact ? 8 : 10),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 9,
+                        horizontal: 10,
+                        vertical: 7,
                       ),
                       decoration: BoxDecoration(
                         color: const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(11),
+                        borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: const Color(0xFFE2E8F0)),
                       ),
                       child: const Row(
@@ -494,16 +632,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         children: [
                           Icon(
                             Icons.shield_outlined,
-                            size: 14,
+                            size: 13,
                             color: AppColors.muted,
                           ),
-                          SizedBox(width: 6),
+                          SizedBox(width: 5),
                           Flexible(
                             child: Text(
                               'OAuth2 Password + JWT · Phiên đăng nhập bảo mật',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                fontSize: 11.2,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w600,
                                 color: AppColors.muted,
                               ),
@@ -522,13 +662,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Widget _buildModeSegmentedControl() {
+  Widget _buildModeSegmentedControl({required bool compact}) {
     final isLogin = _mode == _AuthMode.login;
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(3.5),
       decoration: BoxDecoration(
         color: const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Row(
@@ -537,6 +677,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: _SegmentTab(
               label: 'Đăng nhập',
               selected: isLogin,
+              compact: compact,
               onTap: () => _switchMode(_AuthMode.login),
             ),
           ),
@@ -545,6 +686,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: _SegmentTab(
               label: 'Đăng ký Free',
               selected: !isLogin,
+              compact: compact,
               onTap: () => _switchMode(_AuthMode.register),
             ),
           ),
@@ -553,7 +695,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  List<Widget> _buildLoginFields() {
+  List<Widget> _buildLoginFields({required bool compact}) {
     return [
       TextFormField(
         controller: _username,
@@ -564,40 +706,37 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           AutofillHints.email,
         ],
         textInputAction: TextInputAction.next,
-        decoration: const InputDecoration(
+        style: const TextStyle(fontSize: 14),
+        decoration: _compactInputDecoration(
           labelText: 'Tên đăng nhập / Email',
           hintText: 'Nhập username hoặc email của bạn',
-          prefixIcon: Icon(
-            Icons.person_outline_rounded,
-            size: 20,
-            color: AppColors.muted,
-          ),
+          prefixIcon: Icons.person_outline_rounded,
+          compact: compact,
         ),
         validator: (value) => (value == null || value.trim().isEmpty)
             ? 'Nhập tên đăng nhập hoặc email'
             : null,
       ),
-      const SizedBox(height: 14),
+      SizedBox(height: compact ? 10 : 12),
       TextFormField(
         controller: _password,
         obscureText: _obscurePassword,
         autofillHints: const [AutofillHints.password],
         textInputAction: TextInputAction.done,
         onFieldSubmitted: (_) => _submit(),
-        decoration: InputDecoration(
+        style: const TextStyle(fontSize: 14),
+        decoration: _compactInputDecoration(
           labelText: 'Mật khẩu',
           hintText: 'Nhập mật khẩu',
-          prefixIcon: const Icon(
-            Icons.lock_outline_rounded,
-            size: 20,
-            color: AppColors.muted,
-          ),
+          prefixIcon: Icons.lock_outline_rounded,
+          compact: compact,
           suffixIcon: IconButton(
+            visualDensity: VisualDensity.compact,
             icon: Icon(
               _obscurePassword
                   ? Icons.visibility_outlined
                   : Icons.visibility_off_outlined,
-              size: 20,
+              size: 18,
               color: AppColors.muted,
             ),
             onPressed: () =>
@@ -607,20 +746,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         validator: (value) =>
             (value == null || value.isEmpty) ? 'Nhập mật khẩu' : null,
       ),
-      const SizedBox(height: 10),
+      SizedBox(height: compact ? 6 : 8),
       Row(
         children: [
           InkWell(
             onTap: () => setState(() => _remember = !_remember),
             borderRadius: BorderRadius.circular(8),
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+              padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   SizedBox(
-                    width: 20,
-                    height: 20,
+                    width: 18,
+                    height: 18,
                     child: Checkbox(
                       value: _remember,
                       activeColor: AppColors.brand,
@@ -631,11 +770,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           setState(() => _remember = v ?? true),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 7),
                   const Text(
                     'Ghi nhớ đăng nhập',
                     style: TextStyle(
-                      fontSize: 12.8,
+                      fontSize: 12.5,
                       fontWeight: FontWeight.w600,
                       color: AppColors.inkSoft,
                     ),
@@ -650,14 +789,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ? null
                 : () => _switchMode(_AuthMode.resetRequest),
             style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: const Text(
               'Quên mật khẩu?',
               style: TextStyle(
-                fontSize: 12.8,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w700,
                 color: AppColors.brandDark,
               ),
@@ -668,40 +807,97 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     ];
   }
 
-  List<Widget> _buildRegisterFields() {
+  List<Widget> _buildRegisterFields({
+    required bool compact,
+    required double maxW,
+  }) {
+    final gap = compact ? 9.0 : 11.0;
+    final pwField = TextFormField(
+      controller: _registerPassword,
+      obscureText: _obscurePassword,
+      textInputAction: TextInputAction.next,
+      autofillHints: const [AutofillHints.newPassword],
+      style: const TextStyle(fontSize: 13.5),
+      decoration: _compactInputDecoration(
+        labelText: 'Mật khẩu (≥12 ký tự)',
+        hintText: 'Tối thiểu 12 ký tự',
+        prefixIcon: Icons.lock_outline_rounded,
+        compact: compact,
+        suffixIcon: IconButton(
+          visualDensity: VisualDensity.compact,
+          icon: Icon(
+            _obscurePassword
+                ? Icons.visibility_outlined
+                : Icons.visibility_off_outlined,
+            size: 18,
+            color: AppColors.muted,
+          ),
+          onPressed: () =>
+              setState(() => _obscurePassword = !_obscurePassword),
+        ),
+      ),
+      validator: (value) => (value == null || value.length < 12)
+          ? 'Mật khẩu cần tối thiểu 12 ký tự'
+          : null,
+    );
+
+    final confirmField = TextFormField(
+      controller: _registerConfirm,
+      obscureText: _obscureConfirm,
+      textInputAction: TextInputAction.done,
+      onFieldSubmitted: (_) => _submit(),
+      style: const TextStyle(fontSize: 13.5),
+      decoration: _compactInputDecoration(
+        labelText: 'Nhập lại mật khẩu',
+        prefixIcon: Icons.verified_user_outlined,
+        compact: compact,
+        suffixIcon: IconButton(
+          visualDensity: VisualDensity.compact,
+          icon: Icon(
+            _obscureConfirm
+                ? Icons.visibility_outlined
+                : Icons.visibility_off_outlined,
+            size: 18,
+            color: AppColors.muted,
+          ),
+          onPressed: () =>
+              setState(() => _obscureConfirm = !_obscureConfirm),
+        ),
+      ),
+      validator: (value) => value != _registerPassword.text
+          ? 'Mật khẩu nhập lại chưa khớp'
+          : null,
+    );
+
     return [
       TextFormField(
         controller: _displayName,
         textInputAction: TextInputAction.next,
         autofillHints: const [AutofillHints.name],
-        decoration: const InputDecoration(
+        style: const TextStyle(fontSize: 13.5),
+        decoration: _compactInputDecoration(
           labelText: 'Tên hiển thị',
           hintText: 'Ví dụ: Review Phim Studio',
-          prefixIcon: Icon(
-            Icons.badge_outlined,
-            size: 20,
-            color: AppColors.muted,
-          ),
+          prefixIcon: Icons.badge_outlined,
+          compact: compact,
         ),
         validator: (value) => (value == null || value.trim().isEmpty)
             ? 'Nhập tên hiển thị'
             : null,
       ),
-      const SizedBox(height: 14),
+      SizedBox(height: gap),
       TextFormField(
         controller: _registerEmail,
         keyboardType: TextInputType.emailAddress,
         autocorrect: false,
         textInputAction: TextInputAction.next,
         autofillHints: const [AutofillHints.email],
-        decoration: const InputDecoration(
+        style: const TextStyle(fontSize: 13.5),
+        decoration: _compactInputDecoration(
           labelText: 'Email',
           hintText: 'studio@domain.com',
-          prefixIcon: Icon(
-            Icons.alternate_email_rounded,
-            size: 20,
-            color: AppColors.muted,
-          ),
+          prefixIcon: Icons.alternate_email_rounded,
+          compact: compact,
         ),
         validator: (value) {
           final text = value?.trim() ?? '';
@@ -711,69 +907,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           return null;
         },
       ),
-      const SizedBox(height: 14),
-      TextFormField(
-        controller: _registerPassword,
-        obscureText: _obscurePassword,
-        textInputAction: TextInputAction.next,
-        autofillHints: const [AutofillHints.newPassword],
-        decoration: InputDecoration(
-          labelText: 'Mật khẩu',
-          helperText: 'Tối thiểu 12 ký tự.',
-          prefixIcon: const Icon(
-            Icons.lock_outline_rounded,
-            size: 20,
-            color: AppColors.muted,
-          ),
-          suffixIcon: IconButton(
-            icon: Icon(
-              _obscurePassword
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
-              size: 20,
-              color: AppColors.muted,
-            ),
-            onPressed: () =>
-                setState(() => _obscurePassword = !_obscurePassword),
-          ),
-        ),
-        validator: (value) => (value == null || value.length < 12)
-            ? 'Mật khẩu cần tối thiểu 12 ký tự'
-            : null,
-      ),
-      const SizedBox(height: 14),
-      TextFormField(
-        controller: _registerConfirm,
-        obscureText: _obscureConfirm,
-        textInputAction: TextInputAction.done,
-        onFieldSubmitted: (_) => _submit(),
-        decoration: InputDecoration(
-          labelText: 'Nhập lại mật khẩu',
-          prefixIcon: const Icon(
-            Icons.verified_user_outlined,
-            size: 20,
-            color: AppColors.muted,
-          ),
-          suffixIcon: IconButton(
-            icon: Icon(
-              _obscureConfirm
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
-              size: 20,
-              color: AppColors.muted,
-            ),
-            onPressed: () =>
-                setState(() => _obscureConfirm = !_obscureConfirm),
-          ),
-        ),
-        validator: (value) => value != _registerPassword.text
-            ? 'Mật khẩu nhập lại chưa khớp'
-            : null,
-      ),
+      SizedBox(height: gap),
+      pwField,
+      SizedBox(height: gap),
+      confirmField,
     ];
   }
 
-  List<Widget> _buildResetRequestFields() {
+  List<Widget> _buildResetRequestFields({required bool compact}) {
     return [
       TextFormField(
         controller: _resetEmail,
@@ -781,14 +922,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         autocorrect: false,
         textInputAction: TextInputAction.done,
         onFieldSubmitted: (_) => _submit(),
-        decoration: const InputDecoration(
+        style: const TextStyle(fontSize: 14),
+        decoration: _compactInputDecoration(
           labelText: 'Email đã đăng ký',
           hintText: 'Nhập email tài khoản của bạn',
-          prefixIcon: Icon(
-            Icons.mail_outline_rounded,
-            size: 20,
-            color: AppColors.muted,
-          ),
+          prefixIcon: Icons.mail_outline_rounded,
+          compact: compact,
         ),
         validator: (value) {
           final text = value?.trim() ?? '';
@@ -801,46 +940,47 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     ];
   }
 
-  List<Widget> _buildResetConfirmFields() {
+  List<Widget> _buildResetConfirmFields({
+    required bool compact,
+    required double maxW,
+  }) {
+    final gap = compact ? 9.0 : 11.0;
     return [
       TextFormField(
         controller: _resetCode,
         keyboardType: TextInputType.number,
         maxLength: 6,
         textInputAction: TextInputAction.next,
-        decoration: const InputDecoration(
+        style: const TextStyle(fontSize: 13.5),
+        decoration: _compactInputDecoration(
           labelText: 'Mã xác nhận (6 chữ số)',
-          helperText: 'Mã gồm 6 chữ số được gửi tới email của bạn.',
-          prefixIcon: Icon(
-            Icons.pin_outlined,
-            size: 20,
-            color: AppColors.muted,
-          ),
-        ),
+          hintText: 'Nhập mã 6 số trong email',
+          prefixIcon: Icons.pin_outlined,
+          compact: compact,
+        ).copyWith(counterText: ''),
         validator: (value) =>
             (value == null || value.trim().length != 6)
                 ? 'Nhập đủ 6 chữ số xác nhận'
                 : null,
       ),
-      const SizedBox(height: 12),
+      SizedBox(height: gap),
       TextFormField(
         controller: _resetNewPassword,
         obscureText: _obscurePassword,
         textInputAction: TextInputAction.next,
-        decoration: InputDecoration(
-          labelText: 'Mật khẩu mới',
-          helperText: 'Tối thiểu 12 ký tự. Mọi phiên cũ sẽ được đăng xuất.',
-          prefixIcon: const Icon(
-            Icons.lock_outline_rounded,
-            size: 20,
-            color: AppColors.muted,
-          ),
+        style: const TextStyle(fontSize: 13.5),
+        decoration: _compactInputDecoration(
+          labelText: 'Mật khẩu mới (≥12 ký tự)',
+          hintText: 'Tối thiểu 12 ký tự',
+          prefixIcon: Icons.lock_outline_rounded,
+          compact: compact,
           suffixIcon: IconButton(
+            visualDensity: VisualDensity.compact,
             icon: Icon(
               _obscurePassword
                   ? Icons.visibility_outlined
                   : Icons.visibility_off_outlined,
-              size: 20,
+              size: 18,
               color: AppColors.muted,
             ),
             onPressed: () =>
@@ -851,25 +991,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ? 'Mật khẩu mới cần tối thiểu 12 ký tự'
             : null,
       ),
-      const SizedBox(height: 14),
+      SizedBox(height: gap),
       TextFormField(
         controller: _resetConfirmPassword,
         obscureText: _obscureConfirm,
         textInputAction: TextInputAction.done,
         onFieldSubmitted: (_) => _submit(),
-        decoration: InputDecoration(
+        style: const TextStyle(fontSize: 13.5),
+        decoration: _compactInputDecoration(
           labelText: 'Nhập lại mật khẩu mới',
-          prefixIcon: const Icon(
-            Icons.verified_user_outlined,
-            size: 20,
-            color: AppColors.muted,
-          ),
+          prefixIcon: Icons.verified_user_outlined,
+          compact: compact,
           suffixIcon: IconButton(
+            visualDensity: VisualDensity.compact,
             icon: Icon(
               _obscureConfirm
                   ? Icons.visibility_outlined
                   : Icons.visibility_off_outlined,
-              size: 20,
+              size: 18,
               color: AppColors.muted,
             ),
             onPressed: () =>
@@ -884,16 +1023,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Widget _buildBottomModeLinks() {
+    final compactStyle = TextButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+
     return switch (_mode) {
       _AuthMode.login => Center(
           child: TextButton(
+            style: compactStyle,
             onPressed: _submitting
                 ? null
                 : () => _switchMode(_AuthMode.register),
             child: const Text(
               'Chưa có tài khoản? Đăng ký miễn phí',
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w800,
                 color: AppColors.brandDark,
               ),
@@ -902,12 +1048,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ),
       _AuthMode.register => Center(
           child: TextButton(
+            style: compactStyle,
             onPressed:
                 _submitting ? null : () => _switchMode(_AuthMode.login),
             child: const Text(
               'Đã có tài khoản? Đăng nhập ngay',
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w800,
                 color: AppColors.brandDark,
               ),
@@ -916,13 +1063,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ),
       _AuthMode.resetRequest => Center(
           child: TextButton.icon(
+            style: compactStyle,
             onPressed:
                 _submitting ? null : () => _switchMode(_AuthMode.login),
-            icon: const Icon(Icons.arrow_back_rounded, size: 16),
+            icon: const Icon(Icons.arrow_back_rounded, size: 15),
             label: const Text(
               'Quay lại đăng nhập',
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w800,
                 color: AppColors.brandDark,
               ),
@@ -933,24 +1081,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             TextButton(
+              style: compactStyle,
               onPressed: _submitting ? null : _resendResetCode,
               child: const Text(
                 'Gửi lại mã',
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w800,
                   color: AppColors.brandDark,
                 ),
               ),
             ),
-            const Text('·', style: TextStyle(color: AppColors.muted)),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4),
+              child: Text('·', style: TextStyle(color: AppColors.muted)),
+            ),
             TextButton(
+              style: compactStyle,
               onPressed:
                   _submitting ? null : () => _switchMode(_AuthMode.login),
               child: const Text(
                 'Quay lại đăng nhập',
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                   color: AppColors.muted,
                 ),
@@ -961,57 +1114,66 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     };
   }
 
-  Widget _buildBottomStudioHighlights() {
-    const pills = <(IconData, String)>[
-      (Icons.translate_rounded, 'Dịch & Lồng tiếng AI'),
-      (Icons.auto_stories_rounded, 'Truyện tranh & Hoạt hình'),
-      (Icons.layers_rounded, 'Xử lý hàng loạt 50 video'),
+  /// Single-row responsive studio highlights bar that never wraps into a second
+  /// overflowing line on any phone width.
+  Widget _buildBottomStudioHighlights({required double maxW}) {
+    final isNarrow = maxW < 375;
+    final pills = <(IconData, String)>[
+      (Icons.translate_rounded, isNarrow ? 'Dịch & Dub AI' : 'Dịch & Lồng tiếng'),
+      (Icons.auto_stories_rounded, isNarrow ? 'Truyện AI' : 'Truyện → Video'),
+      (Icons.layers_rounded, 'Batch 50 video'),
     ];
 
-    return Wrap(
-      alignment: WrapAlignment.center,
-      spacing: 8,
-      runSpacing: 8,
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        for (final (icon, label) in pills)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.14),
+        for (var i = 0; i < pills.length; i++) ...[
+          if (i > 0) const SizedBox(width: 6),
+          Flexible(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isNarrow ? 8 : 10,
+                    vertical: 5,
                   ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      icon,
-                      size: 13,
-                      color: const Color(0xFFFB923C),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.14),
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white.withValues(alpha: 0.88),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        pills[i].$1,
+                        size: 12,
+                        color: const Color(0xFFFB923C),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          pills[i].$2,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: isNarrow ? 10.2 : 11,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white.withValues(alpha: 0.9),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
+        ],
       ],
     );
   }
@@ -1022,11 +1184,13 @@ class _SegmentTab extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.compact = false,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1036,10 +1200,10 @@ class _SegmentTab extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(vertical: 9),
+        padding: EdgeInsets.symmetric(vertical: compact ? 7 : 8),
         decoration: BoxDecoration(
           color: selected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(9),
           boxShadow: selected
               ? const [
                   BoxShadow(
@@ -1054,7 +1218,7 @@ class _SegmentTab extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            fontSize: 13,
+            fontSize: 12.5,
             fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
             color: selected ? AppColors.brandDark : AppColors.muted,
           ),

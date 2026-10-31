@@ -342,10 +342,12 @@ async function refreshApplicationAuth() {
     lockApplication(detail);
     $("#authSubmit").disabled = true;
     $("#authRegisterSubmit").disabled = true;
+    $("#authGuestButton").disabled = true;
     return false;
   }
   $("#authSubmit").disabled = false;
   $("#authRegisterSubmit").disabled = false;
+  $("#authGuestButton").disabled = false;
   if (!status.authenticated) {
     lockApplication("Nhập tài khoản quản trị để tiếp tục.", false);
     return false;
@@ -1124,6 +1126,7 @@ function renderBilling(data) {
   }
 
   const planBadges = {
+    trial: { icon: "🎟️", label: "Dùng thử" },
     free: { icon: "🌱", label: "Gói Khởi động" },
     creator: { icon: "⚡", label: "Nhà sáng tạo" },
     pro: { icon: "🚀", label: "Phổ biến nhất" },
@@ -1134,7 +1137,7 @@ function renderBilling(data) {
   const previousSelection = $("#paymentPlan").value;
   $("#paymentPlan").innerHTML = paidPlans.map(plan => `<option value="${escapeHtml(plan.key)}">${escapeHtml(plan.name)} (${plan.minutes.toLocaleString("vi-VN")} phút/tháng) · ${money(plan.amount)}</option>`).join("");
 
-  $("#billingPlans").innerHTML = data.plans.map(plan => {
+  $("#billingPlans").innerHTML = data.plans.filter(plan => plan.key !== "trial" || plan.key === account.plan).map(plan => {
     const isCurrent = plan.key === account.plan;
     const isFeatured = plan.key === "pro";
     const isSelectable = Number(plan.amount) > 0 && !isCurrent;
@@ -1160,16 +1163,19 @@ function renderBilling(data) {
         <ul class="plan-features">
           <li><span class="feature-icon check">✓</span><span>Xử lý video đa luồng & phụ đề AI</span></li>
           <li><span class="feature-icon check">✓</span><span>Dịch Google, TranslateGemma · lồng tiếng Edge TTS, CIT Voice Studio</span></li>
-          <li>${plan.key === "free" ? '<span class="feature-icon dash">—</span><span class="feature-muted">Gemini AI & ElevenLabs</span>' : '<span class="feature-icon check">✓</span><span>Gemini AI & ElevenLabs</span>'}</li>
+          <li>${["free", "trial"].includes(plan.key) ? '<span class="feature-icon dash">—</span><span class="feature-muted">Gemini AI & ElevenLabs</span>' : '<span class="feature-icon check">✓</span><span>Gemini AI & ElevenLabs</span>'}</li>
           <li><span class="feature-icon check">✓</span><span>Lưu trữ kết quả đám mây an toàn</span></li>
-          <li>${plan.key === "free" ? '<span class="feature-icon dash">—</span><span class="feature-muted">Hỗ trợ ưu tiên 24/7</span>' : '<span class="feature-icon check">✓</span><span>Hỗ trợ ưu tiên chuyên sâu 24/7</span>'}</li>
+          <li>${["free", "trial"].includes(plan.key) ? '<span class="feature-icon dash">—</span><span class="feature-muted">Hỗ trợ ưu tiên 24/7</span>' : '<span class="feature-icon check">✓</span><span>Hỗ trợ ưu tiên chuyên sâu 24/7</span>'}</li>
         </ul>
         <div class="plan-card-action">
           ${plan.key === "enterprise" ? `
             <a class="button secondary enterprise-btn" href="mailto:support@vidtrans.local">
               <span>Liên hệ tư vấn</span>
               <span>→</span>
-            </a>` : plan.key === "free" ? (isCurrent ? `
+            </a>` : plan.key === "trial" ? `
+            <button class="button secondary current-plan-btn" type="button" disabled>
+              ✓ Đang dùng thử
+            </button>` : plan.key === "free" ? (isCurrent ? `
             <button class="button secondary current-plan-btn" type="button" disabled>
               ✓ Đang kích hoạt
             </button>` : `
@@ -1363,7 +1369,7 @@ function renderAdminAccounts() {
   const roles = Object.entries(adminLabels.role);
   const approvals = Object.entries(adminLabels.approval);
   const payments = Object.entries(adminLabels.payment);
-  const plans = [["free", "Free"], ["creator", "Creator"], ["pro", "Pro"], ["enterprise", "Enterprise"]];
+  const plans = [["trial", "Dùng thử"], ["free", "Free"], ["creator", "Creator"], ["pro", "Pro"], ["enterprise", "Enterprise"]];
   list.innerHTML = state.adminAccounts.map(item => {
     const quota = item.quota || {};
     const quotaUsed = Number(quota.consumed_minutes || 0) + Number(quota.reserved_minutes || 0);
@@ -2666,6 +2672,28 @@ $("#authRegisterForm").addEventListener("submit", async event => {
   } catch (error) {
     message.textContent = error.message;
     message.classList.add("error");
+  } finally {
+    button.disabled = !state.auth.configured;
+  }
+});
+
+$("#authGuestButton").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const message = $("#authMessage");
+  button.disabled = true;
+  message.textContent = "Đang tạo tài khoản dùng thử…";
+  message.classList.remove("error");
+  try {
+    const payload = await requestJson("/api/v1/auth/guest", { method: "POST" });
+    if (await refreshApplicationAuth()) {
+      await startProtectedApplication();
+      const { email, password } = payload.credentials;
+      toast(`Đã kích hoạt gói dùng thử ${payload.quota_minutes} phút video`);
+      // Shown once: the server keeps only the hash.
+      window.alert(`Tài khoản dùng thử của bạn (lưu lại để đăng nhập lần sau):\n\nEmail: ${email}\nMật khẩu: ${password}`);
+    }
+  } catch (error) {
+    showAuthError(error);
   } finally {
     button.disabled = !state.auth.configured;
   }

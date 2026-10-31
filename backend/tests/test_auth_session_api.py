@@ -1,4 +1,5 @@
 import tempfile
+from datetime import datetime, timedelta, timezone
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -147,3 +148,59 @@ class AuthSessionApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GuestTrialApiTests(AuthSessionApiTests):
+    def setUp(self) -> None:
+        super().setUp()
+        main._guest_requests.clear()
+        # Full-strength PBKDF2 is slow; the guest password only needs to round-trip.
+        fast_hash = patch.object(main, "hash_password", lambda value: hash_password(value, iterations=100_000))
+        fast_hash.start()
+        self.patches.append(fast_hash)
+
+    def test_guest_gets_random_trial_account_and_session(self) -> None:
+        response = self.client.post("/api/v1/auth/guest")
+        self.assertEqual(response.status_code, 201, response.text)
+        payload = response.json()
+        self.assertEqual(payload["account"]["plan"], "trial")
+        self.assertEqual(payload["quota_minutes"], 5)
+        self.assertTrue(payload["credentials"]["email"].endswith(f"@{main.GUEST_EMAIL_DOMAIN}"))
+        self.assertTrue(self.client.get("/api/v1/auth/status").json()["authenticated"])
+        other = TestClient(main.app)
+        login = other.post(
+            "/api/v1/auth/token",
+            data={"username": payload["credentials"]["email"], "password": payload["credentials"]["password"]},
+        )
+        self.assertEqual(login.status_code, 200, login.text)
+
+    def test_guest_creation_is_rate_limited_per_client(self) -> None:
+        emails = {self.client.post("/api/v1/auth/guest").json()["account"]["email"]
+                  for _ in range(main.GUEST_ACCOUNTS_PER_IP)}
+        self.assertEqual(len(emails), main.GUEST_ACCOUNTS_PER_IP)
+        self.assertEqual(self.client.post("/api/v1/auth/guest").status_code, 429)
+
+    def test_trial_account_cannot_switch_to_free(self) -> None:
+        self.client.post("/api/v1/auth/guest")
+        response = self.client.post("/api/v1/billing/switch-free", headers=CSRF)
+        self.assertEqual(response.status_code, 403, response.text)
+
+    def test_retention_removes_expired_guest_but_keeps_upgraded(self) -> None:
+        expired = self.client.post("/api/v1/auth/guest").json()["account"]
+        upgraded = self.client.post("/api/v1/auth/guest").json()["account"]
+        self.accounts.update(upgraded["user_id"], plan="creator", payment_status="active")
+        later = datetime.now(timezone.utc) + timedelta(days=8)
+        with patch.object(main.JOB_SERVICE, "prune_terminal", return_value={"jobs": [], "batches": []}), \
+                patch.object(main.JOB_SERVICE, "status_counts", return_value={}), \
+                patch.object(main, "purge_account_data") as purge:
+            self.assertEqual(main.remove_expired_guest_accounts(later), 1)
+        purge.assert_called_once_with(expired["user_id"])
+        self.assertEqual(self.accounts.get(upgraded["user_id"])["plan"], "creator")
+
+    def test_retention_keeps_guest_with_active_job(self) -> None:
+        guest = self.client.post("/api/v1/auth/guest").json()["account"]
+        later = datetime.now(timezone.utc) + timedelta(days=8)
+        with patch.object(main.JOB_SERVICE, "prune_terminal", return_value={"jobs": [], "batches": []}), \
+                patch.object(main.JOB_SERVICE, "status_counts", return_value={"processing": 1}):
+            self.assertEqual(main.remove_expired_guest_accounts(later), 0)
+        self.assertEqual(self.accounts.get(guest["user_id"])["plan"], "trial")

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -871,6 +872,7 @@ PUBLIC_AUTH_PATHS = {
     "/api/v1/auth/token",
     "/api/v1/auth/refresh",
     "/api/v1/auth/register",
+    "/api/v1/auth/guest",
     "/api/v1/auth/password-reset/request",
     "/api/v1/auth/password-reset/confirm",
     "/api/v1/tiktok-auth/callback",
@@ -4290,9 +4292,33 @@ def remove_pruned_storage(removed: dict[str, Any]) -> None:
             shutil.rmtree(path)
 
 
+def remove_expired_guest_accounts(now: datetime) -> int:
+    """Delete guest trial accounts older than VIDTRANS_GUEST_TRIAL_DAYS that never upgraded.
+
+    Accounts with a job still queued or running are kept until the next sweep.
+    """
+    cutoff = (now - timedelta(days=retention_days("VIDTRANS_GUEST_TRIAL_DAYS", 7))).isoformat()
+    removed = 0
+    for account in ADMIN_ACCOUNTS.trial_accounts_created_before(cutoff):
+        user_id = str(account["user_id"])
+        remove_pruned_storage(JOB_SERVICE.prune_terminal(now.isoformat(), owner_user_id=user_id))
+        if JOB_SERVICE.status_counts(owner_user_id=user_id):
+            continue
+        try:
+            ADMIN_ACCOUNTS.delete(user_id)
+        except AdminAccountError:
+            continue
+        purge_account_data(user_id)
+        removed += 1
+    return removed
+
+
 def apply_retention_policy() -> None:
     """Prune old terminal jobs per account policy, then the system-wide policy if enabled."""
     now = datetime.now(timezone.utc)
+    guests_removed = remove_expired_guest_accounts(now) if retention_enabled() else 0
+    if guests_removed:
+        logger.info("Removed %d expired guest trial accounts", guests_removed)
     overrides = ADMIN_ACCOUNTS.video_retention_overrides()
     account_removed = 0
     for user_id, days in overrides.items():
@@ -4598,6 +4624,12 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
         target_user_id=user_id,
         metadata={"email": deleted.get("email")},
     )
+    purge_account_data(user_id)
+    return JSONResponse({"deleted": True, "user_id": user_id}, headers={"Cache-Control": "no-store"})
+
+
+def purge_account_data(user_id: str) -> None:
+    """Remove a deleted account's per-user stores and storage directories."""
     PLATFORM_APP_STORE.delete_user(user_id)
     BRANDING_STORE.delete_user(user_id)
     DEVICE_STORE.delete_user(user_id)
@@ -4606,7 +4638,6 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
         user_dir = base_dir / "users" / storage_owner_segment(user_id)
         if user_dir.exists() and user_dir.is_relative_to(base_dir.resolve()):
             shutil.rmtree(user_dir, ignore_errors=True)
-    return JSONResponse({"deleted": True, "user_id": user_id}, headers={"Cache-Control": "no-store"})
 
 
 def live_user_publishers(user_id: str, platform: str) -> list[Any]:
@@ -5217,6 +5248,8 @@ def cancel_billing_order(request: Request, order_id: str) -> JSONResponse:
 @app.post("/api/v1/billing/switch-free")
 def switch_free_plan(request: Request) -> JSONResponse:
     account = current_account(request)
+    if account.get("plan") == "trial":
+        raise HTTPException(status_code=403, detail="Tài khoản khách cần đăng ký email để dùng gói Free")
     ADMIN_ACCOUNTS.update(account["user_id"], plan="free", payment_status="exempt")
     return JSONResponse({"status": "success", "plan": "free"}, headers={"Cache-Control": "no-store"})
 
@@ -5486,6 +5519,77 @@ def register_account(
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
     set_auth_cookies(response, account, token, expires_in, remember=False)
+    return response
+
+
+GUEST_ACCOUNTS_PER_IP = 3
+GUEST_IP_WINDOW_SECONDS = 24 * 60 * 60
+GUEST_EMAIL_DOMAIN = "guest.vidtrans.local"
+_guest_requests: dict[str, list[float]] = {}
+_guest_requests_lock = threading.Lock()
+
+
+def check_guest_rate_limit(client_id: str) -> None:
+    """Cap auto-created trial accounts per client so the trial quota cannot be farmed."""
+    now = time.monotonic()
+    with _guest_requests_lock:
+        recent = [stamp for stamp in _guest_requests.get(client_id, []) if stamp > now - GUEST_IP_WINDOW_SECONDS]
+        if len(recent) >= GUEST_ACCOUNTS_PER_IP:
+            _guest_requests[client_id] = recent
+            retry_after = max(1, int(GUEST_IP_WINDOW_SECONDS - (now - recent[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="Thiết bị này đã tạo đủ tài khoản dùng thử hôm nay. Hãy đăng ký tài khoản Free.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        recent.append(now)
+        _guest_requests[client_id] = recent
+
+
+@app.post("/api/v1/auth/guest", status_code=201)
+def create_guest_account(request: Request) -> JSONResponse:
+    """Create a random trial account and sign it in.
+
+    The generated password is returned once so the guest can sign in again on
+    another device; it is never stored in plain text.
+    """
+
+    if not AUTH_MANAGER.config.configured:
+        raise HTTPException(status_code=503, detail="Hệ thống đăng ký chưa sẵn sàng")
+    check_guest_rate_limit(auth_client_id(request))
+    password = secrets.token_urlsafe(12)
+    for _ in range(3):
+        suffix = secrets.token_hex(4)
+        try:
+            account = ADMIN_ACCOUNTS.create(
+                email=f"guest-{suffix}@{GUEST_EMAIL_DOMAIN}",
+                display_name=f"Khách {suffix.upper()}",
+                role="editor",
+                approval_status="approved",
+                plan="trial",
+                payment_status="trial",
+                password_hash=hash_password(password),
+            )
+            break
+        except AdminAccountError:
+            continue
+    else:
+        raise HTTPException(status_code=503, detail="Không tạo được tài khoản khách, hãy thử lại")
+
+    token, expires_in = AUTH_MANAGER.issue_token(
+        account["email"], user_id=account["user_id"], role=account["role"], scope="user"
+    )
+    response = JSONResponse(
+        {
+            "account": public_admin_account(account),
+            "credentials": {"email": account["email"], "password": password},
+            "quota_minutes": account_plan_limit(account),
+            "expires_in": expires_in,
+        },
+        status_code=201,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+    set_auth_cookies(response, account, token, expires_in, remember=True)
     return response
 
 

@@ -26,6 +26,19 @@ class ServerAuthStatus {
       );
 }
 
+/// A random trial account; the password is only ever returned once.
+class GuestCredentials {
+  const GuestCredentials({
+    required this.email,
+    required this.password,
+    required this.quotaMinutes,
+  });
+
+  final String email;
+  final String password;
+  final int? quotaMinutes;
+}
+
 class AuthRepository {
   AuthRepository(this._api, this._tokens);
 
@@ -82,6 +95,21 @@ class AuthRepository {
       ),
     );
     return login(username: email, password: password);
+  }
+
+  /// Creates a random trial account. The caller signs in with the returned
+  /// credentials after showing them, so the guest can save them first.
+  Future<GuestCredentials> createGuest() async {
+    final data = await _api.post<Map<String, dynamic>>(
+      '/api/v1/auth/guest',
+      options: ApiClient.anonymous,
+    );
+    final credentials = data['credentials'] as Map<String, dynamic>;
+    return GuestCredentials(
+      email: credentials['email'] as String,
+      password: credentials['password'] as String,
+      quotaMinutes: (data['quota_minutes'] as num?)?.toInt(),
+    );
   }
 
   /// Sends a 6-digit password reset code to [email].

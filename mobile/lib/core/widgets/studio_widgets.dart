@@ -808,26 +808,35 @@ class StudioMetricCard extends StatelessWidget {
     super.key,
     required this.label,
     required this.value,
+    this.subtitle,
     this.accentColor = AppColors.ink,
     this.backgroundColor = AppColors.surface,
     this.borderColor = AppColors.line,
     this.icon,
+    this.iconBackgroundColor,
   });
 
   final String label;
   final String value;
+  final String? subtitle;
   final Color accentColor;
   final Color backgroundColor;
   final Color borderColor;
   final IconData? icon;
+  final Color? iconBackgroundColor;
 
   @override
   Widget build(BuildContext context) {
+    final resolvedIconBg = iconBackgroundColor ??
+        (accentColor == AppColors.ink
+            ? AppColors.surfaceMuted
+            : accentColor.withValues(alpha: 0.12));
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
       decoration: BoxDecoration(
         color: backgroundColor,
-        borderRadius: BorderRadius.circular(13),
+        borderRadius: BorderRadius.circular(15),
         border: Border.all(color: borderColor),
         boxShadow: AppColors.cardShadow,
       ),
@@ -837,37 +846,342 @@ class StudioMetricCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              if (icon != null) ...[
-                Icon(icon, size: 13, color: accentColor),
-                const SizedBox(width: 4),
-              ],
               Expanded(
                 child: Text(
                   label.toUpperCase(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.45,
                     color: AppColors.muted,
                   ),
                 ),
               ),
+              if (icon != null) ...[
+                const SizedBox(width: 6),
+                Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: resolvedIconBg,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(icon, size: 14, color: accentColor),
+                ),
+              ],
             ],
           ),
-          const SizedBox(height: 5),
+          const SizedBox(height: 6),
           Text(
             value,
             style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
               color: accentColor,
-              letterSpacing: -0.5,
-              height: 1.1,
+              letterSpacing: -0.6,
+              height: 1.08,
             ),
           ),
+          if (subtitle != null && subtitle!.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              subtitle!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: AppColors.muted,
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// Web-style page header matching `.page-heading` / `.jobs-header` in `web/index.html`
+/// and `web/assets/styles.css`. Adapts automatically to all phone widths.
+class StudioPageHeader extends StatelessWidget {
+  const StudioPageHeader({
+    super.key,
+    this.eyebrow,
+    this.eyebrowIcon,
+    this.eyebrowPulse = false,
+    this.eyebrowNote,
+    required this.title,
+    this.subtitle,
+    this.actions,
+    this.bottom,
+  });
+
+  final String? eyebrow;
+  final IconData? eyebrowIcon;
+  final bool eyebrowPulse;
+  final String? eyebrowNote;
+  final String title;
+  final String? subtitle;
+  final List<Widget>? actions;
+  final Widget? bottom;
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isCompact = screenWidth < 360;
+
+    return Container(
+      padding: EdgeInsets.all(isCompact ? 14 : 16),
+      decoration: BoxDecoration(
+        gradient: AppColors.studioHeroGradient,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.brandBorder.withValues(alpha: 0.85)),
+        boxShadow: AppColors.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (eyebrow != null || eyebrowNote != null) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (eyebrow != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.brandSoft,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: AppColors.brandBorder),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (eyebrowPulse) ...[
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: AppColors.brand,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.brand.withValues(alpha: 0.35),
+                                  spreadRadius: 2,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ] else if (eyebrowIcon != null) ...[
+                          Icon(
+                            eyebrowIcon,
+                            size: 13,
+                            color: AppColors.brandDark,
+                          ),
+                          const SizedBox(width: 5),
+                        ],
+                        Flexible(
+                          child: Text(
+                            eyebrow!.toUpperCase(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: AppColors.brandDark,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (eyebrowNote != null)
+                  Text(
+                    eyebrowNote!,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.muted,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: isCompact ? 18.5 : 20.5,
+              fontWeight: FontWeight.w900,
+              color: AppColors.ink,
+              letterSpacing: -0.5,
+              height: 1.2,
+            ),
+          ),
+          if (subtitle != null && subtitle!.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              subtitle!,
+              style: TextStyle(
+                fontSize: isCompact ? 12.5 : 13,
+                color: AppColors.muted,
+                height: 1.45,
+              ),
+            ),
+          ],
+          if (actions != null && actions!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: actions!,
+            ),
+          ],
+          if (bottom != null) ...[
+            const SizedBox(height: 12),
+            bottom!,
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Top navigation bar for sub-screens pushed onto the stack, styled to match
+/// `.topbar` in `web/index.html` & `web/assets/styles.css` with a 2.5px orange
+/// gradient bottom accent line.
+class StudioSubBar extends StatelessWidget implements PreferredSizeWidget {
+  const StudioSubBar({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.actions,
+    this.bottom,
+    this.onBack,
+  });
+
+  final String title;
+  final String? subtitle;
+  final List<Widget>? actions;
+  final PreferredSizeWidget? bottom;
+  final VoidCallback? onBack;
+
+  @override
+  Size get preferredSize =>
+      Size.fromHeight(58 + (bottom?.preferredSize.height ?? 0));
+
+  @override
+  Widget build(BuildContext context) {
+    final canPop = Navigator.of(context).canPop();
+    return Material(
+      color: Colors.white,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              height: 55.5,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    if (canPop || onBack != null) ...[
+                      InkWell(
+                        onTap: onBack ?? () => Navigator.of(context).maybePop(),
+                        borderRadius: BorderRadius.circular(11),
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceSoft,
+                            borderRadius: BorderRadius.circular(11),
+                            border: Border.all(color: AppColors.line),
+                          ),
+                          alignment: Alignment.center,
+                          child: const Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            size: 16,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ] else ...[
+                      const VidTransLogo(size: 30),
+                      const SizedBox(width: 10),
+                    ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.35,
+                              color: AppColors.ink,
+                              height: 1.15,
+                            ),
+                          ),
+                          if (subtitle != null && subtitle!.isNotEmpty) ...[
+                            const SizedBox(height: 1),
+                            Text(
+                              subtitle!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.muted,
+                                height: 1.1,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (actions != null && actions!.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: actions!,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            ?bottom,
+            Container(
+              height: 2.5,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Color(0xFFFB923C),
+                    Color(0xFFEA580C),
+                    Color(0xFFF97316),
+                    Color(0xFFFB923C),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

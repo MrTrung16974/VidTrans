@@ -13,7 +13,7 @@ from typing import Any, Iterator
 ROLES = {"owner", "admin", "editor", "viewer"}
 APPROVAL_STATUSES = {"pending", "approved", "suspended", "rejected"}
 PAYMENT_STATUSES = {"trial", "active", "past_due", "cancelled", "exempt"}
-PLANS = {"free", "creator", "pro", "enterprise"}
+PLANS = {"trial", "free", "creator", "pro", "enterprise"}
 # NULL = follow the system-wide policy, 0 = never delete automatically.
 MAX_VIDEO_RETENTION_DAYS = 3650
 
@@ -239,6 +239,15 @@ class AdminAccountStore:
                 "SELECT user_id,video_retention_days FROM admin_accounts WHERE video_retention_days IS NOT NULL"
             ).fetchall()
         return {str(row["user_id"]): int(row["video_retention_days"]) for row in rows}
+
+    def trial_accounts_created_before(self, cutoff: str) -> list[dict[str, Any]]:
+        """Guest trial accounts that were never upgraded, oldest first."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT * FROM admin_accounts WHERE plan='trial' AND created_at < ? ORDER BY created_at LIMIT 500",
+                (cutoff,),
+            ).fetchall()
+        return [self._row(row) for row in rows]
 
     def summary(self) -> dict[str, Any]:
         with self._db() as db:

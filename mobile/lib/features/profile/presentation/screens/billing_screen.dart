@@ -197,7 +197,8 @@ class _BillingBody extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 10),
-        for (final plan in overview.plans)
+        // The trial plan is only for auto-created guests; never offer it.
+        for (final plan in overview.plans.where((plan) => plan.key != 'trial' || plan.key == currentPlan))
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: StudioCard(
@@ -247,7 +248,7 @@ class _BillingBody extends ConsumerWidget {
                       onPressed: () => _choosePlan(context, ref, plan),
                       child: const Text('Chọn gói'),
                     )
-                  else if (!readOnly && plan.key == 'free')
+                  else if (!readOnly && plan.key == 'free' && currentPlan != 'trial')
                     OutlinedButton(
                       style: OutlinedButton.styleFrom(minimumSize: const Size(0, 40)),
                       onPressed: () async {
