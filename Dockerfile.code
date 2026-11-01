@@ -13,6 +13,9 @@ RUN set -eux; \
     python -c 'import torchaudio' 2>/dev/null \
         || pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torchaudio==${torch_version}"; \
     pip install --no-cache-dir -r requirements-audio.txt
+# Socket.IO server (/api/v1/socket.io), also newer than the base image.
+COPY requirements-realtime.txt ./
+RUN pip install --no-cache-dir -r requirements-realtime.txt
 RUN rm -rf /app/backend
 COPY backend ./backend
 RUN mkdir -p /usr/local/share/fonts/vidtrans \
