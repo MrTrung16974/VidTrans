@@ -17,7 +17,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Any, Callable, Optional, Sequence
+from typing import Annotated, Any, Callable, NamedTuple, Optional, Sequence
 from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -43,6 +43,7 @@ from application.comic_routes import ComicRouteDependencies, create_comic_router
 from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
 from application.branding_routes import BrandingRouteDependencies, create_branding_router
 from application.branding_service import BRANDING_JOB_ACTION, STAGES as BRANDING_STAGES, BrandingJobRunner
+from pipeline.logo_overlay import Placement, build_filter_graph
 from application.instagram_routes import create_instagram_router
 from application.seo_routes import create_seo_router
 from application.threads_routes import create_threads_router
@@ -2603,6 +2604,43 @@ def burn_subtitles_with_pillow(
     )
 
 
+class RenderLogo(NamedTuple):
+    """The account logo, drawn by the subtitle render itself (see ``plan_render_logo``)."""
+
+    path: Path
+    placements: list[Placement]
+    opacity: float
+    summary: dict[str, Any]
+
+
+def subtitle_render_command(
+    video_path: Path, audio_path: Optional[Path], output_path: Path, video_filter: str, logo: RenderLogo | None,
+) -> list[str]:
+    cmd = [FFMPEG, "-y", "-i", str(video_path)]
+    if audio_path:
+        cmd.extend(["-i", str(audio_path)])
+    if logo is None:
+        cmd.extend(["-vf", video_filter])
+        video_map: list[str] = ["-map", "0:v:0"] if audio_path else []
+    else:
+        # A still image is one frame; overlay repeats it to the end.
+        cmd.extend(["-i", str(logo.path)])
+        graph = f"[0:v]{video_filter}[subtitled];" + build_filter_graph(
+            logo.placements, logo.opacity, video_label="[subtitled]", logo_label=f"[{2 if audio_path else 1}:v]",
+        ) + ";[vout]format=yuv420p[final]"
+        cmd.extend(["-filter_complex", graph])
+        video_map = ["-map", "[final]"]
+    cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", *video_map])
+    if audio_path:
+        cmd.extend(["-map", "1:a:0", "-c:a", "aac", "-shortest"])
+    elif logo is not None:
+        cmd.extend(["-map", "0:a?", "-c:a", "copy"])
+    else:
+        cmd.extend(["-c:a", "copy"])
+    cmd.append(str(output_path))
+    return cmd
+
+
 def burn_subtitles(
     video_path: Path,
     subtitle_path: Path,
@@ -2612,7 +2650,10 @@ def burn_subtitles(
     subtitle_style: dict[str, Any],
     work_dir: Path,
     video_fps: float | None = None,
-) -> None:
+    logo: RenderLogo | None = None,
+) -> bool:
+    """Render the subtitles (and ``logo`` when given). Returns whether the logo was drawn:
+    the last-resort Pillow renderer cannot, and the caller then stamps it afterwards."""
     subtitle_filter = f"subtitles=filename='{ff_escape_path(subtitle_path)}'"
     if BUNDLED_FONT.is_file():
         # Make the bundled CJK font available for libass fallback, but honor
@@ -2620,66 +2661,18 @@ def burn_subtitles(
         # Vietnamese glyphs even when the chosen style supports them.
         subtitle_filter += f":fontsdir='{ff_escape_path(FONT_DIR)}'"
     subtitle_filter = add_localized_subtitle_blur(subtitle_filter, segments, subtitle_style)
-    cmd = [
-        FFMPEG,
-        "-y",
-        "-i",
-        str(video_path),
-    ]
-    if audio_path:
-        cmd.extend(["-i", str(audio_path)])
-    cmd.extend(
-        [
-            "-vf",
-            subtitle_filter,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
-        ]
-    )
-    if audio_path:
-        cmd.extend(["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-shortest"])
-    else:
-        cmd.extend(["-c:a", "copy"])
-    cmd.append(str(output_path))
     try:
-        run_ffmpeg(cmd)
+        run_ffmpeg(subtitle_render_command(video_path, audio_path, output_path, subtitle_filter, logo))
+        return logo is not None
     except subprocess.CalledProcessError as exc:
         if "No such filter: 'subtitles'" not in (exc.stderr or ""):
             raise
         logger.warning("ffmpeg subtitles filter is unavailable, falling back to drawtext rendering")
         fallback_filter = build_drawtext_filter(segments, subtitle_style)
         fallback_filter = add_localized_subtitle_blur(fallback_filter, segments, subtitle_style)
-        fallback_cmd = [
-            FFMPEG,
-            "-y",
-            "-i",
-            str(video_path),
-        ]
-        if audio_path:
-            fallback_cmd.extend(["-i", str(audio_path)])
-        fallback_cmd.extend(
-            [
-                "-vf",
-                fallback_filter,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "23",
-            ]
-        )
-        if audio_path:
-            fallback_cmd.extend(["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-shortest"])
-        else:
-            fallback_cmd.extend(["-c:a", "copy"])
-        fallback_cmd.append(str(output_path))
         try:
-            run_ffmpeg(fallback_cmd)
+            run_ffmpeg(subtitle_render_command(video_path, audio_path, output_path, fallback_filter, logo))
+            return logo is not None
         except subprocess.CalledProcessError as fallback_exc:
             if "No such filter: 'drawtext'" not in (fallback_exc.stderr or ""):
                 raise
@@ -2693,6 +2686,7 @@ def burn_subtitles(
                 work_dir,
                 video_fps=video_fps,
             )
+            return False
 
 
 def normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3101,6 +3095,7 @@ def process_video(
             minutes=TENANT_GOVERNANCE.minutes_for_duration(video_duration),
         )
         video_width, video_height = source_probe.width, source_probe.height
+        early_logo_detection = start_logo_detection(job_id, owner_user_id, video_path) if apply_logo else None
         checkpoint_store = StageCheckpointStore(work_dir)
         transcript_fingerprint = fingerprint_payload(
             {
@@ -3632,9 +3627,17 @@ def process_video(
             )
 
         output_video = output_dir / f"output_{job_id}.mp4"
+        render_logo = plan_render_logo(job_id, owner_user_id, video_path, early_logo_detection) if apply_logo else None
         render_fingerprint = fingerprint_payload(
             {
                 "version": 1,
+                # A logo drawn by the render is part of it: another logo or position renders
+                # again. Absent without one, so renders cached before stay valid.
+                **({"logo": {
+                    "checksum": sha256_file(render_logo.path),
+                    "placements": [placement.to_dict() for placement in render_logo.placements],
+                    "opacity": render_logo.opacity,
+                }} if render_logo else {}),
                 "source_checksum": source_checksum,
                 "translation_bundle_checksum": translation_checkpoint.bundle_checksum,
                 "tts_bundle_checksum": tts_checkpoint.bundle_checksum if tts_checkpoint else None,
@@ -3662,10 +3665,11 @@ def process_video(
         render_cache_hit = render_checkpoint is not None
         if render_checkpoint is not None:
             render_artifact = restore_file_checkpoint(render_checkpoint.payload, work_dir=work_dir)
+            logo_rendered = bool(render_checkpoint.payload.get("logo_rendered"))
             update_job(job_id, step_detail="Đã dùng lại video render hợp lệ", progress=0.98)
         else:
             with measure_job_stage(job_id, "render", video_duration=video_duration):
-                burn_subtitles(
+                logo_rendered = burn_subtitles(
                     video_path,
                     ass_path,
                     render_artifact,
@@ -3674,21 +3678,25 @@ def process_video(
                     subtitle_style,
                     work_dir,
                     video_fps=source_probe.fps,
+                    logo=render_logo,
                 )
             render_relative_path = str(render_artifact.resolve().relative_to(work_dir.resolve()))
             render_checkpoint = checkpoint_store.commit_json(
                 "render",
                 fingerprint=render_fingerprint,
                 artifact_name=f"checkpoints/render/{render_fingerprint}.json",
-                payload={"version": 1, "artifact": render_relative_path},
+                payload={"version": 1, "artifact": render_relative_path, "logo_rendered": logo_rendered},
                 dependency_names=[render_relative_path],
             )
         record_job_stage_cache(job_id, "render", render_cache_hit)
         copy_file_atomic(render_artifact, output_video)
         ensure_job_active(job_id)
         if apply_logo:
-            # After the render checkpoint, so a logo change never invalidates the cached render.
-            stamp_account_logo(job_id, owner_user_id, output_video, detect=True)
+            if render_logo is not None and logo_rendered:
+                update_job(job_id, branding=render_logo.summary)
+            else:
+                # Encodes the video a second time; only when the render could not draw the logo.
+                stamp_account_logo(job_id, owner_user_id, output_video, detect=True, prepared=early_logo_detection)
 
         artifact_fields: dict[str, Any] = {
             "output_video": stored_artifact_name(output_video),
@@ -4277,8 +4285,82 @@ def require_account_logo(owner_user_id: str) -> None:
         raise HTTPException(status_code=400, detail="Hãy tải logo lên trong trang Tài khoản & logo trước khi chọn chèn logo")
 
 
+# Early logo detection (translation jobs): it only has to finish before the render
+# does, which takes far longer, so two at a time is plenty.
+LOGO_DETECTION_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="vidtrans-logo")
+
+
+def start_logo_detection(job_id: str, owner_user_id: str, video_path: Path) -> Callable[[], Any] | None:
+    """Find the old logo on the source video while ASR, translation and TTS run.
+
+    The render keeps the frame geometry, so the position found on the source is the
+    one in the finished video, and stamping then adds no detection time to the job.
+    The returned callable gives the result, or None when the work never started (the
+    pool was busy) so the stamp step detects by itself.
+    """
+    try:
+        stored = BRANDING_STORE.get(owner_user_id)
+        if stored["logo"] is None or not stored["config"].auto_detect:
+            return None
+        template_path = None
+        template_source = BRANDING_STORE.template_path(owner_user_id)
+        if template_source:
+            work = tenant_job_dir(WORK_DIR, owner_user_id, job_id) / "branding"
+            work.mkdir(parents=True, exist_ok=True)
+            template_path = work / "early-template.png"
+            shutil.copyfile(template_source, template_path)
+        future = LOGO_DETECTION_POOL.submit(
+            BRANDING_RUNNER.detect_video, video_path, stored["config"], template_path=template_path,
+        )
+    except Exception:
+        logger.exception("Cannot start early logo detection for job %s", job_id)
+        return None
+
+    def result() -> Any:
+        return None if future.cancel() else future.result()
+
+    return result
+
+
+def plan_render_logo(job_id: str, owner_user_id: str, video_path: Path,
+                     prepared: Callable[[], Any] | None) -> RenderLogo | None:
+    """The account logo for the subtitle render to draw, so the video is encoded once.
+
+    None leaves it to ``stamp_account_logo`` after the render: no logo (it reports
+    that), an old logo to inpaint (frame by frame), or a planning failure.
+    """
+    try:
+        stored = BRANDING_STORE.get(owner_user_id)
+        logo_source = BRANDING_STORE.logo_path(owner_user_id)
+        if logo_source is None or stored["logo"] is None:
+            return None
+        config = stored["config"]
+        work = tenant_job_dir(WORK_DIR, owner_user_id, job_id) / "branding"
+        work.mkdir(parents=True, exist_ok=True)
+        # Snapshot: replacing the account logo deletes the old file, maybe mid-render.
+        logo_path = work / "logo.png"
+        shutil.copyfile(logo_source, logo_path)
+        template_source = BRANDING_STORE.template_path(owner_user_id)
+        template_path = work / "template.png" if template_source else None
+        if template_source and template_path:
+            shutil.copyfile(template_source, template_path)
+        plan = BRANDING_RUNNER.plan_for_render(
+            video_path, logo_width=int(stored["logo"]["width"]), logo_height=int(stored["logo"]["height"]),
+            config=config, template_path=template_path, prepared=prepared,
+        )
+    except JobCancelled:
+        raise
+    except Exception:
+        logger.exception("Cannot plan the logo for the render of job %s; stamping it afterwards", job_id)
+        return None
+    if plan is None:
+        return None
+    placements, summary = plan
+    return RenderLogo(logo_path, placements, config.opacity, summary)
+
+
 def stamp_account_logo(job_id: str, owner_user_id: str, video: Path, *, detect: bool,
-                       low: float = 0.95, high: float = 0.99) -> None:
+                       low: float = 0.95, high: float = 0.99, prepared: Callable[[], Any] | None = None) -> None:
     """Stamp the account logo onto a finished video in place.
 
     ``detect`` looks for a logo already in the video (translated sources) and puts the
@@ -4312,6 +4394,7 @@ def stamp_account_logo(job_id: str, owner_user_id: str, video: Path, *, detect: 
             job_id, video, branded, logo_path=logo_path, logo_width=int(stored["logo"]["width"]),
             logo_height=int(stored["logo"]["height"]), config=config, template_path=template_path,
             override="auto" if detect else config.default_position, progress=progress,
+            prepared=prepared if detect else None,
         )
         branded.replace(video)
     except JobCancelled:

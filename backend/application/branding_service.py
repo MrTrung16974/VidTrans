@@ -25,7 +25,7 @@ from domain.branding import BrandingConfig
 from infrastructure.media_probe import probe_media_file
 from pipeline import logo_inpaint, logo_tracking
 from pipeline.logo_detection import Detection, detect_logo, hold_one_position
-from pipeline.logo_overlay import build_ffmpeg_command, plan_placements
+from pipeline.logo_overlay import Placement, build_ffmpeg_command, plan_placements
 
 logger = logging.getLogger(__name__)
 
@@ -88,13 +88,42 @@ class BrandingJobRunner:
             output_video=self.artifact_name(output), branding=summary, finished_at=self.utc_now(),
         )
 
+    def detect_video(self, video_path: Path, config: BrandingConfig, *, template_path: Path | None = None,
+                     progress: Callable[[float, str], None] = lambda fraction, detail: None) -> Detection:
+        """Where the old logo is: one position for the whole video (no logo: no position).
+
+        Writes nothing to the job, so translation jobs run it on the source video in
+        another thread while the slow stages run (the render keeps the frame geometry).
+        """
+        probe = probe_media_file(video_path, ffprobe=self.ffprobe())
+        width, height = decoded_size(self.ffmpeg(), video_path) or (probe.width, probe.height)
+        if template_path is not None and template_path.is_file() and logo_tracking.available():
+            # The user named the logo to replace: follow it, and never replace another one instead.
+            progress(0.0, "Đang dò logo theo mẫu")
+            detection = logo_tracking.track_template(
+                self.ffmpeg(), video_path, template_path, width=width, height=height,
+                duration=probe.duration, progress=lambda fraction: progress(fraction, "Đang dò logo theo mẫu"),
+            )
+        else:
+            progress(0.0, "Đang nhận diện logo có sẵn trong video")
+            detection = detect_logo(
+                self.ffmpeg(), video_path, width=width, height=height, duration=probe.duration,
+                strategy=config.multi_logo_strategy, default_position=config.default_position,
+                min_confidence=config.min_confidence,
+            )
+        # The new logo stays in one place for the whole video.
+        return hold_one_position(detection, probe.duration)
+
     def stamp(self, job_id: str, video_path: Path, output: Path, *, logo_path: Path, logo_width: int,
               logo_height: int, config: BrandingConfig, template_path: Path | None = None,
-              override: str = "auto", progress: Callable[[str, float, str], None]) -> dict[str, Any]:
+              override: str = "auto", progress: Callable[[str, float, str], None],
+              prepared: Callable[[], Detection | None] | None = None) -> dict[str, Any]:
         """Stamp the logo on ``video_path`` into ``output`` and return the placement summary.
 
         Shared by logo jobs and by translation/comic jobs that asked for the account logo;
         ``progress(stage, fraction, detail)`` lets each caller map stages onto its own bar.
+        ``prepared`` returns a detection started earlier (``detect_video``); when it returns
+        None or fails, the video is analysed here instead.
         """
         if not logo_path.is_file():
             raise FileNotFoundError("Logo của job không còn trên máy chủ")
@@ -106,48 +135,22 @@ class BrandingJobRunner:
 
         detection: Detection | None = None
         if config.auto_detect and override == "auto":
-            if template_path is not None and template_path.is_file() and logo_tracking.available():
-                # The user named the logo to replace: follow it, and never replace another one instead.
-                progress("detect", 0.0, "Đang dò logo theo mẫu")
-
-                def tracking_progress(fraction: float) -> None:
-                    progress("detect", fraction, "Đang dò logo theo mẫu")
+            if prepared is not None:
+                try:
+                    detection = prepared()
+                except Exception:
+                    logger.exception("Early logo detection failed for job %s; detecting again", job_id)
+            if detection is None:
+                def detect_progress(fraction: float, detail: str) -> None:
+                    progress("detect", fraction, detail)
                     self.ensure_active(job_id)
 
-                detection = logo_tracking.track_template(
-                    self.ffmpeg(), video_path, template_path, width=width, height=height,
-                    duration=probe.duration, progress=tracking_progress,
-                )
-            else:
-                progress("detect", 0.0, "Đang nhận diện logo có sẵn trong video")
-                detection = detect_logo(
-                    self.ffmpeg(), video_path, width=width, height=height, duration=probe.duration,
-                    strategy=config.multi_logo_strategy, default_position=config.default_position,
-                    min_confidence=config.min_confidence,
-                )
-            # The new logo stays in one place for the whole video.
-            detection = hold_one_position(detection, probe.duration)
+                detection = self.detect_video(video_path, config, template_path=template_path,
+                                              progress=detect_progress)
             self.ensure_active(job_id)
-        inpaint = config.cover_original and config.cover_method == "inpaint" and logo_inpaint.available()
-        placements = plan_placements(
-            detection.segments if detection else None,
-            duration=probe.duration, video_w=width, video_h=height,
-            logo_w=logo_width, logo_h=logo_height,
-            size_percent=config.logo_size, margin_percent=config.margin,
-            default_position=config.default_position, cover_original=config.cover_original,
-            cover_method="inpaint" if inpaint else "blur", override=override,
-        )
-        needs_review = bool(detection and detection.status == "uncertain" and config.low_confidence_action == "review")
-        summary = {
-            "override": override,
-            "video": {"width": width, "height": height, "duration": probe.duration, "fps": fps,
-                      "has_audio": probe.has_audio},
-            "detection": detection.to_dict() if detection else None,
-            "detected_logo": bool(detection and detection.status == "found"),
-            "cover_method": ("inpaint" if inpaint else "blur") if config.cover_original else None,
-            "placements": [placement.to_dict() for placement in placements],
-            "needs_review": needs_review,
-        }
+        placements, summary = self._plan(probe, width, height, fps, logo_width=logo_width, logo_height=logo_height,
+                                         config=config, detection=detection, override=override)
+        inpaint = summary["cover_method"] == "inpaint"
         self.update_job(job_id, branding=summary)
 
         detail = f"Đang chèn logo ({len(placements)} vị trí)" if len(placements) > 1 else "Đang chèn logo"
@@ -170,6 +173,55 @@ class BrandingJobRunner:
                 # Some source audio codecs (Vorbis, PCM in MKV...) cannot go into MP4 as-is.
                 logger.info("Logo job %s: audio copy failed, re-encoding audio to AAC", job_id)
         return summary
+
+    @staticmethod
+    def _plan(probe, width: int, height: int, fps: float, *, logo_width: int, logo_height: int,
+              config: BrandingConfig, detection: Detection | None, override: str,
+              ) -> tuple[list[Placement], dict[str, Any]]:
+        """Where the logo goes over time, and the summary stored in the job's ``branding`` field."""
+        inpaint = config.cover_original and config.cover_method == "inpaint" and logo_inpaint.available()
+        placements = plan_placements(
+            detection.segments if detection else None,
+            duration=probe.duration, video_w=width, video_h=height,
+            logo_w=logo_width, logo_h=logo_height,
+            size_percent=config.logo_size, margin_percent=config.margin,
+            default_position=config.default_position, cover_original=config.cover_original,
+            cover_method="inpaint" if inpaint else "blur", override=override,
+        )
+        needs_review = bool(detection and detection.status == "uncertain" and config.low_confidence_action == "review")
+        summary = {
+            "override": override,
+            "video": {"width": width, "height": height, "duration": probe.duration, "fps": fps,
+                      "has_audio": probe.has_audio},
+            "detection": detection.to_dict() if detection else None,
+            "detected_logo": bool(detection and detection.status == "found"),
+            "cover_method": ("inpaint" if inpaint else "blur") if config.cover_original else None,
+            "placements": [placement.to_dict() for placement in placements],
+            "needs_review": needs_review,
+        }
+        return placements, summary
+
+    def plan_for_render(self, video_path: Path, *, logo_width: int, logo_height: int, config: BrandingConfig,
+                        template_path: Path | None = None,
+                        prepared: Callable[[], Detection | None] | None = None,
+                        ) -> tuple[list[Placement], dict[str, Any]] | None:
+        """Placements for a render of ``video_path`` that keeps its frame geometry (subtitles),
+        so that render draws the logo too and the video is encoded once instead of twice.
+
+        None when the old logo must be inpainted: that needs the frame-by-frame ``stamp``.
+        """
+        if config.cover_original and config.cover_method == "inpaint" and logo_inpaint.available():
+            return None
+        probe = probe_media_file(video_path, ffprobe=self.ffprobe())
+        width, height = decoded_size(self.ffmpeg(), video_path) or (probe.width, probe.height)
+        fps = probe.fps if 1.0 <= probe.fps <= 120.0 else 30.0
+        detection: Detection | None = None
+        if config.auto_detect:
+            detection = prepared() if prepared is not None else None
+            if detection is None:
+                detection = self.detect_video(video_path, config, template_path=template_path)
+        return self._plan(probe, width, height, fps, logo_width=logo_width, logo_height=logo_height,
+                          config=config, detection=detection, override="auto")
 
     def _render_inpainted(self, job_id: str, video_path: Path, logo_path: Path, output: Path, placements,
                           stencils: dict, width: int, height: int, fps: float, duration: float, opacity: float,

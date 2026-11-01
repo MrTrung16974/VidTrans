@@ -16,8 +16,9 @@ from application.job_service import JobService
 from domain.branding import BrandingConfig
 from infrastructure.branding_store import BrandingError, BrandingStore, normalise_logo
 from infrastructure.job_store import SQLiteJobStore
+from pipeline import logo_detection
 from pipeline.logo_detection import (
-    Box, Candidate, Detection, Segment, Window, decide, detect_candidates, hold_one_position,
+    Box, Candidate, Detection, Segment, Window, decide, detect_candidates, hold_one_position, sample_frames,
 )
 from pipeline import logo_inpaint, logo_tracking
 from pipeline.logo_overlay import build_filter_graph, logo_size, path_expression, plan_placements
@@ -104,20 +105,42 @@ class LogoDetectionTests(unittest.TestCase):
     def test_no_readable_window_is_uncertain(self):
         self.assertEqual(decide([Window(0, 6, False)], 6.0).status, "uncertain")
 
-    def test_burned_in_subtitle_line_is_not_a_logo(self):
-        # A wide static line centred near the bottom, like the subtitles of a translated video.
-        _, candidates = detect_candidates(stamp_logo(moving_frames(), 100, 150, w=120, h=20))
-        self.assertEqual(candidates, [])
+    def test_subtitles_are_not_a_logo(self):
+        # A static subtitle line, or a few characters of it, in the lower middle of the frame.
+        for x, w in ((100, 120), (150, 20)):
+            _, candidates = detect_candidates(stamp_logo(moving_frames(), x, 150, w=w, h=20))
+            self.assertEqual(candidates, [], (x, w))
         # The same shape in a corner is still a logo.
         _, candidates = detect_candidates(stamp_logo(moving_frames(), 190, 150, w=120, h=20))
         self.assertTrue(candidates)
 
-    def test_one_window_blip_in_a_long_video_is_dropped(self):
-        logo, blip = Box(0.82, 0.03, 0.12, 0.08), Box(0.6, 0.88, 0.04, 0.05)
-        windows = [Window(i * 6, i * 6 + 6, True, [Candidate(logo, 0.9)] if i in (0, 1) else []) for i in range(8)]
-        windows[5] = Window(30, 36, True, [Candidate(blip, 0.9)])
-        detection = decide(windows, 48.0)
-        self.assertEqual({s.box for s in detection.segments}, {logo, None})
+    def test_rarely_seen_object_in_a_long_video_is_not_a_logo(self):
+        logo, rare = Box(0.82, 0.03, 0.12, 0.08), Box(0.02, 0.88, 0.04, 0.05)
+        # Seen in 3 of 10 readable windows (30%): a logo. Seen in 2 of 10: not one.
+        windows = [Window(i * 6, i * 6 + 6, True, [Candidate(logo, 0.9)] if i in (0, 1, 2) else []) for i in range(10)]
+        windows[5] = Window(30, 36, True, [Candidate(rare, 0.95)])
+        windows[8] = Window(48, 54, True, [Candidate(rare, 0.95)])
+        detection = hold_one_position(decide(windows, 60.0), 60.0)
+        self.assertEqual([(s.start, s.end, s.box) for s in detection.segments], [(0.0, 60.0, logo)])
+
+    def test_long_video_decodes_only_a_spread_sample_of_windows(self):
+        commands = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            # 9 gray 320x180 frames: one 6 s window at 1.5 fps.
+            return subprocess.CompletedProcess(command, 0, stdout=bytes(320 * 180 * 9))
+
+        timestamps, frames = sample_frames("ffmpeg", Path("v.mp4"), width=1280, height=720, duration=480.0,
+                                           run=fake_run)
+
+        starts = sorted(float(command[command.index("-ss") + 1]) for command in commands)
+        self.assertEqual(len(starts), logo_detection.MAX_ANALYSED_WINDOWS)
+        self.assertEqual((starts[0], starts[-1]), (0.0, 474.0))  # first and last of the 80 windows
+        self.assertEqual(frames.shape, (24 * 9, 180, 320))
+        self.assertEqual(len(logo_detection.analyse_windows(timestamps, frames, 480.0)), 80)
+        # Each sampled window gets all its frames; the others none (unreadable).
+        self.assertEqual(sorted({int(t // 6) for t in timestamps}), [int(s // 6) for s in starts])
 
     def test_logo_is_held_in_one_place_for_the_whole_video(self):
         corner, other = Box(0.82, 0.03, 0.12, 0.08), Box(0.02, 0.88, 0.12, 0.08)
@@ -345,6 +368,79 @@ class BrandingApiTests(unittest.TestCase):
         streams = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type",
                                   "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout.split()
         self.assertEqual(sorted(streams), ["audio", "video"])
+
+    @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
+    def test_detection_started_early_is_used_instead_of_detecting_again(self):
+        self.upload_logo()
+        video = self.finished_video("job3")
+        corner = Box(0.05, 0.05, 0.1, 0.1)
+        early = Detection("found", 0.9, [Segment(0.0, 3.0, corner, 0.9, 0)], [], 1, 1)
+        with patch.object(main.BRANDING_RUNNER, "detect_video") as detect:
+            main.stamp_account_logo("job3", "user-a", video, detect=True, prepared=lambda: early)
+            detect.assert_not_called()
+            placement = self.service.get("job3")["branding"]["placements"][0]
+            self.assertEqual((placement["source"], placement["start"], placement["end"]), ("detected", 0.0, 3.0))
+            # Never started (the pool was busy): the stamp step detects by itself.
+            detect.return_value = early
+            main.stamp_account_logo("job3", "user-a", video, detect=True, prepared=lambda: None)
+            detect.assert_called_once()
+
+    @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
+    def test_subtitle_render_draws_the_logo_in_the_same_encode(self):
+        self.upload_logo()  # solid red 200x100
+        source = self.finished_video("job5")
+        ass = source.parent / "subs.ass"
+        ass.write_text(
+            "[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 360\n\n[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, "
+            "Outline, Shadow, Alignment, MarginL, MarginR, MarginV\n"
+            "Style: Default,Arial,24,&H00FFFFFF,&H00000000,&H00000000,0,0,1,1,0,2,10,10,20\n\n[Events]\n"
+            "Format: Layer, Start, End, Style, Text\nDialogue: 0,0:00:00.00,0:00:03.00,Default,Xin chao\n",
+            encoding="utf-8",
+        )
+        main.BRANDING_STORE.save_config("user-a", BrandingConfig(auto_detect=False, default_position="top-left"))
+        logo = main.plan_render_logo("job5", "user-a", source, None)
+        self.assertIsNotNone(logo)
+        self.assertEqual(len(logo.placements), 1)
+        output = source.parent / "rendered.mp4"
+
+        drawn = main.burn_subtitles(source, ass, output, None, [], dict(main.DEFAULT_SUB_STYLE), source.parent,
+                                    logo=logo)
+
+        self.assertTrue(drawn)
+        placement = logo.placements[0]
+        frame = subprocess.run(
+            [shutil.which("ffmpeg"), "-v", "error", "-ss", "1", "-i", str(output), "-frames:v", "1",
+             "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], capture_output=True, check=True).stdout
+        pixels = np.frombuffer(frame, dtype=np.uint8).reshape(360, 640, 3)
+        red = pixels[placement.y + placement.height // 2, placement.x + placement.width // 2]
+        self.assertGreater(int(red[0]), 200)
+        self.assertLess(int(red[1]), 60)
+        streams = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type",
+                                  "-of", "csv=p=0", str(output)], capture_output=True, text=True).stdout.split()
+        self.assertEqual(sorted(streams), ["audio", "video"])
+
+    def test_render_leaves_the_logo_to_the_stamp_step_when_it_cannot_draw_it(self):
+        source = Path("source.mp4")
+        self.assertIsNone(main.plan_render_logo("job6", "user-a", source, None))  # no logo: stamp reports it
+        self.upload_logo()
+        main.BRANDING_STORE.save_config("user-a", BrandingConfig(cover_original=True, cover_method="inpaint"))
+        with patch.object(logo_inpaint, "available", return_value=True):
+            self.assertIsNone(main.plan_render_logo("job6", "user-a", source, None))  # inpainting: frame by frame
+        main.BRANDING_STORE.save_config("user-a", BrandingConfig())
+        with patch.object(main.BRANDING_RUNNER, "plan_for_render", side_effect=RuntimeError("probe failed")):
+            self.assertIsNone(main.plan_render_logo("job6", "user-a", source, None))
+
+    def test_early_detection_needs_a_logo_and_auto_detection(self):
+        self.assertIsNone(main.start_logo_detection("job4", "user-a", Path("source.mp4")))  # no logo yet
+        self.upload_logo()
+        main.BRANDING_STORE.save_config("user-a", BrandingConfig(auto_detect=False))
+        self.assertIsNone(main.start_logo_detection("job4", "user-a", Path("source.mp4")))
+        main.BRANDING_STORE.save_config("user-a", BrandingConfig())
+        with patch.object(main.BRANDING_RUNNER, "detect_video", return_value="detection") as detect:
+            result = main.start_logo_detection("job4", "user-a", Path("source.mp4"))
+            self.assertEqual(result(), "detection")
+        detect.assert_called_once()
 
     @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
     def test_stamping_failure_keeps_the_unbranded_video(self):

@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 import subprocess
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Sequence
@@ -27,7 +28,11 @@ import numpy as np
 ANALYSIS_WIDTH = 320
 WINDOW_SECONDS = 6.0
 MIN_WINDOW_FRAMES = 4
-MAX_SAMPLED_FRAMES = 360
+# The logo gets one position for the whole video, so a sample of windows spread
+# over it decides as well as every window would: only these are decoded, each by
+# seeking straight to it, a few at a time.
+MAX_ANALYSED_WINDOWS = 24
+DECODE_WORKERS = 3
 EDGE_THRESHOLD = 28.0
 PERSISTENCE = 0.8
 # Above this share of persistent pixels the scene itself is static (slides, fixed camera on a wall).
@@ -35,9 +40,12 @@ MAX_STATIC_SHARE = 0.25
 MIN_SCENE_CHANGE = 3.0
 # Pixels whose value barely changes across the window (logo fill, solid borders).
 STATIC_STD = 8.0
-# In a video this long (in readable windows), a track seen in one window only is a
-# blip (a subtitle fragment, a static object), not a logo: logos stay for a while.
+# In a video this long (in readable windows), a logo must show in at least this share
+# of them: a channel logo stays for most of the video, while a subtitle fragment or a
+# static object only shows now and then. The one position chosen for the whole video
+# must never come from such a blip.
 BLIP_MIN_VALID_WINDOWS = 6
+MIN_LOGO_COVERAGE = 0.3
 
 
 @dataclass(frozen=True)
@@ -132,21 +140,39 @@ def sample_frames(
     height: int,
     duration: float,
     sample_fps: float = 1.5,
+    window_seconds: float = WINDOW_SECONDS,
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (timestamps, gray frames[n, h, w]) sampled evenly over the video."""
-    fps = min(sample_fps, MAX_SAMPLED_FRAMES / max(duration, 1.0))
+    """Return (timestamps, gray frames[n, h, w]) inside up to MAX_ANALYSED_WINDOWS windows.
+
+    The windows are the ones ``analyse_windows`` cuts, picked evenly over the video;
+    the others get no frames and count as unreadable.
+    """
     out_w, out_h = analysis_size(width, height)
-    result = run(
-        [ffmpeg, "-v", "error", "-i", str(video_path), "-an", "-sn",
-         "-vf", f"fps={fps:.4f}:round=up,scale={out_w}:{out_h},format=gray",
-         "-f", "rawvideo", "pipe:1"],
-        capture_output=True, check=True,
-    )
     frame_bytes = out_w * out_h
-    count = len(result.stdout) // frame_bytes
-    frames = np.frombuffer(result.stdout[: count * frame_bytes], dtype=np.uint8).reshape(count, out_h, out_w)
-    return np.arange(count, dtype=np.float64) / fps, frames
+    count = max(1, int(round(duration / window_seconds)))
+    edges = np.linspace(0.0, duration, count + 1)
+    picked = sorted({int(i) for i in np.linspace(0, count - 1, min(count, MAX_ANALYSED_WINDOWS)).round()})
+
+    def window(index: int) -> tuple[np.ndarray, np.ndarray]:
+        start, end = float(edges[index]), float(edges[index + 1])
+        result = run(
+            [ffmpeg, "-v", "error", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(video_path),
+             "-an", "-sn", "-vf", f"fps={sample_fps:.4f}:round=up,scale={out_w}:{out_h},format=gray",
+             "-f", "rawvideo", "pipe:1"],
+            capture_output=True, check=True,
+        )
+        frames = len(result.stdout) // frame_bytes
+        data = np.frombuffer(result.stdout[: frames * frame_bytes], dtype=np.uint8).reshape(frames, out_h, out_w)
+        # Kept inside the window even when the seek lands slightly late.
+        return np.minimum(start + np.arange(frames) / sample_fps, end - 1e-3), data
+
+    with ThreadPoolExecutor(max_workers=min(DECODE_WORKERS, len(picked))) as pool:
+        parts = list(pool.map(window, picked))
+    timestamps = np.concatenate([times for times, _ in parts]) if parts else np.zeros(0)
+    frames = (np.concatenate([data for _, data in parts]) if parts
+              else np.zeros((0, out_h, out_w), dtype=np.uint8))
+    return timestamps.astype(np.float64), frames
 
 
 # ------------------------------------------------------------------ per-window analysis
@@ -207,14 +233,15 @@ def _location_prior(box: Box) -> float:
     return 0.0
 
 
-def _looks_like_subtitle(box: Box, pixel_w: int, pixel_h: int) -> bool:
-    """A burned-in subtitle line: wide, horizontally centred, in the lower part of the frame.
+def _in_subtitle_area(box: Box) -> bool:
+    """Lower middle of the frame, where burned-in subtitles sit.
 
-    It stays still for a few seconds while the scene moves, exactly like a logo, so
-    translated videos (our own subtitles) would otherwise get the logo put on them.
+    A subtitle line, or a few characters of it, stays still for a few seconds while the
+    scene moves, exactly like a logo; translated videos always have subtitles there, and
+    a logo almost never does.
     """
     cx, cy = box.center
-    return abs(cx - 0.5) < 0.15 and cy > 0.6 and pixel_w >= 2.5 * pixel_h
+    return 0.3 <= cx <= 0.7 and cy > 0.6
 
 
 def _grow_into_static(mask: np.ndarray, temporal_std: np.ndarray, x0: int, y0: int, x1: int, y1: int,
@@ -270,7 +297,7 @@ def detect_candidates(frames: np.ndarray) -> tuple[bool, list[Candidate]]:
             continue
         if not 0.2 <= bw / max(bh, 1) <= 12:
             continue
-        if _looks_like_subtitle(box, bw, bh):
+        if _in_subtitle_area(box):
             continue
         inside = mask[y0:y1, x0:x1]
         density = float(inside.mean())
@@ -361,7 +388,7 @@ def decide(
             track["windows"].append(index)
     valid_count = sum(1 for window in windows if window.valid)
     if valid_count >= BLIP_MIN_VALID_WINDOWS:
-        tracks = [track for track in tracks if len(set(track["windows"])) >= 2]
+        tracks = [track for track in tracks if len(set(track["windows"])) >= MIN_LOGO_COVERAGE * valid_count]
     for track in tracks:
         track["box"] = _median_box(track["boxes"])
         coverage = len(set(track["windows"])) / max(1, valid_count)
