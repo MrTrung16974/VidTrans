@@ -4,6 +4,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/widgets/error_view.dart';
+import '../../../../core/widgets/video_controls.dart';
 import '../../data/jobs_repository.dart';
 
 /// Streams `/api/v1/jobs/{id}/artifacts/video` with the Bearer header.
@@ -68,31 +69,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
             ? ErrorView(message: _error!)
             : controller == null
                 ? const CircularProgressIndicator(color: AppColors.brand)
-                : GestureDetector(
-                    onTap: () => setState(
-                      () => controller.value.isPlaying
-                          ? controller.pause()
-                          : controller.play(),
-                    ),
-                    child: AspectRatio(
-                      aspectRatio: controller.value.aspectRatio,
-                      child: Stack(
-                        alignment: Alignment.bottomCenter,
-                        children: [
-                          VideoPlayer(controller),
-                          VideoProgressIndicator(
-                            controller,
-                            allowScrubbing: true,
-                            colors: const VideoProgressColors(
-                              playedColor: AppColors.brand,
-                              bufferedColor: Colors.white38,
-                              backgroundColor: Colors.white12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                : ControlledVideo(controller: controller),
       ),
     );
   }

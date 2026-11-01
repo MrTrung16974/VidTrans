@@ -29,6 +29,8 @@ BACKGROUND_MAX_CHROMA = 24
 BACKGROUND_EDGE_SHARE = 0.9
 # Flood fill runs on a grid of blocks at most this many cells wide (numpy only).
 BACKGROUND_GRID = 512
+# Width of the anti-aliased rim (pixels) re-blended after the background is cut.
+BACKGROUND_EDGE_PIXELS = 2
 
 
 class BrandingError(ValueError):
@@ -92,7 +94,48 @@ def remove_painted_background(rgba: "Image.Image") -> "Image.Image":
         return rgba  # a plain light image: nothing would be left
     result = pixels.copy()
     result[..., 3] = np.where(background, 0, 255)
+    _soften_edge(result, background, rgb)
     return Image.fromarray(result, "RGBA")
+
+
+def _soften_edge(result: "np.ndarray", background: "np.ndarray", rgb: "np.ndarray") -> None:
+    """Un-mix the anti-aliased rim the logo shares with the removed background.
+
+    Pixels just inside the cut are a blend of the logo and the light background, so
+    leaving them opaque draws a pale outline around the logo. Each one gets the
+    alpha (and colour) that reproduces it over the neighbouring background colour.
+    """
+    import numpy as np
+
+    level = np.where(background, rgb.min(axis=2), 0).astype(np.int32)
+    near = background.copy()
+    for _ in range(BACKGROUND_EDGE_PIXELS):
+        grown = near.copy()
+        grown[1:, :] |= near[:-1, :]
+        grown[:-1, :] |= near[1:, :]
+        grown[:, 1:] |= near[:, :-1]
+        grown[:, :-1] |= near[:, 1:]
+        spread = level.copy()
+        spread[1:, :] = np.maximum(spread[1:, :], level[:-1, :])
+        spread[:-1, :] = np.maximum(spread[:-1, :], level[1:, :])
+        spread[:, 1:] = np.maximum(spread[:, 1:], level[:, :-1])
+        spread[:, :-1] = np.maximum(spread[:, :-1], level[:, 1:])
+        level = np.where(background, level, spread)
+        near = grown
+    band = near & ~background
+    reference = np.maximum(level, BACKGROUND_MIN_LEVEL)
+    if not band.any():
+        return
+    ref = reference[band][:, None].astype(np.float32)
+    colour = rgb[band].astype(np.float32)
+    # Smallest alpha a in [0, 1] with colour = a * fg + (1 - a) * ref and fg in [0, 255].
+    alpha = np.clip(((ref - colour) / np.maximum(ref, 1)).max(axis=1), 0.0, 1.0)
+    keep = alpha > 0.02
+    safe = np.maximum(alpha, 1e-3)[:, None]
+    foreground = np.clip((colour - (1 - safe) * ref) / safe, 0, 255)
+    rows, cols = np.nonzero(band)
+    result[rows, cols, :3] = np.where(keep[:, None], foreground, colour).astype(np.uint8)
+    result[rows, cols, 3] = np.where(keep, alpha * 255, 0).round().astype(np.uint8)
 
 
 def normalise_logo(data: bytes) -> tuple[bytes, int, int, bool]:

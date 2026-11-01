@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/auth/session_controller.dart';
 import '../../../../core/errors/api_exception.dart';
+import '../../../../core/widgets/video_controls.dart';
 import '../../data/comic_repository.dart';
 
 /// Media served by `/api/v1/comic/.../media/...` needs the Bearer header.
@@ -98,7 +99,7 @@ class _ClipScreenState extends ConsumerState<_ClipScreen> {
             ? const Text('Không phát được clip.', style: TextStyle(color: Colors.white))
             : controller == null
                 ? const CircularProgressIndicator(color: AppColors.primary)
-                : AspectRatio(aspectRatio: controller.value.aspectRatio, child: VideoPlayer(controller)),
+                : ControlledVideo(controller: controller),
       ),
     );
   }
