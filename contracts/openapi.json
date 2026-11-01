@@ -604,6 +604,11 @@
             "title": "Elevenlabs Male Voice",
             "type": "string"
           },
+          "file_source_urls": {
+            "default": "",
+            "title": "File Source Urls",
+            "type": "string"
+          },
           "files": {
             "anyOf": [
               {
@@ -8146,6 +8151,33 @@
           }
         ],
         "summary": "Sync Douyin Browser Session"
+      }
+    },
+    "/api/v1/download/policy": {
+      "get": {
+        "description": "Where each platform's links are downloaded: on the phone (residential IP, the user's own\nsession) with the server as fallback, or on the server only.",
+        "operationId": "download_policy_endpoint_api_v1_download_policy_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Download Policy Endpoint"
       }
     },
     "/api/v1/facebook-auth": {

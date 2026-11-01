@@ -22,13 +22,14 @@ final ttsProvidersProvider = FutureProvider.autoDispose<List<TtsProviderInfo>>(
   (ref) => ref.watch(translationRepositoryProvider).ttsProviders(),
 );
 
-/// A local file picked for upload.
+/// A local file picked for upload, or downloaded on the phone from [sourceUrl].
 class PickedMedia {
-  const PickedMedia({required this.path, required this.name, this.size});
+  const PickedMedia({required this.path, required this.name, this.size, this.sourceUrl});
 
   final String path;
   final String name;
   final int? size;
+  final String? sourceUrl;
 }
 
 /// `POST /api/v1/batches` response (201, or 200 with `duplicate: true` when the
@@ -99,6 +100,9 @@ class TranslationRepository {
     final fields = {
       ...config.toFormFields(),
       if (sourceLinks.trim().isNotEmpty) 'source_links': sourceLinks.trim(),
+      // One entry per `files` part, in the same order: where the phone downloaded it from.
+      if (files.any((file) => file.sourceUrl != null))
+        'file_source_urls': jsonEncode([for (final file in files) file.sourceUrl]),
     };
     final uploads = <UploadFile>[
       for (final file in files) (field: 'files', path: file.path),

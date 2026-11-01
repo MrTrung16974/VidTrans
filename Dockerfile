@@ -59,6 +59,9 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu torchaudio==2.6
 COPY requirements-visual.txt ./
 RUN pip install -r requirements-visual.txt
 
+COPY requirements-realtime.txt ./
+RUN pip install -r requirements-realtime.txt
+
 # Install the stable CLI OCR fallback after the expensive Python dependency
 # layers so enabling it does not invalidate the cached Torch/Paddle build.
 RUN apt-get update -o Acquire::Retries=3 \

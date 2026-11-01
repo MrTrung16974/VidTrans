@@ -36,7 +36,9 @@ void main() {
       // The guest trial entry must stay reachable without scrolling.
       expect(find.text('Dùng thử'), findsOneWidget);
 
-      final scrollable = tester.state<ScrollableState>(find.byType(Scrollable).first);
+      final scrollable = tester.state<ScrollableState>(
+        find.byType(Scrollable).first,
+      );
       expect(
         scrollable.position.maxScrollExtent,
         0.0,

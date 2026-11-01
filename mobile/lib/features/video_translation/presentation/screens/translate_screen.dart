@@ -1288,9 +1288,13 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             ),
           if (state.busy) ...[
             Text(
-              state.phase == UploadPhase.creating
-                  ? 'Tải lên xong. Đang tạo công việc…'
-                  : 'Đang tải lên ${(state.progress * 100).round()}%',
+              switch (state.phase) {
+                UploadPhase.creating => 'Tải lên xong. Đang tạo công việc…',
+                UploadPhase.downloading => state.downloadNote == null
+                    ? 'Đang chuẩn bị link…'
+                    : 'Đang tải trên máy ${state.downloadNote} · ${(state.progress * 100).round()}%',
+                _ => 'Đang tải lên ${(state.progress * 100).round()}%',
+              },
               style: const TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 12.5,
@@ -1298,7 +1302,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             ),
             const SizedBox(height: 8),
             LinearProgressIndicator(
-              value: state.phase == UploadPhase.creating
+              value: state.phase == UploadPhase.creating ||
+                      (state.phase == UploadPhase.downloading && state.downloadNote == null)
                   ? null
                   : state.progress,
             ),

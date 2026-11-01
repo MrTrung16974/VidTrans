@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261031-download-only" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261031-guest-trial-cta" />
   </head>
   <body>
     <div class="app-shell">
@@ -2337,7 +2337,15 @@
           </label>
           <button id="authRegisterSubmit" class="button primary full" type="submit">Tạo tài khoản Free</button>
         </form>
-        <button id="authGuestButton" class="button secondary full" type="button">Dùng thử ngay · không cần đăng ký</button>
+        <div class="auth-guest-divider" aria-hidden="true"><span>hoặc trải nghiệm tức thì</span></div>
+        <button id="authGuestButton" class="button auth-guest-cta full" type="button">
+          <span class="auth-guest-icon" aria-hidden="true">⚡</span>
+          <span class="auth-guest-copy">
+            <strong>Dùng thử ngay · Không cần đăng ký</strong>
+            <small>Cấp tài khoản tức thì · Tặng phút xử lý video miễn phí</small>
+          </span>
+          <span class="auth-guest-badge">MIỄN PHÍ →</span>
+        </button>
         <button id="authModeToggle" class="auth-mode-toggle" type="button">Chưa có tài khoản? Đăng ký miễn phí</button>
         <div id="authMessage" class="auth-message" aria-live="polite">OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly</div>
       </section>

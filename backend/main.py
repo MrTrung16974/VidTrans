@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, ValidationError
 from infrastructure.frontend_static import FrontendStaticFiles
 from gtts import gTTS
 from starlette.background import BackgroundTask
+from starlette.requests import HTTPConnection
 from infrastructure.artifact_archive import build_artifact_archive
 
 from app.config import AppSettings, available_cpu_count
@@ -87,7 +88,8 @@ from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccoun
 from infrastructure.comic_series import ComicSeriesStore
 from infrastructure.branding_store import BrandingStore
 from infrastructure.device_store import DeviceStore
-from infrastructure.push_notifications import FcmSender, JobPushNotifier
+from infrastructure.push_notifications import FcmSender, JobPushNotifier, job_message
+from infrastructure.realtime import SOCKET_IO_PATH, RealtimeServer
 from application.device_routes import DeviceRouteDependencies, create_device_router
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
@@ -117,6 +119,7 @@ from infrastructure.social_video_downloader import (
     SocialVideoDownloader,
     SocialVideoDownloadError,
     extract_social_video_urls,
+    normalize_social_video_url,
     social_platform,
 )
 from infrastructure.tts_providers import (
@@ -377,8 +380,15 @@ PUSH_NOTIFIER = JobPushNotifier(DEVICE_STORE, FcmSender.from_env(), lambda job_i
 JOB_SERVICE = JobService(
     JobStore(DATABASE_TARGET),
     on_change=JOB_EVENTS.notify,
-    on_status=lambda job_id, status: PUSH_NOTIFIER.on_status(job_id, status),
+    on_status=lambda job_id, status: notify_job_status(job_id, status),
 )
+
+
+def notify_job_status(job_id: str, status: str) -> None:
+    # REALTIME is created with the job routes below; worker threads only write
+    # statuses after the module has loaded.
+    PUSH_NOTIFIER.on_status(job_id, status)
+    REALTIME.on_status(job_id, status)
 N8N_WORKFLOW_CONFIG = N8nWebhookConfig.from_env()
 WORKFLOW_EVENT_STORE = WorkflowEventStore(DATABASE_TARGET)
 WORKFLOW_EVENTS = WorkflowEventSink(WORKFLOW_EVENT_STORE)
@@ -4477,6 +4487,7 @@ async def prepare_cit_voice_previews() -> None:
 @app.on_event("startup")
 async def start_job_scheduler() -> None:
     await JOB_EVENTS.start()
+    await REALTIME.start()
     await SYSTEM_EVENTS.start()
     apply_retention_policy()
     app.state.retention_task = asyncio.create_task(run_retention_loop())
@@ -4522,6 +4533,7 @@ async def start_job_scheduler() -> None:
 
 @app.on_event("shutdown")
 async def stop_job_scheduler() -> None:
+    await REALTIME.stop()
     await JOB_EVENTS.stop()
     PUSH_NOTIFIER.shutdown()
     await SYSTEM_EVENTS.stop()
@@ -6031,6 +6043,54 @@ def tts_voice_preview_endpoint(provider: str, voice_key: str) -> Response:
     return Response(audio, media_type=content_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
+SOCIAL_SOURCE_PLATFORMS = ("TikTok", "Douyin", "YouTube", "Facebook")
+
+
+def client_download_platforms() -> set[str]:
+    """Platforms the app downloads on the phone first (VIDTRANS_CLIENT_DOWNLOAD_PLATFORMS)."""
+    raw = os.environ.get("VIDTRANS_CLIENT_DOWNLOAD_PLATFORMS", "TikTok,Douyin")
+    wanted = {item.strip().lower() for item in re.split(r"[,;\s]+", raw) if item.strip()}
+    return {platform for platform in SOCIAL_SOURCE_PLATFORMS if platform.lower() in wanted}
+
+
+@app.get("/api/v1/download/policy")
+def download_policy_endpoint(request: Request) -> JSONResponse:
+    """Where each platform's links are downloaded: on the phone (residential IP, the user's own
+    session) with the server as fallback, or on the server only."""
+    current_account(request)
+    client = client_download_platforms()
+    return JSONResponse({
+        "platforms": {
+            platform: {"mode": "client_then_server" if platform in client else "server"}
+            for platform in SOCIAL_SOURCE_PLATFORMS
+        },
+    })
+
+
+def parse_file_source_urls(raw: str, upload_count: int) -> list[str | None]:
+    """`file_source_urls`: JSON array aligned with `files`, the link each file was downloaded
+    from on the phone, or null for a file picked from the device."""
+    if not raw.strip():
+        return [None] * upload_count
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("file_source_urls phải là mảng JSON") from exc
+    if not isinstance(values, list) or len(values) != upload_count:
+        raise ValueError("file_source_urls phải có đúng một phần tử cho mỗi file")
+    urls: list[str | None] = []
+    for value in values:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            urls.append(None)
+        elif isinstance(value, str):
+            url = normalize_social_video_url(value)
+            social_platform(url)
+            urls.append(url)
+        else:
+            raise ValueError("file_source_urls chỉ chứa link hoặc null")
+    return urls
+
+
 @app.get("/api/v1/translation-providers")
 def translation_providers_endpoint(request: Request) -> JSONResponse:
     providers = [dict(status.__dict__) for status in translation_provider_statuses()]
@@ -6269,6 +6329,8 @@ async def create_batch_endpoint(
     idempotent: Annotated[IdempotentRequest, Depends(BATCH_IDEMPOTENCY)] = IdempotentRequest(),
     files: list[UploadFile] | None = File(default=None),
     source_links: str = Form(""),
+    # JSON array aligned with `files`: the link a file was downloaded from on the phone, or null.
+    file_source_urls: str = Form(""),
     source_cookies: UploadFile | None = File(default=None),
     batch_name: str = Form("Batch mới"),
     mode: int = Form(1),
@@ -6325,6 +6387,7 @@ async def create_batch_endpoint(
     uploads = [upload for upload in (files or []) if (upload.filename or "").strip()]
     try:
         source_urls = extract_social_video_urls(source_links, limit=50)
+        upload_source_urls = parse_file_source_urls(file_source_urls, len(uploads))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if source_links.strip() and not source_urls:
@@ -6463,19 +6526,19 @@ async def create_batch_endpoint(
         "apply_logo": apply_logo,
         "background_music_path": str(background_music_path) if background_music_path else None,
     }
-    prepared_uploads: list[tuple[str, UploadFile, Path]] = []
+    prepared_uploads: list[tuple[str, UploadFile, Path, str | None]] = []
     try:
-        for upload_job_id, upload in zip(upload_job_ids, uploads):
+        for upload_job_id, upload, upload_source_url in zip(upload_job_ids, uploads, upload_source_urls):
             video_ext = Path(upload.filename or "video.mp4").suffix.lower() or ".mp4"
             upload_video_path = tenant_job_dir(UPLOAD_DIR, owner_user_id, upload_job_id) / f"source{video_ext}"
             with upload_video_path.open("wb") as buffer:
                 shutil.copyfileobj(upload.file, buffer)
             validate_video_file(upload_video_path, ffprobe=FFPROBE)
-            prepared_uploads.append((upload_job_id, upload, upload_video_path))
+            prepared_uploads.append((upload_job_id, upload, upload_video_path, upload_source_url))
     except InvalidVideoError as exc:
         for reserved_job_id in [*upload_job_ids, *source_job_ids]:
             TENANT_GOVERNANCE.release(reserved_job_id)
-        for _, _, prepared_path in prepared_uploads:
+        for _, _, prepared_path, _ in prepared_uploads:
             prepared_path.unlink(missing_ok=True)
         # The failing file is not appended to prepared_uploads yet.
         if "upload_video_path" in locals():
@@ -6489,8 +6552,14 @@ async def create_batch_endpoint(
 
     created_jobs: list[dict[str, Any]] = []
     try:
-        for job_id, upload, video_path in prepared_uploads:
+        for job_id, upload, video_path, upload_source_url in prepared_uploads:
             resume_request = {**batch_config, "video_path": str(video_path)}
+            # Kept out of resume_request: a phone download is never fetched again by the server.
+            client_source = (
+                {"source_url": upload_source_url, "source_platform": social_platform(upload_source_url),
+                 "source_origin": "client"}
+                if upload_source_url else {}
+            )
             created_job = JOB_SERVICE.create(
                 job_id,
                 {
@@ -6500,6 +6569,7 @@ async def create_batch_endpoint(
                     "progress": 0.0,
                     "mode": int(processing_request.mode),
                     "filename": upload.filename,
+                    **client_source,
                     "subtitle_source": processing_request.subtitle_source.value,
                     "source_language": processing_request.source_language,
                     "target_language": processing_request.target_language,
@@ -6528,7 +6598,7 @@ async def create_batch_endpoint(
             JOB_SERVICE.attach_to_batch(job_id, batch_id)
             created_job = {**created_job, "batch_id": batch_id}
             emit_workflow_event("source.uploaded", job_id, created_job)
-            created_jobs.append({"job_id": job_id, "filename": upload.filename, "status": "queued"})
+            created_jobs.append({"job_id": job_id, "filename": upload.filename, **client_source, "status": "queued"})
 
         for job_id, source_url in zip(source_job_ids, source_urls):
             platform = social_platform(source_url)
@@ -6734,16 +6804,21 @@ def filter_job_event_for_user(message: dict[str, Any], owner_user_id: str, *, al
     }
 
 
-def websocket_auth_claims(websocket: WebSocket) -> dict[str, Any] | None:
+def websocket_auth_claims(websocket: HTTPConnection, token: str | None = None) -> dict[str, Any] | None:
     """Apply the HTTP middleware's auth rules to a WebSocket handshake.
 
-    Native apps send ``Authorization: Bearer``; nothing ambient rides along, so the
-    Origin is not checked. Browsers cannot set that header on a WebSocket and use the
-    session cookie instead; because cookies ride along on cross-site handshakes, the
-    Origin must then match the Host the page was served from.
+    Native apps send ``Authorization: Bearer`` (or, over Socket.IO, ``token`` in the
+    auth payload); nothing ambient rides along, so the Origin is not checked. Browsers
+    cannot set that header on a WebSocket and use the session cookie instead; because
+    cookies ride along on cross-site handshakes, the Origin must then match the Host
+    the page was served from.
     """
 
     authorization = websocket.headers.get("authorization", "").strip()
+    if token is not None:
+        if not token.strip():
+            return None
+        authorization = f"Bearer {token.strip()}"
     scheme, _, bearer = authorization.partition(" ")
     if authorization and (scheme.lower() != "bearer" or not bearer.strip()):
         return None
@@ -6769,9 +6844,43 @@ def websocket_auth_claims(websocket: WebSocket) -> dict[str, Any] | None:
     return claims
 
 
+def socket_io_auth_claims(scope: dict[str, Any], auth: dict[str, Any]) -> dict[str, Any] | None:
+    if scope.get("type") != "websocket":
+        return None
+    token = auth.get("token")
+    claims = websocket_auth_claims(HTTPConnection(scope), token if isinstance(token, str) else None)
+    if claims is not None and not AUTH_MANAGER.config.enabled:
+        # Authentication-disabled mode is local development only.
+        return {"user_id": _bootstrap_owner["user_id"], "role": _bootstrap_owner["role"]}
+    return claims
+
+
+def job_status_notification(job_id: str, status: str) -> tuple[str, dict[str, Any]] | None:
+    job = JOB_SERVICE.get(job_id)
+    owner = str((job or {}).get("owner_user_id") or "")
+    if not job or not owner or str(job.get("status")) != status:
+        return None
+    title, body, data = job_message(job_id, status, job)
+    return owner, {**data, "title": title, "body": body}
+
+
+REALTIME = RealtimeServer(
+    JOB_EVENTS,
+    authenticate=socket_io_auth_claims,
+    scope_message=lambda message, owner, allow_all: filter_job_event_for_user(message, owner, allow_all=allow_all),
+    build_notification=job_status_notification,
+)
+# Socket.IO (job progress + notifications). Under /api/ so the existing proxies
+# forward it with the WebSocket upgrade headers.
+app.mount(SOCKET_IO_PATH, REALTIME.asgi_app)
+
+
 @app.websocket("/api/v1/jobs/events")
 async def job_events_socket(websocket: WebSocket) -> None:
-    """Push job progress instead of having every tab poll the full job list."""
+    """Push job progress instead of having every tab poll the full job list.
+
+    Superseded by Socket.IO (SOCKET_IO_PATH); kept for app builds that still use it.
+    """
 
     claims = await asyncio.to_thread(websocket_auth_claims, websocket)
     if claims is None:

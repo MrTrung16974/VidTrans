@@ -11,12 +11,7 @@ import '../../../../core/errors/api_exception.dart';
 import '../../../../core/widgets/studio_widgets.dart';
 import '../../data/auth_repository.dart';
 
-enum _AuthMode {
-  login,
-  register,
-  resetRequest,
-  resetConfirm,
-}
+enum _AuthMode { login, register, resetRequest, resetConfirm }
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -88,13 +83,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       switch (_mode) {
         case _AuthMode.login:
-          await ref.read(sessionProvider.notifier).login(
+          await ref
+              .read(sessionProvider.notifier)
+              .login(
                 _username.text.trim(),
                 _password.text,
                 remember: _remember,
               );
         case _AuthMode.register:
-          await ref.read(sessionProvider.notifier).register(
+          await ref
+              .read(sessionProvider.notifier)
+              .register(
                 displayName: _displayName.text.trim(),
                 email: _registerEmail.text.trim(),
                 password: _registerPassword.text,
@@ -111,12 +110,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           _switchMode(_AuthMode.resetConfirm, info: msg);
         case _AuthMode.resetConfirm:
           final email = _resetEmail.text.trim();
-          final msg =
-              await ref.read(authRepositoryProvider).confirmPasswordReset(
-                    email: email,
-                    code: _resetCode.text.trim(),
-                    newPassword: _resetNewPassword.text,
-                  );
+          final msg = await ref
+              .read(authRepositoryProvider)
+              .confirmPasswordReset(
+                email: email,
+                code: _resetCode.text.trim(),
+                newPassword: _resetNewPassword.text,
+              );
           if (!mounted) return;
           _username.text = email;
           _password.clear();
@@ -146,7 +146,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // Show the credentials before signing in: the router leaves this screen
       // as soon as a session exists, and the password cannot be recovered.
       await _showGuestCredentials(guest);
-      await ref.read(sessionProvider.notifier).login(guest.email, guest.password);
+      await ref
+          .read(sessionProvider.notifier)
+          .login(guest.email, guest.password);
     } catch (error) {
       if (mounted) {
         setState(() => _error = errorMessage(error));
@@ -204,8 +206,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _error = null;
     });
     try {
-      final msg =
-          await ref.read(authRepositoryProvider).requestPasswordReset(email);
+      final msg = await ref
+          .read(authRepositoryProvider)
+          .requestPasswordReset(email);
       if (mounted) {
         setState(() => _infoMessage = msg);
       }
@@ -234,11 +237,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       hintText: hintText,
       contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: vPad),
       prefixIconConstraints: const BoxConstraints(minWidth: 38, minHeight: 36),
-      prefixIcon: Icon(
-        prefixIcon,
-        size: 18,
-        color: AppColors.muted,
-      ),
+      prefixIcon: Icon(prefixIcon, size: 18, color: AppColors.muted),
       suffixIconConstraints: const BoxConstraints(minWidth: 38, minHeight: 36),
       suffixIcon: suffixIcon,
     );
@@ -260,12 +259,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               builder: (context, constraints) {
                 final maxH = constraints.maxHeight;
                 final maxW = constraints.maxWidth;
-                final isMultiField = _mode == _AuthMode.register ||
+                final isMultiField =
+                    _mode == _AuthMode.register ||
                     _mode == _AuthMode.resetConfirm;
                 final compact = maxH < 730 || isMultiField;
-                final ultraCompact = maxH < 640;
+                final ultraCompact = maxH <= 670;
                 final showBottomPills =
-                    !keyboardOpen && (!isMultiField || maxH >= 760) && maxH >= 580;
+                    !keyboardOpen &&
+                    (!isMultiField || maxH >= 760) &&
+                    maxH >= 580;
 
                 return SingleChildScrollView(
                   physics: keyboardOpen
@@ -277,10 +279,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
-                      minHeight: math.max(
-                        0.0,
-                        maxH - (ultraCompact ? 16 : 24),
-                      ),
+                      minHeight: math.max(0.0, maxH - (ultraCompact ? 16 : 24)),
                     ),
                     child: Center(
                       child: ConstrainedBox(
@@ -293,7 +292,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               compact: compact,
                               ultraCompact: ultraCompact,
                             ),
-                            SizedBox(height: ultraCompact ? 8 : (compact ? 10 : 14)),
+                            SizedBox(
+                              height: ultraCompact ? 8 : (compact ? 10 : 14),
+                            ),
                             _buildAuthCard(
                               compact: compact,
                               ultraCompact: ultraCompact,
@@ -330,39 +331,43 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.15),
-              ),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
             ),
             child: const VidTransLogo(size: 30),
           ),
           const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0x26F97316),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: const Color(0x59FB923C)),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.auto_awesome_rounded,
-                  size: 12,
-                  color: Color(0xFFFDBA74),
-                ),
-                SizedBox(width: 5),
-                Text(
-                  'VIDTRANS CREATOR STUDIO',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.7,
-                    color: Color(0xFFFFEDD5),
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0x26F97316),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: const Color(0x59FB923C)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 12,
+                    color: Color(0xFFFDBA74),
                   ),
-                ),
-              ],
+                  SizedBox(width: 5),
+                  Flexible(
+                    child: Text(
+                      'VIDTRANS CREATOR STUDIO',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.7,
+                        color: Color(0xFFFFEDD5),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -378,9 +383,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.07),
             borderRadius: BorderRadius.circular(compact ? 17 : 20),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.14),
-            ),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
             boxShadow: [
               BoxShadow(
                 color: AppColors.brand.withValues(alpha: 0.30),
@@ -398,9 +401,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           decoration: BoxDecoration(
             color: const Color(0x26F97316),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: const Color(0x59FB923C),
-            ),
+            border: Border.all(color: const Color(0x59FB923C)),
           ),
           child: const Row(
             mainAxisSize: MainAxisSize.min,
@@ -432,26 +433,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     required bool ultraCompact,
     required double maxW,
   }) {
-    final isTabMode =
-        _mode == _AuthMode.login || _mode == _AuthMode.register;
+    final isTabMode = _mode == _AuthMode.login || _mode == _AuthMode.register;
 
     final (title, subtitle) = switch (_mode) {
       _AuthMode.login => (
-          'Đăng nhập VidTrans',
-          'Đăng nhập để truy cập pipeline dịch video, truyện AI và tiến trình xử lý.',
-        ),
+        'Đăng nhập VidTrans',
+        'Đăng nhập để truy cập pipeline dịch video, truyện AI và tiến trình xử lý.',
+      ),
       _AuthMode.register => (
-          'Tạo tài khoản Studio',
-          'Kích hoạt ngay gói Free để dịch video, tạo truyện AI và lồng tiếng tự động.',
-        ),
+        'Tạo tài khoản Studio',
+        'Kích hoạt ngay gói Free để dịch video, tạo truyện AI và lồng tiếng tự động.',
+      ),
       _AuthMode.resetRequest => (
-          'Khôi phục mật khẩu',
-          'Nhập email đã đăng ký để nhận mã xác nhận gồm 6 chữ số.',
-        ),
+        'Khôi phục mật khẩu',
+        'Nhập email đã đăng ký để nhận mã xác nhận gồm 6 chữ số.',
+      ),
       _AuthMode.resetConfirm => (
-          'Đặt lại mật khẩu mới',
-          'Nhập mã 6 chữ số trong email và thiết lập mật khẩu mới.',
-        ),
+        'Đặt lại mật khẩu mới',
+        'Nhập mã 6 chữ số trong email và thiết lập mật khẩu mới.',
+      ),
     };
 
     final hPad = maxW < 360 ? 16.0 : 20.0;
@@ -617,15 +617,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ...switch (_mode) {
                       _AuthMode.login => _buildLoginFields(compact: compact),
                       _AuthMode.register => _buildRegisterFields(
-                          compact: compact,
-                          maxW: maxW,
-                        ),
-                      _AuthMode.resetRequest =>
-                        _buildResetRequestFields(compact: compact),
+                        compact: compact,
+                        maxW: maxW,
+                      ),
+                      _AuthMode.resetRequest => _buildResetRequestFields(
+                        compact: compact,
+                      ),
                       _AuthMode.resetConfirm => _buildResetConfirmFields(
-                          compact: compact,
-                          maxW: maxW,
-                        ),
+                        compact: compact,
+                        maxW: maxW,
+                      ),
                     },
                     if (_error != null) ...[
                       const SizedBox(height: 10),
@@ -674,7 +675,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       icon: switch (_mode) {
                         _AuthMode.login => Icons.login_rounded,
                         _AuthMode.register => Icons.rocket_launch_rounded,
-                        _AuthMode.resetRequest => Icons.mark_email_read_outlined,
+                        _AuthMode.resetRequest =>
+                          Icons.mark_email_read_outlined,
                         _AuthMode.resetConfirm => Icons.lock_reset_rounded,
                       },
                       label: switch (_mode) {
@@ -684,44 +686,54 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         _AuthMode.resetConfirm => 'Đặt lại mật khẩu',
                       },
                     ),
-                    SizedBox(height: compact ? 8 : 10),
+                    if (_mode == _AuthMode.login ||
+                        _mode == _AuthMode.register) ...[
+                      SizedBox(height: compact ? 8 : 10),
+                      _buildGuestTrialButton(
+                        compact: compact,
+                        ultraCompact: ultraCompact,
+                      ),
+                    ],
+                    SizedBox(height: compact ? 6 : 8),
                     _buildBottomModeLinks(),
-                    SizedBox(height: compact ? 6 : 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.shield_outlined,
-                            size: 13,
-                            color: AppColors.muted,
-                          ),
-                          SizedBox(width: 5),
-                          Flexible(
-                            child: Text(
-                              'OAuth2 Password + JWT · Phiên đăng nhập bảo mật',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.muted,
+                    if (!ultraCompact) ...[
+                      SizedBox(height: compact ? 6 : 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.shield_outlined,
+                              size: 13,
+                              color: AppColors.muted,
+                            ),
+                            SizedBox(width: 5),
+                            Flexible(
+                              child: Text(
+                                'OAuth2 Password + JWT · Phiên đăng nhập bảo mật',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.muted,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -771,10 +783,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         controller: _username,
         keyboardType: TextInputType.emailAddress,
         autocorrect: false,
-        autofillHints: const [
-          AutofillHints.username,
-          AutofillHints.email,
-        ],
+        autofillHints: const [AutofillHints.username, AutofillHints.email],
         textInputAction: TextInputAction.next,
         style: const TextStyle(fontSize: 14),
         decoration: _compactInputDecoration(
@@ -823,42 +832,45 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: InkWell(
-            onTap: () => setState(() => _remember = !_remember),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: Checkbox(
-                      value: _remember,
-                      activeColor: AppColors.brand,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      onChanged: (v) =>
-                          setState(() => _remember = v ?? true),
-                    ),
+                onTap: () => setState(() => _remember = !_remember),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 2,
+                    horizontal: 2,
                   ),
-                  const SizedBox(width: 7),
-                  const Flexible(
-                    child: Text(
-                      'Ghi nhớ đăng nhập',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.inkSoft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: Checkbox(
+                          value: _remember,
+                          activeColor: AppColors.brand,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          onChanged: (v) =>
+                              setState(() => _remember = v ?? true),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 7),
+                      const Flexible(
+                        child: Text(
+                          'Ghi nhớ đăng nhập',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.inkSoft,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
+                ),
               ),
             ),
           ),
@@ -911,8 +923,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             size: 18,
             color: AppColors.muted,
           ),
-          onPressed: () =>
-              setState(() => _obscurePassword = !_obscurePassword),
+          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
         ),
       ),
       validator: (value) => (value == null || value.length < 12)
@@ -939,8 +950,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             size: 18,
             color: AppColors.muted,
           ),
-          onPressed: () =>
-              setState(() => _obscureConfirm = !_obscureConfirm),
+          onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
         ),
       ),
       validator: (value) => value != _registerPassword.text
@@ -1037,10 +1047,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           prefixIcon: Icons.pin_outlined,
           compact: compact,
         ).copyWith(counterText: ''),
-        validator: (value) =>
-            (value == null || value.trim().length != 6)
-                ? 'Nhập đủ 6 chữ số xác nhận'
-                : null,
+        validator: (value) => (value == null || value.trim().length != 6)
+            ? 'Nhập đủ 6 chữ số xác nhận'
+            : null,
       ),
       SizedBox(height: gap),
       TextFormField(
@@ -1090,8 +1099,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               size: 18,
               color: AppColors.muted,
             ),
-            onPressed: () =>
-                setState(() => _obscureConfirm = !_obscureConfirm),
+            onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
           ),
         ),
         validator: (value) => value != _resetNewPassword.text
@@ -1099,6 +1107,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             : null,
       ),
     ];
+  }
+
+  Widget _buildGuestTrialButton({
+    required bool compact,
+    required bool ultraCompact,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: _submitting ? null : _startGuestTrial,
+      style: OutlinedButton.styleFrom(
+        minimumSize: Size.fromHeight(ultraCompact ? 40 : 44),
+        padding: EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: compact ? 9 : 11,
+        ),
+        foregroundColor: AppColors.brandDark,
+        backgroundColor: AppColors.brandSoft,
+        side: const BorderSide(color: AppColors.brandBorder),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      icon: const Icon(Icons.bolt_rounded, size: 18),
+      label: const Text(
+        'Dùng thử',
+        maxLines: 1,
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+    );
   }
 
   Widget _buildBottomModeLinks() {
@@ -1109,48 +1143,57 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
 
     return switch (_mode) {
-      // Wrap, not Row: the two links share a line when they fit and stack otherwise.
-      _AuthMode.login => Wrap(
-          alignment: WrapAlignment.center,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            TextButton(
-              style: compactStyle,
-              onPressed: _submitting
-                  ? null
-                  : () => _switchMode(_AuthMode.register),
-              child: const Text(
-                'Đăng ký',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.brandDark,
-                ),
-              ),
+      _AuthMode.login => Center(
+        child: TextButton(
+          style: compactStyle,
+          onPressed: _submitting ? null : () => _switchMode(_AuthMode.register),
+          child: const Text(
+            'Chưa có tài khoản? Đăng ký Free',
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w800,
+              color: AppColors.brandDark,
             ),
-            const Text('·', style: TextStyle(color: AppColors.muted)),
-            TextButton.icon(
-              style: compactStyle,
-              onPressed: _submitting ? null : _startGuestTrial,
-              icon: const Icon(Icons.bolt_rounded, size: 16, color: AppColors.brandDark),
-              label: const Text(
-                'Dùng thử',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.brandDark,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
+      ),
       _AuthMode.register => Center(
-          child: TextButton(
+        child: TextButton(
+          style: compactStyle,
+          onPressed: _submitting ? null : () => _switchMode(_AuthMode.login),
+          child: const Text(
+            'Đã có tài khoản? Đăng nhập ngay',
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w800,
+              color: AppColors.brandDark,
+            ),
+          ),
+        ),
+      ),
+      _AuthMode.resetRequest => Center(
+        child: TextButton.icon(
+          style: compactStyle,
+          onPressed: _submitting ? null : () => _switchMode(_AuthMode.login),
+          icon: const Icon(Icons.arrow_back_rounded, size: 15),
+          label: const Text(
+            'Quay lại đăng nhập',
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w800,
+              color: AppColors.brandDark,
+            ),
+          ),
+        ),
+      ),
+      _AuthMode.resetConfirm => Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          TextButton(
             style: compactStyle,
-            onPressed:
-                _submitting ? null : () => _switchMode(_AuthMode.login),
+            onPressed: _submitting ? null : _resendResetCode,
             child: const Text(
-              'Đã có tài khoản? Đăng nhập ngay',
+              'Gửi lại mã',
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w800,
@@ -1158,57 +1201,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
           ),
-        ),
-      _AuthMode.resetRequest => Center(
-          child: TextButton.icon(
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: Text('·', style: TextStyle(color: AppColors.muted)),
+          ),
+          TextButton(
             style: compactStyle,
-            onPressed:
-                _submitting ? null : () => _switchMode(_AuthMode.login),
-            icon: const Icon(Icons.arrow_back_rounded, size: 15),
-            label: const Text(
+            onPressed: _submitting ? null : () => _switchMode(_AuthMode.login),
+            child: const Text(
               'Quay lại đăng nhập',
               style: TextStyle(
                 fontSize: 12.5,
-                fontWeight: FontWeight.w800,
-                color: AppColors.brandDark,
+                fontWeight: FontWeight.w700,
+                color: AppColors.muted,
               ),
             ),
           ),
-        ),
-      _AuthMode.resetConfirm => Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TextButton(
-              style: compactStyle,
-              onPressed: _submitting ? null : _resendResetCode,
-              child: const Text(
-                'Gửi lại mã',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.brandDark,
-                ),
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 4),
-              child: Text('·', style: TextStyle(color: AppColors.muted)),
-            ),
-            TextButton(
-              style: compactStyle,
-              onPressed:
-                  _submitting ? null : () => _switchMode(_AuthMode.login),
-              child: const Text(
-                'Quay lại đăng nhập',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.muted,
-                ),
-              ),
-            ),
-          ],
-        ),
+        ],
+      ),
     };
   }
 
@@ -1217,18 +1227,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget _buildBottomStudioHighlights({required double maxW}) {
     final isNarrow = maxW < 375;
     final pills = <(IconData, String)>[
-      (Icons.translate_rounded, isNarrow ? 'Dịch & Dub AI' : 'Dịch & Lồng tiếng'),
+      (
+        Icons.translate_rounded,
+        isNarrow ? 'Dịch & Dub AI' : 'Dịch & Lồng tiếng',
+      ),
       (Icons.auto_stories_rounded, isNarrow ? 'Truyện AI' : 'Truyện → Video'),
       (Icons.layers_rounded, 'Batch 50 video'),
     ];
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        for (var i = 0; i < pills.length; i++) ...[
-          if (i > 0) const SizedBox(width: 6),
-          Flexible(
-            child: ClipRRect(
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var i = 0; i < pills.length; i++) ...[
+            if (i > 0) const SizedBox(width: 6),
+            ClipRRect(
               borderRadius: BorderRadius.circular(999),
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
@@ -1253,16 +1267,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         color: const Color(0xFFFB923C),
                       ),
                       const SizedBox(width: 4),
-                      Flexible(
-                        child: Text(
-                          pills[i].$2,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: isNarrow ? 10.2 : 11,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white.withValues(alpha: 0.9),
-                          ),
+                      Text(
+                        pills[i].$2,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: isNarrow ? 10.2 : 11,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white.withValues(alpha: 0.9),
                         ),
                       ),
                     ],
@@ -1270,9 +1281,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
               ),
             ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -1409,9 +1420,7 @@ class _StudioCinematicBackdrop extends StatelessWidget {
             ),
           ),
           // Custom painted studio grid, film strips, and audio wave ribbons
-          const CustomPaint(
-            painter: _StudioBackdropPainter(),
-          ),
+          const CustomPaint(painter: _StudioBackdropPainter()),
         ],
       ),
     );
@@ -1453,10 +1462,12 @@ class _StudioBackdropPainter extends CustomPainter {
     final bottomWave = Path();
     for (var x = 0.0; x <= size.width; x += 6) {
       final t = x / size.width;
-      final y1 = size.height * 0.14 +
+      final y1 =
+          size.height * 0.14 +
           math.sin(t * math.pi * 2.5) * 22 +
           math.cos(t * math.pi * 5) * 8;
-      final y2 = size.height * 0.86 +
+      final y2 =
+          size.height * 0.86 +
           math.cos(t * math.pi * 2.2) * 24 +
           math.sin(t * math.pi * 4.5) * 10;
       if (x == 0) {

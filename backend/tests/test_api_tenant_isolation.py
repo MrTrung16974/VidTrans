@@ -1,12 +1,14 @@
 import asyncio
 import inspect
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from starlette.requests import Request
 
 import main
@@ -201,6 +203,48 @@ class ApiTenantIsolationTests(unittest.TestCase):
         self.assertEqual(payload["total_jobs"], 1)
         job = self.service.get_for_user(payload["jobs"][0]["job_id"], "user-a")
         self.assertEqual(job["source_platform"].lower(), "youtube")
+
+    def create_upload_batch(self, file_source_urls: str):
+        signature = inspect.signature(main.create_batch_endpoint)
+        values = {}
+        for name, parameter in signature.parameters.items():
+            default = parameter.default
+            values[name] = getattr(default, "default", default)
+        values.update(
+            request=request_for(self.user_a, "POST"),
+            files=[UploadFile(io.BytesIO(b"video"), filename="tiktok.mp4"),
+                   UploadFile(io.BytesIO(b"video"), filename="picked.mp4")],
+            file_source_urls=file_source_urls,
+        )
+        governance = Mock()
+        governance.overview.return_value = {"remaining_minutes": 30}
+        with patch.object(main, "TENANT_GOVERNANCE", governance), \
+                patch.object(main, "notify_scheduler"), patch.object(main, "validate_video_file"):
+            return asyncio.run(main.create_batch_endpoint(**values))
+
+    def test_phone_downloaded_file_keeps_its_link_without_server_redownload(self) -> None:
+        response = self.create_upload_batch(json.dumps(["https://www.tiktok.com/@a/video/1", None]))
+
+        jobs = response_json(response)["jobs"]
+        self.assertEqual(jobs[0]["source_platform"], "TikTok")
+        self.assertNotIn("source_url", jobs[1])
+        job = self.service.get_for_user(jobs[0]["job_id"], "user-a")
+        self.assertEqual((job["source_url"], job["source_origin"]), ("https://www.tiktok.com/@a/video/1", "client"))
+        self.assertNotIn("source_url", job["resume_request"])
+
+    def test_file_source_urls_must_match_the_files(self) -> None:
+        for raw in ("[null]", "not json", '["https://example.com/x", null]', "[1, null]"):
+            with self.assertRaises(HTTPException) as rejected:
+                self.create_upload_batch(raw)
+            self.assertEqual(rejected.exception.status_code, 400, raw)
+
+    def test_download_policy_follows_the_configured_platforms(self) -> None:
+        with patch.dict(os.environ, {"VIDTRANS_CLIENT_DOWNLOAD_PLATFORMS": "douyin, youtube"}):
+            policy = response_json(main.download_policy_endpoint(request_for(self.user_a)))["platforms"]
+        self.assertEqual(policy["Douyin"]["mode"], "client_then_server")
+        self.assertEqual(policy["YouTube"]["mode"], "client_then_server")
+        self.assertEqual(policy["TikTok"]["mode"], "server")
+        self.assertEqual(policy["Facebook"]["mode"], "server")
 
     def test_download_only_job_hands_back_the_source(self) -> None:
         source = self.upload_dir / "source.mp4"

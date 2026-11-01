@@ -1,0 +1,3 @@
+# Socket.IO server for job progress and in-app notifications (/api/v1/socket.io).
+# Its own layer so adding it does not rebuild the Torch/Paddle dependencies.
+python-socketio>=5.11,<6

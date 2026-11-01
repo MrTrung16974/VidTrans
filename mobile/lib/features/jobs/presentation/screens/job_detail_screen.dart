@@ -234,10 +234,12 @@ class _JobDetail extends ConsumerWidget {
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
+                      iconColor: Colors.white,
+                      backgroundColor: const Color(0x14FFFFFF),
                       side: const BorderSide(color: Color(0xFF475569)),
                     ),
                     onPressed: () => context.push('/social/publish/${job.id}'),
-                    icon: const Icon(Icons.share_rounded),
+                    icon: const Icon(Icons.share_rounded, size: 18),
                     label: const Text('Đăng mạng xã hội'),
                   ),
                 ],

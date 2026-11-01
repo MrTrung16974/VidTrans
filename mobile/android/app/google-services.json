@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "437010796553",
+    "project_id": "vistrans-e0fbc",
+    "storage_bucket": "vistrans-e0fbc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:437010796553:android:174a3b2096553dd6e968d8",
+        "android_client_info": {
+          "package_name": "cloud.vidtrans.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBd3SqLWwUcUZh6uYJp6tbS_hY8zHzkaFU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

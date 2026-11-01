@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/auth/session_controller.dart';
 import '../core/deeplink/deep_link_service.dart';
 import '../core/push/push_service.dart';
+import '../core/websocket/job_events.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 
@@ -21,21 +22,34 @@ class VidTransApp extends ConsumerStatefulWidget {
 class _VidTransAppState extends ConsumerState<VidTransApp> {
   final _subscriptions = <StreamSubscription<dynamic>>[];
 
+  /// Job outcomes already shown: the Socket.IO event and the FCM push of the
+  /// same outcome usually both arrive while the app is open.
+  final _shownOutcomes = <String>{};
+
   @override
   void initState() {
     super.initState();
     final push = ref.read(pushServiceProvider);
     _subscriptions
       ..add(push.opened.listen((event) => _openJob(event.jobId)))
-      ..add(push.foreground.listen(_showForegroundPush))
+      ..add(push.foreground.listen((p) => _showJobOutcome(p.jobId, p.status, p.title, p.body)))
+      ..add(ref.read(jobEventsProvider).notifications.listen(
+            (n) => _showJobOutcome(n.jobId, n.status, n.title, n.body),
+          ))
       ..add(ref.read(deepLinkServiceProvider).links.listen(_onDeepLink));
     // Listen first: initialize() replays the push that launched the app.
     unawaited(push.initialize());
 
     ref.listenManual<AsyncValue<dynamic>>(sessionProvider, (previous, next) {
       final account = next.valueOrNull;
+      final events = ref.read(jobEventsProvider);
       if (account != null && previous?.valueOrNull?.userId != account.userId) {
         unawaited(push.onSignedIn());
+        // Reconnect so the socket carries the new account's token.
+        events.disconnect();
+        unawaited(events.connect());
+      } else if (account == null) {
+        events.disconnect();
       }
     }, fireImmediately: true);
   }
@@ -50,12 +64,15 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
 
   void _openJob(String jobId) => ref.read(routerProvider).push('/jobs/$jobId');
 
-  void _showForegroundPush(JobPush push) {
+  void _showJobOutcome(String jobId, String status, String? title, String? body) {
+    if (!_shownOutcomes.add('$jobId:$status')) return;
+    // A retried job can finish again later.
+    Timer(const Duration(minutes: 2), () => _shownOutcomes.remove('$jobId:$status'));
     scaffoldMessengerKey.currentState?.showSnackBar(SnackBar(
-      content: Text(push.body ?? push.title ?? 'Công việc đã cập nhật'),
+      content: Text(body ?? title ?? 'Công việc đã cập nhật'),
       action: SnackBarAction(
         label: 'Xem',
-        onPressed: () => _openJob(push.jobId),
+        onPressed: () => _openJob(jobId),
       ),
     ));
   }
