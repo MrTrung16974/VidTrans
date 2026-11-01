@@ -803,8 +803,10 @@ class _SystemStateCircleState extends State<_SystemStateCircle>
 
   @override
   Widget build(BuildContext context) {
+    // Idle shows a check: a still spinner arc read as a load that hung.
+    final busy = widget.activeCount > 0;
     return Tooltip(
-      message: widget.activeCount > 0
+      message: busy
           ? '${widget.activeCount} tiến trình đang xử lý'
           : 'Hệ thống sẵn sàng',
       child: InkWell(
@@ -813,34 +815,47 @@ class _SystemStateCircleState extends State<_SystemStateCircle>
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Container(
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
               width: 34,
               height: 34,
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF7ED),
+                color: busy ? AppColors.brandTint : AppColors.greenTint,
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: const Color(0xFFFED7AA),
+                  color: busy ? AppColors.brandBorder : AppColors.greenBorder,
                   width: 1.2,
                 ),
-                boxShadow: const [
+                boxShadow: [
                   BoxShadow(
-                    color: Color(0x14EA580C),
+                    color: (busy ? AppColors.brand : AppColors.green)
+                        .withValues(alpha: 0.08),
                     blurRadius: 6,
-                    offset: Offset(0, 2),
+                    offset: const Offset(0, 2),
                   ),
                 ],
               ),
               alignment: Alignment.center,
-              child: RotationTransition(
-                turns: _controller,
-                child: SizedBox(
-                  width: 15,
-                  height: 15,
-                  child: CustomPaint(
-                    painter: _SystemArcPainter(),
-                  ),
-                ),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: busy
+                    ? RotationTransition(
+                        key: const ValueKey('busy'),
+                        turns: _controller,
+                        child: const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CustomPaint(
+                            painter: _SystemArcPainter(),
+                          ),
+                        ),
+                      )
+                    : const Icon(
+                        Icons.check_rounded,
+                        key: ValueKey('idle'),
+                        size: 18,
+                        color: AppColors.greenDark,
+                      ),
               ),
             ),
             if (widget.activeCount > 0)
@@ -875,6 +890,8 @@ class _SystemStateCircleState extends State<_SystemStateCircle>
 }
 
 class _SystemArcPainter extends CustomPainter {
+  const _SystemArcPainter();
+
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
