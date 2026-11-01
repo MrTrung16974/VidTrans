@@ -432,6 +432,27 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             self.assertEqual(result.platform, "Douyin")
             self.assertEqual(progress, [(5, 5)])
 
+    def test_video_skipped_by_the_length_limit_reports_the_limit(self):
+        # yt-dlp does not raise when its match_filter rejects a video; it just downloads nothing.
+        with TemporaryDirectory() as directory:
+            stem = Path(directory) / "long"
+
+            def factory(options):
+                instance = FakeYoutubeDL(options)
+
+                def extract(url, download):
+                    info = {"id": "1", "duration": 18271.8}
+                    self.assertIsNotNone(options["match_filter"](info))
+                    return info
+
+                instance.extract_info = extract
+                return instance
+
+            downloader = SocialVideoDownloader(ydl_factory=factory, max_duration_seconds=7200)
+            with self.assertRaisesRegex(SocialVideoDownloadError, "Video dài 305 phút, quá giới hạn 120 phút"):
+                downloader.download("https://www.facebook.com/reel/834164483086130", stem)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_does_not_accept_unmerged_component_as_finished_video(self):
         with TemporaryDirectory() as directory:
             stem = Path(directory) / "partial"

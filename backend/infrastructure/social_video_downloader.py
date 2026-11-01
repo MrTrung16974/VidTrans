@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
 import logging
 import re
 import urllib.request
@@ -279,15 +280,25 @@ class SocialVideoDownloader:
 
         cleanup()
 
+        # yt-dlp skips a video its match_filter rejects without raising, so the reason
+        # is kept here and reported instead of a missing-file error.
+        rejections: list[str] = []
+
         def match_filter(info: dict[str, Any], *, incomplete: bool = False) -> str | None:
             del incomplete
+            reason = None
             duration = info.get("duration")
             if duration is not None and float(duration) > self.max_duration_seconds:
-                return f"Video dài quá giới hạn {self.max_duration_seconds // 60} phút"
+                reason = (
+                    f"Video dài {math.ceil(float(duration) / 60)} phút, "
+                    f"quá giới hạn {self.max_duration_seconds // 60} phút"
+                )
             filesize = info.get("filesize") or info.get("filesize_approx")
-            if filesize is not None and int(filesize) > self.max_bytes:
-                return f"Video lớn quá giới hạn {self.max_bytes // (1024 * 1024)} MB"
-            return None
+            if reason is None and filesize is not None and int(filesize) > self.max_bytes:
+                reason = f"Video lớn quá giới hạn {self.max_bytes // (1024 * 1024)} MB"
+            if reason:
+                rejections.append(reason)
+            return reason
 
         def progress_hook(status: dict[str, Any]) -> None:
             if cancel_requested and cancel_requested():
@@ -530,6 +541,8 @@ class SocialVideoDownloader:
         )
         if not candidates:
             cleanup()
+            if rejections:
+                raise SocialVideoDownloadError(rejections[-1])
             raise SocialVideoDownloadError("Tải nguồn chưa hoàn tất: không tìm thấy file video đã ghép xong")
         output_path = candidates[0]
         if output_path.stat().st_size == 0:
