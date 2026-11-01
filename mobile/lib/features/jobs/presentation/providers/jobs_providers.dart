@@ -11,32 +11,66 @@ import '../../domain/job_list.dart';
 
 final jobStatusFilterProvider = StateProvider<String?>((ref) => null);
 
+/// Server-side search on the jobs page (name or job id), as on the web.
+final jobSearchProvider = StateProvider<String>((ref) => '');
+
+/// 1-based page of the jobs list. Reset to 1 when the filter, search or size changes.
+final jobPageProvider = StateProvider<int>((ref) => 1);
+
+const jobPageSizes = [10, 20, 50, 100];
+final jobPageSizeProvider = StateProvider<int>((ref) => 10);
+
 final jobListProvider = AsyncNotifierProvider.autoDispose<JobListController, JobList>(JobListController.new);
 
-/// First page from REST, then patched in place by WebSocket change sets.
+/// The selected page from REST, then patched in place by WebSocket change sets.
 class JobListController extends AutoDisposeAsyncNotifier<JobList> {
   JobsRepository get _repo => ref.read(jobsRepositoryProvider);
-  bool _loadingMore = false;
 
   @override
   Future<JobList> build() async {
-    final status = ref.watch(jobStatusFilterProvider);
+    ref.watch(jobStatusFilterProvider);
+    ref.watch(jobSearchProvider);
+    ref.watch(jobPageProvider);
+    ref.watch(jobPageSizeProvider);
     final subscription = ref.read(jobEventsProvider).changes.listen(_onChanges);
     ref.onDispose(subscription.cancel);
-    return _repo.list(status: status);
+    return _fetch();
+  }
+
+  Future<JobList> _fetch() async {
+    final page = ref.read(jobPageProvider);
+    final list = await _repo.list(
+      page: page,
+      limit: ref.read(jobPageSizeProvider),
+      status: ref.read(jobStatusFilterProvider),
+      search: ref.read(jobSearchProvider).trim(),
+    );
+    // The last page emptied (jobs deleted or filtered away): show the new last page.
+    if (list.jobs.isEmpty && page > 1 && list.totalPages < page) {
+      final last = list.totalPages < 1 ? 1 : list.totalPages;
+      return _repo.list(
+        page: last,
+        limit: ref.read(jobPageSizeProvider),
+        status: ref.read(jobStatusFilterProvider),
+        search: ref.read(jobSearchProvider).trim(),
+      );
+    }
+    return list;
   }
 
   void _onChanges(JobChanges changes) {
     final current = state.valueOrNull;
     if (current == null) return;
     final result = applyJobChanges(current.jobs, changes, statusFilter: ref.read(jobStatusFilterProvider));
+    final before = {for (final job in current.jobs) job.id: job.status};
+    // A status change moves the per-status counts of every page: fetch them again.
+    final statusChanged = result.jobs.any((job) => before[job.id] != job.status);
     state = AsyncData(current.copyWith(jobs: result.jobs));
-    if (result.reload) unawaited(refresh());
+    if (result.reload || statusChanged) unawaited(refresh());
   }
 
   Future<void> refresh() async {
-    final status = ref.read(jobStatusFilterProvider);
-    final next = await AsyncValue.guard(() => _repo.list(status: status));
+    final next = await AsyncValue.guard(_fetch);
     // Keep showing the old list if a background reload fails.
     if (next.hasValue || state.valueOrNull == null) state = next;
   }
@@ -65,19 +99,6 @@ class JobListController extends AutoDisposeAsyncNotifier<JobList> {
     }
     await refresh();
     return BulkJobResult(action, succeeded: succeeded, errors: errors);
-  }
-
-  Future<void> loadMore() async {
-    final current = state.valueOrNull;
-    if (current == null || !current.hasMore || _loadingMore) return;
-    _loadingMore = true;
-    try {
-      final next = await _repo.list(page: current.page + 1, status: ref.read(jobStatusFilterProvider));
-      final seen = current.jobs.map((job) => job.id).toSet();
-      state = AsyncData(next.copyWith(jobs: [...current.jobs, ...next.jobs.where((j) => !seen.contains(j.id))]));
-    } finally {
-      _loadingMore = false;
-    }
   }
 }
 

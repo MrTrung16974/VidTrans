@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -15,6 +17,7 @@ import '../../domain/bulk_actions.dart';
 import '../../domain/job.dart';
 import '../providers/jobs_providers.dart';
 import '../widgets/job_bulk_bar.dart';
+import '../widgets/jobs_pagination.dart';
 import '../widgets/job_status_chip.dart';
 
 class JobsScreen extends ConsumerStatefulWidget {
@@ -34,6 +37,8 @@ class JobsScreen extends ConsumerStatefulWidget {
 
 class _JobsScreenState extends ConsumerState<JobsScreen> {
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
+  Timer? _searchDebounce;
   String _searchQuery = '';
 
   /// Selection mode (long-press a job, or "Chọn"): taps toggle jobs and the
@@ -45,6 +50,8 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
+    _searchDebounce?.cancel();
     super.dispose();
   }
 
@@ -61,6 +68,36 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
   void _toggle(Job job) => setState(() {
     if (!_selectedIds.remove(job.id)) _selectedIds.add(job.id);
   });
+
+  /// Search runs on the server, like the web, so it covers every page.
+  void _onSearch(String value) {
+    setState(() => _searchQuery = value);
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      ref.read(jobPageProvider.notifier).state = 1;
+      ref.read(jobSearchProvider.notifier).state = value.trim();
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    _searchDebounce?.cancel();
+    setState(() => _searchQuery = '');
+    ref.read(jobPageProvider.notifier).state = 1;
+    ref.read(jobSearchProvider.notifier).state = '';
+  }
+
+  void _goToPage(int page) {
+    ref.read(jobPageProvider.notifier).state = page;
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+  }
+
+  void _setPageSize(int size) {
+    ref.read(jobPageProvider.notifier).state = 1;
+    ref.read(jobPageSizeProvider.notifier).state = size;
+  }
 
   Future<void> _runBulk(BulkJobAction action, List<Job> selected) async {
     final jobs = action.eligible(selected);
@@ -117,27 +154,17 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
     final filter = ref.watch(jobStatusFilterProvider);
     final pending = ref.watch(submissionQueueProvider);
 
-    final allJobs = jobs.valueOrNull?.jobs ?? const <Job>[];
-    final totalCount = allJobs.length;
-    final processingCount = allJobs
-        .where((j) => j.status == 'processing')
-        .length;
-    final queuedCount = allJobs
-        .where((j) => j.status == 'queued' || j.status == 'scheduled')
-        .length;
-    final completedCount = allJobs.where((j) => j.status == 'completed').length;
-    final failedCount = allJobs
-        .where((j) => j.status == 'failed' || j.status == 'cancelled')
-        .length;
+    final list = jobs.valueOrNull;
+    final allJobs = list?.jobs ?? const <Job>[];
+    // Counts span every page (server `counts`), as on the web dashboard.
+    final totalCount = list?.allCount ?? 0;
+    final processingCount = list?.countOf(const ['processing', 'cancelling']) ?? 0;
+    final queuedCount = list?.countOf(const ['queued', 'scheduled']) ?? 0;
+    final completedCount = list?.countOf(const ['completed']) ?? 0;
+    final failedCount = list?.countOf(const ['failed', 'cancelled']) ?? 0;
 
-    final query = _searchQuery.trim().toLowerCase();
-    final filteredJobs = query.isEmpty
-        ? allJobs
-        : allJobs.where((j) {
-            return j.title.toLowerCase().contains(query) ||
-                j.id.toLowerCase().contains(query) ||
-                (j.step?.toLowerCase().contains(query) ?? false);
-          }).toList();
+    final query = _searchQuery.trim();
+    final filteredJobs = allJobs;
     final readOnly = ref.watch(sessionProvider).valueOrNull?.isReadOnly ?? true;
     final selectedJobs = allJobs
         .where((job) => _selectedIds.contains(job.id))
@@ -185,14 +212,8 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
           data: (list) => RefreshIndicator(
             color: AppColors.brand,
             onRefresh: () => ref.read(jobListProvider.notifier).refresh(),
-            child: NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                if (notification.metrics.extentAfter < 400) {
-                  ref.read(jobListProvider.notifier).loadMore();
-                }
-                return false;
-              },
-              child: ListView(
+            child: ListView(
+                controller: _scrollController,
                 padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
                 children: [
                   StudioPageHeader(
@@ -313,7 +334,7 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                       children: [
                         TextField(
                           controller: _searchController,
-                          onChanged: (v) => setState(() => _searchQuery = v),
+                          onChanged: _onSearch,
                           decoration: InputDecoration(
                             isDense: true,
                             hintText: 'Tìm theo tên video hoặc mã job...',
@@ -330,10 +351,7 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                                       Icons.clear_rounded,
                                       size: 17,
                                     ),
-                                    onPressed: () {
-                                      _searchController.clear();
-                                      setState(() => _searchQuery = '');
-                                    },
+                                    onPressed: _clearSearch,
                                   ),
                           ),
                         ),
@@ -354,14 +372,10 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                                           : jobStatusLabels[status]!,
                                     ),
                                     selected: filter == status,
-                                    onSelected: (_) =>
-                                        ref
-                                                .read(
-                                                  jobStatusFilterProvider
-                                                      .notifier,
-                                                )
-                                                .state =
-                                            status,
+                                    onSelected: (_) {
+                                      ref.read(jobPageProvider.notifier).state = 1;
+                                      ref.read(jobStatusFilterProvider.notifier).state = status;
+                                    },
                                   ),
                                 ),
                             ],
@@ -386,10 +400,7 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                           : 'Chuyển sang tab Dịch video để tải video lên hoặc dán link TikTok/Douyin để tự động xử lý.',
                       action: query.isNotEmpty
                           ? OutlinedButton(
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _searchQuery = '');
-                              },
+                              onPressed: _clearSearch,
                               child: const Text('Xóa tìm kiếm'),
                             )
                           : StudioGradientButton(
@@ -414,19 +425,15 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                             : () => _startSelecting(filteredJobs[i]),
                       ),
                     ],
-                    if (list.hasMore)
-                      const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            color: AppColors.brand,
-                          ),
-                        ),
-                      ),
+                    const SizedBox(height: 14),
+                    JobsPagination(
+                      list: list,
+                      onPage: _goToPage,
+                      onPageSize: _setPageSize,
+                    ),
                   ],
                 ],
               ),
-            ),
           ),
         ),
       ),

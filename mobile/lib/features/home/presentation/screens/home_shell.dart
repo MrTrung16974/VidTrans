@@ -24,7 +24,7 @@ class HomeShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final jobsAsync = ref.watch(jobListProvider);
     final activeCount = jobsAsync.maybeWhen(
-      data: (list) => list.jobs.where((j) => j.isActive).length,
+      data: (list) => list.activeCount,
       orElse: () => 0,
     );
 
@@ -433,7 +433,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final jobsAsync = ref.watch(jobListProvider);
     final activeCount = jobsAsync.maybeWhen(
-      data: (list) => list.jobs.where((j) => j.isActive).length,
+      data: (list) => list.activeCount,
       orElse: () => 0,
     );
     final account = ref.watch(sessionProvider).valueOrNull;
