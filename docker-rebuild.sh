@@ -95,8 +95,18 @@ for argument in "$@"; do
 done
 
 compose=(docker compose)
+compose_files=()
 if [[ "$CORPORATE_CA" -eq 1 ]]; then
-    compose+=( -f docker-compose.yml -f docker-compose.corporate-ca.yml )
+    compose_files+=( -f docker-compose.corporate-ca.yml )
+fi
+# A host with an NVIDIA GPU (driver + container toolkit) gets it for Whisper and NVENC.
+# The first build after adding a GPU must be a full one (--full) to install CUDA libraries.
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    printf '%s\n' "NVIDIA GPU found: enabling docker-compose.gpu.yml"
+    compose_files+=( -f docker-compose.gpu.yml )
+fi
+if [[ ${#compose_files[@]} -gt 0 ]]; then
+    compose+=( -f docker-compose.yml "${compose_files[@]}" )
 fi
 
 # Once a VPS is configured, a plain rebuild must keep Nginx and Certbot online.

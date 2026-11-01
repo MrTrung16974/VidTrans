@@ -49,6 +49,11 @@ RUN pip install -r requirements-downloader.txt
 
 COPY requirements-asr.txt ./
 RUN pip install -r requirements-asr.txt
+# GPU servers (docker-compose.gpu.yml sets VIDTRANS_GPU=1): CUDA libraries for
+# CTranslate2, so faster-whisper runs on the GPU. The paths are harmless without them.
+ARG VIDTRANS_GPU=0
+RUN if [ "$VIDTRANS_GPU" = "1" ]; then pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"; fi
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib
 
 COPY requirements-audio.txt ./
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torchaudio==2.6.0 \

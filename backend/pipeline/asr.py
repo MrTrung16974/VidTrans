@@ -27,8 +27,14 @@ ProgressCallback = Callable[[float, float | None], None]
 VAD_GAP_SECONDS = 4.0
 VAD_GAP_PADDING_SECONDS = 0.3
 # The recovery pass starts this far before the gap: decoding cold inside loud music
-# produces garbage, while a little preceding dialogue anchors the decoder.
-RECOVERY_CONTEXT_SECONDS = 10.0
+# produces garbage, while a little preceding dialogue anchors the decoder. Every second
+# here is decoded again for every gap, so it is kept to a couple of short lines.
+RECOVERY_CONTEXT_SECONDS = 4.0
+# Gaps closer than this are heard in one clip: the context of the second would
+# re-decode the speech between them anyway.
+RECOVERY_MERGE_SECONDS = 2 * RECOVERY_CONTEXT_SECONDS
+# A gap this quiet (RMS of float PCM, about -50 dBFS) holds no speech worth a decode.
+SILENT_GAP_RMS = 0.003
 # Whisper's own hallucination test: text decoded from audio it believes is not speech.
 GAP_MAX_NO_SPEECH_PROB = 0.6
 GAP_MIN_LOGPROB = -1.0
@@ -44,8 +50,25 @@ def _loop_text(text: str) -> str:
     return "".join(character for character in str(text or "") if character.isalnum()).casefold()
 
 
+def _merge_spans(spans: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
+    merged: list[tuple[float, float]] = []
+    for first, last in sorted(spans):
+        if merged and first <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], last))
+        else:
+            merged.append((first, last))
+    return merged
+
+
 def _muted_overlap(start: float, end: float, muted: Sequence[tuple[float, float]]) -> float:
-    return sum(max(0.0, min(end, last) - max(start, first)) for first, last in muted)
+    return sum(max(0.0, min(end, last) - max(start, first)) for first, last in _merge_spans(muted))
+
+
+def _silent(audio: Any, rate: int, start: float, end: float) -> bool:
+    import numpy as np
+
+    clip = np.asarray(audio[int(start * rate) : int(end * rate)], dtype=np.float32)
+    return clip.size == 0 or float(np.sqrt(np.mean(np.square(clip)))) < SILENT_GAP_RMS
 
 
 def drop_repetition_loops(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -87,27 +110,58 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer") from exc
 
 
+def cuda_device_count() -> int:
+    """NVIDIA GPUs CTranslate2 can use; 0 without a GPU or a CUDA build."""
+    try:
+        import ctranslate2
+
+        return int(ctranslate2.get_cuda_device_count())
+    except Exception:
+        return 0
+
+
+# Beam search costs about its width in decode time. On a GPU that is cheap, on a
+# small CPU it doubles the slowest stage for a barely visible accuracy gain.
+GPU_BEAM_SIZE = 5
+CPU_BEAM_SIZE = 2
+
+
 @dataclass(frozen=True)
 class ASRConfig:
     engine: str = "faster"          # "faster" or "openai"
-    compute_type: str = "int8"      # faster-whisper only: int8, int8_float32, float32
+    compute_type: str = "int8"      # faster-whisper only: int8, int8_float16, float16, float32
     beam_size: int = 5
     vad: bool = True
     vad_min_silence_ms: int = 500
+    device: str = "cpu"             # faster-whisper only: cpu or cuda
 
     @classmethod
-    def from_env(cls) -> "ASRConfig":
+    def from_env(cls, gpu_count: Callable[[], int] = cuda_device_count) -> "ASRConfig":
+        """``auto`` values follow the hardware, so a GPU or more cores need no config change."""
         engine = os.environ.get("VIDTRANS_ASR_ENGINE", "faster").strip().lower()
         if engine not in {"faster", "openai"}:
             raise ValueError("VIDTRANS_ASR_ENGINE must be 'faster' or 'openai'")
-        beam_size = _env_int("VIDTRANS_ASR_BEAM_SIZE", 5)
+        device = os.environ.get("VIDTRANS_ASR_DEVICE", "auto").strip().lower() or "auto"
+        if device not in {"auto", "cpu", "cuda"}:
+            raise ValueError("VIDTRANS_ASR_DEVICE must be auto, cpu or cuda")
+        if device == "auto":
+            device = "cuda" if engine == "faster" and gpu_count() > 0 else "cpu"
+        raw_beam = os.environ.get("VIDTRANS_ASR_BEAM_SIZE", "auto").strip().lower()
+        if raw_beam in {"", "auto"}:
+            beam_size = GPU_BEAM_SIZE if device == "cuda" else CPU_BEAM_SIZE
+        else:
+            beam_size = _env_int("VIDTRANS_ASR_BEAM_SIZE", CPU_BEAM_SIZE)
         if beam_size < 1:
             raise ValueError("VIDTRANS_ASR_BEAM_SIZE must be at least 1")
+        compute_type = os.environ.get("VIDTRANS_ASR_COMPUTE_TYPE", "auto").strip().lower() or "auto"
+        if compute_type == "auto":
+            compute_type = "float16" if device == "cuda" else "int8"
         return cls(
             engine=engine,
-            compute_type=os.environ.get("VIDTRANS_ASR_COMPUTE_TYPE", "int8").strip() or "int8",
+            compute_type=compute_type,
             beam_size=beam_size,
             vad=_env_bool("VIDTRANS_ASR_VAD", True),
+            device=device,
         )
 
 
@@ -223,7 +277,7 @@ class ASRService:
                     from faster_whisper import WhisperModel
 
                     model = WhisperModel(
-                        model_name, device="cpu", compute_type=self.config.compute_type,
+                        model_name, device=self.config.device, compute_type=self.config.compute_type,
                         cpu_threads=self.cpu_threads,
                     )
                     bound_feature_memory(model)
@@ -237,11 +291,14 @@ class ASRService:
     def transcribe(
         self, model_name: str, media_path: Path, *, progress: ProgressCallback | None = None,
         source_language: str = "auto", muted: Sequence[tuple[float, float]] = (),
+        no_speech: Sequence[tuple[float, float]] = (),
     ) -> ASRResult:
         """Return raw Whisper-style segment dicts (start/end/text/words/avg_logprob).
 
         ``muted`` spans (seconds) are silenced first: VAD then skips them, and
         Whisper neither spends time on nor invents lyrics for pure music.
+        ``no_speech`` spans (the soundtrack classifier heard no speech) are still
+        transcribed, but a gap VAD left there is not transcribed a second time.
         """
         source = normalize_language(source_language, allow_auto=True)
         forced = None if source == "auto" else language_profile(source).whisper_code
@@ -269,7 +326,7 @@ class ASRService:
             if self.config.engine == "faster":
                 result = self._faster_result(model, audio, attempt, progress)
                 if attempt["strict"] and result.segments:
-                    result = self._recover_lost_speech(model, audio, result, attempt, muted)
+                    result = self._recover_lost_speech(model, audio, result, attempt, [*muted, *no_speech])
             else:
                 result = self._openai_result(model, audio, attempt)
             if any((segment.get("text") or "").strip() for segment in result.segments):
@@ -317,15 +374,27 @@ class ASRService:
             (start, end)
             for start, end in zip(boundaries[::2], boundaries[1::2])
             if end - start - _muted_overlap(start, end, muted) >= VAD_GAP_SECONDS
+            and not _silent(audio, rate, start, end)
         ]
         if not gaps:
             return result
+        # Gaps close together share one clip; each keeps its own bounds for the filter below.
+        clips: list[list[tuple[float, float]]] = []
+        for gap in gaps:
+            if clips and gap[0] - clips[-1][-1][1] < RECOVERY_MERGE_SECONDS:
+                clips[-1].append(gap)
+            else:
+                clips.append([gap])
+        logger.info("Hearing %d gap(s) again in %d clip(s), %.0fs of audio",
+                    len(gaps), len(clips), sum(end - start for start, end in gaps))
         language = attempt["language"] or result.detected_language
+        # Greedy decoding: these clips are mostly non-speech, where a beam buys nothing.
+        gap_attempt = {**attempt, "language": language, "vad": False, "beam": False, "recovery": True}
         recovered: list[dict[str, Any]] = []
-        for gap_start, gap_end in gaps:
-            offset = max(0.0, gap_start - RECOVERY_CONTEXT_SECONDS)
-            clip = audio[int(offset * rate) : int(min(total, gap_end + VAD_GAP_PADDING_SECONDS) * rate)]
-            gap_attempt = {**attempt, "language": language, "vad": False, "recovery": True}
+        for clip_gaps in clips:
+            offset = max(0.0, clip_gaps[0][0] - RECOVERY_CONTEXT_SECONDS)
+            clip_end = min(total, clip_gaps[-1][1] + VAD_GAP_PADDING_SECONDS)
+            clip = audio[int(offset * rate) : int(clip_end * rate)]
             heard = drop_repetition_loops(self._faster_result(model, clip, gap_attempt, None).segments)
             for segment in heard:
                 if segment["no_speech_prob"] > GAP_MAX_NO_SPEECH_PROB and segment["avg_logprob"] < GAP_MIN_LOGPROB:
@@ -335,8 +404,9 @@ class ASRService:
                 for word in segment["words"]:
                     word["start"] = None if word["start"] is None else word["start"] + offset
                     word["end"] = None if word["end"] is None else word["end"] + offset
-                # The context before the gap re-hears known cues; keep only speech inside the gap.
-                if gap_start < (segment["start"] + segment["end"]) / 2 < gap_end:
+                # The clip also re-hears known cues around the gaps; keep only speech inside one.
+                middle = (segment["start"] + segment["end"]) / 2
+                if any(gap_start < middle < gap_end for gap_start, gap_end in clip_gaps):
                     recovered.append(segment)
         if not recovered:
             return result

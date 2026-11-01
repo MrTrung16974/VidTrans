@@ -14,7 +14,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 
@@ -193,9 +193,23 @@ def music_only_regions(windows: Sequence[SceneWindow], *, padding: float = 1.0) 
     edge of a song.
     """
 
+    return _regions(
+        windows, lambda window: window.speech < CLEAR_NO_SPEECH and window.music >= MUSIC_PRESENT, padding
+    )
+
+
+def no_speech_regions(windows: Sequence[SceneWindow], *, padding: float = 1.0) -> list[tuple[float, float]]:
+    """Stretches with clearly no speech, whatever else plays: a VAD gap there needs no second pass."""
+
+    return _regions(windows, lambda window: window.speech < CLEAR_NO_SPEECH, padding)
+
+
+def _regions(
+    windows: Sequence[SceneWindow], keep: Callable[[SceneWindow], bool], padding: float
+) -> list[tuple[float, float]]:
     regions: list[tuple[float, float]] = []
     for window in windows:
-        if window.speech >= CLEAR_NO_SPEECH or window.music < MUSIC_PRESENT:
+        if not keep(window):
             continue
         span = window.end - window.start
         margin = 0.0 if span < WINDOW_SECONDS else (span - HOP_SECONDS) / 2

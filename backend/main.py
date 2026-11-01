@@ -33,6 +33,7 @@ from starlette.requests import HTTPConnection
 from infrastructure.artifact_archive import build_artifact_archive
 
 from app.config import AppSettings, available_cpu_count
+from pipeline.video_encoder import VideoEncoder
 from application.job_scheduler import JobScheduler
 from application.job_service import JobService
 from application.api_models import (
@@ -186,6 +187,7 @@ from pipeline.audio_scene import (
     caption_rescue_spans,
     label_segments,
     music_only_regions,
+    no_speech_regions,
     music_under_speech,
 )
 from pipeline.caption_alignment import CaptionAlignmentConfig, align_speech_to_burned_captions
@@ -239,6 +241,7 @@ OUTPUT_DIR = SETTINGS.output_dir
 WORK_DIR = SETTINGS.work_dir
 DATABASE_TARGET = database_target(WORK_DIR / "jobs.sqlite3")
 FFMPEG = SETTINGS.ffmpeg
+VIDEO_ENCODER = VideoEncoder.from_env(FFMPEG, available_cpu_count())
 FFPROBE = SETTINGS.ffprobe
 
 
@@ -423,6 +426,8 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     tiktok_proxy=os.environ.get("VIDTRANS_TIKTOK_PROXY", "").strip() or None,
     douyin_proxy=os.environ.get("VIDTRANS_DOUYIN_PROXY", "").strip() or None,
     youtube_proxy=os.environ.get("VIDTRANS_YOUTUBE_PROXY", "").strip() or None,
+    max_duration_seconds=int(os.environ.get("VIDTRANS_SOCIAL_MAX_DURATION_MINUTES", "360") or 360) * 60,
+    max_bytes=int(os.environ.get("VIDTRANS_SOCIAL_MAX_DOWNLOAD_MB", "6144") or 6144) * 1024 * 1024,
 )
 # Each user may enter their own OAuth developer apps on the web; .env stays the fallback.
 PLATFORM_APP_STORE = PlatformAppStore(
@@ -1446,12 +1451,14 @@ def transcribe_video(
     *,
     progress: Callable[[float, float | None], None] | None = None,
     muted: Sequence[tuple[float, float]] = (),
+    no_speech: Sequence[tuple[float, float]] = (),
     repeated_sink: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, float | None]:
     if progress is None and job_id:
         progress = make_asr_progress_callback(job_id, media_duration)
     result = ASR_SERVICE.transcribe(
-        model_name, video_path, progress=progress, source_language=source_language, muted=muted
+        model_name, video_path, progress=progress, source_language=source_language, muted=muted,
+        no_speech=no_speech,
     )
     if repeated_sink is not None:
         repeated_sink.extend(normalize_segments(result.repeated))
@@ -2569,14 +2576,9 @@ def burn_subtitles_with_pillow(
             f"{fps:.6f}",
             "-i",
             str(rendered_dir / "frame_%06d.png"),
-            "-c:v",
-            "libx264",
+            *VIDEO_ENCODER.args(23),
             "-pix_fmt",
             "yuv420p",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
             str(rendered_video),
         ]
     )
@@ -2630,7 +2632,7 @@ def subtitle_render_command(
         ) + ";[vout]format=yuv420p[final]"
         cmd.extend(["-filter_complex", graph])
         video_map = ["-map", "[final]"]
-    cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", *video_map])
+    cmd.extend([*VIDEO_ENCODER.args(23), *video_map])
     if audio_path:
         cmd.extend(["-map", "1:a:0", "-c:a", "aac", "-shortest"])
     elif logo is not None:
@@ -2890,7 +2892,7 @@ def recognize_video_source(
             asr_language = "auto" if subtitle_source == "independent" else source_language
             return transcribe_video(
                 whisper_model, speech_media, asr_language, job_id, video_duration, progress=progress, muted=muted,
-                repeated_sink=repeated_lines,
+                no_speech=no_speech_regions(scenes), repeated_sink=repeated_lines,
             )
 
     def measured_speech(

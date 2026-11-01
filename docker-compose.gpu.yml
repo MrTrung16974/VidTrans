@@ -1,0 +1,18 @@
+# NVIDIA GPU host: Whisper (CTranslate2/CUDA) and the render (NVENC) move to the GPU.
+# docker-rebuild.sh adds this file by itself when `nvidia-smi` works on the host;
+# run it once with --full after adding the GPU so the CUDA libraries are installed.
+# Needs the NVIDIA driver and nvidia-container-toolkit on the host.
+services:
+  vidtrans:
+    build:
+      args:
+        VIDTRANS_GPU: "1"
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility,video"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

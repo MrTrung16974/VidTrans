@@ -59,13 +59,13 @@ class ASRServiceTests(unittest.TestCase):
 
         model = FakeFasterModel([
             [_segment(0.0, 2.0, "你好"), _segment(30.0, 32.0, "谢谢")],
-            # The recovery clip starts up to 10s before the gap, here at 0s.
+            # The recovery clip starts up to 4s before the gap, here at 0s.
             [_segment(10.0, 11.0, "有鬼"), _segment(0.0, 0.4, "好")],
             [],
         ])
         model.feature_extractor = SimpleNamespace(sampling_rate=16000)
         asr = service(model)
-        asr._load_audio = lambda model, path: np.zeros(16000 * 40, dtype=np.float32)
+        asr._load_audio = lambda model, path: np.full(16000 * 40, 0.1, dtype=np.float32)
         segments = asr.transcribe_chinese("small", Path("v.mp4"))
         self.assertEqual([s["text"] for s in segments], ["你好", "有鬼", "谢谢"])
         self.assertAlmostEqual(segments[1]["start"], 10.0)
@@ -73,9 +73,9 @@ class ASRServiceTests(unittest.TestCase):
         self.assertFalse(model.calls[1]["vad_filter"])
         self.assertFalse(model.calls[1]["condition_on_previous_text"])
         self.assertNotIn("hallucination_silence_threshold", model.calls[1])
-        self.assertEqual(len(model.inputs[1]), int(16000 * 30.3))
-        # The 8s tail after the last segment is a gap too.
-        self.assertEqual(len(model.calls), 3)
+        # The 8s tail after the last segment is a gap too; 2s apart, both share one clip.
+        self.assertEqual(len(model.inputs[1]), 16000 * 40)
+        self.assertEqual(len(model.calls), 2)
 
     def test_muted_music_is_silenced_and_not_heard_again(self):
         import numpy as np
@@ -101,7 +101,7 @@ class ASRServiceTests(unittest.TestCase):
         model = FakeFasterModel([loop, [_segment(5.0, 6.0, "我凭什么后悔"), _segment(30.0, 31.0, "我想吃水果")], [], []])
         model.feature_extractor = SimpleNamespace(sampling_rate=16000)
         asr = service(model)
-        asr._load_audio = lambda model, path: np.zeros(16000 * 242, dtype=np.float32)
+        asr._load_audio = lambda model, path: np.full(16000 * 242, 0.1, dtype=np.float32)
         texts = [s["text"] for s in asr.transcribe_chinese("small", Path("v.mp4"))]
         self.assertEqual(texts.count("我死定了"), 1)
         self.assertIn("我想吃水果", texts)
@@ -116,6 +116,26 @@ class ASRServiceTests(unittest.TestCase):
         result = asr.transcribe("small", Path("v.mp4"), source_language="zh-CN")
         self.assertEqual(len(result.segments) + len(result.repeated), 5)
         self.assertGreaterEqual(len(result.repeated), 1)
+
+    def test_recovery_is_greedy_and_skips_silent_or_speechless_gaps(self):
+        import numpy as np
+
+        model = FakeFasterModel([
+            [_segment(0.0, 1.0, "你好"), _segment(10.0, 11.0, "谢谢"), _segment(20.0, 21.0, "好"),
+             _segment(30.0, 31.0, "走"), _segment(50.0, 51.0, "来")],
+            [],
+        ])
+        model.feature_extractor = SimpleNamespace(sampling_rate=16000)
+        audio = np.full(16000 * 51, 0.1, dtype=np.float32)
+        audio[16000 * 1 : 16000 * 10] = 0.0  # 1-10s: silence, not heard again
+        asr = service(model)
+        asr._load_audio = lambda model, path: audio
+        # 31-50s: the classifier heard no speech there.
+        asr.transcribe("small", Path("v.mp4"), source_language="zh-CN", no_speech=[(31.0, 50.0)])
+        # 11-20s and 21-30s are 1s apart: one greedy clip covers both.
+        self.assertEqual(len(model.calls), 2)
+        self.assertEqual(model.calls[1]["beam_size"], 1)
+        self.assertEqual(len(model.inputs[1]), int(16000 * 23.3))
 
     def test_loop_filter_keeps_real_repeats(self):
         from pipeline.asr import drop_repetition_loops
@@ -196,6 +216,18 @@ class ASRServiceTests(unittest.TestCase):
         with patch.dict("os.environ", {"VIDTRANS_ASR_BEAM_SIZE": "1", "VIDTRANS_ASR_VAD": "0"}):
             config = ASRConfig.from_env()
         self.assertEqual((config.beam_size, config.vad), (1, False))
+
+    def test_auto_settings_follow_the_hardware(self):
+        with patch.dict("os.environ", {}, clear=True):
+            cpu = ASRConfig.from_env(gpu_count=lambda: 0)
+            gpu = ASRConfig.from_env(gpu_count=lambda: 1)
+        self.assertEqual((cpu.device, cpu.beam_size, cpu.compute_type), ("cpu", 2, "int8"))
+        self.assertEqual((gpu.device, gpu.beam_size, gpu.compute_type), ("cuda", 5, "float16"))
+        with patch.dict("os.environ", {"VIDTRANS_ASR_DEVICE": "cpu", "VIDTRANS_ASR_BEAM_SIZE": "4"}, clear=True):
+            forced = ASRConfig.from_env(gpu_count=lambda: 1)
+        self.assertEqual((forced.device, forced.beam_size, forced.compute_type), ("cpu", 4, "int8"))
+        with patch.dict("os.environ", {"VIDTRANS_ASR_DEVICE": "tpu"}, clear=True), self.assertRaises(ValueError):
+            ASRConfig.from_env()
 
 
 @unittest.skipUnless(importlib.util.find_spec("faster_whisper"), "faster-whisper required")
