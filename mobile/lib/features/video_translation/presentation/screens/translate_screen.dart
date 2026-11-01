@@ -92,21 +92,19 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     }
   }
 
-  Future<void> _submit() async {
+  void _submit() {
     FocusScope.of(context).unfocus();
     _update((c) => c.copyWith(batchName: _batchName.text));
-    final batch = await _form.submit();
-    if (batch == null || !mounted) return;
+    final count = ref.read(translateFormProvider).sourceCount;
+    if (_form.submit() == null) return;
     _links.clear();
     _batchName.text = ref.read(translateFormProvider).config.batchName;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(
-        'Đã tạo ${batch.jobIds.length} công việc trong ${batch.name}',
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Đã đưa $count nguồn vào tiến trình, đang tải dưới nền'),
       ),
-    ));
-    context.go(
-      batch.jobIds.length == 1 ? '/jobs/${batch.jobIds.single}' : '/jobs',
     );
+    context.go('/jobs');
   }
 
   /// Moves remembered choices that the server no longer allows to a usable
@@ -119,8 +117,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     var next = config;
     if (translation != null && translation.isNotEmpty) {
       next = next.copyWith(
-        translationProvider:
-            pickTranslationProvider(next.translationProvider, translation),
+        translationProvider: pickTranslationProvider(
+          next.translationProvider,
+          translation,
+        ),
       );
     }
     if (tts != null && tts.isNotEmpty) {
@@ -129,7 +129,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       final voices = provider?.voiceChoices ?? const <TtsVoice>[];
       final voice =
           voices.where((v) => v.key == next.voiceKey).firstOrNull ??
-              voices.firstOrNull;
+          voices.firstOrNull;
       next = next.copyWith(
         ttsProvider: providerKey,
         voiceKey: voice?.key ?? next.voiceKey,
@@ -140,8 +140,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         next.ttsProvider != config.ttsProvider ||
         next.voiceKey != config.voiceKey ||
         next.voiceGender != config.voiceGender) {
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _form.updateConfig(next));
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _form.updateConfig(next),
+      );
     }
   }
 
@@ -182,65 +183,53 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: const StudioTopBar(),
-      body: AbsorbPointer(
-        absorbing: state.busy,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
-          children: [
-            _heroHeader(),
-            const SizedBox(height: 14),
-            _workflowStepsNav(),
-            const SizedBox(height: 14),
-            KeyedSubtree(
-              key: _step1Key,
-              child: _sourcesSection(state),
-            ),
-            KeyedSubtree(
-              key: _step2Key,
-              child: FormSection(
-                stepNumber: 2,
-                title: 'Cấu hình xử lý',
-                subtitle: 'Đặt tên lô và chọn chế độ âm thanh đầu ra',
-                children: [
-                  TextField(
-                    controller: _batchName,
-                    maxLength: 120,
-                    decoration: const InputDecoration(
-                      hintText: 'Ví dụ: Review phim tập 1-10',
-                      labelText: 'Tên batch (tùy chọn)',
-                      counterText: '',
-                      prefixIcon: Icon(Icons.folder_outlined, size: 19),
-                    ),
-                    onChanged: (value) =>
-                        _update((c) => c.copyWith(batchName: value)),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+        children: [
+          _heroHeader(),
+          const SizedBox(height: 14),
+          _workflowStepsNav(),
+          const SizedBox(height: 14),
+          KeyedSubtree(key: _step1Key, child: _sourcesSection(state)),
+          KeyedSubtree(
+            key: _step2Key,
+            child: FormSection(
+              stepNumber: 2,
+              title: 'Cấu hình xử lý',
+              subtitle: 'Đặt tên lô và chọn chế độ âm thanh đầu ra',
+              children: [
+                TextField(
+                  controller: _batchName,
+                  maxLength: 120,
+                  decoration: const InputDecoration(
+                    hintText: 'Ví dụ: Review phim tập 1-10',
+                    labelText: 'Tên batch (tùy chọn)',
+                    counterText: '',
+                    prefixIcon: Icon(Icons.folder_outlined, size: 19),
                   ),
-                  _modeBody(state),
-                ],
-              ),
+                  onChanged: (value) =>
+                      _update((c) => c.copyWith(batchName: value)),
+                ),
+                _modeBody(state),
+              ],
             ),
-            // Download-only skips every translation step; the logo still applies.
-            if (!config.downloadOnly) ...[
-              _languageSection(config, translation),
-              _recognitionSection(config),
-              if (config.hasVoice) _voiceSection(config, tts),
-              _audioSection(config),
-            ],
-            _logoSection(config),
-            if (!config.downloadOnly) ...[
-              KeyedSubtree(
-                key: _step3Key,
-                child: _subtitleStyleSection(config),
-              ),
-              KeyedSubtree(
-                key: _step4Key,
-                child: _tiktokSection(config),
-              ),
-              _ocrSection(config),
-            ],
-            const SizedBox(height: 4),
-            _submitCard(state),
+          ),
+          // Download-only skips every translation step; the logo still applies.
+          if (!config.downloadOnly) ...[
+            _languageSection(config, translation),
+            _recognitionSection(config),
+            if (config.hasVoice) _voiceSection(config, tts),
+            _audioSection(config),
           ],
-        ),
+          _logoSection(config),
+          if (!config.downloadOnly) ...[
+            KeyedSubtree(key: _step3Key, child: _subtitleStyleSection(config)),
+            KeyedSubtree(key: _step4Key, child: _tiktokSection(config)),
+            _ocrSection(config),
+          ],
+          const SizedBox(height: 4),
+          _submitCard(state),
+        ],
       ),
     );
   }
@@ -294,12 +283,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final downloadOnly = ref.watch(translateFormProvider).config.downloadOnly;
     final allSteps = <({int step, String label, String sub, GlobalKey key})>[
       (step: 1, label: 'Nguồn video', sub: 'File hoặc link', key: _step1Key),
-      (
-        step: 2,
-        label: 'Cấu hình xử lý',
-        sub: 'Chế độ & giọng',
-        key: _step2Key,
-      ),
+      (step: 2, label: 'Cấu hình xử lý', sub: 'Chế độ & giọng', key: _step2Key),
       (
         step: 3,
         label: 'Vị trí phụ đề',
@@ -314,7 +298,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       ),
     ];
     // Subtitle and caption steps are hidden in download-only mode.
-    final steps = downloadOnly ? allSteps.where((s) => s.step <= 2).toList() : allSteps;
+    final steps = downloadOnly
+        ? allSteps.where((s) => s.step <= 2).toList()
+        : allSteps;
 
     return Container(
       padding: const EdgeInsets.all(7),
@@ -347,7 +333,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   }
 
   Widget _stepNavItem(
-      ({int step, String label, String sub, GlobalKey key}) item) {
+    ({int step, String label, String sub, GlobalKey key}) item,
+  ) {
     final active = _activeStep == item.step;
     return Material(
       color: Colors.transparent,
@@ -427,9 +414,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       title: 'Thêm video nguồn',
       subtitle:
           'Tải file từ thiết bị hoặc dán liên kết TikTok, Douyin, YouTube hoặc Facebook — tối đa 50 video mỗi batch.',
-      trailing: StudioEyebrow(
-        label: '${state.sourceCount}/50 nguồn',
-      ),
+      trailing: StudioEyebrow(label: '${state.sourceCount}/50 nguồn'),
       children: [
         StudioDashedBox(
           onTap: _pickVideos,
@@ -621,42 +606,38 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
   Widget _modeBody(TranslateFormState state) {
     final config = state.config;
-    const modes = <({
-      int value,
-      String title,
-      String badge,
-      String desc,
-      IconData icon,
-    })>[
-      (
-        value: 1,
-        title: 'Chỉ phụ đề',
-        badge: 'Tốc độ cao',
-        desc: 'Giữ nguyên âm thanh gốc, tạo và gắn phụ đề dịch vào video.',
-        icon: Icons.subtitles_outlined,
-      ),
-      (
-        value: 2,
-        title: 'Phụ đề + Thuyết minh',
-        badge: 'Phổ biến',
-        desc: 'Tạo phụ đề kết hợp giọng đọc AI tự nhiên theo ngữ cảnh.',
-        icon: Icons.record_voice_over_outlined,
-      ),
-      (
-        value: 3,
-        title: 'Phụ đề + Thuyết minh + Nhạc',
-        badge: 'Studio Pro',
-        desc: 'Kết hợp phụ đề, giọng thuyết minh AI và nhạc nền tùy chọn.',
-        icon: Icons.library_music_outlined,
-      ),
-      (
-        value: 4,
-        title: 'Chỉ tải video',
-        badge: 'Không dịch',
-        desc: 'Tải video gốc từ link hoặc file về, không nhận diện, dịch hay lồng tiếng.',
-        icon: Icons.download_rounded,
-      ),
-    ];
+    const modes =
+        <({int value, String title, String badge, String desc, IconData icon})>[
+          (
+            value: 1,
+            title: 'Chỉ phụ đề',
+            badge: 'Tốc độ cao',
+            desc: 'Giữ nguyên âm thanh gốc, tạo và gắn phụ đề dịch vào video.',
+            icon: Icons.subtitles_outlined,
+          ),
+          (
+            value: 2,
+            title: 'Phụ đề + Thuyết minh',
+            badge: 'Phổ biến',
+            desc: 'Tạo phụ đề kết hợp giọng đọc AI tự nhiên theo ngữ cảnh.',
+            icon: Icons.record_voice_over_outlined,
+          ),
+          (
+            value: 3,
+            title: 'Phụ đề + Thuyết minh + Nhạc',
+            badge: 'Studio Pro',
+            desc: 'Kết hợp phụ đề, giọng thuyết minh AI và nhạc nền tùy chọn.',
+            icon: Icons.library_music_outlined,
+          ),
+          (
+            value: 4,
+            title: 'Chỉ tải video',
+            badge: 'Không dịch',
+            desc:
+                'Tải video gốc từ link hoặc file về, không nhận diện, dịch hay lồng tiếng.',
+            icon: Icons.download_rounded,
+          ),
+        ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -856,12 +837,14 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             final voices = byKey[v]?.voiceChoices ?? const <TtsVoice>[];
             final voice =
                 voices.where((x) => x.key == config.voiceKey).firstOrNull ??
-                    voices.firstOrNull;
-            _update((c) => c.copyWith(
-                  ttsProvider: v,
-                  voiceKey: voice?.key ?? 'female',
-                  voiceGender: voice?.gender ?? 'female',
-                ));
+                voices.firstOrNull;
+            _update(
+              (c) => c.copyWith(
+                ttsProvider: v,
+                voiceKey: voice?.key ?? 'female',
+                voiceGender: voice?.gender ?? 'female',
+              ),
+            );
           },
         ),
         SelectField(
@@ -886,15 +869,16 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 value: config.voiceKey,
                 enabled: voices.isNotEmpty,
                 options: [
-                  for (final v in voices)
-                    (value: v.key, label: v.displayLabel),
+                  for (final v in voices) (value: v.key, label: v.displayLabel),
                 ],
                 onChanged: (key) {
                   final voice = voices.firstWhere((v) => v.key == key);
-                  _update((c) => c.copyWith(
-                        voiceKey: voice.key,
-                        voiceGender: voice.gender,
-                      ));
+                  _update(
+                    (c) => c.copyWith(
+                      voiceKey: voice.key,
+                      voiceGender: voice.gender,
+                    ),
+                  );
                 },
               ),
             ),
@@ -930,7 +914,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   }
 
   Widget _logoSection(TranslationConfig config) {
-    final hasLogo = ref.watch(brandingSettingsProvider).valueOrNull?.logo != null;
+    final hasLogo =
+        ref.watch(brandingSettingsProvider).valueOrNull?.logo != null;
     return FormSection(
       title: 'Logo thương hiệu',
       subtitle: 'Chèn logo của tài khoản vào video thành phẩm',
@@ -948,7 +933,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 : 'Chưa có logo — tải logo ở mục Logo & cấu hình chèn logo',
           ),
           value: hasLogo && config.applyLogo,
-          onChanged: hasLogo ? (v) => _update((c) => c.copyWith(applyLogo: v)) : null,
+          onChanged: hasLogo
+              ? (v) => _update((c) => c.copyWith(applyLogo: v))
+              : null,
         ),
         if (!hasLogo)
           Align(
@@ -1197,8 +1184,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           max: 1,
           divisions: 95,
           onChanged: (v) => _update(
-            (c) =>
-                c.copyWith(ocrRoiBottom: double.parse(v.toStringAsFixed(2))),
+            (c) => c.copyWith(ocrRoiBottom: double.parse(v.toStringAsFixed(2))),
           ),
         ),
       ],
@@ -1249,10 +1235,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: _SummaryItem(
-                    label: 'Chế độ',
-                    value: modeLabel,
-                  ),
+                  child: _SummaryItem(label: 'Chế độ', value: modeLabel),
                 ),
                 Container(width: 1, height: 26, color: AppColors.line),
                 const SizedBox(width: 10),
@@ -1286,40 +1269,11 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 ),
               ),
             ),
-          if (state.busy) ...[
-            Text(
-              switch (state.phase) {
-                UploadPhase.creating => 'Tải lên xong. Đang tạo công việc…',
-                UploadPhase.downloading => state.downloadNote == null
-                    ? 'Đang chuẩn bị link…'
-                    : 'Đang tải trên máy ${state.downloadNote} · ${(state.progress * 100).round()}%',
-                _ => 'Đang tải lên ${(state.progress * 100).round()}%',
-              },
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 12.5,
-              ),
-            ),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: state.phase == UploadPhase.creating ||
-                      (state.phase == UploadPhase.downloading && state.downloadNote == null)
-                  ? null
-                  : state.progress,
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton(
-              onPressed: _form.cancel,
-              child: const Text('Hủy tải lên'),
-            ),
-          ] else
-            StudioGradientButton(
-              onPressed: _submit,
-              icon: Icons.rocket_launch_rounded,
-              label: state.error != null && state.sourceCount > 0
-                  ? 'Thử lại'
-                  : 'Bắt đầu xử lý batch (${state.sourceCount} nguồn)',
-            ),
+          StudioGradientButton(
+            onPressed: _submit,
+            icon: Icons.rocket_launch_rounded,
+            label: 'Bắt đầu xử lý batch (${state.sourceCount} nguồn)',
+          ),
         ],
       ),
     );
@@ -1403,8 +1357,9 @@ class _ModeChoiceCard extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 13.8,
                             fontWeight: FontWeight.w800,
-                            color:
-                                selected ? AppColors.brandDark : AppColors.ink,
+                            color: selected
+                                ? AppColors.brandDark
+                                : AppColors.ink,
                           ),
                         ),
                         Container(
@@ -1465,10 +1420,7 @@ class _ModeChoiceCard extends StatelessWidget {
 }
 
 class _SummaryItem extends StatelessWidget {
-  const _SummaryItem({
-    required this.label,
-    required this.value,
-  });
+  const _SummaryItem({required this.label, required this.value});
 
   final String label;
   final String value;

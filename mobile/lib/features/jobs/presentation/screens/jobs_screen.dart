@@ -9,6 +9,8 @@ import '../../../../core/errors/api_exception.dart';
 import '../../../../core/widgets/error_view.dart';
 import '../../../../core/widgets/studio_widgets.dart';
 import '../../../home/presentation/screens/home_shell.dart';
+import '../../../video_translation/presentation/providers/submission_queue.dart';
+import '../../../video_translation/presentation/widgets/pending_submission_card.dart';
 import '../../domain/bulk_actions.dart';
 import '../../domain/job.dart';
 import '../providers/jobs_providers.dart';
@@ -113,6 +115,7 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
   Widget build(BuildContext context) {
     final jobs = ref.watch(jobListProvider);
     final filter = ref.watch(jobStatusFilterProvider);
+    final pending = ref.watch(submissionQueueProvider);
 
     final allJobs = jobs.valueOrNull?.jobs ?? const <Job>[];
     final totalCount = allJobs.length;
@@ -368,7 +371,11 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  if (filteredJobs.isEmpty)
+                  for (final item in pending) ...[
+                    PendingSubmissionCard(item: item),
+                    const SizedBox(height: 10),
+                  ],
+                  if (filteredJobs.isEmpty && pending.isEmpty)
                     StudioEmptyState(
                       icon: Icons.inbox_outlined,
                       title: query.isNotEmpty
@@ -392,7 +399,7 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                               onPressed: () => context.go('/translate'),
                             ),
                     )
-                  else ...[
+                  else if (filteredJobs.isNotEmpty) ...[
                     for (var i = 0; i < filteredJobs.length; i++) ...[
                       if (i > 0) const SizedBox(height: 10),
                       _JobTile(

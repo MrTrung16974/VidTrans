@@ -12,6 +12,7 @@ import 'package:vidtrans_mobile/features/source_download/data/phone_video_downlo
 import 'package:vidtrans_mobile/features/source_download/domain/download_policy.dart';
 import 'package:vidtrans_mobile/features/video_translation/data/translation_repository.dart';
 import 'package:vidtrans_mobile/features/video_translation/domain/translation_config.dart';
+import 'package:vidtrans_mobile/features/video_translation/presentation/providers/submission_queue.dart';
 import 'package:vidtrans_mobile/features/video_translation/presentation/providers/translate_form_controller.dart';
 
 class _MockUploader extends Mock implements BackgroundUploader {}
@@ -122,7 +123,7 @@ void main() {
     final container = containerWith(downloader);
     final form = container.read(translateFormProvider.notifier)..setLinks('$_tiktok\n$_youtube\n$_douyin');
 
-    expect(await form.submit(), isNotNull);
+    expect(await form.submit()!, isNotNull);
 
     final batch = repo.batches.single;
     expect(batch.links, _youtube);
@@ -135,7 +136,7 @@ void main() {
     final container = containerWith(_FakeDownloader(dir, failing: {_tiktok}));
     final form = container.read(translateFormProvider.notifier)..setLinks('$_tiktok $_douyin');
 
-    await form.submit();
+    await form.submit()!;
 
     expect(repo.batches.single.links, _tiktok);
     expect(repo.batches.single.files.single.sourceUrl, _douyin);
@@ -147,11 +148,25 @@ void main() {
     final form = container.read(translateFormProvider.notifier)..setLinks(_tiktok);
     repo.failNext = true;
 
-    expect(await form.submit(), isNull);
-    expect(container.read(translateFormProvider).error, 'mất mạng');
-    expect(await form.submit(), isNotNull);
+    expect(await form.submit()!, isNull);
+    final failed = container.read(submissionQueueProvider).single;
+    expect(failed.error, 'mất mạng');
+    expect(await container.read(submissionQueueProvider.notifier).retry(failed.id), isNotNull);
+    expect(container.read(submissionQueueProvider), isEmpty);
 
     expect(downloader.calls, [_tiktok]);
     expect(repo.batches.map((b) => b.files.single.path).toSet(), hasLength(1));
+  });
+
+  test('submit frees the form at once while the phone download runs in the background', () async {
+    final container = containerWith(_FakeDownloader(dir));
+    final form = container.read(translateFormProvider.notifier)..setLinks(_tiktok);
+
+    final done = form.submit()!;
+
+    expect(container.read(translateFormProvider).sourceCount, 0);
+    expect(container.read(submissionQueueProvider).single.sourceCount, 1);
+    expect(await done, isNotNull);
+    expect(container.read(submissionQueueProvider), isEmpty);
   });
 }
