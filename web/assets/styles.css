@@ -3892,8 +3892,8 @@ input[type="file"]::-webkit-file-upload-button:active {
 .source-options-grid .link-source-field textarea { width: 100%; min-height: 100px; height: 100px; border: 1px solid #cbd5e1; border-radius: 11px; padding: 10px 12px; font-size: 0.8rem; font-family: inherit; resize: none; outline: none; background: #ffffff; color: var(--ink); line-height: 1.45; transition: border-color .15s, box-shadow .15s; }
 .source-options-grid .link-source-field textarea:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(23, 107, 104, 0.12); }
 
-.source-auth-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; margin-top: 14px; }
-.douyin-auth-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid #ccfbf1; border-radius: 13px; background: linear-gradient(135deg, #f0fdfa, #ffffff); }
+.source-auth-row { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 14px; }
+.douyin-auth-card { margin-top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid #ccfbf1; border-radius: 13px; background: linear-gradient(135deg, #f0fdfa, #ffffff); }
 .douyin-auth-icon { width: 36px; height: 36px; flex: 0 0 36px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #0f172a, var(--teal)); color: #fff; font-size: 0.74rem; font-weight: 800; }
 .douyin-auth-copy { flex: 1; min-width: 0; }
 .douyin-auth-copy strong { display: block; font-size: 0.82rem; font-weight: 700; color: var(--ink); }
@@ -3901,16 +3901,17 @@ input[type="file"]::-webkit-file-upload-button:active {
 .douyin-auth-copy small.authenticated { color: var(--green); font-weight: 700; }
 .douyin-auth-actions { flex: 0 0 auto; display: flex; gap: 6px; }
 
-.cookie-source-field { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 13px; background: #f8fafc; cursor: pointer; transition: all 0.15s ease; }
+.cookie-source-field { margin-top: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 13px; background: #f8fafc; cursor: pointer; transition: all 0.15s ease; }
 .cookie-source-field:hover { border-color: #cbd5e1; background: #f1f5f9; }
-.cookie-label-wrap { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+.cookie-label-wrap { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1 1 200px; }
 .cookie-label-wrap > div { min-width: 0; }
 .cookie-icon { font-size: 1.25rem; flex: 0 0 auto; }
 .cookie-label-wrap strong { display: block; font-size: 0.8rem; font-weight: 700; color: var(--ink); letter-spacing: 0; }
 .cookie-label-wrap small { display: block; margin-top: 1px; color: var(--muted); font-size: 0.68rem; line-height: 1.35; }
-.cookie-source-field input { flex: 0 0 auto; width: auto; max-width: 175px; font-size: 0.72rem; color: var(--muted); cursor: pointer; }
-.cookie-source-field input::file-selector-button { min-height: 32px; margin-right: 6px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 5px 10px; background: #fff; color: var(--ink); cursor: pointer; font-size: 0.72rem; font-weight: 700; transition: all 0.15s; }
-.cookie-source-field input::file-selector-button:hover { border-color: var(--brand); color: var(--brand-dark); }
+.cookie-source-field input { flex: 0 1 255px; width: 255px; min-width: 235px; max-width: 100%; color: var(--muted); cursor: pointer; }
+.cookie-source-field input[type="file"]:not([hidden]) { padding: 6px 10px !important; font-size: 0.76rem !important; }
+.cookie-source-field input[type="file"]::file-selector-button,
+.cookie-source-field input[type="file"]::-webkit-file-upload-button { min-height: 30px; margin-right: 9px !important; padding: 6px 12px !important; border-radius: 8px !important; font-size: 0.75rem !important; font-weight: 700 !important; }
 .small-btn { min-height: 32px; padding: 5px 10px; font-size: 0.72rem; border-radius: 8px; white-space: nowrap; }
 
 /* STEP 2: Configuration Stack */
