@@ -21,6 +21,14 @@ from infrastructure.database import connect, prepare_target
 MAX_LOGO_BYTES = 5 * 1024 * 1024
 MAX_LOGO_SIDE = 4096
 MIN_LOGO_SIDE = 16
+# An opaque logo whose edge is (almost) all light grey/white has a painted
+# background: plain white, or the grey/white checkerboard image generators draw
+# instead of real transparency. It is removed where it touches the edge.
+BACKGROUND_MIN_LEVEL = 180
+BACKGROUND_MAX_CHROMA = 24
+BACKGROUND_EDGE_SHARE = 0.9
+# Flood fill runs on a grid of blocks at most this many cells wide (numpy only).
+BACKGROUND_GRID = 512
 
 
 class BrandingError(ValueError):
@@ -29,6 +37,62 @@ class BrandingError(ValueError):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _connected_to_edge(mask: "np.ndarray") -> "np.ndarray":
+    """Pixels of ``mask`` reachable from the image edge through ``mask`` (4-connected).
+
+    Done on blocks that are entirely in the mask, so a thin dark outline still stops
+    the fill; a block next to the filled area then gives back its own mask pixels.
+    """
+    import numpy as np
+
+    height, width = mask.shape
+    block = max(1, -(-max(height, width) // BACKGROUND_GRID))
+    rows, cols = -(-height // block), -(-width // block)
+    padded = np.ones((rows * block, cols * block), dtype=bool)
+    padded[:height, :width] = mask
+    cells = padded.reshape(rows, block, cols, block).all(axis=(1, 3))
+    filled = np.zeros_like(cells)
+    filled[0, :], filled[-1, :], filled[:, 0], filled[:, -1] = cells[0, :], cells[-1, :], cells[:, 0], cells[:, -1]
+    while True:
+        grown = filled.copy()
+        grown[1:, :] |= filled[:-1, :]
+        grown[:-1, :] |= filled[1:, :]
+        grown[:, 1:] |= filled[:, :-1]
+        grown[:, :-1] |= filled[:, 1:]
+        grown &= cells
+        if np.array_equal(grown, filled):
+            break
+        filled = grown
+    near = filled.copy()
+    near[1:, :] |= filled[:-1, :]
+    near[:-1, :] |= filled[1:, :]
+    near[:, 1:] |= filled[:, :-1]
+    near[:, :-1] |= filled[:, 1:]
+    full = np.repeat(np.repeat(near, block, axis=0), block, axis=1)[:height, :width]
+    return full & mask
+
+
+def remove_painted_background(rgba: "Image.Image") -> "Image.Image":
+    """Make a painted white/checkerboard background transparent; anything else is unchanged."""
+    import numpy as np
+    from PIL import Image
+
+    pixels = np.asarray(rgba)
+    if pixels[..., 3].min() < 255:
+        return rgba  # it already has real transparency
+    rgb = pixels[..., :3].astype(np.int16)
+    light = (rgb.min(axis=2) >= BACKGROUND_MIN_LEVEL) & (rgb.max(axis=2) - rgb.min(axis=2) <= BACKGROUND_MAX_CHROMA)
+    edge = np.concatenate([light[0, :], light[-1, :], light[:, 0], light[:, -1]])
+    if edge.mean() < BACKGROUND_EDGE_SHARE:
+        return rgba
+    background = _connected_to_edge(light)
+    if background.all():
+        return rgba  # a plain light image: nothing would be left
+    result = pixels.copy()
+    result[..., 3] = np.where(background, 0, 255)
+    return Image.fromarray(result, "RGBA")
 
 
 def normalise_logo(data: bytes) -> tuple[bytes, int, int, bool]:
@@ -48,6 +112,7 @@ def normalise_logo(data: bytes) -> tuple[bytes, int, int, bool]:
             rgba = image.convert("RGBA")
     except (UnidentifiedImageError, OSError) as exc:
         raise BrandingError("File không phải ảnh hợp lệ") from exc
+    rgba = remove_painted_background(rgba)
     # Trim fully transparent padding so the size setting matches what is visible.
     bbox = rgba.getchannel("A").getbbox()
     if bbox is None:

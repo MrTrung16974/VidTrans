@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 import subprocess
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -35,6 +35,9 @@ MAX_STATIC_SHARE = 0.25
 MIN_SCENE_CHANGE = 3.0
 # Pixels whose value barely changes across the window (logo fill, solid borders).
 STATIC_STD = 8.0
+# In a video this long (in readable windows), a track seen in one window only is a
+# blip (a subtitle fragment, a static object), not a logo: logos stay for a while.
+BLIP_MIN_VALID_WINDOWS = 6
 
 
 @dataclass(frozen=True)
@@ -204,6 +207,16 @@ def _location_prior(box: Box) -> float:
     return 0.0
 
 
+def _looks_like_subtitle(box: Box, pixel_w: int, pixel_h: int) -> bool:
+    """A burned-in subtitle line: wide, horizontally centred, in the lower part of the frame.
+
+    It stays still for a few seconds while the scene moves, exactly like a logo, so
+    translated videos (our own subtitles) would otherwise get the logo put on them.
+    """
+    cx, cy = box.center
+    return abs(cx - 0.5) < 0.15 and cy > 0.6 and pixel_w >= 2.5 * pixel_h
+
+
 def _grow_into_static(mask: np.ndarray, temporal_std: np.ndarray, x0: int, y0: int, x1: int, y1: int,
                       ) -> tuple[tuple[int, int, int, int], np.ndarray]:
     """The logo body: its persistent edges plus the unchanging pixels connected to them.
@@ -256,6 +269,8 @@ def detect_candidates(frames: np.ndarray) -> tuple[bool, list[Candidate]]:
         if not (0.001 <= box.area <= 0.08) or box.w < 0.02 or box.w > 0.5 or box.h > 0.4:
             continue
         if not 0.2 <= bw / max(bh, 1) <= 12:
+            continue
+        if _looks_like_subtitle(box, bw, bh):
             continue
         inside = mask[y0:y1, x0:x1]
         density = float(inside.mean())
@@ -345,6 +360,8 @@ def decide(
             track["confidences"].append(candidate.confidence)
             track["windows"].append(index)
     valid_count = sum(1 for window in windows if window.valid)
+    if valid_count >= BLIP_MIN_VALID_WINDOWS:
+        tracks = [track for track in tracks if len(set(track["windows"])) >= 2]
     for track in tracks:
         track["box"] = _median_box(track["boxes"])
         coverage = len(set(track["windows"])) / max(1, valid_count)
@@ -412,6 +429,27 @@ def decide(
             if tracks[segment.track]["stencil"] is not None
         },
     )
+
+
+def hold_one_position(detection: Detection, duration: float) -> Detection:
+    """One logo position for the whole video, so the new logo never jumps around.
+
+    The detected logo shown longest wins (a moving logo keeps its first position);
+    with no detected logo the whole video uses the default corner.
+    """
+    shown: dict[object, float] = {}
+    best: dict[object, Segment] = {}
+    for segment in detection.segments:
+        if segment.box is None:
+            continue
+        key = segment.track if segment.track is not None else segment.box
+        shown[key] = shown.get(key, 0.0) + segment.end - segment.start
+        best.setdefault(key, segment)
+    if not shown:
+        return replace(detection, segments=[Segment(0.0, duration, None, 0.0)])
+    key = max(shown, key=lambda item: (shown[item], best[item].confidence))
+    chosen = best[key]
+    return replace(detection, segments=[Segment(0.0, duration, chosen.box, chosen.confidence, chosen.track)])
 
 
 def detect_logo(

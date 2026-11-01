@@ -14,9 +14,11 @@ import main
 from application.branding_service import BrandingJobRunner
 from application.job_service import JobService
 from domain.branding import BrandingConfig
-from infrastructure.branding_store import BrandingError, BrandingStore
+from infrastructure.branding_store import BrandingError, BrandingStore, normalise_logo
 from infrastructure.job_store import SQLiteJobStore
-from pipeline.logo_detection import Box, Candidate, Segment, Window, decide, detect_candidates
+from pipeline.logo_detection import (
+    Box, Candidate, Detection, Segment, Window, decide, detect_candidates, hold_one_position,
+)
 from pipeline import logo_inpaint, logo_tracking
 from pipeline.logo_overlay import build_filter_graph, logo_size, path_expression, plan_placements
 
@@ -102,6 +104,33 @@ class LogoDetectionTests(unittest.TestCase):
     def test_no_readable_window_is_uncertain(self):
         self.assertEqual(decide([Window(0, 6, False)], 6.0).status, "uncertain")
 
+    def test_burned_in_subtitle_line_is_not_a_logo(self):
+        # A wide static line centred near the bottom, like the subtitles of a translated video.
+        _, candidates = detect_candidates(stamp_logo(moving_frames(), 100, 150, w=120, h=20))
+        self.assertEqual(candidates, [])
+        # The same shape in a corner is still a logo.
+        _, candidates = detect_candidates(stamp_logo(moving_frames(), 190, 150, w=120, h=20))
+        self.assertTrue(candidates)
+
+    def test_one_window_blip_in_a_long_video_is_dropped(self):
+        logo, blip = Box(0.82, 0.03, 0.12, 0.08), Box(0.6, 0.88, 0.04, 0.05)
+        windows = [Window(i * 6, i * 6 + 6, True, [Candidate(logo, 0.9)] if i in (0, 1) else []) for i in range(8)]
+        windows[5] = Window(30, 36, True, [Candidate(blip, 0.9)])
+        detection = decide(windows, 48.0)
+        self.assertEqual({s.box for s in detection.segments}, {logo, None})
+
+    def test_logo_is_held_in_one_place_for_the_whole_video(self):
+        corner, other = Box(0.82, 0.03, 0.12, 0.08), Box(0.02, 0.88, 0.12, 0.08)
+        detection = Detection("found", 0.9, [
+            Segment(0, 6, None, 0.0), Segment(6, 30, corner, 0.8, 0), Segment(30, 36, other, 0.95, 1),
+            Segment(36, 42, None, 0.0), Segment(42, 48, corner, 0.8, 0),
+        ], [], 8, 8)
+        held = hold_one_position(detection, 48.0)
+        self.assertEqual([(s.start, s.end, s.box, s.track) for s in held.segments], [(0.0, 48.0, corner, 0)])
+        nothing = Detection("not_found", 0.0, [Segment(0, 48, None, 0.0)], [], 8, 8)
+        self.assertEqual([(s.start, s.end, s.box) for s in hold_one_position(nothing, 48.0).segments],
+                         [(0.0, 48.0, None)])
+
 
 class LogoOverlayTests(unittest.TestCase):
     def test_logo_size_tracks_video_width_and_keeps_aspect(self):
@@ -168,6 +197,33 @@ class BrandingStoreTests(unittest.TestCase):
         self.assertIsNone(self.store.logo_path("b"))
         self.store.delete_logo("a")
         self.assertIsNone(self.store.get("a")["logo"])
+
+    def test_painted_checkerboard_background_becomes_transparent(self):
+        # What image generators export as a "transparent PNG": an opaque grey/white checkerboard.
+        size, cell = 96, 8
+        image = Image.new("RGBA", (size, size))
+        for y in range(size):
+            for x in range(size):
+                image.putpixel((x, y), (254, 254, 254, 255) if (x // cell + y // cell) % 2 else (202, 202, 202, 255))
+        disc = Image.new("L", (size, size), 0)
+        from PIL import ImageDraw
+        ImageDraw.Draw(disc).ellipse((24, 24, 71, 71), fill=255)
+        image.paste(Image.new("RGBA", (size, size), (20, 20, 20, 255)), (0, 0), disc)
+        ImageDraw.Draw(image).ellipse((40, 40, 55, 55), fill=(255, 255, 255, 255))  # white inside stays
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+
+        png, width, height, transparent = normalise_logo(buffer.getvalue())
+
+        self.assertTrue(transparent)
+        self.assertEqual((width, height), (48, 48))  # trimmed to the disc
+        result = Image.open(io.BytesIO(png))
+        self.assertEqual(result.getpixel((0, 0))[3], 0)
+        self.assertEqual(result.getpixel((24, 24)), (255, 255, 255, 255))
+
+    def test_opaque_logo_without_painted_background_is_kept(self):
+        _, width, height, transparent = normalise_logo(png_bytes((60, 40), color=(200, 30, 30, 255)))
+        self.assertEqual((width, height, transparent), (60, 40, False))
 
     def test_invalid_logos_are_rejected(self):
         with self.assertRaises(BrandingError):

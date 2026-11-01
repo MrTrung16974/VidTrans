@@ -24,7 +24,7 @@ from typing import Any, Callable
 from domain.branding import BrandingConfig
 from infrastructure.media_probe import probe_media_file
 from pipeline import logo_inpaint, logo_tracking
-from pipeline.logo_detection import Detection, detect_logo
+from pipeline.logo_detection import Detection, detect_logo, hold_one_position
 from pipeline.logo_overlay import build_ffmpeg_command, plan_placements
 
 logger = logging.getLogger(__name__)
@@ -125,6 +125,8 @@ class BrandingJobRunner:
                     strategy=config.multi_logo_strategy, default_position=config.default_position,
                     min_confidence=config.min_confidence,
                 )
+            # The new logo stays in one place for the whole video.
+            detection = hold_one_position(detection, probe.duration)
             self.ensure_active(job_id)
         inpaint = config.cover_original and config.cover_method == "inpaint" and logo_inpaint.available()
         placements = plan_placements(
