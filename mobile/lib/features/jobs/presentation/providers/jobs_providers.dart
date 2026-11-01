@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/errors/api_exception.dart';
 import '../../../../core/websocket/job_events.dart';
 import '../../data/jobs_repository.dart';
+import '../../domain/bulk_actions.dart';
 import '../../domain/job.dart';
 import '../../domain/job_list.dart';
 
@@ -37,6 +39,32 @@ class JobListController extends AutoDisposeAsyncNotifier<JobList> {
     final next = await AsyncValue.guard(() => _repo.list(status: status));
     // Keep showing the old list if a background reload fails.
     if (next.hasValue || state.valueOrNull == null) state = next;
+  }
+
+  /// Runs [action] on [jobs], a few requests at a time, then reloads the list.
+  /// One failing job does not stop the others.
+  Future<BulkJobResult> runBulk(BulkJobAction action, List<Job> jobs) async {
+    const concurrency = 4;
+    final succeeded = <String>[];
+    final errors = <String>[];
+    Future<void> one(Job job) async {
+      try {
+        await switch (action) {
+          BulkJobAction.cancel => _repo.cancel(job.id),
+          BulkJobAction.retry => _repo.retry(job.id),
+          BulkJobAction.delete => _repo.delete(job.id),
+        };
+        succeeded.add(job.id);
+      } catch (error) {
+        errors.add(errorMessage(error));
+      }
+    }
+
+    for (var start = 0; start < jobs.length; start += concurrency) {
+      await Future.wait(jobs.skip(start).take(concurrency).map(one));
+    }
+    await refresh();
+    return BulkJobResult(action, succeeded: succeeded, errors: errors);
   }
 
   Future<void> loadMore() async {

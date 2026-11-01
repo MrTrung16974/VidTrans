@@ -437,6 +437,7 @@ class StudioCard extends StatelessWidget {
     this.borderColor = AppColors.line,
     this.borderRadius = 18,
     this.onTap,
+    this.onLongPress,
   });
 
   final Widget child;
@@ -449,6 +450,7 @@ class StudioCard extends StatelessWidget {
   final Color borderColor;
   final double borderRadius;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -516,11 +518,12 @@ class StudioCard extends StatelessWidget {
         boxShadow: AppColors.cardShadow,
       ),
       clipBehavior: Clip.antiAlias,
-      child: onTap != null
+      child: onTap != null || onLongPress != null
           ? Material(
               color: Colors.transparent,
               child: InkWell(
                 onTap: onTap,
+                onLongPress: onLongPress,
                 borderRadius: BorderRadius.circular(borderRadius),
                 child: content,
               ),
