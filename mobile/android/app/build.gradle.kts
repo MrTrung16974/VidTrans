@@ -67,3 +67,9 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Image translation OCR: the plugin bundles only the Latin model; the
+    // Chinese model also reads Latin text (google_mlkit_text_recognition README).
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+}

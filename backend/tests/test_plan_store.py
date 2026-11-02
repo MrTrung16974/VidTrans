@@ -32,11 +32,12 @@ class PlanStoreTests(unittest.TestCase):
         plans = {"trial", "free", "creator", "pro", "enterprise"}
         self.assertEqual(len(matrix), len(plans) * len(FEATURES))
         for row in matrix:
-            self.assertEqual(row["enabled"], row["plan_key"] in {"creator", "pro", "enterprise"}, row)
+            paid = row["plan_key"] in {"creator", "pro", "enterprise"}
+            self.assertEqual(row["enabled"], paid or row["feature_key"] == "image_translation", row)
 
-    def test_trial_and_free_get_no_paid_features(self) -> None:
+    def test_trial_and_free_get_only_image_translation(self) -> None:
         for plan in ("trial", "free"):
-            self.assertEqual(account_features(on_plan(plan)), frozenset())
+            self.assertEqual(account_features(on_plan(plan)), frozenset({"image_translation"}))
             self.assertFalse(feature_allowed(on_plan(plan), "comic_video"))
             self.assertFalse(feature_allowed(on_plan(plan), "social_publishing"))
             self.assertFalse(provider_allowed(on_plan(plan), "translation", "gemini"))
@@ -60,7 +61,7 @@ class PlanStoreTests(unittest.TestCase):
         self.assertEqual(list(plans), ["trial", "free", "creator", "pro", "enterprise"])
         self.assertEqual(plans["trial"]["monthly_minutes"], 5)
         self.assertFalse(plans["trial"]["is_paid"])
-        self.assertEqual(plans["free"]["features"], [])
+        self.assertEqual(plans["free"]["features"], ["image_translation"])
         self.assertIn("comic_video", plans["creator"]["features"])
         self.assertIsNone(plans["enterprise"]["price_vnd"])
 

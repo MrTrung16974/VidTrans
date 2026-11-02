@@ -7,7 +7,8 @@ included. ``configure_entitlement_source`` plugs that store in at start-up;
 without it (unit tests, scripts) the defaults apply.
 
 Trial and free get video translation with the free/local engines (Google
-Translate, TranslateGemma, Qwen3, Edge TTS, CIT Voice Studio, Azure Speech).
+Translate, TranslateGemma, Qwen3, Edge TTS, CIT Voice Studio, Azure Speech) and
+screenshot/image translation.
 Comic videos, social publishing and the per-request AI (Gemini, ElevenLabs,
 Veo) need Creator, Pro or Enterprise. Owners and admins are never limited: they
 run the service and test every provider.
@@ -21,6 +22,10 @@ DEFAULT_PLAN = "free"
 
 # feature_key -> (label shown to users, description for the plan_features table)
 FEATURES: dict[str, tuple[str, str]] = {
+    "image_translation": (
+        "Dịch ảnh chụp màn hình",
+        "Nhận diện chữ trong ảnh và thay bằng bản dịch đúng vị trí (OCR trên máy, dịch offline hoặc qua máy chủ)",
+    ),
     "comic_video": ("Tạo video truyện", "Tạo, sửa và render truyện thành video"),
     "social_publishing": (
         "Đăng bài mạng xã hội",
@@ -46,10 +51,12 @@ DEFAULT_PLANS: dict[str, dict[str, Any]] = {
 }
 
 _PAID_FEATURES = frozenset(FEATURES)
+# Features every plan gets out of the box; admins may still switch them off per plan.
+_BASIC_FEATURES = frozenset({"image_translation"})
 # plan_key -> enabled features; every feature not listed is an explicit deny row.
 DEFAULT_PLAN_FEATURES: dict[str, frozenset[str]] = {
-    "trial": frozenset(),
-    "free": frozenset(),
+    "trial": _BASIC_FEATURES,
+    "free": _BASIC_FEATURES,
     "creator": _PAID_FEATURES,
     "pro": _PAID_FEATURES,
     "enterprise": _PAID_FEATURES,

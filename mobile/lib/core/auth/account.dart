@@ -58,4 +58,5 @@ class Account {
 abstract final class PlanFeature {
   static const comicVideo = 'comic_video';
   static const socialPublishing = 'social_publishing';
+  static const imageTranslation = 'image_translation';
 }

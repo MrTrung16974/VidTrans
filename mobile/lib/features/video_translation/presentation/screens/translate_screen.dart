@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/auth/account.dart';
 import '../../../../core/auth/session_controller.dart';
 import '../../../../core/widgets/studio_widgets.dart';
 import '../../../home/presentation/screens/home_shell.dart';
@@ -161,15 +162,25 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final readOnly = ref.watch(sessionProvider).valueOrNull?.isReadOnly ?? true;
+    final account = ref.watch(sessionProvider).valueOrNull;
+    final readOnly = account?.isReadOnly ?? true;
+    final canTranslateImages =
+        account?.hasFeature(PlanFeature.imageTranslation) ?? false;
     if (readOnly) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: AppColors.bg,
-        appBar: StudioTopBar(),
+        appBar: const StudioTopBar(),
         body: StudioEmptyState(
           icon: Icons.lock_outline_rounded,
           title: 'Tài khoản chỉ xem',
           subtitle: 'Tài khoản chỉ xem không thể tạo công việc mới.',
+          action: canTranslateImages
+              ? OutlinedButton.icon(
+                  onPressed: () => context.push('/translate/image'),
+                  icon: const Icon(Icons.image_search_rounded, size: 18),
+                  label: const Text('Dịch ảnh chụp màn hình'),
+                )
+              : null,
         ),
       );
     }
@@ -188,6 +199,12 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         children: [
           _heroHeader(),
           const SizedBox(height: 14),
+          if (canTranslateImages) ...[
+            _ImageTranslateEntry(
+              onTap: () => context.push('/translate/image'),
+            ),
+            const SizedBox(height: 14),
+          ],
           _workflowStepsNav(),
           const SizedBox(height: 14),
           KeyedSubtree(key: _step1Key, child: _sourcesSection(state)),
@@ -1526,6 +1543,75 @@ class _SubtitlePreviewMonitor extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Entry to screenshot translation ("Dịch ảnh") from the video translation tab.
+class _ImageTranslateEntry extends StatelessWidget {
+  const _ImageTranslateEntry({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return StudioCard(
+      onTap: onTap,
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      borderColor: AppColors.brandBorder,
+      backgroundColor: AppColors.brandTint,
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.brandBorder),
+            ),
+            child: const Icon(
+              Icons.image_search_rounded,
+              color: AppColors.brand,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Dịch ảnh chụp màn hình',
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 6),
+                    StudioStatusPill(
+                      label: 'MỚI',
+                      compact: true,
+                      showDot: false,
+                    ),
+                  ],
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Thay chữ Trung, Anh… trong ảnh bằng tiếng Việt, ngay trên điện thoại',
+                  style: TextStyle(fontSize: 12.5, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: AppColors.brand),
         ],
       ),
     );

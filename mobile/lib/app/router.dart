@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/auth/account.dart';
 import '../core/auth/session_controller.dart';
 import '../core/widgets/studio_widgets.dart';
 import '../features/authentication/presentation/screens/login_screen.dart';
@@ -40,6 +41,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Trial/free plans do not include comic stories or social publishing.
       if (!account.canUseComics && _under(location, '/comic')) return '/translate';
       if (!account.canPublishSocial && _under(location, '/social')) {
+        return '/translate';
+      }
+      if (!account.hasFeature(PlanFeature.imageTranslation) &&
+          _under(location, '/translate/image')) {
         return '/translate';
       }
       return null;

@@ -3648,6 +3648,42 @@
         "title": "ShotPatch",
         "type": "object"
       },
+      "TextTranslationRequest": {
+        "properties": {
+          "provider": {
+            "default": "",
+            "maxLength": 32,
+            "title": "Provider",
+            "type": "string"
+          },
+          "source_language": {
+            "maxLength": 16,
+            "title": "Source Language",
+            "type": "string"
+          },
+          "target_language": {
+            "default": "vi",
+            "maxLength": 16,
+            "title": "Target Language",
+            "type": "string"
+          },
+          "texts": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 80,
+            "minItems": 1,
+            "title": "Texts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "texts",
+          "source_language"
+        ],
+        "title": "TextTranslationRequest",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -11181,6 +11217,53 @@
           }
         ],
         "summary": "Sync Source Browser"
+      }
+    },
+    "/api/v1/text-translations": {
+      "post": {
+        "description": "Translate the text blocks the app read from a screenshot (image translation, online mode).\n\nOnly the text travels; the image never leaves the device.",
+        "operationId": "translate_texts_endpoint_api_v1_text_translations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextTranslationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Translate Texts Endpoint"
       }
     },
     "/api/v1/threads-auth": {

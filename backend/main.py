@@ -154,7 +154,9 @@ from domain.plan_entitlements import (
     configure_entitlement_source,
     ensure_comic_settings_allowed,
     ensure_feature_allowed,
+    ensure_provider_allowed,
     ensure_video_providers_allowed,
+    provider_allowed,
 )
 from infrastructure.translation_providers import (
     GeminiContextTranslator,
@@ -1017,6 +1019,8 @@ async def authenticate_request(request: Request, call_next: Callable[..., Any]):
         and request.url.path != "/api/v1/auth/session"
         and not request.url.path.startswith("/api/v1/me/devices")
         and request.url.path != "/api/v1/me/terms/accept"
+        # Translating screenshot text reads only; it stores nothing.
+        and request.url.path != "/api/v1/text-translations"
     ):
         return JSONResponse(
             {"detail": "Tài khoản Người xem không có quyền thay đổi dữ liệu"},
@@ -6350,6 +6354,72 @@ def parse_file_source_urls(raw: str, upload_count: int) -> list[str | None]:
 def translation_providers_endpoint(request: Request) -> JSONResponse:
     providers = [dict(status.__dict__) for status in translation_provider_statuses()]
     return JSONResponse({"providers": annotate_providers(current_account(request), "translation", providers)})
+
+
+# One image (screenshot) carries a few dozen text blocks at most.
+MAX_TEXT_TRANSLATION_ITEMS = 80
+MAX_TEXT_TRANSLATION_CHARS = 12_000
+
+
+class TextTranslationRequest(BaseModel):
+    texts: list[str] = Field(min_length=1, max_length=MAX_TEXT_TRANSLATION_ITEMS)
+    # The app detects the language on the device; the server translators need a concrete one.
+    source_language: str = Field(max_length=16)
+    target_language: str = Field(default="vi", max_length=16)
+    # Empty: the server default, or Google when the plan cannot use the default.
+    provider: str = Field(default="", max_length=32)
+
+
+@app.post("/api/v1/text-translations")
+def translate_texts_endpoint(request: Request, body: TextTranslationRequest) -> JSONResponse:
+    """Translate the text blocks the app read from a screenshot (image translation, online mode).
+
+    Only the text travels; the image never leaves the device.
+    """
+
+    account = current_account(request)
+    try:
+        ensure_feature_allowed(account, "image_translation")
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        source = normalize_language(body.source_language)
+        target = normalize_language(body.target_language)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Ngôn ngữ không hợp lệ: {exc}") from exc
+    if source == target:
+        raise HTTPException(status_code=422, detail="Ngôn ngữ nguồn và đích phải khác nhau")
+    texts = [text.strip() for text in body.texts]
+    if sum(len(text) for text in texts) > MAX_TEXT_TRANSLATION_CHARS:
+        raise HTTPException(status_code=413, detail=f"Tối đa {MAX_TEXT_TRANSLATION_CHARS} ký tự mỗi lần dịch")
+
+    requested = body.provider.strip().lower()
+    provider = requested or default_translation_provider()
+    if requested:
+        try:
+            ensure_provider_allowed(account, "translation", provider, "Gemini AI")
+        except PlanEntitlementError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    elif not provider_allowed(account, "translation", provider):
+        provider = "google"
+
+    translator = create_translation_provider(provider, source_language=source, target_language=target)
+    pending = [text for text in dict.fromkeys(texts) if text]
+    translated: dict[str, str] = {}
+    try:
+        if pending and hasattr(translator, "translate_lines"):
+            translated = dict(zip(pending, translator.translate_lines(pending)))
+        else:
+            translated = {text: translator.translate(text) for text in pending}
+    except Exception as exc:  # every provider in the fallback chain failed
+        logger.warning("Text translation failed (%s): %s", provider, exc)
+        raise HTTPException(status_code=502, detail="Máy chủ dịch đang bận, hãy thử lại hoặc dùng chế độ offline") from exc
+    return JSONResponse({
+        "translations": [translated.get(text, "") for text in texts],
+        "source_language": source,
+        "target_language": target,
+        "provider": getattr(translator, "name", provider),
+    }, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/process-video", deprecated=True)
