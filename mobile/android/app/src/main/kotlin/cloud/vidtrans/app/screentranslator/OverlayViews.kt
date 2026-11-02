@@ -63,7 +63,11 @@ class OverlayRegion(
  * screen; the service hides it while capturing so it is not in the frame.
  */
 @SuppressLint("ViewConstructor", "ClickableViewAccessibility")
-class FloatingBubble(context: Context, private val onTap: () -> Unit) : FrameLayout(context) {
+class FloatingBubble(
+    context: Context,
+    private val onTap: () -> Unit,
+    private val onLongPress: () -> Unit,
+) : FrameLayout(context) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val label = TextView(context).apply {
         text = "Dịch"
@@ -89,12 +93,30 @@ class FloatingBubble(context: Context, private val onTap: () -> Unit) : FrameLay
     var attached = false
         private set
 
-    init {
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Color.parseColor("#EA580C"))
-            setStroke(context.dp(2f), Color.WHITE)
+    private val circle = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.parseColor("#EA580C"))
+        setStroke(context.dp(2f), Color.WHITE)
+    }
+
+    /** Live (continuous) mode: teal "LIVE" instead of the orange "Dịch". */
+    var live = false
+        set(value) {
+            field = value
+            circle.setColor(Color.parseColor(if (value) "#0F766E" else "#EA580C"))
+            label.text = if (value) "LIVE" else "Dịch"
         }
+
+    /** Where the button is on screen, so live translation can ignore it. */
+    fun screenBounds(): PixelRect? {
+        if (!attached || width == 0) return null
+        val at = IntArray(2)
+        getLocationOnScreen(at)
+        return PixelRect(at[0], at[1], at[0] + width, at[1] + height)
+    }
+
+    init {
+        background = circle
         elevation = context.dp(6f).toFloat()
         contentDescription = "VidTrans: dịch màn hình"
         addView(label, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -108,24 +130,39 @@ class FloatingBubble(context: Context, private val onTap: () -> Unit) : FrameLay
         var startX = 0
         var startY = 0
         var dragging = false
+        var longPressed = false
+        val longPress = Runnable {
+            if (!dragging) {
+                longPressed = true
+                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                onLongPress()
+            }
+        }
         setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = event.rawX; downY = event.rawY
                     startX = params.x; startY = params.y
                     dragging = false
+                    longPressed = false
+                    postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - downX
                     val dy = event.rawY - downY
                     if (dragging || abs(dx) > slop || abs(dy) > slop) {
                         dragging = true
+                        removeCallbacks(longPress)
                         params.x = (startX + dx).toInt()
                         params.y = (startY + dy).toInt()
                         if (attached) windowManager.updateViewLayout(this, params)
                     }
                 }
-                MotionEvent.ACTION_UP -> if (!dragging && !busy) onTap()
+                MotionEvent.ACTION_UP -> {
+                    removeCallbacks(longPress)
+                    if (!dragging && !longPressed && (!busy || live)) onTap()
+                }
+                MotionEvent.ACTION_CANCEL -> removeCallbacks(longPress)
             }
             true
         }
@@ -167,7 +204,13 @@ class FloatingBubble(context: Context, private val onTap: () -> Unit) : FrameLay
 class TranslationOverlay(
     context: Context,
     private val regions: List<OverlayRegion>,
-    private val note: String,
+    private val note: String?,
+    /**
+     * False in live mode: touches pass through to the app below. Android 12+
+     * only lets touches through an overlay of another app whose opacity is at
+     * most 0.8, so the live layer is drawn at 80%.
+     */
+    private val interactive: Boolean,
     private val onClose: () -> Unit,
 ) : View(context) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -192,15 +235,27 @@ class TranslationOverlay(
         PixelFormat.TRANSLUCENT,
     ).apply {
         gravity = Gravity.TOP or Gravity.START
+        windowAnimations = 0 // appear at once: live mode compares frames
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        if (!interactive) {
+            flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            alpha = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val input = context.getSystemService(Context.INPUT_SERVICE) as android.hardware.input.InputManager
+                minOf(0.8f, input.maximumObscuringOpacityForTouch)
+            } else {
+                0.8f
+            }
         }
     }
 
     init {
-        setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_UP) onClose()
-            true
+        if (interactive) {
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_UP) onClose()
+                true
+            }
         }
     }
 
@@ -265,6 +320,7 @@ class TranslationOverlay(
         }
         canvas.restore()
 
+        val note = note ?: return
         val textWidth = hintPaint.measureText(note)
         val padX = context.dp(14f).toFloat()
         val padY = context.dp(9f).toFloat()

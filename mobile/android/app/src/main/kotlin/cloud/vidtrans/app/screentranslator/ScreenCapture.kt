@@ -48,11 +48,42 @@ class ScreenCapture(
     private var width = 0
     private var height = 0
 
-    @Synchronized
+    /** Live mode: told about every new frame (on the capture thread). */
+    @Volatile
+    var onFrame: ((FrameSignature) -> Unit)? = null
+
     private fun keep(image: Image?) {
         if (image == null) return
-        latest?.close()
-        latest = image
+        val listener = onFrame
+        val signature = if (listener != null) signature(image) else null
+        synchronized(this) {
+            latest?.close()
+            latest = image
+        }
+        if (signature != null) listener?.invoke(signature)
+    }
+
+    /** 72-column grayscale thumbnail of [image] for change detection. */
+    private fun signature(image: Image): FrameSignature {
+        val plane = image.planes[0]
+        val buffer = plane.buffer
+        val w = image.width
+        val h = image.height
+        val cols = 72
+        val rows = maxOf(1, cols * h / maxOf(1, w))
+        val luma = ByteArray(cols * rows)
+        for (r in 0 until rows) {
+            val y = ((r + 0.5f) * h / rows).toInt()
+            for (c in 0 until cols) {
+                val x = ((c + 0.5f) * w / cols).toInt()
+                val i = y * plane.rowStride + x * plane.pixelStride
+                val red = buffer.get(i).toInt() and 0xFF
+                val green = buffer.get(i + 1).toInt() and 0xFF
+                val blue = buffer.get(i + 2).toInt() and 0xFF
+                luma[r * cols + c] = ((red * 299 + green * 587 + blue * 114) / 1000).toByte()
+            }
+        }
+        return FrameSignature(w, h, cols, rows, luma, image.timestamp)
     }
 
     private fun realMetrics(): Triple<Int, Int, Int> {
@@ -134,6 +165,10 @@ class ScreenCapture(
         }
         return CapturedFrame(w, h, out)
     }
+
+    /** Current capture size (width, height), or null before start. */
+    @Synchronized
+    fun size(): Pair<Int, Int>? = if (display == null) null else width to height
 
     @Synchronized
     fun release() {

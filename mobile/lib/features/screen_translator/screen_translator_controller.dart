@@ -25,17 +25,24 @@ class ScreenTranslatorController {
   Future<bool> isRunning() async =>
       await _channel.invokeMethod<bool>('isRunning') ?? false;
 
+  /// Live (continuous) translation currently on; the floating button's long
+  /// press can change it without the app.
+  Future<bool> isLive() async =>
+      await _channel.invokeMethod<bool>('isLive') ?? false;
+
   /// Asks Android for screen capture consent (every session on Android 14+),
   /// then starts the service. False when the user declined.
   Future<bool> start({
     required String source,
     required String target,
     required String mode,
+    bool live = false,
   }) async =>
       await _channel.invokeMethod<bool>('start', {
         'source': source,
         'target': target,
         'mode': mode,
+        'live': live,
       }) ??
       false;
 
@@ -43,10 +50,12 @@ class ScreenTranslatorController {
     required String source,
     required String target,
     required String mode,
+    bool live = false,
   }) => _channel.invokeMethod<void>('updateSettings', {
     'source': source,
     'target': target,
     'mode': mode,
+    'live': live,
   });
 
   Future<void> stop() => _channel.invokeMethod<void>('stop');

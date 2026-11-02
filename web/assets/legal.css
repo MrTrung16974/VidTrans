@@ -57,8 +57,9 @@
 
 /* Inside the app shell the footer sits as a card under the views. */
 .app-footer { margin-top: 48px; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
-.auth-legal { margin: 14px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.5; text-align: center; }
-.auth-legal a { color: var(--brand-dark); font-weight: 600; }
+.auth-legal { margin: 10px auto 0; max-width: 480px; color: var(--muted); font-size: .75rem; line-height: 1.45; text-align: center; }
+.auth-legal a { color: var(--brand-dark); font-weight: 600; text-decoration: none; }
+.auth-legal a:hover { text-decoration: underline; }
 
 /* Contact form */
 .info-form { display: grid; gap: 14px; margin: 12px 0 8px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }

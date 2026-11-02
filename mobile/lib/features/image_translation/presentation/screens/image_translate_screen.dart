@@ -46,7 +46,9 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   Uint8List? _bytes;
   String _source = autoLanguage;
   String _target = 'vi';
-  TranslationMode _mode = TranslationMode.offline;
+  // Online by default: the server translators read far better than the
+  // on-device models; Offline stays one tap away for no network or privacy.
+  TranslationMode _mode = TranslationMode.online;
   TranslationStage? _stage;
   ImageTranslationResult? _result;
   bool _showOriginal = false;
@@ -56,6 +58,9 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   /// Floating "Dịch" button over other apps (phase 2, Android).
   bool _floating = false;
   bool _floatingBusy = false;
+
+  /// Live (phase 3): translate again by itself whenever the screen settles.
+  bool _live = false;
   late final AppLifecycleListener _lifecycle;
 
   bool get _busy => _stage != null;
@@ -84,7 +89,12 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     if (!_floatingController.supported) return;
     try {
       final running = await _floatingController.isRunning();
-      if (mounted && running != _floating) setState(() => _floating = running);
+      final live = running && await _floatingController.isLive();
+      if (!mounted) return;
+      setState(() {
+        _floating = running;
+        if (running) _live = live;
+      });
     } catch (_) {}
   }
 
@@ -93,7 +103,12 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     _saveSettings();
     if (_floating) {
       _floatingController
-          .updateSettings(source: _source, target: _target, mode: _mode.name)
+          .updateSettings(
+            source: _source,
+            target: _target,
+            mode: _mode.name,
+            live: _live,
+          )
           .catchError((_) {});
     }
   }
@@ -152,6 +167,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
         source: _source,
         target: _target,
         mode: _mode.name,
+        live: _live,
       );
       if (!mounted) return;
       setState(() => _floating = started);
@@ -159,7 +175,9 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
         SnackBar(
           content: Text(
             started
-                ? 'Đã bật nút “Dịch”. Mở ứng dụng bất kỳ và chạm nút để dịch màn hình.'
+                ? (_live
+                      ? 'Đã bật dịch liên tục. Mở ứng dụng bất kỳ: bản dịch tự hiện khi màn hình đứng yên.'
+                      : 'Đã bật nút “Dịch”. Mở ứng dụng bất kỳ và chạm nút để dịch màn hình.')
                 : 'Chưa bật: cần cho phép chia sẻ toàn màn hình.',
           ),
         ),
@@ -176,7 +194,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
       final saved = (await SharedPreferences.getInstance()).getStringList(
         _prefsKey,
       );
-      if (saved == null || saved.length != 3 || !mounted) return;
+      if (saved == null || saved.length < 3 || !mounted) return;
       setState(() {
         if (saved[0] == autoLanguage || imageLanguage(saved[0]) != null) {
           _source = saved[0];
@@ -186,6 +204,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
           (m) => m.name == saved[2],
           orElse: () => _mode,
         );
+        if (saved.length > 3) _live = saved[3] == 'live';
       });
     } catch (_) {
       // Preferences are a convenience; defaults are fine.
@@ -198,6 +217,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
         _source,
         _target,
         _mode.name,
+        if (_live) 'live' else 'tap',
       ]);
     } catch (_) {}
   }
@@ -464,14 +484,14 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
           SegmentedButton<TranslationMode>(
             segments: const [
               ButtonSegment(
-                value: TranslationMode.offline,
-                icon: Icon(Icons.phone_android_rounded, size: 18),
-                label: Text('Offline'),
-              ),
-              ButtonSegment(
                 value: TranslationMode.online,
                 icon: Icon(Icons.cloud_outlined, size: 18),
                 label: Text('Online'),
+              ),
+              ButtonSegment(
+                value: TranslationMode.offline,
+                icon: Icon(Icons.phone_android_rounded, size: 18),
+                label: Text('Offline'),
               ),
             ],
             selected: {_mode},
@@ -565,6 +585,25 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
                 icon: const Icon(Icons.touch_app_rounded, size: 18),
                 label: Text(_floatingBusy ? 'Đang bật…' : 'Bật nút dịch nổi'),
               ),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          value: _live,
+          onChanged: _floatingBusy
+              ? null
+              : (value) {
+                  setState(() => _live = value);
+                  _settingsChanged();
+                },
+          title: const Text(
+            'Tự dịch liên tục (Live)',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+          ),
+          subtitle: const Text(
+            'Cuộn hay đổi màn hình là tự dịch lại khi màn hình đứng yên; vẫn chạm, cuộn app bên dưới được. '
+            'Lớp dịch hơi trong suốt (Android yêu cầu). Nhấn giữ nút nổi để bật/tắt nhanh. Tốn pin hơn.',
+            style: TextStyle(fontSize: 11.5, height: 1.35),
+          ),
+        ),
         const SizedBox(height: 6),
         const Text(
           'Mỗi lần bật, Android hỏi quyền chia sẻ màn hình. VidTrans chỉ chụp một khung khi bạn chạm nút, '

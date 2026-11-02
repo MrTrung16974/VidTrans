@@ -63,8 +63,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261102-access-config" />
-    <link rel="stylesheet" href="/assets/legal.css?v=20261102-contact-terms" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261102-auth-redesign" />
+    <link rel="stylesheet" href="/assets/legal.css?v=20261102-auth-redesign" />
   </head>
   <body>
     <div class="app-shell">
@@ -2310,99 +2310,110 @@
 
     <div id="authGate" class="auth-gate is-hidden" role="dialog" aria-modal="true" aria-labelledby="authTitle">
       <section class="auth-card">
-        <div class="auth-brand-mark"><img src="/assets/vidtrans-mark.svg" alt="" /></div>
-        <span class="eyebrow">Secure workspace</span>
-        <h1 id="authTitle">Đăng nhập VidTrans</h1>
-        <p id="authDescription">Đăng nhập để truy cập pipeline, tiến trình và file video.</p>
+        <header class="auth-header">
+          <div class="auth-brand-mark"><img src="/assets/vidtrans-mark.svg" alt="" /></div>
+          <div class="auth-header-copy">
+            <span class="eyebrow auth-eyebrow">Secure workspace</span>
+            <h1 id="authTitle">Đăng nhập VidTrans</h1>
+            <p id="authDescription">Đăng nhập để truy cập pipeline, tiến trình và file video.</p>
+          </div>
+        </header>
         <form id="authLoginForm" class="auth-form">
           <label>
-            <span>Tên đăng nhập/email</span>
-            <input id="authUsername" name="username" type="text" autocomplete="username" required />
+            <span>Tên đăng nhập / Email</span>
+            <input id="authUsername" name="username" type="text" placeholder="Nhập tên đăng nhập hoặc email" autocomplete="username" required />
           </label>
           <label>
             <span>Mật khẩu</span>
             <span class="password-field">
-              <input id="authPassword" name="password" type="password" autocomplete="current-password" required />
+              <input id="authPassword" name="password" type="password" placeholder="Nhập mật khẩu của bạn" autocomplete="current-password" required />
               <button class="password-toggle" type="button" data-password-toggle="authPassword" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
               </button>
             </span>
           </label>
-          <label class="auth-remember">
-            <input id="authRemember" name="remember" type="checkbox" />
-            <span>Ghi nhớ đăng nhập</span>
-          </label>
-          <button id="authSubmit" class="button primary full" type="submit">Đăng nhập</button>
-          <button id="authForgotPassword" class="auth-link" type="button">Quên mật khẩu?</button>
+          <div class="auth-form-options">
+            <label class="auth-remember">
+              <input id="authRemember" name="remember" type="checkbox" />
+              <span>Ghi nhớ đăng nhập</span>
+            </label>
+            <button id="authForgotPassword" class="auth-link" type="button">Quên mật khẩu?</button>
+          </div>
+          <button id="authSubmit" class="button primary full auth-submit-btn" type="submit">Đăng nhập</button>
         </form>
         <form id="authResetRequestForm" class="auth-form is-hidden">
           <label>
             <span>Email đã đăng ký</span>
-            <input id="resetEmail" name="email" type="email" maxlength="254" autocomplete="email" required />
+            <input id="resetEmail" name="email" type="email" maxlength="254" placeholder="you@example.com" autocomplete="email" required />
           </label>
-          <button id="authResetRequestSubmit" class="button primary full" type="submit">Gửi mã xác nhận</button>
+          <button id="authResetRequestSubmit" class="button primary full auth-submit-btn" type="submit">Gửi mã xác nhận</button>
         </form>
         <form id="authResetConfirmForm" class="auth-form is-hidden">
           <label>
             <span>Mã xác nhận</span>
-            <input id="resetCode" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required />
+            <input id="resetCode" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6 chữ số" autocomplete="one-time-code" required />
             <small>Mã gồm 6 chữ số được gửi tới email của bạn.</small>
           </label>
-          <label>
-            <span>Mật khẩu mới</span>
-            <span class="password-field">
-              <input id="resetNewPassword" name="new_password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
-              <button class="password-toggle" type="button" data-password-toggle="resetNewPassword" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
-              </button>
-            </span>
-            <small>Tối thiểu 12 ký tự. Mọi phiên đăng nhập cũ sẽ bị đăng xuất.</small>
-          </label>
-          <label>
-            <span>Nhập lại mật khẩu mới</span>
-            <span class="password-field">
-              <input id="resetNewPasswordConfirm" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
-              <button class="password-toggle" type="button" data-password-toggle="resetNewPasswordConfirm" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
-              </button>
-            </span>
-          </label>
-          <button id="authResetConfirmSubmit" class="button primary full" type="submit">Đặt lại mật khẩu</button>
+          <div class="auth-form-grid">
+            <label>
+              <span>Mật khẩu mới</span>
+              <span class="password-field">
+                <input id="resetNewPassword" name="new_password" type="password" minlength="12" maxlength="256" placeholder="Tối thiểu 12 ký tự" autocomplete="new-password" required />
+                <button class="password-toggle" type="button" data-password-toggle="resetNewPassword" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                </button>
+              </span>
+            </label>
+            <label>
+              <span>Nhập lại mật khẩu mới</span>
+              <span class="password-field">
+                <input id="resetNewPasswordConfirm" type="password" minlength="12" maxlength="256" placeholder="Nhập lại mật khẩu" autocomplete="new-password" required />
+                <button class="password-toggle" type="button" data-password-toggle="resetNewPasswordConfirm" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                </button>
+              </span>
+            </label>
+          </div>
+          <small class="auth-form-hint">Tối thiểu 12 ký tự. Mọi phiên đăng nhập cũ sẽ bị đăng xuất.</small>
+          <button id="authResetConfirmSubmit" class="button primary full auth-submit-btn" type="submit">Đặt lại mật khẩu</button>
           <button id="authResetResend" class="auth-link" type="button">Gửi lại mã</button>
         </form>
         <form id="authRegisterForm" class="auth-form is-hidden">
-          <label>
-            <span>Tên hiển thị</span>
-            <input id="registerDisplayName" name="display_name" type="text" maxlength="120" autocomplete="name" required />
-          </label>
-          <label>
-            <span>Email</span>
-            <input id="registerEmail" name="email" type="email" maxlength="254" autocomplete="email" required />
-          </label>
-          <label>
-            <span>Mật khẩu</span>
-            <span class="password-field">
-              <input id="registerPassword" name="password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
-              <button class="password-toggle" type="button" data-password-toggle="registerPassword" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
-              </button>
-            </span>
-            <small>Tối thiểu 12 ký tự.</small>
-          </label>
-          <label>
-            <span>Nhập lại mật khẩu</span>
-            <span class="password-field">
-              <input id="registerPasswordConfirm" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
-              <button class="password-toggle" type="button" data-password-toggle="registerPasswordConfirm" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
-              </button>
-            </span>
-          </label>
+          <div class="auth-form-grid">
+            <label>
+              <span>Tên hiển thị</span>
+              <input id="registerDisplayName" name="display_name" type="text" maxlength="120" placeholder="Tên của bạn" autocomplete="name" required />
+            </label>
+            <label>
+              <span>Email</span>
+              <input id="registerEmail" name="email" type="email" maxlength="254" placeholder="you@example.com" autocomplete="email" required />
+            </label>
+          </div>
+          <div class="auth-form-grid">
+            <label>
+              <span>Mật khẩu</span>
+              <span class="password-field">
+                <input id="registerPassword" name="password" type="password" minlength="12" maxlength="256" placeholder="Tối thiểu 12 ký tự" autocomplete="new-password" required />
+                <button class="password-toggle" type="button" data-password-toggle="registerPassword" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                </button>
+              </span>
+            </label>
+            <label>
+              <span>Nhập lại mật khẩu</span>
+              <span class="password-field">
+                <input id="registerPasswordConfirm" type="password" minlength="12" maxlength="256" placeholder="Nhập lại mật khẩu" autocomplete="new-password" required />
+                <button class="password-toggle" type="button" data-password-toggle="registerPasswordConfirm" aria-label="Hiện mật khẩu" aria-pressed="false" title="Hiện mật khẩu">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-closed" d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                </button>
+              </span>
+            </label>
+          </div>
           <label class="auth-remember auth-terms-consent">
             <input id="registerAcceptTerms" name="accept_terms" type="checkbox" required />
             <span>Tôi đồng ý với <a href="/terms" target="_blank" rel="noopener">Điều khoản sử dụng</a> và <a href="/privacy" target="_blank" rel="noopener">Chính sách quyền riêng tư</a></span>
           </label>
-          <button id="authRegisterSubmit" class="button primary full" type="submit">Tạo tài khoản Free</button>
+          <button id="authRegisterSubmit" class="button primary full auth-submit-btn" type="submit">Tạo tài khoản Free</button>
         </form>
         <div class="auth-guest-divider" aria-hidden="true"><span>hoặc trải nghiệm tức thì</span></div>
         <button id="authGuestButton" class="button auth-guest-cta full" type="button">
@@ -2414,8 +2425,10 @@
           <span class="auth-guest-badge">MIỄN PHÍ →</span>
         </button>
         <p class="auth-legal">Bấm “Dùng thử ngay” nghĩa là bạn đồng ý với <a href="/terms" target="_blank" rel="noopener">Điều khoản sử dụng</a> và <a href="/privacy" target="_blank" rel="noopener">Chính sách quyền riêng tư</a> của VidTrans.</p>
-        <button id="authModeToggle" class="auth-mode-toggle" type="button">Chưa có tài khoản? Đăng ký miễn phí</button>
-        <div id="authMessage" class="auth-message" aria-live="polite">OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly</div>
+        <div class="auth-footer">
+          <button id="authModeToggle" class="auth-mode-toggle" type="button">Chưa có tài khoản? Đăng ký miễn phí</button>
+          <div id="authMessage" class="auth-message" aria-live="polite">OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly</div>
+        </div>
       </section>
     </div>
 

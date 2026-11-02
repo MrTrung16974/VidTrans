@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:vidtrans_mobile/features/image_translation/data/block_translators.dart';
 import 'package:vidtrans_mobile/features/screen_translator/screen_translator_controller.dart';
 // The service's headless engine runs screenTranslatorMain from this library;
 // the test (not lib/main.dart) is the program root here, so include it.
@@ -49,6 +50,13 @@ class _ChatPage extends StatelessWidget {
   );
 }
 
+/// `--dart-define=LIVE=true`: continuous mode (scripts/test_screen_translator.sh live).
+const _live = bool.fromEnvironment('LIVE');
+
+/// `--dart-define=MODE=offline`: real on-device translation (downloads the
+/// zh/en/vi models first; they live in app data, which the test run wipes).
+const _mode = String.fromEnvironment('MODE', defaultValue: 'debug-echo');
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -74,9 +82,26 @@ void main() {
       isTrue,
       reason: 'run through scripts/test_screen_translator.sh',
     );
+    if (_mode == 'offline') {
+      final models = OfflineBlockTranslator();
+      final missing =
+          await tester.runAsync(
+            () => models.missingModels(['zh-CN', 'en', 'vi']),
+          ) ??
+          [];
+      if (missing.isNotEmpty) {
+        await tester.runAsync(() => models.download(missing, wifiOnly: false));
+      }
+      debugPrint('SCREEN_TRANSLATOR: offline models ready');
+    }
     debugPrint('SCREEN_TRANSLATOR: requesting capture consent');
     final started = await tester.runAsync(
-      () => controller.start(source: 'auto', target: 'vi', mode: 'debug-echo'),
+      () => controller.start(
+        source: 'auto',
+        target: 'vi',
+        mode: _mode,
+        live: _live,
+      ),
     );
     expect(started, isTrue);
     debugPrint('SCREEN_TRANSLATOR: started');
@@ -93,12 +118,11 @@ void main() {
     expect(running, isTrue);
 
     // The host script taps the button and screenshots the overlay meanwhile.
-    for (var i = 0; i < 45; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(seconds: 1)),
-      );
-      await tester.pump();
-    }
+    // No pump here: in live mode another app (Chrome) is in front and this
+    // app draws no frames until it comes back.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(seconds: 50)),
+    );
     await tester.runAsync(controller.stop);
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(seconds: 1)),

@@ -1,0 +1,105 @@
+package cloud.vidtrans.app.screentranslator
+
+import cloud.vidtrans.app.screentranslator.LiveScheduler.Action
+import cloud.vidtrans.app.screentranslator.LiveScheduler.State
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class LiveSchedulerTest {
+    private fun signature(vararg changed: Int, value: Int = 200): FrameSignature {
+        val luma = ByteArray(100) { 30 }
+        changed.forEach { luma[it] = value.toByte() }
+        return FrameSignature(1000, 1000, 10, 10, luma, 0)
+    }
+
+    @Test
+    fun `small changes like a blinking cursor do not count`() {
+        assertFalse(signature().differsFrom(signature(5), emptyList()))
+        assertTrue(signature().differsFrom(signature(1, 2, 3, 4, 5), emptyList()))
+    }
+
+    @Test
+    fun `changes inside ignored areas do not count`() {
+        // samples 0..9 are the top row (y = 50): the status bar.
+        val statusBar = listOf(PixelRect(0, 0, 1000, 100))
+        assertFalse(signature().differsFrom(signature(0, 1, 2, 3, 4, 5, 6), statusBar))
+        assertTrue(signature().differsFrom(signature(10, 11, 12, 13, 14), statusBar))
+    }
+
+    @Test
+    fun `a rotated or resized screen always counts as changed`() {
+        val rotated = FrameSignature(1000, 500, 10, 10, ByteArray(100) { 30 }, 0)
+        assertTrue(signature().differsFrom(rotated, emptyList()))
+    }
+
+    @Test
+    fun `translates once the screen is still, then shows the result`() {
+        val live = LiveScheduler(settleMs = 300, minGapMs = 0, graceMs = 200)
+        live.start(0)
+        assertEquals(Action.NONE, live.onTick(100))
+        assertEquals(Action.TRANSLATE, live.onTick(300))
+        assertEquals(State.TRANSLATING, live.state)
+        assertEquals(Action.NONE, live.onTick(400))
+        assertTrue(live.onTranslated(900))
+        assertEquals(State.SHOWING, live.state)
+    }
+
+    @Test
+    fun `scrolling hides the translation and waits until it stops`() {
+        val live = LiveScheduler(settleMs = 300, minGapMs = 0, graceMs = 200)
+        live.start(0)
+        live.onTick(300)
+        live.onTranslated(500)
+        assertEquals(Action.NONE, live.onScreenChanged(600)) // the overlay appearing
+        assertEquals(Action.HIDE_OVERLAY, live.onScreenChanged(800))
+        assertEquals(Action.NONE, live.onScreenChanged(900)) // still scrolling
+        assertEquals(Action.NONE, live.onTick(1100))
+        assertEquals(Action.TRANSLATE, live.onTick(1200))
+    }
+
+    @Test
+    fun `a result that arrives after the screen changed is dropped`() {
+        val live = LiveScheduler(settleMs = 300, minGapMs = 0, graceMs = 200)
+        live.start(0)
+        live.onTick(300)
+        live.onScreenChanged(400)
+        assertFalse(live.onTranslated(700))
+        assertEquals(State.SETTLING, live.state)
+        assertEquals(Action.NONE, live.onTick(600))
+        assertEquals(Action.TRANSLATE, live.onTick(700))
+    }
+
+    @Test
+    fun `translations are spaced by minGap and failures do not loop`() {
+        val live = LiveScheduler(settleMs = 100, minGapMs = 1000, graceMs = 0)
+        live.start(0)
+        assertEquals(Action.TRANSLATE, live.onTick(1000))
+        live.onFailed(1100)
+        assertEquals(State.SHOWING, live.state)
+        assertEquals(Action.HIDE_OVERLAY, live.onScreenChanged(1200))
+        assertEquals(Action.NONE, live.onTick(1400)) // < minGap after the failure
+        assertEquals(Action.TRANSLATE, live.onTick(2100))
+    }
+
+    @Test
+    fun `tapping the button while live translates right away`() {
+        val live = LiveScheduler(settleMs = 300, minGapMs = 5000, graceMs = 0)
+        live.start(0)
+        live.onTick(5000)
+        live.onTranslated(5100)
+        assertEquals(Action.HIDE_OVERLAY, live.forceNow(5200))
+        assertEquals(Action.TRANSLATE, live.onTick(5200))
+    }
+
+    @Test
+    fun `nothing happens once stopped`() {
+        val live = LiveScheduler()
+        live.start(0)
+        live.stop()
+        assertEquals(Action.NONE, live.onTick(10_000))
+        assertEquals(Action.NONE, live.onScreenChanged(10_000))
+        assertFalse(live.onTranslated(10_000))
+    }
+}

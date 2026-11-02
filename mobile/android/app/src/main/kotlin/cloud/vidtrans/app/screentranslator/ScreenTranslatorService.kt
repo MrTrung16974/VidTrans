@@ -50,6 +50,7 @@ class ScreenTranslatorService : Service() {
         const val EXTRA_SOURCE = "source"
         const val EXTRA_TARGET = "target"
         const val EXTRA_MODE = "mode"
+        const val EXTRA_LIVE = "live"
         private const val CHANNEL_ID = "screen_translator"
         private const val NOTIFICATION_ID = 7301
         private const val ENGINE_CHANNEL = "vidtrans/screen_translator_engine"
@@ -60,6 +61,11 @@ class ScreenTranslatorService : Service() {
 
         @Volatile
         var running = false
+            private set
+
+        /** Live (continuous) translation on; the button's long press flips it. */
+        @Volatile
+        var liveNow = false
             private set
     }
 
@@ -76,7 +82,25 @@ class ScreenTranslatorService : Service() {
     private val pendingCalls = ArrayList<() -> Unit>()
     private var source = "auto"
     private var target = "vi"
-    private var mode = "offline"
+    private var mode = "online"
+    private var live = false
+
+    // Live mode (phase 3): see LiveScheduler.
+    private val scheduler = LiveScheduler()
+    @Volatile private var previousFrame: FrameSignature? = null
+    @Volatile private var ignoreAreas: List<PixelRect> = emptyList()
+    private var overlayHiddenAtNanos = 0L
+    private var lastLiveError = ""
+    private val ticker = object : Runnable {
+        override fun run() {
+            if (!scheduler.active) return
+            ignoreAreas = currentIgnoreAreas()
+            act(scheduler.onTick(nowMs()))
+            main.postDelayed(this, 100)
+        }
+    }
+
+    private fun nowMs() = android.os.SystemClock.uptimeMillis()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -96,9 +120,17 @@ class ScreenTranslatorService : Service() {
     }
 
     private fun readSettings(intent: Intent) {
+        val changed = intent.getStringExtra(EXTRA_SOURCE).let { it != null && it != source } ||
+            intent.getStringExtra(EXTRA_TARGET).let { it != null && it != target } ||
+            intent.getStringExtra(EXTRA_MODE).let { it != null && it != mode }
         source = intent.getStringExtra(EXTRA_SOURCE) ?: source
         target = intent.getStringExtra(EXTRA_TARGET) ?: target
         mode = intent.getStringExtra(EXTRA_MODE) ?: mode
+        intent.getStringExtra(EXTRA_LIVE)?.let { live = it == "true" }
+        if (projection != null) {
+            applyLive()
+            if (changed && scheduler.active) act(scheduler.forceNow(nowMs())) // new languages: redo now
+        }
     }
 
     private fun start(intent: Intent) {
@@ -134,7 +166,7 @@ class ScreenTranslatorService : Service() {
         projection = granted
         capture = ScreenCapture(this, granted, workerHandler).also { it.ensureStarted() }
         startEngine()
-        bubble = FloatingBubble(this) { translateScreen() }.also { button ->
+        bubble = FloatingBubble(this, onTap = { onBubbleTap() }, onLongPress = { toggleLive() }).also { button ->
             button.show()
             button.post {
                 val at = IntArray(2)
@@ -144,6 +176,120 @@ class ScreenTranslatorService : Service() {
             }
         }
         running = true
+        applyLive()
+    }
+
+    private fun onBubbleTap() {
+        if (live) act(scheduler.forceNow(nowMs())) else translateScreen()
+    }
+
+    private fun toggleLive() {
+        live = !live
+        applyLive()
+        toast(if (live) "Đã bật dịch liên tục (LIVE)" else "Đã chuyển về chạm để dịch")
+    }
+
+    /** Starts or stops live translation to match [live]. */
+    private fun applyLive() {
+        val screen = capture ?: return
+        liveNow = live
+        bubble?.live = live
+        if (live == scheduler.active) return
+        overlay?.remove()
+        overlay = null
+        bubble?.show()
+        main.removeCallbacks(ticker)
+        if (live) {
+            previousFrame = null
+            lastLiveError = ""
+            ignoreAreas = currentIgnoreAreas()
+            screen.onFrame = { frame -> onLiveFrame(frame) }
+            scheduler.start(nowMs())
+            main.post(ticker)
+        } else {
+            scheduler.stop()
+            screen.onFrame = null
+        }
+    }
+
+    /** Capture thread: compare with the previous frame. */
+    private fun onLiveFrame(frame: FrameSignature) {
+        val previous = previousFrame
+        previousFrame = frame
+        if (previous != null && frame.differsFrom(previous, ignoreAreas)) {
+            main.post { act(scheduler.onScreenChanged(nowMs())) }
+        }
+    }
+
+    private fun act(action: LiveScheduler.Action) {
+        when (action) {
+            LiveScheduler.Action.NONE -> Unit
+            LiveScheduler.Action.HIDE_OVERLAY -> {
+                overlay?.remove()
+                overlay = null
+                overlayHiddenAtNanos = System.nanoTime()
+            }
+            LiveScheduler.Action.TRANSLATE -> translateLive()
+        }
+    }
+
+    /** System bars and the floating button (with a margin for its shadow). */
+    private fun currentIgnoreAreas(): List<PixelRect> {
+        val screen = capture?.size() ?: return emptyList()
+        val areas = systemBarAreas(screen.first, screen.second).map { PixelRect(it[0], it[1], it[2], it[3]) }
+        val button = bubble?.screenBounds() ?: return areas
+        val margin = (12 * resources.displayMetrics.density).toInt()
+        return areas + PixelRect(button.left - margin, button.top - margin, button.right + margin, button.bottom + margin)
+    }
+
+    private fun translateLive() {
+        val screen = capture ?: return
+        bubble?.busy = true
+        val after = overlayHiddenAtNanos + 40_000_000L
+        workerHandler.post {
+            val frame = try {
+                screen.ensureStarted()
+                screen.frameAfter(after, timeoutMs = 400)
+            } catch (error: Exception) {
+                Log.e(TAG, "live capture failed", error)
+                null
+            }
+            when {
+                frame == null -> main.post { liveFailed("") }
+                frame.looksBlank() -> main.post { liveFailed("Ứng dụng này chặn chụp màn hình nên không dịch được.") }
+                else -> sendToEngine(frame, live = true)
+            }
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun showLiveResult(result: Any?) {
+        bubble?.busy = false
+        val map = result as? Map<String, Any?> ?: return liveFailed("Dịch thất bại.")
+        when (map["error"]) {
+            "models_missing" -> {
+                liveFailed("Chưa có gói dịch offline. Mở VidTrans → Dịch ảnh để tải, hoặc chuyển sang Online.")
+                // Retrying on every scroll would only repeat the message.
+                live = false
+                applyLive()
+                return
+            }
+            "failed" -> return liveFailed(map["message"] as? String ?: "Dịch thất bại.")
+        }
+        if (!scheduler.onTranslated(nowMs())) return // the screen moved on meanwhile
+        lastLiveError = ""
+        val regions = (map["regions"] as? List<Any?>).orEmpty().map { OverlayRegion.fromMap(it as Map<String, Any?>) }
+        overlay?.remove()
+        overlay = if (regions.isEmpty()) null
+        else TranslationOverlay(this, regions, null, interactive = false) {}.also { it.show() }
+    }
+
+    private fun liveFailed(message: String) {
+        bubble?.busy = false
+        scheduler.onFailed(nowMs())
+        // Say it once, not on every scroll.
+        if (message.isNotEmpty() && message != lastLiveError) toast(message)
+        lastLiveError = message
     }
 
     private fun startEngine() {
@@ -196,13 +342,13 @@ class ScreenTranslatorService : Service() {
             when {
                 frame == null -> finish("Chưa chụp được màn hình, hãy thử lại.")
                 frame.looksBlank() -> finish("Ứng dụng này chặn chụp màn hình nên không dịch được.")
-                else -> sendToEngine(frame)
+                else -> sendToEngine(frame, live = false)
             }
         }
     }
 
     /** Runs on the worker thread: writes the OCR input, then calls Dart. */
-    private fun sendToEngine(frame: CapturedFrame) {
+    private fun sendToEngine(frame: CapturedFrame, live: Boolean) {
         val file = File(cacheDir, "screen_translator_${System.currentTimeMillis()}.jpg")
         try {
             val bitmap = Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888)
@@ -211,7 +357,7 @@ class ScreenTranslatorService : Service() {
             bitmap.recycle()
         } catch (error: Exception) {
             Log.e(TAG, "could not write capture", error)
-            finish("Chưa xử lý được ảnh màn hình, hãy thử lại.")
+            if (live) main.post { liveFailed("") } else finish("Chưa xử lý được ảnh màn hình, hãy thử lại.")
             return
         }
         val args = mapOf(
@@ -224,10 +370,12 @@ class ScreenTranslatorService : Service() {
             "mode" to mode,
             // Status and navigation bars: system text (clock, carrier, …)
             // is not part of the app being translated.
-            "ignore" to systemBarAreas(frame.width, frame.height),
+            // …nor is the floating button.
+            "ignore" to (if (live) ignoreAreas.map { it.toList() } else systemBarAreas(frame.width, frame.height)),
         )
+        fun fail(message: String) = if (live) liveFailed(message) else finish(message)
         main.post {
-            // One answer per tap: the result, an error, or the timeout.
+            // One answer per request: the result, an error, or the timeout.
             var answered = false
             fun answer(block: () -> Unit) {
                 if (answered) return
@@ -238,7 +386,7 @@ class ScreenTranslatorService : Service() {
                 answer {
                     Log.w(TAG, "translation timed out (engine ready: $engineReady)")
                     file.delete()
-                    finish(
+                    fail(
                         if (engineReady) "Dịch quá lâu, hãy thử lại."
                         else "Không khởi động được bộ dịch. Hãy tắt rồi bật lại nút dịch.",
                     )
@@ -246,10 +394,11 @@ class ScreenTranslatorService : Service() {
             }, TRANSLATE_TIMEOUT_MS)
             whenEngineReady {
                 engineChannel?.invokeMethod("translate", args, object : MethodChannel.Result {
-                    override fun success(result: Any?) = answer { showResult(result) }
+                    override fun success(result: Any?) =
+                        answer { if (live) showLiveResult(result) else showResult(result) }
                     override fun error(code: String, message: String?, details: Any?) =
-                        answer { finish(message ?: "Dịch thất bại, hãy thử lại.") }
-                    override fun notImplemented() = answer { finish("Bản cài đặt chưa hỗ trợ dịch màn hình.") }
+                        answer { fail(message ?: "Dịch thất bại, hãy thử lại.") }
+                    override fun notImplemented() = answer { fail("Bản cài đặt chưa hỗ trợ dịch màn hình.") }
                 })
             }
         }
@@ -297,7 +446,8 @@ class ScreenTranslatorService : Service() {
         bubble?.busy = false
         bubble?.hideForCapture() // keep the translation unobstructed
         overlay?.remove()
-        overlay = TranslationOverlay(this, regions, "Chạm để đóng bản dịch") { closeOverlay() }.also { it.show() }
+        overlay = TranslationOverlay(this, regions, "Chạm để đóng bản dịch", interactive = true) { closeOverlay() }
+            .also { it.show() }
     }
 
     private fun closeOverlay() {
@@ -345,6 +495,10 @@ class ScreenTranslatorService : Service() {
 
     override fun onDestroy() {
         running = false
+        liveNow = false
+        main.removeCallbacks(ticker)
+        scheduler.stop()
+        capture?.onFrame = null
         overlay?.remove()
         overlay = null
         bubble?.remove()

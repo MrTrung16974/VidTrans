@@ -33,6 +33,7 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "isRunning" -> result.success(ScreenTranslatorService.running)
+                    "isLive" -> result.success(ScreenTranslatorService.running && ScreenTranslatorService.liveNow)
                     "start" -> requestCapture(settingsOf(call.arguments), result)
                     "updateSettings" -> {
                         if (ScreenTranslatorService.running) {
@@ -67,6 +68,7 @@ class MainActivity : FlutterActivity() {
             .putExtra(ScreenTranslatorService.EXTRA_SOURCE, settings["source"])
             .putExtra(ScreenTranslatorService.EXTRA_TARGET, settings["target"])
             .putExtra(ScreenTranslatorService.EXTRA_MODE, settings["mode"])
+            .putExtra(ScreenTranslatorService.EXTRA_LIVE, settings["live"])
 
     private fun requestCapture(settings: Map<String, String>, result: MethodChannel.Result) {
         if (!canDrawOverlays()) {
