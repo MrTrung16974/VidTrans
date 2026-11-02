@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from domain.plan_entitlements import DEFAULT_PLANS
 from infrastructure.database import connect, prepare_target
 import uuid
 from contextlib import contextmanager
@@ -13,7 +14,7 @@ from typing import Any, Iterator
 ROLES = {"owner", "admin", "editor", "viewer"}
 APPROVAL_STATUSES = {"pending", "approved", "suspended", "rejected"}
 PAYMENT_STATUSES = {"trial", "active", "past_due", "cancelled", "exempt"}
-PLANS = {"trial", "free", "creator", "pro", "enterprise"}
+PLANS = frozenset(DEFAULT_PLANS)
 # NULL = follow the system-wide policy, 0 = never delete automatically.
 MAX_VIDEO_RETENTION_DAYS = 3650
 

@@ -4,6 +4,7 @@ import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261031-apply-logo";
 import { createBrandingWorkspace } from "./branding.js?v=20261031-apply-logo";
+import { createAccessConfig } from "./access-config.js?v=20261102-access";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -390,9 +391,60 @@ function updateUserAvatar(logoUrl = state.userLogoUrl) {
   }
 }
 
+// Main navigation from the admin-configured app_menus table (GET /api/v1/me/menus).
+// Until it loads, or if it fails, the role rules in the markup stay in force.
+let navMenuRequest = 0;
+state.navAllowedViews = null;
+
+function applyNavMenus(items) {
+  const nav = $("#mainNavigation");
+  if (!nav) return;
+  const allowed = new Set(items.map(item => item.key));
+  state.navAllowedViews = allowed;
+  const links = $$("a[data-view-link]", nav);
+  links.forEach(link => {
+    const visible = allowed.has(link.dataset.viewLink);
+    link.hidden = !visible;
+    link.classList.toggle("is-hidden", !visible);
+  });
+  items.forEach(item => {
+    const link = links.find(candidate => candidate.dataset.viewLink === item.key);
+    if (!link) return;
+    const full = $(".nav-label-full", link);
+    const short = $(".nav-label-short", link);
+    if (full && short) {
+      full.textContent = item.label;
+      short.textContent = item.short_label || item.label;
+    } else {
+      const label = $(":scope > span", link);
+      if (label) label.textContent = item.label;
+    }
+    link.title = item.label;
+    nav.appendChild(link); // re-append in configured order
+  });
+}
+
+async function loadNavMenus() {
+  const request = ++navMenuRequest;
+  try {
+    const payload = await requestJson("/api/v1/me/menus?platform=web");
+    if (request !== navMenuRequest || !state.auth.authenticated) return;
+    applyNavMenus(payload.items || []);
+    showView(); // leave a view the new menu no longer offers
+  } catch (error) {
+    console.warn("Không tải được cấu hình menu", error);
+  }
+}
+
 function applyPermissions() {
   const role = state.auth.role || "viewer";
   const isAdmin = ["owner", "admin"].includes(role);
+  // Start from the markup's role rules; the configured menu is applied on top once loaded.
+  state.navAllowedViews = null;
+  $$("#mainNavigation a[data-view-link]:not([data-admin-only])").forEach(link => {
+    link.hidden = false;
+    link.classList.remove("is-hidden");
+  });
   $$('[data-admin-only]').forEach(element => {
     element.hidden = !isAdmin;
     element.classList.toggle("is-hidden", !isAdmin);
@@ -410,6 +462,7 @@ function applyPermissions() {
     ? "Đăng xuất khỏi VidTrans"
     : "Xác thực đang tắt trong cấu hình môi trường local";
   $("#userMenu").classList.remove("is-hidden");
+  if (state.auth.authenticated) loadNavMenus();
 }
 
 async function refreshUserBrandingAvatar() {
@@ -1093,11 +1146,16 @@ function bindWorkflowStepNav() {
 }
 
 let activeView = null;
+const NAV_MENU_VIEWS = new Set(["create", "comic", "jobs", "tiktok", "douyin", "admin"]);
 
 function showView() {
   let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : location.hash === "#account" ? "account" : "create";
   if (["admin", "douyin"].includes(view) && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
   if (["tiktok", "comic", "account"].includes(view) && state.auth.role === "viewer") view = "jobs";
+  // Views behind a main-menu entry the admin hid (or the plan lacks) are closed too.
+  if (state.navAllowedViews && NAV_MENU_VIEWS.has(view) && !state.navAllowedViews.has(view)) {
+    view = [...state.navAllowedViews][0] || "billing";
+  }
   $("#createView").classList.toggle("is-hidden", view !== "create");
   $("#jobsView").classList.toggle("is-hidden", view !== "jobs");
   $("#comicView").classList.toggle("is-hidden", view !== "comic");
@@ -3075,6 +3133,9 @@ $$("[data-admin-subtab]").forEach(tabBtn => {
     } else if (tabName === "system") {
       $("#adminSubtabSystem")?.classList.remove("is-hidden");
       startAdminSystemRefresh();
+    } else if (tabName === "access") {
+      $("#adminSubtabAccess")?.classList.remove("is-hidden");
+      accessConfig.load();
     } else if (tabName === "audit") {
       $("#adminSubtabAudit")?.classList.remove("is-hidden");
       loadAdminAudit();
@@ -3250,6 +3311,12 @@ const brandingWorkspace = createBrandingWorkspace({
   toast,
   escapeHtml,
   onLogoChange: logoUrl => updateUserAvatar(logoUrl),
+});
+const accessConfig = createAccessConfig({
+  requestJson,
+  toast,
+  escapeHtml,
+  onMenusChanged: () => loadNavMenus(),
 });
 const platformAppsSettings = createPlatformAppsSettings({
   requestJson, toast, escapeHtml, onChange: () => tiktokWorkspace.enter(),

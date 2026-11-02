@@ -67,9 +67,10 @@ from infrastructure.auth import (
     hash_password,
 )
 from infrastructure.admin_accounts import AdminAccountError, AdminAccountStore
+from infrastructure.plan_store import PlanStore, PlanStoreError
+from domain.app_menus import MENU_ROLES, MOBILE_DOCK_SIZE, PLATFORMS, MenuConfigError, visible_menus
 from infrastructure.database import database_target
 from infrastructure.payments import (
-    PLAN_CATALOG,
     PaymentConfig,
     PaymentError,
     PaymentGatewayClient,
@@ -146,9 +147,13 @@ from infrastructure.tts_providers import (
     tts_voice_pool,
 )
 from domain.plan_entitlements import (
+    FEATURES as PLAN_FEATURES,
     PlanEntitlementError,
+    account_features,
     annotate_providers,
+    configure_entitlement_source,
     ensure_comic_settings_allowed,
+    ensure_feature_allowed,
     ensure_video_providers_allowed,
 )
 from infrastructure.translation_providers import (
@@ -473,6 +478,29 @@ def tenant_social_auth_dir(owner_user_id: str, platform: str) -> Path:
     return path
 
 
+# Read-only calls (GET), deletes and cancelling/refreshing an existing post stay
+# open so a downgraded account can still see and clean up what it made earlier.
+_PAID_FEATURE_FREE_SUFFIXES = ("/cancel", "/refresh")
+
+
+def require_paid_feature(feature: str):
+    """Router dependency refusing create/edit/publish calls on free plans."""
+
+    def dependency(request: Request) -> None:
+        method = request.method.upper()
+        path = request.url.path.rstrip("/")
+        if method in {"GET", "HEAD", "OPTIONS", "DELETE"} and not path.endswith("/connect"):
+            return
+        if path.endswith(_PAID_FEATURE_FREE_SUFFIXES):
+            return
+        try:
+            ensure_feature_allowed(current_account(request), feature)
+        except PlanEntitlementError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return [Depends(dependency)]
+
+
 def tenant_tiktok_publisher(owner_user_id: str) -> TikTokPublisher:
     with _TENANT_PUBLISHER_LOCK:
         publisher = _TENANT_TIKTOK_PUBLISHERS.get(owner_user_id)
@@ -527,7 +555,7 @@ app.include_router(create_tiktok_browser_router(
     owner_resolver=lambda request: str(current_account(request)["user_id"]),
     publisher_resolver=lambda request: tenant_tiktok_publisher(str(current_account(request)["user_id"])),
     can_manage_all_resolver=lambda request: str(current_account(request).get("role") or "") == "owner",
-))
+), dependencies=require_paid_feature("social_publishing"))
 SOCIAL_PUBLISH_STORE = SocialPublishStore(DATABASE_TARGET)
 SIGNED_MEDIA_URLS = SignedMediaUrlService(
     OUTPUT_DIR,
@@ -564,32 +592,35 @@ app.include_router(create_social_publish_router(
         user_id, connection_id, platform
     ),
     can_manage_all_resolver=lambda request: str(current_account(request).get("role") or "") == "owner",
-))
+), dependencies=require_paid_feature("social_publishing"))
 app.include_router(create_instagram_router(
     INSTAGRAM_PUBLISHER, SIGNED_MEDIA_URLS,
     publisher_resolver=lambda request: tenant_publisher_for_request(request, "INSTAGRAM"),
     oauth_session_registrar=lambda request, platform, url: register_tenant_oauth_session(request, platform, url),
     callback_publisher_resolver=lambda platform, state: tenant_publisher_for_oauth_callback(platform, state),
-))
+), dependencies=require_paid_feature("social_publishing"))
 app.include_router(create_threads_router(
     THREADS_PUBLISHER,
     publisher_resolver=lambda request: tenant_publisher_for_request(request, "THREADS"),
     oauth_session_registrar=lambda request, platform, url: register_tenant_oauth_session(request, platform, url),
     callback_publisher_resolver=lambda platform, state: tenant_publisher_for_oauth_callback(platform, state),
-))
+), dependencies=require_paid_feature("social_publishing"))
 app.include_router(create_social_account_router(
     "facebook", FACEBOOK_PUBLISHER, FacebookPublisherError,
     publisher_resolver=lambda request: tenant_publisher_for_request(request, "FACEBOOK"),
     oauth_session_registrar=lambda request, platform, url: register_tenant_oauth_session(request, platform, url),
     callback_publisher_resolver=lambda platform, state: tenant_publisher_for_oauth_callback(platform, state),
-))
+), dependencies=require_paid_feature("social_publishing"))
 app.include_router(create_social_account_router(
     "youtube", YOUTUBE_PUBLISHER, YouTubePublisherError,
     publisher_resolver=lambda request: tenant_publisher_for_request(request, "YOUTUBE"),
     oauth_session_registrar=lambda request, platform, url: register_tenant_oauth_session(request, platform, url),
     callback_publisher_resolver=lambda platform, state: tenant_publisher_for_oauth_callback(platform, state),
-))
+), dependencies=require_paid_feature("social_publishing"))
 AUTH_MANAGER = AuthManager()
+# Plans and per-plan feature rights (trial/free/creator/pro/enterprise) live in the database.
+PLAN_STORE = PlanStore(DATABASE_TARGET)
+configure_entitlement_source(PLAN_STORE)
 ADMIN_ACCOUNTS = AdminAccountStore(
     DATABASE_TARGET,
     AUTH_MANAGER.config.username if AUTH_MANAGER.config.enabled else "admin",
@@ -844,7 +875,7 @@ def tenant_publisher_for_oauth_callback(platform: str, state: str):
         account_store.accept_consumed_state(state)
     return publisher
 PAYMENT_CONFIG = PaymentConfig.from_env()
-PAYMENT_ORDERS = PaymentOrderStore(DATABASE_TARGET)
+PAYMENT_ORDERS = PaymentOrderStore(DATABASE_TARGET, plan_lookup=lambda key: plan_catalog_entry(key))
 PAYMENT_GATEWAY = PaymentGatewayClient(PAYMENT_CONFIG)
 TENANT_GOVERNANCE = TenantGovernanceStore(DATABASE_TARGET)
 ASR_SERVICE = ASRService(
@@ -1053,8 +1084,24 @@ def add_job_owner_identity(payload: dict[str, Any], job: dict[str, Any]) -> dict
     return payload
 
 
+def plan_catalog_entry(plan_key: str) -> dict[str, Any] | None:
+    """A ``plans`` row in the billing shape the web expects: key, name, amount, minutes."""
+
+    plan = PLAN_STORE.plan(plan_key)
+    if plan is None:
+        return None
+    return {
+        "key": plan["key"],
+        "name": plan["name"],
+        "amount": plan["price_vnd"],
+        "minutes": plan["monthly_minutes"],
+        "is_paid": plan["is_paid"],
+        "features": sorted(PLAN_STORE.features_for(plan["key"])),
+    }
+
+
 def account_plan_limit(account: dict[str, Any]) -> int | None:
-    plan = PLAN_CATALOG.get(str(account.get("plan") or "free"), PLAN_CATALOG["free"])
+    plan = plan_catalog_entry(str(account.get("plan") or "free")) or plan_catalog_entry("free") or {}
     minutes = plan.get("minutes")
     return int(minutes) if minutes is not None else None
 
@@ -4665,6 +4712,8 @@ def public_admin_account(account: dict[str, Any]) -> dict[str, Any]:
     public = {key: account.get(key) for key in allowed}
     # The web client asks for consent again whenever /terms or /privacy has a newer revision.
     public["terms_outdated"] = account.get("terms_version") != TERMS_VERSION
+    # What this account may use, from plan_entitlements; clients hide the rest.
+    public["features"] = sorted(account_features(account))
     return public
 
 
@@ -5190,6 +5239,90 @@ def get_current_user(request: Request) -> JSONResponse:
     return JSONResponse(public_admin_account(account), headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/v1/me/menus")
+def get_my_menus(request: Request, platform: str = Query(default="web", max_length=16)) -> JSONResponse:
+    """Navigation entries this account sees, from the admin-configured ``app_menus`` table."""
+
+    if platform not in PLATFORMS:
+        raise HTTPException(status_code=422, detail="Nền tảng không hợp lệ")
+    account = current_account(request)
+    payload: dict[str, Any] = {"platform": platform, "items": visible_menus(PLAN_STORE.menus(platform), account)}
+    if platform == "mobile":
+        payload["dock_size"] = MOBILE_DOCK_SIZE
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+class EntitlementUpdate(BaseModel):
+    enabled: bool
+
+
+class MenuUpdate(BaseModel):
+    label: str = Field(max_length=60)
+    short_label: str = Field(default="", max_length=24)
+    sort_order: int
+    required_feature: str | None = None
+    min_role: str = "viewer"
+    is_enabled: bool = True
+
+
+@app.get("/api/v1/admin/access-config")
+def get_access_config(request: Request) -> JSONResponse:
+    """Plans, features, the plan x feature matrix and every menu, for the admin screen."""
+
+    require_roles(request, "owner", "admin")
+    return JSONResponse({
+        "plans": PLAN_STORE.plans(),
+        "features": [
+            {"key": key, "name": name, "description": description}
+            for key, (name, description) in PLAN_FEATURES.items()
+        ],
+        "entitlements": PLAN_STORE.matrix(),
+        "menus": PLAN_STORE.menus(),
+        "platforms": list(PLATFORMS),
+        "menu_roles": list(MENU_ROLES),
+        "mobile_dock_size": MOBILE_DOCK_SIZE,
+    }, headers={"Cache-Control": "no-store"})
+
+
+@app.put("/api/v1/admin/plan-entitlements/{plan_key}/{feature_key}")
+def update_plan_entitlement(request: Request, plan_key: str, feature_key: str, body: EntitlementUpdate) -> JSONResponse:
+    actor = require_roles(request, "owner", "admin")
+    try:
+        PLAN_STORE.set_entitlement(plan_key, feature_key, body.enabled)
+    except PlanStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=actor["user_id"],
+        action="plan_entitlement.update",
+        resource_type="plan_entitlement",
+        resource_id=f"{plan_key}:{feature_key}",
+        metadata={"plan_key": plan_key, "feature_key": feature_key, "enabled": body.enabled},
+    )
+    return JSONResponse(
+        {"plan_key": plan_key, "feature_key": feature_key, "enabled": body.enabled},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.put("/api/v1/admin/menus/{platform}/{menu_key}")
+def update_app_menu(request: Request, platform: str, menu_key: str, body: MenuUpdate) -> JSONResponse:
+    actor = require_roles(request, "owner", "admin")
+    try:
+        menu = PLAN_STORE.update_menu(platform, menu_key, body.model_dump())
+    except MenuConfigError as exc:
+        status_code = 404 if "không tồn tại" in str(exc) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=actor["user_id"],
+        action="app_menu.update",
+        resource_type="app_menu",
+        resource_id=f"{platform}:{menu_key}",
+        metadata={key: menu[key] for key in ("label", "short_label", "sort_order", "required_feature",
+                                             "min_role", "is_enabled")},
+    )
+    return JSONResponse(menu, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/v1/billing/overview")
 def billing_overview(request: Request) -> JSONResponse:
     account = current_account(request)
@@ -5199,7 +5332,7 @@ def billing_overview(request: Request) -> JSONResponse:
         {
             "account": public_admin_account(account),
             "quota": quota_info,
-            "plans": [{"key": key, **value} for key, value in PLAN_CATALOG.items()],
+            "plans": [plan_catalog_entry(plan["key"]) for plan in PLAN_STORE.plans()],
             "providers": providers,
             "provider_notes": {
                 "bank": "Chuyển khoản/VietQR — chờ quản trị viên đối soát",
@@ -6073,7 +6206,7 @@ def get_tiktok_auth_status(request: Request, account_id: str = Query(default="")
     return JSONResponse(status)
 
 
-@app.get("/api/v1/tiktok-auth/connect")
+@app.get("/api/v1/tiktok-auth/connect", dependencies=require_paid_feature("social_publishing"))
 def connect_tiktok(request: Request) -> JSONResponse:
     try:
         authorization_url = tenant_publisher_for_request(request, "TIKTOK").authorization_url()
@@ -6268,6 +6401,8 @@ async def process_video_endpoint(
                 account, translation_provider=translation_provider, tts_provider=tts_provider,
                 dubbing=mode != ProcessingMode.SUBTITLES,
             )
+        if auto_publish_tiktok:
+            ensure_feature_allowed(account, "social_publishing")
     except PlanEntitlementError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     video_ext = Path(file.filename or "video.mp4").suffix.lower() or ".mp4"
@@ -6501,6 +6636,8 @@ async def create_batch_endpoint(
                 account, translation_provider=translation_provider, tts_provider=tts_provider,
                 dubbing=mode != ProcessingMode.SUBTITLES,
             )
+        if auto_publish_tiktok:
+            ensure_feature_allowed(account, "social_publishing")
     except PlanEntitlementError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     # Browsers serialize an untouched <input type="file"> as an empty UploadFile.
@@ -7227,6 +7364,7 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     if is_comic_job(source):
         previous = source.get("resume_request") or {}
         try:
+            ensure_feature_allowed(entitlement_account, "comic_video")
             ensure_comic_settings_allowed(entitlement_account, previous.get("settings") or {})
         except PlanEntitlementError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -7251,6 +7389,8 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
             tts_provider=str(resume_request.get("tts_provider") or "edge"),
             dubbing=int(resume_request.get("mode") or 1) != 1,
         )
+        if resume_request.get("auto_publish_tiktok"):
+            ensure_feature_allowed(entitlement_account, "social_publishing")
     except PlanEntitlementError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -7453,7 +7593,7 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     delete_project=delete_comic_project_permanently,
     has_logo=lambda user_id: BRANDING_STORE.logo_path(user_id) is not None,
 )
-app.include_router(create_comic_router(COMIC_ROUTE_DEPS))
+app.include_router(create_comic_router(COMIC_ROUTE_DEPS), dependencies=require_paid_feature("comic_video"))
 DEVICE_ROUTE_DEPS = DeviceRouteDependencies(
     store=DEVICE_STORE,
     current_account=lambda request: current_account(request),

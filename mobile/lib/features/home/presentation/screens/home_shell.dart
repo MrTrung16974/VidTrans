@@ -7,51 +7,70 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/auth/account.dart';
 import '../../../../core/auth/session_controller.dart';
 import '../../../../core/widgets/studio_widgets.dart';
 import '../../../jobs/presentation/providers/jobs_providers.dart';
 import '../../../profile/presentation/screens/billing_screen.dart';
+import '../../data/menu_repository.dart';
+import '../../domain/app_menu.dart';
 
 /// Floating Netflix-style glassmorphic pill navigation shell matching
 /// `web/assets/styles.css` (`@media (max-width: 1024px) .nav-tabs`) and
 /// the mobile `vidtrans.cloud/#create` studio layout.
-class HomeShell extends ConsumerWidget {
+class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key, required this.shell});
 
   final StatefulNavigationShell shell;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends ConsumerState<HomeShell> {
+  // Admins change menus in the web admin; pick the change up when the app
+  // comes back to the foreground instead of waiting for the next sign-in.
+  late final AppLifecycleListener _lifecycle;
+
+  StatefulNavigationShell get shell => widget.shell;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(
+      onResume: () => ref.invalidate(mobileMenuProvider),
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final jobsAsync = ref.watch(jobListProvider);
     final activeCount = jobsAsync.maybeWhen(
       data: (list) => list.activeCount,
       orElse: () => 0,
     );
 
-    final items = <_DockItem>[
-      const _DockItem(
-        type: _NavIconType.translate,
-        label: 'Dịch',
-      ),
-      const _DockItem(
-        type: _NavIconType.comic,
-        label: 'Truyện',
-      ),
-      _DockItem(
-        type: _NavIconType.jobs,
-        label: 'Tiến trình',
-        badgeCount: activeCount,
-      ),
-      const _DockItem(
-        type: _NavIconType.social,
-        label: 'Đăng bài',
-      ),
-    ];
+    final menus = ref.watch(mobileMenuProvider).valueOrNull;
+    final items = menus != null && menus.items.isNotEmpty
+        ? _dockFromMenus(menus, activeCount)
+        : _fallbackDock(ref.watch(sessionProvider).valueOrNull, activeCount);
+    final currentDockIndex = items.indexWhere(
+      (item) => item.branch == shell.currentIndex,
+    );
 
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     final screenHeight = MediaQuery.sizeOf(context).height;
     final isCompactHeight = screenHeight < 700;
-    final bottomMargin = math.max(isCompactHeight ? 6.0 : 10.0, bottomInset + 2.0);
+    final bottomMargin = math.max(
+      isCompactHeight ? 6.0 : 10.0,
+      bottomInset + 2.0,
+    );
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
 
     return Scaffold(
@@ -75,13 +94,23 @@ class HomeShell extends ConsumerWidget {
                     constraints: const BoxConstraints(maxWidth: 420),
                     child: _FloatingNetflixDock(
                       items: items,
-                      currentIndex: shell.currentIndex,
+                      currentIndex: currentDockIndex,
                       compact: isCompactHeight,
                       onSelect: (index) {
                         HapticFeedback.selectionClick();
+                        final branch = items[index].branch;
+                        if (branch == null) {
+                          // Upgrade opens the billing page above the dock.
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const BillingScreen(),
+                            ),
+                          );
+                          return;
+                        }
                         shell.goBranch(
-                          index,
-                          initialLocation: index == shell.currentIndex,
+                          branch,
+                          initialLocation: branch == shell.currentIndex,
                         );
                       },
                     ),
@@ -93,22 +122,81 @@ class HomeShell extends ConsumerWidget {
   }
 }
 
-enum _NavIconType {
-  translate,
-  comic,
-  jobs,
-  social,
+/// Shell branch and icon of each menu key from the `app_menus` table. Branch
+/// indexes follow the StatefulShellRoute order in app/router.dart:
+/// 0 translate, 1 comic, 2 jobs, 3 social, 4 profile. A null branch pushes a
+/// page instead (upgrade opens billing).
+const _menuTargets = <String, ({_NavIconType icon, int? branch})>{
+  'translate': (icon: _NavIconType.translate, branch: 0),
+  'comic': (icon: _NavIconType.comic, branch: 1),
+  'jobs': (icon: _NavIconType.jobs, branch: 2),
+  'social': (icon: _NavIconType.social, branch: 3),
+  'upgrade': (icon: _NavIconType.upgrade, branch: null),
+  'profile': (icon: _NavIconType.profile, branch: 4),
+};
+
+/// The dock from the server: entries already filtered by role and plan and
+/// sorted by the admin; the first `dockSize` known screens are shown.
+List<_DockItem> _dockFromMenus(AppMenuConfig menus, int activeCount) {
+  final items = <_DockItem>[];
+  for (final menu in menus.items) {
+    final target = _menuTargets[menu.key];
+    if (target == null) continue; // a screen this app version does not have
+    items.add(
+      _DockItem(
+        type: target.icon,
+        label: menu.shortLabel,
+        branch: target.branch,
+        badgeCount: menu.key == 'jobs' ? activeCount : 0,
+      ),
+    );
+    if (items.length >= menus.dockSize) break;
+  }
+  return items;
 }
+
+/// Built-in dock used until the server menus load (or if they fail): the
+/// same defaults the backend seeds into `app_menus`.
+List<_DockItem> _fallbackDock(Account? account, int activeCount) {
+  final items = <_DockItem>[
+    const _DockItem(type: _NavIconType.translate, label: 'Dịch', branch: 0),
+    if (account?.canUseComics ?? true)
+      const _DockItem(type: _NavIconType.comic, label: 'Truyện', branch: 1),
+    _DockItem(
+      type: _NavIconType.jobs,
+      label: 'Tiến trình',
+      branch: 2,
+      badgeCount: activeCount,
+    ),
+    if (account?.canPublishSocial ?? true)
+      const _DockItem(type: _NavIconType.social, label: 'Đăng bài', branch: 3),
+  ];
+  const fillers = <_DockItem>[
+    _DockItem(type: _NavIconType.upgrade, label: 'Nâng cấp'),
+    _DockItem(type: _NavIconType.profile, label: 'Tài khoản', branch: 4),
+  ];
+  for (final filler in fillers) {
+    if (items.length >= 4) break;
+    items.add(filler);
+  }
+  return items;
+}
+
+enum _NavIconType { translate, comic, jobs, social, upgrade, profile }
 
 class _DockItem {
   const _DockItem({
     required this.type,
     required this.label,
+    this.branch,
     this.badgeCount = 0,
   });
 
   final _NavIconType type;
   final String label;
+
+  /// Shell branch the tab opens; null for tabs that push a page instead.
+  final int? branch;
   final int badgeCount;
 }
 
@@ -156,10 +244,7 @@ class _FloatingNetflixDock extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.94),
               borderRadius: BorderRadius.circular(32),
-              border: Border.all(
-                color: const Color(0xFFE2E8F0),
-                width: 1.2,
-              ),
+              border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -179,10 +264,7 @@ class _FloatingNetflixDock extends StatelessWidget {
                             gradient: const LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
-                              colors: [
-                                Color(0xFFFFFBF7),
-                                Color(0xFFFFF3E6),
-                              ],
+                              colors: [Color(0xFFFFFBF7), Color(0xFFFFF3E6)],
                             ),
                             borderRadius: BorderRadius.circular(25),
                             border: Border.all(
@@ -237,8 +319,9 @@ class _DockButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fgColor = selected ? AppColors.brand : const Color(0xFF64748B);
-    final labelColor =
-        selected ? const Color(0xFFC2410C) : const Color(0xFF64748B);
+    final labelColor = selected
+        ? const Color(0xFFC2410C)
+        : const Color(0xFF64748B);
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -383,24 +466,49 @@ class _DockIconPainter extends CustomPainter {
           paint,
         );
         // 3 progress lines inside
-        canvas.drawLine(Offset(8.2 * s, 8.2 * s), Offset(15.8 * s, 8.2 * s), paint);
-        canvas.drawLine(Offset(8.2 * s, 12 * s), Offset(15.8 * s, 12 * s), paint);
-        canvas.drawLine(Offset(8.2 * s, 15.8 * s), Offset(13 * s, 15.8 * s), paint);
+        canvas.drawLine(
+          Offset(8.2 * s, 8.2 * s),
+          Offset(15.8 * s, 8.2 * s),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(8.2 * s, 12 * s),
+          Offset(15.8 * s, 12 * s),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(8.2 * s, 15.8 * s),
+          Offset(13 * s, 15.8 * s),
+          paint,
+        );
       case _NavIconType.social:
         // TikTok / music note stem & wave: M11 17.5V5.5c2.2 1.8 4.5 2.4 6.5 2.5
         final stemPath = Path()
           ..moveTo(11.5 * s, 17 * s)
           ..lineTo(11.5 * s, 5 * s)
-          ..cubicTo(
-            12.8 * s,
-            7.2 * s,
-            15.2 * s,
-            8.4 * s,
-            17.8 * s,
-            8.5 * s,
-          );
+          ..cubicTo(12.8 * s, 7.2 * s, 15.2 * s, 8.4 * s, 17.8 * s, 8.5 * s);
         canvas.drawPath(stemPath, paint);
         canvas.drawCircle(Offset(8.5 * s, 17 * s), 3.0 * s, paint);
+      case _NavIconType.upgrade:
+        // Crown: M4 8l4 4 4-6 4 6 4-4-2 10H6z
+        final crown = Path()
+          ..moveTo(4 * s, 8 * s)
+          ..lineTo(8 * s, 12 * s)
+          ..lineTo(12 * s, 5.5 * s)
+          ..lineTo(16 * s, 12 * s)
+          ..lineTo(20 * s, 8 * s)
+          ..lineTo(18 * s, 18 * s)
+          ..lineTo(6 * s, 18 * s)
+          ..close();
+        canvas.drawPath(crown, paint);
+      case _NavIconType.profile:
+        // Head + shoulders: circle(12,8.5,r3.5) + M5 20c0-3.9 3.1-6 7-6s7 2.1 7 6
+        canvas.drawCircle(Offset(12 * s, 8.5 * s), 3.5 * s, paint);
+        final shoulders = Path()
+          ..moveTo(5 * s, 20 * s)
+          ..cubicTo(5 * s, 16.1 * s, 8.1 * s, 14 * s, 12 * s, 14 * s)
+          ..cubicTo(15.9 * s, 14 * s, 19 * s, 16.1 * s, 19 * s, 20 * s);
+        canvas.drawPath(shoulders, paint);
     }
   }
 
@@ -416,11 +524,7 @@ class _DockIconPainter extends CustomPainter {
 /// - Right: circular system status indicator + circular user avatar opening the Studio User Menu
 /// - Bottom: `2.5px` orange gradient accent line
 class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
-  const StudioTopBar({
-    super.key,
-    this.bottom,
-    this.extraActions,
-  });
+  const StudioTopBar({super.key, this.bottom, this.extraActions});
 
   final PreferredSizeWidget? bottom;
   final List<Widget>? extraActions;
@@ -587,10 +691,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                       ),
                       child: Row(
                         children: [
-                          _UserAvatarCircle(
-                            name: account.name,
-                            size: 46,
-                          ),
+                          _UserAvatarCircle(name: account.name, size: 46),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -637,7 +738,8 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                     _UserMenuTile(
                       icon: Icons.branding_watermark_outlined,
                       title: 'Cấu hình gắn logo thương hiệu',
-                      subtitle: 'Tải lên logo và chọn góc hiển thị khi chèn vào video',
+                      subtitle:
+                          'Tải lên logo và chọn góc hiển thị khi chèn vào video',
                       onTap: () {
                         Navigator.of(sheetContext).pop();
                         context.push('/branding');
@@ -646,7 +748,8 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                   _UserMenuTile(
                     icon: Icons.workspace_premium_outlined,
                     title: 'Gói dịch vụ & thanh toán',
-                    subtitle: 'Xem hạn mức sử dụng, nâng cấp gói và lịch sử đơn',
+                    subtitle:
+                        'Xem hạn mức sử dụng, nâng cấp gói và lịch sử đơn',
                     onTap: () {
                       Navigator.of(sheetContext).pop();
                       Navigator.of(context).push(
@@ -756,10 +859,7 @@ class _UserMenuTile extends StatelessWidget {
 
 /// Circular system status button matching `.system-state` in the mobile screenshot.
 class _SystemStateCircle extends StatefulWidget {
-  const _SystemStateCircle({
-    required this.activeCount,
-    required this.onTap,
-  });
+  const _SystemStateCircle({required this.activeCount, required this.onTap});
 
   final int activeCount;
   final VoidCallback onTap;
@@ -845,9 +945,7 @@ class _SystemStateCircleState extends State<_SystemStateCircle>
                         child: const SizedBox(
                           width: 15,
                           height: 15,
-                          child: CustomPaint(
-                            painter: _SystemArcPainter(),
-                          ),
+                          child: CustomPaint(painter: _SystemArcPainter()),
                         ),
                       )
                     : const Icon(
@@ -901,13 +999,7 @@ class _SystemArcPainter extends CustomPainter {
       ..strokeWidth = 2.2
       ..strokeCap = StrokeCap.round;
 
-    canvas.drawArc(
-      rect.deflate(1.2),
-      0.35,
-      math.pi * 1.38,
-      false,
-      paint,
-    );
+    canvas.drawArc(rect.deflate(1.2), 0.35, math.pi * 1.38, false, paint);
   }
 
   @override
@@ -916,11 +1008,7 @@ class _SystemArcPainter extends CustomPainter {
 
 /// Circular studio avatar badge matching `#userAvatar` in the top-right of the screenshot.
 class _UserAvatarCircle extends StatelessWidget {
-  const _UserAvatarCircle({
-    required this.name,
-    this.size = 36,
-    this.onTap,
-  });
+  const _UserAvatarCircle({required this.name, this.size = 36, this.onTap});
 
   final String name;
   final double size;
@@ -932,10 +1020,10 @@ class _UserAvatarCircle extends StatelessWidget {
     final initials = trimmed.isEmpty
         ? 'VT'
         : trimmed
-            .split(RegExp(r'\s+'))
-            .take(2)
-            .map((part) => part.characters.first.toUpperCase())
-            .join();
+              .split(RegExp(r'\s+'))
+              .take(2)
+              .map((part) => part.characters.first.toUpperCase())
+              .join();
 
     final badge = Stack(
       clipBehavior: Clip.none,
@@ -947,10 +1035,7 @@ class _UserAvatarCircle extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white,
             shape: BoxShape.circle,
-            border: Border.all(
-              color: const Color(0xFFCBD5E1),
-              width: 1.2,
-            ),
+            border: Border.all(color: const Color(0xFFCBD5E1), width: 1.2),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x180F172A),
@@ -972,10 +1057,7 @@ class _UserAvatarCircle extends StatelessWidget {
                 ],
                 stops: [0.0, 0.55, 1.0],
               ),
-              border: Border.all(
-                color: const Color(0xFFF59E0B),
-                width: 1.3,
-              ),
+              border: Border.all(color: const Color(0xFFF59E0B), width: 1.3),
             ),
             alignment: Alignment.center,
             child: Text(

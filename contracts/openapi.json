@@ -59,6 +59,20 @@
             ],
             "title": "Email"
           },
+          "features": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Features"
+          },
           "payment_status": {
             "anyOf": [
               {
@@ -2575,6 +2589,19 @@
         "title": "DialogueLine",
         "type": "object"
       },
+      "EntitlementUpdate": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "EntitlementUpdate",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2994,6 +3021,52 @@
           }
         },
         "title": "LocationPatch",
+        "type": "object"
+      },
+      "MenuUpdate": {
+        "properties": {
+          "is_enabled": {
+            "default": true,
+            "title": "Is Enabled",
+            "type": "boolean"
+          },
+          "label": {
+            "maxLength": 60,
+            "title": "Label",
+            "type": "string"
+          },
+          "min_role": {
+            "default": "viewer",
+            "title": "Min Role",
+            "type": "string"
+          },
+          "required_feature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Feature"
+          },
+          "short_label": {
+            "default": "",
+            "maxLength": 24,
+            "title": "Short Label",
+            "type": "string"
+          },
+          "sort_order": {
+            "title": "Sort Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "sort_order"
+        ],
+        "title": "MenuUpdate",
         "type": "object"
       },
       "RegisteredDevice": {
@@ -3641,6 +3714,33 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin/access-config": {
+      "get": {
+        "description": "Plans, features, the plan x feature matrix and every menu, for the admin screen.",
+        "operationId": "get_access_config_api_v1_admin_access_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Access Config"
+      }
+    },
     "/api/v1/admin/accounts": {
       "get": {
         "operationId": "list_admin_accounts_api_v1_admin_accounts_get",
@@ -4511,6 +4611,138 @@
           }
         ],
         "summary": "Admin Get Job"
+      }
+    },
+    "/api/v1/admin/menus/{platform}/{menu_key}": {
+      "put": {
+        "operationId": "update_app_menu_api_v1_admin_menus__platform___menu_key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "platform",
+            "required": true,
+            "schema": {
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "menu_key",
+            "required": true,
+            "schema": {
+              "title": "Menu Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MenuUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update App Menu"
+      }
+    },
+    "/api/v1/admin/plan-entitlements/{plan_key}/{feature_key}": {
+      "put": {
+        "operationId": "update_plan_entitlement_api_v1_admin_plan_entitlements__plan_key___feature_key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_key",
+            "required": true,
+            "schema": {
+              "title": "Plan Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "feature_key",
+            "required": true,
+            "schema": {
+              "title": "Feature Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntitlementUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update Plan Entitlement"
       }
     },
     "/api/v1/admin/system-metrics": {
@@ -10166,6 +10398,56 @@
         "tags": [
           "devices"
         ]
+      }
+    },
+    "/api/v1/me/menus": {
+      "get": {
+        "description": "Navigation entries this account sees, from the admin-configured ``app_menus`` table.",
+        "operationId": "get_my_menus_api_v1_me_menus_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "web",
+              "maxLength": 16,
+              "title": "Platform",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get My Menus"
       }
     },
     "/api/v1/me/platform-apps": {

@@ -1,24 +1,67 @@
-"""Which AI providers each billing plan may use.
+"""What each billing plan may use.
 
-Free accounts get the free/local engines (Google Translate, TranslateGemma, Qwen3,
-Edge TTS, CIT Voice Studio, Azure Speech). Gemini and ElevenLabs cost per request,
-so they need a paid plan (Creator, Pro or Enterprise). Owners and admins are not
-limited: they run the service and test every provider.
+The rules live in the database (``plans``, ``plan_features`` and
+``plan_entitlements``, see infrastructure/plan_store.py), seeded from the
+defaults below: one explicit allow/deny row per plan and feature, trial and free
+included. ``configure_entitlement_source`` plugs that store in at start-up;
+without it (unit tests, scripts) the defaults apply.
+
+Trial and free get video translation with the free/local engines (Google
+Translate, TranslateGemma, Qwen3, Edge TTS, CIT Voice Studio, Azure Speech).
+Comic videos, social publishing and the per-request AI (Gemini, ElevenLabs,
+Veo) need Creator, Pro or Enterprise. Owners and admins are never limited: they
+run the service and test every provider.
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
-PAID_PLANS = frozenset({"creator", "pro", "enterprise"})
 UNRESTRICTED_ROLES = frozenset({"owner", "admin"})
+DEFAULT_PLAN = "free"
 
-# kind -> provider keys that require a paid plan
-PAID_ONLY_PROVIDERS: dict[str, frozenset[str]] = {
-    "translation": frozenset({"gemini"}),
-    "tts": frozenset({"elevenlabs"}),
-    "comic_llm": frozenset({"gemini"}),
-    "comic_image": frozenset({"gemini"}),
-    "comic_animation": frozenset({"veo"}),
+# feature_key -> (label shown to users, description for the plan_features table)
+FEATURES: dict[str, tuple[str, str]] = {
+    "comic_video": ("Tạo video truyện", "Tạo, sửa và render truyện thành video"),
+    "social_publishing": (
+        "Đăng bài mạng xã hội",
+        "Kết nối tài khoản, đăng và hẹn giờ đăng lên TikTok, YouTube, Facebook, Instagram, Threads",
+    ),
+    "ai_translation_gemini": ("AI dịch phụ đề Gemini AI", "Dịch phụ đề bằng Gemini (tính phí theo lượt)"),
+    "ai_tts_elevenlabs": ("AI lồng tiếng ElevenLabs", "Lồng tiếng bằng ElevenLabs (tính phí theo lượt)"),
+    "ai_comic_script_gemini": ("AI viết kịch bản Gemini", "Viết kịch bản truyện bằng Gemini"),
+    "ai_comic_image_gemini": ("AI vẽ ảnh Gemini Image", "Vẽ minh họa truyện bằng Gemini Image"),
+    "ai_comic_animation_veo": ("AI tạo chuyển động Google Veo", "Tạo chuyển động cho cảnh truyện bằng Veo"),
+}
+
+# plan_key -> plan row defaults. Prices in VND (None = quoted per customer),
+# minutes per month (None = unlimited).
+DEFAULT_PLANS: dict[str, dict[str, Any]] = {
+    # Auto-generated guest accounts: a tiny taste of the pipeline, never sold.
+    "trial": {"name": "Dùng thử", "price_vnd": 0, "monthly_minutes": 5, "is_paid": False, "sort_order": 0},
+    "free": {"name": "Free", "price_vnd": 0, "monthly_minutes": 30, "is_paid": False, "sort_order": 1},
+    "creator": {"name": "Creator", "price_vnd": 199_000, "monthly_minutes": 300, "is_paid": True, "sort_order": 2},
+    "pro": {"name": "Pro", "price_vnd": 499_000, "monthly_minutes": 1_000, "is_paid": True, "sort_order": 3},
+    "enterprise": {"name": "Enterprise", "price_vnd": None, "monthly_minutes": None, "is_paid": True,
+                   "sort_order": 4},
+}
+
+_PAID_FEATURES = frozenset(FEATURES)
+# plan_key -> enabled features; every feature not listed is an explicit deny row.
+DEFAULT_PLAN_FEATURES: dict[str, frozenset[str]] = {
+    "trial": frozenset(),
+    "free": frozenset(),
+    "creator": _PAID_FEATURES,
+    "pro": _PAID_FEATURES,
+    "enterprise": _PAID_FEATURES,
+}
+
+# (provider kind, provider key) -> feature that unlocks it. Providers not listed are free.
+PROVIDER_FEATURES: dict[tuple[str, str], str] = {
+    ("translation", "gemini"): "ai_translation_gemini",
+    ("tts", "elevenlabs"): "ai_tts_elevenlabs",
+    ("comic_llm", "gemini"): "ai_comic_script_gemini",
+    ("comic_image", "gemini"): "ai_comic_image_gemini",
+    ("comic_animation", "veo"): "ai_comic_animation_veo",
 }
 
 KIND_LABELS = {
@@ -36,16 +79,53 @@ class PlanEntitlementError(PermissionError):
     pass
 
 
-def has_paid_features(account: Mapping[str, Any]) -> bool:
+class EntitlementSource(Protocol):
+    def features_for(self, plan_key: str) -> frozenset[str]: ...
+
+
+class _DefaultSource:
+    def features_for(self, plan_key: str) -> frozenset[str]:
+        return DEFAULT_PLAN_FEATURES.get(plan_key, frozenset())
+
+
+_source: EntitlementSource = _DefaultSource()
+
+
+def configure_entitlement_source(source: EntitlementSource | None) -> None:
+    """Read entitlements from ``source`` (the plan store); None restores the defaults."""
+
+    global _source
+    _source = source or _DefaultSource()
+
+
+def account_plan(account: Mapping[str, Any]) -> str:
+    return str(account.get("plan") or DEFAULT_PLAN).strip().lower() or DEFAULT_PLAN
+
+
+def account_features(account: Mapping[str, Any]) -> frozenset[str]:
+    """Every feature the account may use; unknown plans get nothing."""
+
     if str(account.get("role") or "") in UNRESTRICTED_ROLES:
-        return True
-    return str(account.get("plan") or "free").strip().lower() in PAID_PLANS
+        return frozenset(FEATURES)
+    return _source.features_for(account_plan(account)) & frozenset(FEATURES)
+
+
+def feature_allowed(account: Mapping[str, Any], feature: str) -> bool:
+    if feature not in FEATURES:
+        raise KeyError(f"unknown plan feature: {feature}")
+    return feature in account_features(account)
+
+
+def ensure_feature_allowed(account: Mapping[str, Any], feature: str) -> None:
+    if not feature_allowed(account, feature):
+        raise PlanEntitlementError(
+            f"{FEATURES[feature][0]} chỉ dành cho {UPGRADE_HINT}. Hãy nâng cấp gói để sử dụng."
+        )
 
 
 def provider_allowed(account: Mapping[str, Any], kind: str, provider: str) -> bool:
-    if provider not in PAID_ONLY_PROVIDERS.get(kind, frozenset()):
-        return True
-    return has_paid_features(account)
+    feature = PROVIDER_FEATURES.get((kind, provider))
+    return feature is None or feature_allowed(account, feature)
 
 
 def ensure_provider_allowed(account: Mapping[str, Any], kind: str, provider: str, label: str | None = None) -> None:
@@ -60,9 +140,12 @@ def ensure_provider_allowed(account: Mapping[str, Any], kind: str, provider: str
 def annotate_providers(account: Mapping[str, Any], kind: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Add ``allowed``/``requires_paid_plan`` so clients can disable locked options."""
 
-    locked = PAID_ONLY_PROVIDERS.get(kind, frozenset())
     return [
-        {**item, "requires_paid_plan": item["key"] in locked, "allowed": provider_allowed(account, kind, item["key"])}
+        {
+            **item,
+            "requires_paid_plan": (kind, item["key"]) in PROVIDER_FEATURES,
+            "allowed": provider_allowed(account, kind, item["key"]),
+        }
         for item in items
     ]
 

@@ -37,7 +37,7 @@ from domain.plan_entitlements import (
     PlanEntitlementError,
     annotate_providers,
     ensure_comic_settings_allowed,
-    has_paid_features,
+    provider_allowed,
 )
 from infrastructure.comic_project import ComicProject
 from infrastructure.comic_series import ComicSeries, ComicSeriesStore
@@ -525,8 +525,8 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     def resolve_llm_provider(account: dict[str, Any], llm_provider: str) -> str:
-        if llm_provider == "auto" and not has_paid_features(account):
-            # "Auto" prefers Gemini; free plans fall back to the next engine in its chain.
+        if llm_provider == "auto" and not provider_allowed(account, "comic_llm", "gemini"):
+            # "Auto" prefers Gemini; plans without it fall back to the next engine in its chain.
             qwen3 = next((s for s in llm_provider_statuses() if s["key"] == "qwen3"), None)
             return "qwen3" if qwen3 and qwen3["configured"] else "heuristic"
         return llm_provider

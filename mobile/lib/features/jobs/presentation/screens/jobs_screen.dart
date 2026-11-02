@@ -472,7 +472,7 @@ class _JobTile extends StatelessWidget {
     final created = job.createdAt;
     final subtitle = [
       if (job.queuePosition != null) 'Hàng đợi #${job.queuePosition}',
-      if (job.isActive && job.step != null) job.step!,
+      if (job.isActive && job.stepLabel != null) job.stepLabel!,
       if (created != null) DateFormat('dd/MM HH:mm').format(created),
     ].join(' · ');
     final accent = _accentForStatus(job.status);

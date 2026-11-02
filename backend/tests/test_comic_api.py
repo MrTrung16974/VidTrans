@@ -17,9 +17,10 @@ STORY = ("Đêm hôm đó, Minh bước vào khu rừng. Ánh trăng lạnh lẽ
          "Bỗng một bóng trắng lướt qua. Cô gái tóc dài đứng giữa lối mòn, mỉm cười buồn bã.")
 
 
-def account(user_id: str, role: str = "editor") -> dict:
+def account(user_id: str, role: str = "editor", plan: str = "creator") -> dict:
+    # Comic videos need a paid plan; free accounts are covered in test_plan_entitlements.
     return {"user_id": user_id, "email": f"{user_id}@test.local", "display_name": user_id, "role": role,
-            "plan": "free", "approval_status": "approved"}
+            "plan": plan, "approval_status": "approved"}
 
 
 def fake_speech(text, output_path, gender, rate, pitch, language):

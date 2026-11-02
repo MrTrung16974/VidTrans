@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 
+from domain.plan_entitlements import DEFAULT_PLANS
 from infrastructure.database import connect, prepare_target
 import time
 import urllib.error
@@ -16,17 +17,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 from zoneinfo import ZoneInfo
 
 
+# Default prices and quotas; the live values are the ``plans`` table (infrastructure/plan_store.py).
 PLAN_CATALOG = {
-    # Auto-generated guest accounts: a tiny taste of the pipeline, never sold.
-    "trial": {"name": "Dùng thử", "amount": 0, "minutes": 5},
-    "free": {"name": "Free", "amount": 0, "minutes": 30},
-    "creator": {"name": "Creator", "amount": 199_000, "minutes": 300},
-    "pro": {"name": "Pro", "amount": 499_000, "minutes": 1_000},
-    "enterprise": {"name": "Enterprise", "amount": None, "minutes": None},
+    key: {"name": plan["name"], "amount": plan["price_vnd"], "minutes": plan["monthly_minutes"]}
+    for key, plan in DEFAULT_PLANS.items()
 }
 PAYMENT_PROVIDERS = {"bank", "momo", "zalopay"}
 PAYMENT_STATUSES = {"pending", "paid", "failed", "expired", "cancelled"}
@@ -116,8 +114,10 @@ class PaymentConfig:
 
 
 class PaymentOrderStore:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path, plan_lookup: Callable[[str], dict[str, Any] | None] | None = None) -> None:
         self.database_path = prepare_target(database_path)
+        # Returns {"name", "amount", "minutes"} for a plan key; defaults to PLAN_CATALOG.
+        self.plan_lookup = plan_lookup or PLAN_CATALOG.get
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -176,7 +176,7 @@ class PaymentOrderStore:
     def create(self, *, user_id: str, provider: str, plan: str) -> dict[str, Any]:
         if provider not in PAYMENT_PROVIDERS:
             raise PaymentError("Phương thức thanh toán không hợp lệ")
-        product = PLAN_CATALOG.get(plan)
+        product = self.plan_lookup(plan)
         if not product or not product["amount"]:
             raise PaymentError("Gói này không thể thanh toán trực tuyến")
         order_id = uuid.uuid4().hex

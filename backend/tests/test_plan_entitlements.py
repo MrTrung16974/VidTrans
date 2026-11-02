@@ -96,17 +96,80 @@ class ComicPlanEntitlementTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.harness.doCleanups()
 
-    def test_free_user_cannot_create_a_gemini_comic_and_auto_skips_gemini(self) -> None:
+    def test_free_user_cannot_create_or_edit_comics_but_can_view_and_delete(self) -> None:
+        created = self.harness.create(auto_render="false")
+        self.assertEqual(created.status_code, 202, created.text)
+        job_id = created.json()["job_id"]
+        self.harness.service.update(job_id, status="failed")  # retryable
+
+        self.harness.users["a"]["plan"] = "free"
+        client = self.harness.client
+        for response in (
+            self.harness.create(auto_render="false"),
+            client.post("/api/v1/comic/series", json={"title": "Rừng đêm"}),
+            client.patch(f"/api/v1/comic/projects/{job_id}/scenes/1", json={"narration": "x"}),
+            client.post(f"/api/v1/comic/projects/{job_id}/render"),
+            client.post(f"/api/v1/jobs/{job_id}/retry"),
+        ):
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertIn("Tạo video truyện chỉ dành cho", response.json()["detail"])
+
+        self.assertEqual(client.get("/api/v1/comic/options").status_code, 200)
+        self.assertEqual(client.get("/api/v1/comic/projects").status_code, 200)
+        self.assertEqual(client.get(f"/api/v1/comic/projects/{job_id}").status_code, 200)
+        self.assertEqual(client.delete(f"/api/v1/comic/projects/{job_id}").status_code, 200)
+
+    def test_paid_user_cannot_pick_gemini_once_downgraded(self) -> None:
         with patch.dict("os.environ", {"GEMINI_API_KEY": "configured"}):
-            rejected = self.harness.create(image_provider="gemini")
+            self.assertEqual(self.harness.create(image_provider="gemini", auto_render="false").status_code, 202)
+            self.harness.users["a"]["plan"] = "free"
             options = self.harness.client.get("/api/v1/comic/options").json()
-            created = self.harness.create(llm_provider="auto", image_provider="placeholder", auto_render="false")
-        self.assertEqual(rejected.status_code, 403)
         gemini_image = next(item for item in options["image_providers"] if item["key"] == "gemini")
         self.assertFalse(gemini_image["allowed"])
-        self.assertEqual(created.status_code, 202, created.text)
-        job = self.harness.service.get(created.json()["job_id"])
-        self.assertIn(job["resume_request"]["settings"]["llm_provider"], {"qwen3", "heuristic"})
+
+
+class SocialPlanEntitlementTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from fastapi.testclient import TestClient
+
+        self.user = on_plan("free")
+        active = patch.object(main, "current_account", lambda request: self.user)
+        active.start()
+        self.addCleanup(active.stop)
+        self.client = TestClient(main.app)
+
+    def test_free_user_cannot_publish_or_connect_accounts(self) -> None:
+        for response in (
+            self.client.post("/api/v1/jobs/missing-job/social-publishes", json={"platform": "TIKTOK"}),
+            self.client.post("/api/v1/jobs/missing-job/tiktok-browser/prepare"),
+            self.client.get("/api/v1/tiktok-auth/connect"),
+            self.client.get("/api/v1/youtube-auth/connect"),
+        ):
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertIn("Đăng bài mạng xã hội chỉ dành cho", response.json()["detail"])
+        self.assertEqual(self.client.get("/api/v1/social-platforms").status_code, 200)
+
+    def test_trial_plan_is_limited_like_free(self) -> None:
+        from domain.plan_entitlements import feature_allowed
+
+        trial = on_plan("trial")
+        self.assertFalse(feature_allowed(trial, "comic_video"))
+        self.assertFalse(feature_allowed(trial, "social_publishing"))
+        self.user = trial
+        response = self.client.post("/api/v1/jobs/missing-job/social-publishes", json={"platform": "TIKTOK"})
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(self.client.get("/api/v1/jobs/missing-job/social-publishes").status_code, 404)
+
+    def test_paid_user_reaches_the_publish_endpoint(self) -> None:
+        self.user = on_plan("pro")
+        response = self.client.post("/api/v1/jobs/missing-job/social-publishes", json={"platform": "TIKTOK"})
+        self.assertNotEqual(response.status_code, 403, response.text)
+
+    def test_free_user_cannot_auto_publish_a_new_batch(self) -> None:
+        with self.assertRaises(HTTPException) as rejected:
+            PlanEntitlementApiTests().create_batch(on_plan("free"), auto_publish_tiktok=True)
+        self.assertEqual(rejected.exception.status_code, 403)
+        self.assertIn("Đăng bài mạng xã hội", rejected.exception.detail)
 
 
 if __name__ == "__main__":

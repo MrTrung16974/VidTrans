@@ -16,6 +16,9 @@ import '../features/social_publishing/presentation/social_publishing_routes.dart
 import '../features/video_translation/presentation/video_translation_routes.dart';
 import 'theme/app_theme.dart';
 
+bool _under(String location, String root) =>
+    location == root || location.startsWith('$root/');
+
 final routerProvider = Provider<GoRouter>((ref) {
   // Re-run redirects whenever the session changes, without rebuilding the router.
   final sessionChanges = ValueNotifier(0);
@@ -31,9 +34,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (session.isLoading && !session.hasValue) {
         return location == '/splash' ? null : '/splash';
       }
-      final signedIn = session.valueOrNull != null;
-      if (!signedIn) return location == '/login' ? null : '/login';
+      final account = session.valueOrNull;
+      if (account == null) return location == '/login' ? null : '/login';
       if (location == '/login' || location == '/splash') return '/translate';
+      // Trial/free plans do not include comic stories or social publishing.
+      if (!account.canUseComics && _under(location, '/comic')) return '/translate';
+      if (!account.canPublishSocial && _under(location, '/social')) {
+        return '/translate';
+      }
       return null;
     },
     routes: [

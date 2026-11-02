@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261102-contact-terms" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261102-access-config" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261102-contact-terms" />
   </head>
   <body>
@@ -1675,6 +1675,7 @@
             <button class="admin-subtab" type="button" data-admin-subtab="billing">💳 Đối soát<span class="subtab-text-extra"> thanh toán</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="contact">✉️ Liên hệ<span class="subtab-text-extra"> khách hàng</span><b id="adminContactBadge" class="nav-badge is-zero">0</b></button>
             <button class="admin-subtab" type="button" data-admin-subtab="system">📊 Hệ thống<span class="subtab-text-extra"> &amp; tài nguyên</span></button>
+            <button class="admin-subtab" type="button" data-admin-subtab="access">🔐 Phân quyền<span class="subtab-text-extra"> gói &amp; menu</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="audit">🛡️ Nhật ký kiểm toán<span class="subtab-text-extra"> (Audit)</span></button>
           </div>
 
@@ -2033,6 +2034,8 @@
                     <option value="billing.order_reject">billing.order_reject (Từ chối đơn)</option>
                     <option value="admin.billing.orders.list">admin.billing.orders.list (Xem đơn thanh toán)</option>
                     <option value="admin.system.processes.view">admin.system.processes.view (Xem tiến trình máy chủ)</option>
+                    <option value="plan_entitlement.update">plan_entitlement.update (Đổi quyền gói)</option>
+                    <option value="app_menu.update">app_menu.update (Sửa menu)</option>
                   </select>
                 </div>
                 <button id="refreshAdminAudit" class="button secondary" type="button" title="Làm mới">
@@ -2053,6 +2056,31 @@
                   <div class="empty-state"><strong>Đang tải nhật ký kiểm toán…</strong></div>
                 </div>
               </div>
+            </section>
+          </div>
+
+          <div id="adminSubtabAccess" class="admin-subtab-pane is-hidden">
+            <section class="card access-panel">
+              <div class="admin-list-title">
+                <strong>Quyền theo gói dịch vụ</strong>
+                <small>Tick để cấp quyền, bỏ tick để thu hồi. Lưu ngay vào cơ sở dữ liệu, áp dụng cho mọi người dùng của gói trong vòng 30 giây. Chủ sở hữu và quản trị viên luôn có đủ quyền.</small>
+              </div>
+              <div id="accessMatrix" class="access-scroll">
+                <div class="empty-state"><strong>Đang tải cấu hình phân quyền…</strong></div>
+              </div>
+            </section>
+
+            <section class="card access-panel">
+              <div class="admin-list-title">
+                <strong>Menu điều hướng</strong>
+                <small>Đổi tên, thứ tự, bật/tắt và điều kiện hiển thị của từng menu. Bấm “Lưu” trên từng dòng.</small>
+              </div>
+              <div class="access-platform-tabs" role="tablist" aria-label="Nền tảng">
+                <button class="admin-subtab active" type="button" role="tab" data-access-platform="mobile" aria-selected="true">📱 App mobile</button>
+                <button class="admin-subtab" type="button" role="tab" data-access-platform="web" aria-selected="false">🖥️ Web</button>
+              </div>
+              <div id="accessMenus"></div>
+              <div id="accessPreview" class="access-preview"></div>
             </section>
           </div>
         </section>
@@ -2435,6 +2463,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261102-contact-terms"></script>
+    <script type="module" src="/js/app.js?v=20261102-access-config"></script>
   </body>
 </html>

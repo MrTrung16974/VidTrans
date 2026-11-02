@@ -57,6 +57,8 @@ class Account(_Open):
     terms_version: str | None = None
     terms_accepted_at: str | None = None
     terms_outdated: bool | None = None
+    # Plan features this account may use (plan_entitlements), e.g. comic_video, social_publishing.
+    features: list[str] | None = None
 
 
 class Job(_Open):

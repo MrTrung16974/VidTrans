@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/auth/session_controller.dart';
 import '../../../../core/errors/api_exception.dart';
 import '../../../../core/widgets/error_view.dart';
 import '../../../../core/widgets/studio_widgets.dart';
+import '../../../video_translation/domain/options.dart';
 import '../../data/jobs_repository.dart';
 import '../../domain/job.dart';
 import '../providers/jobs_providers.dart';
@@ -73,7 +76,9 @@ class _JobDetail extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repo = ref.read(jobsRepositoryProvider);
-    final readOnly = ref.watch(sessionProvider).valueOrNull?.isReadOnly ?? true;
+    final account = ref.watch(sessionProvider).valueOrNull;
+    final readOnly = account?.isReadOnly ?? true;
+    final canPublish = account?.canPublishSocial ?? false;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -135,6 +140,30 @@ class _JobDetail extends ConsumerWidget {
               ),
               if (job.isActive) ...[
                 const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        job.stepLabel ?? 'Đang cập nhật',
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                    ),
+                    if (job.progress != null)
+                      Text(
+                        '${(job.progress! * 100).round()}%',
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900,
+                          color: AppColors.brand,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(999),
                   child: LinearProgressIndicator(
@@ -142,15 +171,17 @@ class _JobDetail extends ConsumerWidget {
                     minHeight: 8,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  [job.step, job.stepDetail].whereType<String>().join(' — '),
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.inkSoft,
+                if (job.stepDetail != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    job.stepDetail!,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.inkSoft,
+                    ),
                   ),
-                ),
+                ],
               ],
             ],
           ),
@@ -229,7 +260,7 @@ class _JobDetail extends ConsumerWidget {
                   icon: Icons.play_circle_outline_rounded,
                   label: 'Xem video kết quả',
                 ),
-                if (job.status == 'completed' && !readOnly) ...[
+                if (job.status == 'completed' && !readOnly && canPublish) ...[
                   const SizedBox(height: 10),
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
@@ -248,6 +279,10 @@ class _JobDetail extends ConsumerWidget {
           ),
         ],
         JobDownloads(job: job),
+        const SizedBox(height: 14),
+        _JobInfoCard(job: job),
+        const SizedBox(height: 14),
+        _JobTimelineCard(job: job),
         if (!readOnly) ...[
           const SizedBox(height: 16),
           if (job.canCancel)
@@ -286,6 +321,302 @@ class _JobDetail extends ConsumerWidget {
           ],
         ],
       ],
+    );
+  }
+}
+
+const _translationProviderLabels = {
+  'google': 'Google Translate',
+  'translategemma': 'TranslateGemma',
+  'qwen3': 'Qwen3',
+  'gemini': 'Gemini',
+};
+
+const _ttsProviderLabels = {
+  'edge': 'Edge TTS',
+  'cit': 'CIT Voice Studio',
+  'azure': 'Azure Speech',
+  'elevenlabs': 'ElevenLabs',
+};
+
+String? _optionLabel(List<Option> options, String? value) {
+  if (value == null) return null;
+  for (final option in options) {
+    if (option.value == value) return option.label;
+  }
+  return value;
+}
+
+String _formatDate(DateTime? value) =>
+    value == null ? '—' : DateFormat('HH:mm · dd/MM/yyyy').format(value);
+
+String _formatDuration(Duration value) {
+  final hours = value.inHours;
+  final minutes = value.inMinutes.remainder(60);
+  final seconds = value.inSeconds.remainder(60);
+  if (hours > 0) return '$hours giờ $minutes phút';
+  if (minutes > 0) return '$minutes phút $seconds giây';
+  return '$seconds giây';
+}
+
+class _JobInfoCard extends StatelessWidget {
+  const _JobInfoCard({required this.job});
+
+  final Job job;
+
+  @override
+  Widget build(BuildContext context) {
+    final isTranslation = job.action == 'translation';
+    final mode = job.mode;
+    final languages = [
+      _optionLabel(sourceLanguageOptions, job.sourceLanguage),
+      _optionLabel(targetLanguageOptions, job.targetLanguage),
+    ];
+    final tts = job.ttsProvider;
+    final tiktok = job.tiktokError != null
+        ? 'Lỗi: ${job.tiktokError}'
+        : job.tiktokPublishAt != null && job.status == 'scheduled'
+            ? 'Hẹn đăng lúc ${_formatDate(job.tiktokPublishAt)}'
+            : job.tiktokStatus;
+
+    final rows = <Widget>[
+      _InfoRow(
+        icon: Icons.tag_rounded,
+        label: 'Mã tiến trình',
+        value: job.id,
+        onCopy: () {
+          Clipboard.setData(ClipboardData(text: job.id));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Đã sao chép mã tiến trình')),
+          );
+        },
+      ),
+      _InfoRow(
+        icon: Icons.category_outlined,
+        label: 'Loại',
+        value: job.actionLabel,
+      ),
+      _InfoRow(
+        icon: Icons.layers_outlined,
+        label: 'Lô xử lý',
+        value: job.batchId ?? 'Video đơn',
+      ),
+      if (job.sourceUrl != null)
+        _InfoRow(
+          icon: Icons.link_rounded,
+          label: 'Link nguồn',
+          value: job.sourceUrl!,
+          onCopy: () {
+            Clipboard.setData(ClipboardData(text: job.sourceUrl!));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Đã sao chép link nguồn')),
+            );
+          },
+        ),
+      if (isTranslation && mode != null)
+        _InfoRow(
+          icon: Icons.tune_rounded,
+          label: 'Chế độ',
+          value: jobModeLabels[mode] ?? 'Chế độ $mode',
+        ),
+      if (languages.any((value) => value != null))
+        _InfoRow(
+          icon: Icons.translate_rounded,
+          label: 'Ngôn ngữ',
+          value: '${languages[0] ?? '—'} → ${languages[1] ?? '—'}',
+        ),
+      if (job.subtitleSource != null)
+        _InfoRow(
+          icon: Icons.subtitles_outlined,
+          label: 'Nguồn phụ đề',
+          value: _optionLabel(subtitleSourceOptions, job.subtitleSource)!,
+        ),
+      if (job.translationProvider != null)
+        _InfoRow(
+          icon: Icons.auto_awesome_outlined,
+          label: 'AI dịch',
+          value: _translationProviderLabels[job.translationProvider] ??
+              job.translationProvider!,
+        ),
+      if (tts != null && (mode ?? 1) >= 2)
+        _InfoRow(
+          icon: Icons.record_voice_over_outlined,
+          label: 'Giọng đọc',
+          value: _ttsProviderLabels[tts] ?? tts,
+        ),
+      if (job.ownerName != null)
+        _InfoRow(
+          icon: Icons.person_outline_rounded,
+          label: 'Người tạo',
+          value: job.ownerName!,
+        ),
+      if (tiktok != null)
+        _InfoRow(
+          icon: Icons.music_note_outlined,
+          label: 'TikTok',
+          value: tiktok,
+        ),
+    ];
+
+    return _SectionCard(
+      icon: Icons.info_outline_rounded,
+      title: 'Thông tin tiến trình',
+      children: rows,
+    );
+  }
+}
+
+class _JobTimelineCard extends StatelessWidget {
+  const _JobTimelineCard({required this.job});
+
+  final Job job;
+
+  @override
+  Widget build(BuildContext context) {
+    final elapsed = job.elapsed;
+    final finishedLabel = switch (job.status) {
+      'failed' => 'Lỗi lúc',
+      'cancelled' => 'Hủy lúc',
+      _ => 'Hoàn tất',
+    };
+    return _SectionCard(
+      icon: Icons.schedule_rounded,
+      title: 'Thời gian',
+      children: [
+        _InfoRow(
+          icon: Icons.add_circle_outline_rounded,
+          label: 'Tạo lúc',
+          value: _formatDate(job.createdAt),
+        ),
+        _InfoRow(
+          icon: Icons.play_circle_outline_rounded,
+          label: 'Bắt đầu',
+          value: job.startedAt == null
+              ? (job.isActive ? 'Đang chờ đến lượt' : '—')
+              : _formatDate(job.startedAt),
+        ),
+        if (job.finishedAt != null || !job.isActive)
+          _InfoRow(
+            icon: Icons.flag_outlined,
+            label: finishedLabel,
+            value: _formatDate(job.finishedAt),
+          ),
+        if (elapsed != null)
+          _InfoRow(
+            icon: Icons.timer_outlined,
+            label: job.isActive ? 'Đã chạy' : 'Thời gian xử lý',
+            value: _formatDuration(elapsed),
+          ),
+        if (job.updatedAt != null)
+          _InfoRow(
+            icon: Icons.update_rounded,
+            label: 'Cập nhật',
+            value: _formatDate(job.updatedAt),
+          ),
+      ],
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.icon,
+    required this.title,
+    required this.children,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return StudioCard(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: AppColors.brand),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) const Divider(height: 1, color: AppColors.lineSubtle),
+            children[i],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.onCopy,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final VoidCallback? onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: AppColors.muted),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 104,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: AppColors.muted,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: AppColors.ink,
+              ),
+            ),
+          ),
+          if (onCopy != null)
+            InkWell(
+              onTap: onCopy,
+              borderRadius: BorderRadius.circular(8),
+              child: const Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: Icon(Icons.copy_rounded, size: 16, color: AppColors.brand),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
