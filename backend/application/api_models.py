@@ -54,6 +54,9 @@ class Account(_Open):
     created_at: str | None = None
     updated_at: str | None = None
     video_retention_days: int | None = None
+    terms_version: str | None = None
+    terms_accepted_at: str | None = None
+    terms_outdated: bool | None = None
 
 
 class Job(_Open):

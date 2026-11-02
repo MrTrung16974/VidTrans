@@ -81,6 +81,11 @@ class AdminAccountStore:
                 db.execute("ALTER TABLE admin_accounts ADD COLUMN video_retention_days INTEGER")
             if "password_changed_at" not in columns:
                 db.execute("ALTER TABLE admin_accounts ADD COLUMN password_changed_at TEXT")
+            # Which /terms + /privacy revision the user agreed to, and when (NULL = never).
+            if "terms_version" not in columns:
+                db.execute("ALTER TABLE admin_accounts ADD COLUMN terms_version TEXT")
+            if "terms_accepted_at" not in columns:
+                db.execute("ALTER TABLE admin_accounts ADD COLUMN terms_accepted_at TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_admin_accounts_status ON admin_accounts(approval_status, payment_status)")
 
     @staticmethod
@@ -137,7 +142,8 @@ class AdminAccountStore:
 
     def create(self, *, email: str, display_name: str, role: str = "viewer",
                approval_status: str = "pending", plan: str = "free",
-               payment_status: str = "trial", password_hash: str | None = None) -> dict[str, Any]:
+               payment_status: str = "trial", password_hash: str | None = None,
+               terms_version: str | None = None) -> dict[str, Any]:
         email, display_name = self._validate(email, display_name, role, approval_status, plan, payment_status)
         now = utc_now()
         user_id = uuid.uuid4().hex
@@ -146,10 +152,11 @@ class AdminAccountStore:
                 db.execute("""
                     INSERT INTO admin_accounts(
                         user_id,email,display_name,role,approval_status,plan,payment_status,
-                        approved_at,created_at,updated_at,password_hash
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                        approved_at,created_at,updated_at,password_hash,terms_version,terms_accepted_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (user_id, email, display_name, role, approval_status, plan, payment_status,
-                      now if approval_status == "approved" else None, now, now, password_hash))
+                      now if approval_status == "approved" else None, now, now, password_hash,
+                      terms_version, now if terms_version else None))
         except sqlite3.IntegrityError as exc:
             raise AdminAccountError("Email đã tồn tại") from exc
         return self.get(user_id)
@@ -178,6 +185,19 @@ class AdminAccountStore:
             )
         if result.rowcount != 1:
             raise AdminAccountError("Không tìm thấy người dùng")
+
+    def accept_terms(self, user_id: str, version: str) -> dict[str, Any]:
+        if not version:
+            raise AdminAccountError("Phiên bản điều khoản không hợp lệ")
+        with self._db() as db:
+            now = utc_now()
+            result = db.execute(
+                "UPDATE admin_accounts SET terms_version=?,terms_accepted_at=?,updated_at=? WHERE user_id=?",
+                (version, now, now, user_id),
+            )
+        if result.rowcount != 1:
+            raise AdminAccountError("Không tìm thấy người dùng")
+        return self.get(user_id)
 
     def list(self, *, query: str = "", status: str = "") -> list[dict[str, Any]]:
         where, values = [], []

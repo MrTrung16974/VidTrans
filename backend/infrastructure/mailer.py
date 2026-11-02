@@ -63,13 +63,15 @@ class SmtpMailer:
     def configured(self) -> bool:
         return self.config.configured
 
-    def send(self, *, to: str, subject: str, text: str) -> None:
+    def send(self, *, to: str, subject: str, text: str, reply_to: str | None = None) -> None:
         if not self.configured:
             raise MailDeliveryError("SMTP chưa được cấu hình")
         message = EmailMessage()
         message["From"] = formataddr((self.config.sender_name, self.config.sender))
         message["To"] = to
         message["Subject"] = subject
+        if reply_to:
+            message["Reply-To"] = reply_to
         message["Message-ID"] = make_msgid(domain=self.config.sender.rsplit("@", 1)[-1])
         message.set_content(text)
         context = ssl.create_default_context()

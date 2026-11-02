@@ -90,9 +90,12 @@ from infrastructure.publishers.encrypted_oauth_store import EncryptedOAuthAccoun
 from infrastructure.comic_series import ComicSeriesStore
 from infrastructure.branding_store import BrandingStore
 from infrastructure.device_store import DeviceStore
+from infrastructure.contact_store import ContactMessageStore
 from infrastructure.push_notifications import FcmSender, JobPushNotifier, job_message
 from infrastructure.realtime import SOCKET_IO_PATH, RealtimeServer
 from application.device_routes import DeviceRouteDependencies, create_device_router
+from application.contact_routes import ContactRouteDependencies, create_contact_router
+from domain.legal import SUPPORT_PHONE, TERMS_VERSION, support_email
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SocialPublishStore
@@ -380,6 +383,7 @@ app.add_middleware(
 # called once the broadcaster runs, after the module has loaded.
 JOB_EVENTS = JobEventHub(lambda job_ids: job_change_snapshot(job_ids))
 DEVICE_STORE = DeviceStore(DATABASE_TARGET)
+CONTACT_MESSAGES = ContactMessageStore(DATABASE_TARGET)
 PUSH_NOTIFIER = JobPushNotifier(DEVICE_STORE, FcmSender.from_env(), lambda job_id: JOB_SERVICE.get(job_id))
 JOB_SERVICE = JobService(
     JobStore(DATABASE_TARGET),
@@ -891,6 +895,7 @@ PUBLIC_AUTH_PATHS = {
     "/api/v1/auth/guest",
     "/api/v1/auth/password-reset/request",
     "/api/v1/auth/password-reset/confirm",
+    "/api/v1/contact",
     "/api/v1/tiktok-auth/callback",
     "/api/v1/instagram-auth/callback",
     "/api/v1/threads-auth/callback",
@@ -980,6 +985,7 @@ async def authenticate_request(request: Request, call_next: Callable[..., Any]):
         and not request.url.path.startswith("/api/v1/billing/")
         and request.url.path != "/api/v1/auth/session"
         and not request.url.path.startswith("/api/v1/me/devices")
+        and request.url.path != "/api/v1/me/terms/accept"
     ):
         return JSONResponse(
             {"detail": "Tài khoản Người xem không có quyền thay đổi dữ liệu"},
@@ -4654,8 +4660,12 @@ def public_admin_account(account: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "user_id", "email", "display_name", "role", "approval_status", "plan",
         "payment_status", "approved_at", "created_at", "updated_at", "video_retention_days",
+        "terms_version", "terms_accepted_at",
     }
-    return {key: account.get(key) for key in allowed}
+    public = {key: account.get(key) for key in allowed}
+    # The web client asks for consent again whenever /terms or /privacy has a newer revision.
+    public["terms_outdated"] = account.get("terms_version") != TERMS_VERSION
+    return public
 
 
 @app.get("/api/v1/admin/accounts/summary")
@@ -5684,14 +5694,37 @@ async def refresh_auth_token(request: Request) -> JSONResponse:
     return response
 
 
+TERMS_REQUIRED_MESSAGE = "Bạn cần đồng ý với Điều khoản sử dụng và Chính sách quyền riêng tư"
+
+
+@app.post("/api/v1/me/terms/accept")
+def accept_current_terms(request: Request) -> JSONResponse:
+    account = current_account(request)
+    updated = ADMIN_ACCOUNTS.accept_terms(str(account["user_id"]), TERMS_VERSION)
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=account["user_id"],
+        action="account.terms_accept",
+        resource_type="account",
+        resource_id=account["user_id"],
+        target_user_id=account["user_id"],
+        metadata={"terms_version": TERMS_VERSION},
+    )
+    return JSONResponse(public_admin_account(updated), headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/v1/auth/register", status_code=201)
 def register_account(
     display_name: str = Form(..., min_length=1, max_length=120),
     email: str = Form(..., max_length=254),
     password: str = Form(..., min_length=12, max_length=256),
+    accept_terms: bool | None = Form(None),
 ) -> JSONResponse:
     if not AUTH_MANAGER.config.configured:
         raise HTTPException(status_code=503, detail="Hệ thống đăng ký chưa sẵn sàng")
+    # None = an older client that never showed the terms: the account is created without
+    # consent and the web client asks for it on sign-in. An explicit refusal is rejected.
+    if accept_terms is False:
+        raise HTTPException(status_code=422, detail=TERMS_REQUIRED_MESSAGE)
     try:
         account = ADMIN_ACCOUNTS.create(
             email=email,
@@ -5701,6 +5734,7 @@ def register_account(
             plan="free",
             payment_status="exempt",
             password_hash=hash_password(password),
+            terms_version=TERMS_VERSION if accept_terms else None,
         )
     except (AdminAccountError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -5742,7 +5776,7 @@ def check_guest_rate_limit(client_id: str) -> None:
 
 
 @app.post("/api/v1/auth/guest", status_code=201)
-def create_guest_account(request: Request) -> JSONResponse:
+def create_guest_account(request: Request, accept_terms: bool | None = Form(None)) -> JSONResponse:
     """Create a random trial account and sign it in.
 
     The generated password is returned once so the guest can sign in again on
@@ -5751,6 +5785,8 @@ def create_guest_account(request: Request) -> JSONResponse:
 
     if not AUTH_MANAGER.config.configured:
         raise HTTPException(status_code=503, detail="Hệ thống đăng ký chưa sẵn sàng")
+    if accept_terms is False:
+        raise HTTPException(status_code=422, detail=TERMS_REQUIRED_MESSAGE)
     check_guest_rate_limit(auth_client_id(request))
     password = secrets.token_urlsafe(12)
     for _ in range(3):
@@ -5764,6 +5800,7 @@ def create_guest_account(request: Request) -> JSONResponse:
                 plan="trial",
                 payment_status="trial",
                 password_hash=hash_password(password),
+                terms_version=TERMS_VERSION if accept_terms else None,
             )
             break
         except AdminAccountError:
@@ -5843,7 +5880,7 @@ def send_password_reset_email(email: str, code: str) -> None:
                 "Mật khẩu hiện tại của bạn vẫn được giữ nguyên.\n\n"
                 "Trân trọng,\n"
                 "Đội ngũ VidTrans\n"
-                "Liên hệ hỗ trợ: 095510400\n"
+                f"Liên hệ hỗ trợ: {SUPPORT_PHONE}\n"
             ),
         )
     except MailDeliveryError:
@@ -7423,6 +7460,14 @@ DEVICE_ROUTE_DEPS = DeviceRouteDependencies(
     push_enabled=lambda: PUSH_NOTIFIER.enabled,
 )
 app.include_router(create_device_router(DEVICE_ROUTE_DEPS))
+app.include_router(create_contact_router(ContactRouteDependencies(
+    store=CONTACT_MESSAGES,
+    mailer=MAILER,
+    support_email=support_email,
+    client_id=lambda request: auth_client_id(request),
+    require_admin=lambda request: require_roles(request, "owner", "admin"),
+    audit=lambda **event: TENANT_GOVERNANCE.audit(**event),
+)))
 
 
 BRANDING_ROUTE_DEPS = BrandingRouteDependencies(

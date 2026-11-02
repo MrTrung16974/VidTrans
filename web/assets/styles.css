@@ -6716,3 +6716,22 @@ input[type="file"]::-webkit-file-upload-button:active {
 .comic-fix-chips button { align-self: start; }
 @media (max-width: 960px) { .comic-scene-visual { max-width: 360px; margin: 0 auto; width: 100%; } }
 .comic-scene-body { align-content: start; }
+
+/* Terms consent (register form, re-accept dialog) and admin contact inbox. */
+.auth-form label.auth-terms-consent { align-items: flex-start; font-weight: 500; font-size: .82rem; line-height: 1.45; color: var(--muted); }
+.auth-form .auth-terms-consent input { margin-top: 2px; flex-shrink: 0; }
+.auth-terms-consent a, .terms-dialog a { color: var(--brand-dark); font-weight: 600; }
+.terms-dialog p { margin: 10px 0; color: #334155; line-height: 1.6; }
+.terms-dialog-check { display: flex; align-items: center; gap: 9px; margin: 14px 0 4px; font-weight: 600; cursor: pointer; }
+.terms-dialog-check input { width: 17px; height: 17px; accent-color: var(--brand); }
+.terms-dialog-error { min-height: 18px; color: var(--red); font-size: .82rem; }
+.admin-subtab .nav-badge { display: inline-grid; width: auto; min-width: 19px; margin-left: 6px; vertical-align: middle; }
+.admin-subtab .nav-badge.is-zero { display: none; }
+.admin-contact-list { display: grid; gap: 12px; padding: 4px 0; }
+.admin-contact-item { padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.admin-contact-item.is-resolved { opacity: .72; }
+.admin-contact-item header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.admin-contact-item header div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.admin-contact-topic { color: var(--muted); font-size: .82rem; }
+.admin-contact-meta { margin: 6px 0; font-size: .86rem; word-break: break-word; }
+.admin-contact-body { margin: 8px 0 12px; white-space: pre-wrap; word-break: break-word; line-height: 1.6; color: #334155; }

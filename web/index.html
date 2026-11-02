@@ -63,7 +63,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261031-guest-trial-cta" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261102-contact-terms" />
+    <link rel="stylesheet" href="/assets/legal.css?v=20261102-contact-terms" />
   </head>
   <body>
     <div class="app-shell">
@@ -1672,6 +1673,7 @@
             <button class="admin-subtab active" type="button" data-admin-subtab="accounts">👥 Tài khoản<span class="subtab-text-extra"> & Phân quyền</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="jobs">🔍 Giám sát Jobs<span class="subtab-text-extra"> toàn hệ thống</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="billing">💳 Đối soát<span class="subtab-text-extra"> thanh toán</span></button>
+            <button class="admin-subtab" type="button" data-admin-subtab="contact">✉️ Liên hệ<span class="subtab-text-extra"> khách hàng</span><b id="adminContactBadge" class="nav-badge is-zero">0</b></button>
             <button class="admin-subtab" type="button" data-admin-subtab="system">📊 Hệ thống<span class="subtab-text-extra"> &amp; tài nguyên</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="audit">🛡️ Nhật ký kiểm toán<span class="subtab-text-extra"> (Audit)</span></button>
           </div>
@@ -1890,6 +1892,30 @@
                 <div id="adminBillingList" class="admin-jobs-list">
                   <div class="empty-state"><strong>Đang tải đơn thanh toán…</strong></div>
                 </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminSubtabContact" class="admin-subtab-pane is-hidden">
+            <section class="card admin-jobs-panel">
+              <div class="admin-toolbar admin-jobs-toolbar">
+                <div class="admin-list-title">
+                  <strong>Tin nhắn liên hệ</strong>
+                  <small>Gửi từ trang /contact. Trả lời khách qua email, sau đó đánh dấu đã xử lý (có ghi Audit).</small>
+                </div>
+                <div class="admin-filter-wrap">
+                  <select id="adminContactFilter" aria-label="Lọc tin nhắn liên hệ">
+                    <option value="new">Chưa xử lý</option>
+                    <option value="resolved">Đã xử lý</option>
+                    <option value="">Tất cả</option>
+                  </select>
+                </div>
+                <button id="refreshAdminContact" class="button secondary" type="button" title="Làm mới">
+                  <span class="refresh-symbol">↻</span> Làm mới
+                </button>
+              </div>
+              <div id="adminContactList" class="admin-contact-list">
+                <div class="empty-state"><strong>Đang tải tin nhắn…</strong></div>
               </div>
             </section>
           </div>
@@ -2224,6 +2250,34 @@
         </section>
       </main>
 
+      <footer class="site-footer app-footer" aria-label="Thông tin VidTrans">
+        <div class="site-footer-inner">
+          <div>
+            <strong>VidTrans Studio</strong>
+            <p>Thuỵ Hà, Phúc Thịnh, Hà Nội</p>
+            <p><a href="mailto:mr.trung16974@gmail.com">mr.trung16974@gmail.com</a></p>
+            <p><a href="tel:0965510400">0965 510 400</a> (Zalo)</p>
+          </div>
+          <nav aria-label="Về VidTrans">
+            <strong>VidTrans</strong>
+            <ul>
+              <li><a href="/about">Giới thiệu</a></li>
+              <li><a href="/faq">Câu hỏi thường gặp</a></li>
+              <li><a href="/contact">Liên hệ</a></li>
+            </ul>
+          </nav>
+          <nav aria-label="Chính sách">
+            <strong>Chính sách</strong>
+            <ul>
+              <li><a href="/terms">Điều khoản sử dụng</a></li>
+              <li><a href="/privacy">Quyền riêng tư</a></li>
+              <li><a href="/refund">Thanh toán &amp; hoàn tiền</a></li>
+              <li><a href="/data-deletion">Xoá dữ liệu &amp; tài khoản</a></li>
+            </ul>
+          </nav>
+        </div>
+        <p class="site-footer-copy">© 2026 VidTrans Studio. Bảo lưu mọi quyền.</p>
+      </footer>
     </div>
 
     <div id="authGate" class="auth-gate is-hidden" role="dialog" aria-modal="true" aria-labelledby="authTitle">
@@ -2316,6 +2370,10 @@
               </button>
             </span>
           </label>
+          <label class="auth-remember auth-terms-consent">
+            <input id="registerAcceptTerms" name="accept_terms" type="checkbox" required />
+            <span>Tôi đồng ý với <a href="/terms" target="_blank" rel="noopener">Điều khoản sử dụng</a> và <a href="/privacy" target="_blank" rel="noopener">Chính sách quyền riêng tư</a></span>
+          </label>
           <button id="authRegisterSubmit" class="button primary full" type="submit">Tạo tài khoản Free</button>
         </form>
         <div class="auth-guest-divider" aria-hidden="true"><span>hoặc trải nghiệm tức thì</span></div>
@@ -2327,12 +2385,27 @@
           </span>
           <span class="auth-guest-badge">MIỄN PHÍ →</span>
         </button>
+        <p class="auth-legal">Bấm “Dùng thử ngay” nghĩa là bạn đồng ý với <a href="/terms" target="_blank" rel="noopener">Điều khoản sử dụng</a> và <a href="/privacy" target="_blank" rel="noopener">Chính sách quyền riêng tư</a> của VidTrans.</p>
         <button id="authModeToggle" class="auth-mode-toggle" type="button">Chưa có tài khoản? Đăng ký miễn phí</button>
         <div id="authMessage" class="auth-message" aria-live="polite">OAuth2 Password + JWT · phiên đăng nhập bảo mật bằng cookie HttpOnly</div>
       </section>
     </div>
 
 
+
+    <dialog id="termsDialog" class="password-reset-dialog terms-dialog" aria-labelledby="termsDialogTitle">
+      <h2 id="termsDialogTitle">Điều khoản đã được cập nhật</h2>
+      <p>Để tiếp tục dùng VidTrans, vui lòng đọc và đồng ý với <a href="/terms" target="_blank" rel="noopener">Điều khoản sử dụng</a> và <a href="/privacy" target="_blank" rel="noopener">Chính sách quyền riêng tư</a> hiện hành.</p>
+      <label class="terms-dialog-check">
+        <input id="termsDialogCheck" type="checkbox" />
+        <span>Tôi đã đọc và đồng ý</span>
+      </label>
+      <p id="termsDialogError" class="terms-dialog-error" aria-live="polite"></p>
+      <div class="password-reset-footer">
+        <button id="termsDialogLogout" class="button secondary" type="button">Đăng xuất</button>
+        <button id="termsDialogAccept" class="button primary" type="button" disabled>Đồng ý &amp; tiếp tục</button>
+      </div>
+    </dialog>
 
     <dialog id="passwordResetDialog" class="password-reset-dialog" aria-labelledby="passwordResetTitle">
       <form id="passwordResetForm" class="auth-form" method="dialog">
@@ -2362,6 +2435,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261031-download-only"></script>
+    <script type="module" src="/js/app.js?v=20261102-contact-terms"></script>
   </body>
 </html>

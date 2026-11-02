@@ -1,0 +1,79 @@
+/* Public information pages (/about, /contact, /terms, /privacy, /refund, /data-deletion, /faq).
+   Reuses the colour tokens from styles.css so the pages read as part of the app. */
+.info-page { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
+.info-header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px max(16px, calc((100vw - 880px) / 2)); border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(10px); }
+.info-header .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
+.info-header .brand img { width: 32px; height: 32px; }
+.info-header .brand strong { font-size: 1.05rem; }
+.info-header .button { display: inline-flex; align-items: center; min-height: 38px; padding: 0 16px; border-radius: 999px; background: var(--brand); color: #fff; font-weight: 700; font-size: 0.9rem; text-decoration: none; }
+.info-header .button:hover { background: var(--brand-dark); }
+
+.info-main { flex: 1; width: 100%; max-width: 880px; margin: 0 auto; padding: 40px 16px 56px; }
+.info-main h1 { margin: 0 0 8px; font-size: clamp(1.7rem, 4vw, 2.3rem); line-height: 1.2; letter-spacing: -0.02em; }
+.info-meta { margin: 0 0 28px; color: var(--muted); font-size: 0.9rem; }
+.info-lead { margin: 0 0 28px; color: #334155; font-size: 1.05rem; line-height: 1.7; }
+.info-main h2 { margin: 36px 0 12px; padding-top: 4px; font-size: 1.25rem; scroll-margin-top: 80px; }
+.info-main h3 { margin: 22px 0 8px; font-size: 1.02rem; }
+.info-main p, .info-main li { color: #334155; line-height: 1.75; }
+.info-main ul, .info-main ol { padding-left: 22px; }
+.info-main li + li { margin-top: 4px; }
+.info-main a { color: var(--brand-dark); }
+.info-main table { width: 100%; border-collapse: collapse; margin: 12px 0 4px; font-size: 0.93rem; }
+.info-main th, .info-main td { padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; line-height: 1.55; }
+.info-main th { background: var(--surface-soft); font-weight: 700; }
+.info-table-wrap { overflow-x: auto; }
+
+.info-toc { margin: 0 0 32px; padding: 16px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.info-toc strong { display: block; margin-bottom: 6px; font-size: 0.9rem; }
+.info-toc ol { margin: 0; }
+.info-toc a { text-decoration: none; }
+
+.info-callout { margin: 20px 0; padding: 14px 18px; border-left: 4px solid var(--brand); border-radius: 10px; background: var(--brand-light); color: #7c2d12; line-height: 1.65; }
+.info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 16px 0; }
+.info-card { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-sm); }
+.info-card h3 { margin: 0 0 6px; }
+.info-card p { margin: 0; }
+.info-card a { font-weight: 700; word-break: break-word; }
+.info-faq details { margin: 10px 0; padding: 14px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.info-faq summary { cursor: pointer; font-weight: 700; color: var(--ink); }
+.info-faq details p { margin: 10px 0 0; }
+
+/* Shared footer: used by the static pages and inside the app shell. */
+.site-footer { border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 0.88rem; }
+.site-footer-inner { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 24px; max-width: 880px; margin: 0 auto; padding: 28px 16px; }
+.site-footer strong { display: block; margin-bottom: 8px; color: var(--ink); font-size: 0.9rem; }
+.site-footer p { margin: 0 0 4px; line-height: 1.6; }
+.site-footer ul { margin: 0; padding: 0; list-style: none; }
+.site-footer li { margin: 0 0 6px; }
+.site-footer a { color: var(--muted); text-decoration: none; }
+.site-footer a:hover { color: var(--brand-dark); text-decoration: underline; }
+.site-footer-copy { max-width: 880px; margin: 0 auto; padding: 14px 16px 18px; border-top: 1px solid var(--line-subtle); font-size: 0.82rem; }
+
+@media (max-width: 680px) {
+  .site-footer-inner { grid-template-columns: 1fr 1fr; }
+  .site-footer-inner > :first-child { grid-column: 1 / -1; }
+  .info-main { padding-top: 28px; }
+}
+
+/* Inside the app shell the footer sits as a card under the views. */
+.app-footer { margin-top: 48px; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.auth-legal { margin: 14px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.5; text-align: center; }
+.auth-legal a { color: var(--brand-dark); font-weight: 600; }
+
+/* Contact form */
+.info-form { display: grid; gap: 14px; margin: 12px 0 8px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.info-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.info-form label { display: grid; gap: 6px; font-size: .88rem; font-weight: 600; color: var(--ink); }
+.info-form input, .info-form select, .info-form textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); font: inherit; font-weight: 400; }
+.info-form input:focus, .info-form select:focus, .info-form textarea:focus { outline: 2px solid var(--brand-light); border-color: var(--brand); }
+.info-form textarea { resize: vertical; min-height: 120px; }
+.info-form-hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.info-form-note { margin: 0; font-size: .84rem; color: var(--muted); }
+.info-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.info-form .button { display: inline-flex; align-items: center; min-height: 42px; padding: 0 20px; border: 0; border-radius: 999px; background: var(--brand); color: #fff; font-weight: 700; cursor: pointer; }
+.info-form .button:disabled { opacity: .6; cursor: wait; }
+.info-form-status { margin: 0; font-size: .9rem; }
+.info-form-status[data-kind="success"] { color: var(--teal); font-weight: 600; }
+.info-form-status[data-kind="error"] { color: var(--red); font-weight: 600; }
+@media (max-width: 680px) { .info-form-grid { grid-template-columns: 1fr; } .info-form { padding: 16px; } }
+.app-footer .site-footer-inner, .app-footer .site-footer-copy { max-width: none; padding-left: 28px; padding-right: 28px; }

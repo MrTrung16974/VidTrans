@@ -12,5 +12,6 @@ COPY docker/robots.txt /usr/share/nginx/html/robots.txt
 COPY index.html googlefffecc69420e3aa8.html /usr/share/nginx/html/
 COPY assets /usr/share/nginx/html/assets
 COPY js /usr/share/nginx/html/js
+COPY pages /usr/share/nginx/html/pages
 RUN chmod 0755 /docker-entrypoint.d/40-vidtrans-seo.sh \
     && rm -f /usr/share/nginx/html/50x.html

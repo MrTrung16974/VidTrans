@@ -15,6 +15,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 PLACEHOLDER = "__VIDTRANS_PUBLIC_URL__"
+# Public information pages served from web/pages/<slug>.html at /<slug>. Keep in sync with
+# web/docker/default.conf.template and web/docker/40-vidtrans-seo.sh.
+INFO_PAGES = ("about", "contact", "terms", "privacy", "refund", "data-deletion", "faq")
 _HOST = re.compile(r"^[A-Za-z0-9.-]+(:\d{1,5})?$")
 
 
@@ -34,14 +37,18 @@ def public_base_url(request: Request) -> str:
 def create_seo_router(frontend_dir: Path) -> APIRouter:
     router = APIRouter(include_in_schema=False)
     index_path = Path(frontend_dir) / "index.html"
-    cache: dict[str, tuple[float, str]] = {}
+    pages_dir = Path(frontend_dir) / "pages"
+    cache: dict[Path, tuple[float, str]] = {}
+
+    def read_cached(path: Path) -> tuple[str, float]:
+        mtime = path.stat().st_mtime
+        cached = cache.get(path)
+        if cached is None or cached[0] != mtime:
+            cache[path] = (mtime, path.read_text(encoding="utf-8"))
+        return cache[path][1], mtime
 
     def index_html() -> tuple[str, float]:
-        mtime = index_path.stat().st_mtime
-        cached = cache.get("index")
-        if cached is None or cached[0] != mtime:
-            cache["index"] = (mtime, index_path.read_text(encoding="utf-8"))
-        return cache["index"][1], mtime
+        return read_cached(index_path)
 
     @router.get("/")
     @router.get("/index.html")
@@ -69,8 +76,24 @@ def create_seo_router(frontend_dir: Path) -> APIRouter:
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
             f"  <url><loc>{public_base_url(request)}/</loc><lastmod>{modified}</lastmod>"
             "<changefreq>weekly</changefreq><priority>1.0</priority></url>\n"
-            "</urlset>\n"
+            + "".join(
+                f"  <url><loc>{public_base_url(request)}/{slug}</loc>"
+                "<changefreq>monthly</changefreq><priority>0.5</priority></url>\n"
+                for slug in INFO_PAGES
+            )
+            + "</urlset>\n"
         )
         return Response(body, media_type="application/xml", headers={"Cache-Control": "public, max-age=3600"})
+
+    def add_info_page(slug: str) -> None:
+        def info_page(request: Request) -> HTMLResponse:
+            html, _mtime = read_cached(pages_dir / f"{slug}.html")
+            return HTMLResponse(html.replace(PLACEHOLDER, public_base_url(request)),
+                                headers={"Cache-Control": "no-cache"})
+
+        router.add_api_route(f"/{slug}", info_page, methods=["GET"], response_class=HTMLResponse)
+
+    for slug in INFO_PAGES:
+        add_info_page(slug)
 
     return router

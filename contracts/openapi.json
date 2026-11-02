@@ -92,6 +92,39 @@
             ],
             "title": "Role"
           },
+          "terms_accepted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms Accepted At"
+          },
+          "terms_outdated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms Outdated"
+          },
+          "terms_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms Version"
+          },
           "updated_at": {
             "anyOf": [
               {
@@ -780,6 +813,23 @@
           }
         },
         "title": "Body_create_batch_endpoint_api_v1_batches_post",
+        "type": "object"
+      },
+      "Body_create_guest_account_api_v1_auth_guest_post": {
+        "properties": {
+          "accept_terms": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accept Terms"
+          }
+        },
+        "title": "Body_create_guest_account_api_v1_auth_guest_post",
         "type": "object"
       },
       "Body_create_payment_order_api_v1_billing_orders_post": {
@@ -1617,6 +1667,17 @@
       },
       "Body_register_account_api_v1_auth_register_post": {
         "properties": {
+          "accept_terms": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accept Terms"
+          },
           "display_name": {
             "maxLength": 120,
             "minLength": 1,
@@ -1721,6 +1782,50 @@
           "redirect_uri"
         ],
         "title": "Body_save_my_platform_app_api_v1_me_platform_apps__platform__post",
+        "type": "object"
+      },
+      "Body_submit_contact_message_api_v1_contact_post": {
+        "properties": {
+          "email": {
+            "maxLength": 254,
+            "title": "Email",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 4000,
+            "title": "Message",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "default": "",
+            "maxLength": 30,
+            "title": "Phone",
+            "type": "string"
+          },
+          "topic": {
+            "default": "support",
+            "maxLength": 32,
+            "title": "Topic",
+            "type": "string"
+          },
+          "website": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Website",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "message"
+        ],
+        "title": "Body_submit_contact_message_api_v1_contact_post",
         "type": "object"
       },
       "Body_suggest_story_bible_api_v1_comic_bible_suggest_post": {
@@ -4127,6 +4232,131 @@
         "summary": "Reject Bank Payment"
       }
     },
+    "/api/v1/admin/contact-messages": {
+      "get": {
+        "operationId": "list_contact_messages_api_v1_admin_contact_messages_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "new",
+              "maxLength": 16,
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Contact Messages",
+        "tags": [
+          "contact"
+        ]
+      }
+    },
+    "/api/v1/admin/contact-messages/{message_id}/resolve": {
+      "post": {
+        "operationId": "resolve_contact_message_api_v1_admin_contact_messages__message_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Resolve Contact Message",
+        "tags": [
+          "contact"
+        ]
+      }
+    },
     "/api/v1/admin/jobs": {
       "get": {
         "operationId": "admin_list_jobs_api_v1_admin_jobs_get",
@@ -4587,6 +4817,15 @@
       "post": {
         "description": "Create a random trial account and sign it in.\n\nThe generated password is returned once so the guest can sign in again on\nanother device; it is never stored in plain text.",
         "operationId": "create_guest_account_api_v1_auth_guest_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_guest_account_api_v1_auth_guest_post"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {
@@ -4595,6 +4834,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Create Guest Account"
@@ -7977,6 +8226,45 @@
         ]
       }
     },
+    "/api/v1/contact": {
+      "post": {
+        "operationId": "submit_contact_message_api_v1_contact_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_submit_contact_message_api_v1_contact_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Contact Message",
+        "tags": [
+          "contact"
+        ]
+      }
+    },
     "/api/v1/douyin-auth": {
       "delete": {
         "operationId": "logout_douyin_api_v1_douyin_auth_delete",
@@ -10006,6 +10294,32 @@
           }
         ],
         "summary": "Save My Platform App"
+      }
+    },
+    "/api/v1/me/terms/accept": {
+      "post": {
+        "operationId": "accept_current_terms_api_v1_me_terms_accept_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Accept Current Terms"
       }
     },
     "/api/v1/social-connections": {

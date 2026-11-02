@@ -290,6 +290,7 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   $("#authResetRequestForm").reset();
   $("#authResetConfirmForm").reset();
   passwordResetEmail = "";
+  closeTermsDialog();
   setAuthMode("login", message);
   const authMessage = $("#authMessage");
   authMessage.classList.toggle("error", isError);
@@ -419,9 +420,57 @@ async function refreshUserBrandingAvatar() {
   } catch (_) {}
 }
 
+// Accounts that never accepted, or accepted an older /terms revision, must accept before
+// working. The dialog is modal and cannot be dismissed except by accepting or signing out.
+async function ensureTermsConsent() {
+  if (!state.auth.enabled) return;
+  try {
+    const account = await requestJson("/api/v1/me");
+    if (account.terms_outdated) openTermsDialog();
+  } catch {
+    // A failed check must not block the app; it is asked again on the next sign-in.
+  }
+}
+
+function openTermsDialog() {
+  const dialog = $("#termsDialog");
+  if (!dialog || dialog.open) return;
+  $("#termsDialogCheck").checked = false;
+  $("#termsDialogAccept").disabled = true;
+  $("#termsDialogError").textContent = "";
+  dialog.showModal();
+}
+
+function closeTermsDialog() {
+  const dialog = $("#termsDialog");
+  if (dialog?.open) dialog.close();
+}
+
+$("#termsDialog")?.addEventListener("cancel", event => event.preventDefault());
+$("#termsDialogCheck")?.addEventListener("change", event => {
+  $("#termsDialogAccept").disabled = !event.currentTarget.checked;
+});
+$("#termsDialogAccept")?.addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await requestJson("/api/v1/me/terms/accept", { method: "POST" });
+    closeTermsDialog();
+    toast("Cảm ơn bạn đã đồng ý điều khoản");
+  } catch (error) {
+    $("#termsDialogError").textContent = error.message;
+    button.disabled = false;
+  }
+});
+$("#termsDialogLogout")?.addEventListener("click", () => {
+  closeTermsDialog();
+  $("#appLogoutButton").click();
+});
+
 async function startProtectedApplication() {
   if (state.appStarted) return;
   state.appStarted = true;
+  ensureTermsConsent();
   const canManageSources = ["owner", "admin"].includes(state.auth.role);
   await Promise.all([
     loadJobs(),
@@ -1074,7 +1123,10 @@ function showView() {
   if (view === "jobs" && state.appStarted) loadJobs();
   if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
   else stopDouyinBrowserPolling();
-  if (view === "admin" && state.appStarted) loadAdminAccounts();
+  if (view === "admin" && state.appStarted) {
+    loadAdminAccounts();
+    refreshAdminContactBadge();
+  }
   syncAdminSystemEvents();
   if (view === "billing" && state.appStarted) loadBilling();
   $("#mainNavigation").classList.remove("open");
@@ -1686,6 +1738,67 @@ function renderAdminBilling(orders) {
         </div>
         <div class="admin-job-cell admin-job-cell-actions">${actions}</div>
       </div>`;
+  }).join("");
+}
+
+function setAdminContactBadge(count) {
+  const badge = $("#adminContactBadge");
+  if (!badge) return;
+  badge.textContent = String(count);
+  badge.classList.toggle("is-zero", !count);
+}
+
+async function refreshAdminContactBadge() {
+  try {
+    const data = await requestJson("/api/v1/admin/contact-messages?status=new&limit=1");
+    setAdminContactBadge(data.new_count || 0);
+  } catch {
+    // The badge is a hint; the tab itself reports errors.
+  }
+}
+
+async function loadAdminContact() {
+  const list = $("#adminContactList");
+  if (!list) return;
+  list.innerHTML = '<div class="empty-state"><strong>Đang tải tin nhắn…</strong></div>';
+  try {
+    const params = new URLSearchParams({ limit: "100", status: $("#adminContactFilter")?.value ?? "new" });
+    const data = await requestJson(`/api/v1/admin/contact-messages?${params}`);
+    setAdminContactBadge(data.new_count || 0);
+    renderAdminContact(data.items || []);
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state error"><strong>${escapeHtml(err.message)}</strong></div>`;
+  }
+}
+
+function renderAdminContact(messages) {
+  const list = $("#adminContactList");
+  if (!list) return;
+  if (!messages.length) {
+    list.innerHTML = '<div class="empty-state"><strong>Không có tin nhắn nào</strong></div>';
+    return;
+  }
+  list.innerHTML = messages.map(item => {
+    const createdAt = item.created_at ? new Date(item.created_at).toLocaleString("vi-VN") : "—";
+    const resolved = item.status === "resolved";
+    const subject = encodeURIComponent(`Re: [VidTrans] ${item.topic_label}`);
+    return `
+      <article class="admin-contact-item${resolved ? " is-resolved" : ""}" data-contact-id="${escapeHtml(item.message_id)}">
+        <header>
+          <div>
+            <strong>${escapeHtml(item.name)}</strong>
+            <span class="badge ${resolved ? "badge-success" : "badge-warning"}">${resolved ? "Đã xử lý" : "Mới"}</span>
+            <span class="admin-contact-topic">${escapeHtml(item.topic_label)}</span>
+          </div>
+          <small>${escapeHtml(createdAt)}</small>
+        </header>
+        <p class="admin-contact-meta">
+          <a href="mailto:${escapeHtml(item.email)}?subject=${subject}">${escapeHtml(item.email)}</a>
+          ${item.phone ? ` · <a href="tel:${escapeHtml(item.phone)}">${escapeHtml(item.phone)}</a>` : ""}
+        </p>
+        <p class="admin-contact-body">${escapeHtml(item.message)}</p>
+        ${resolved ? "" : `<button class="button secondary mini-btn" type="button" data-admin-resolve-contact>Đánh dấu đã xử lý</button>`}
+      </article>`;
   }).join("");
 }
 
@@ -2681,6 +2794,8 @@ $("#authRegisterForm").addEventListener("submit", async event => {
     body.set("display_name", $("#registerDisplayName").value.trim());
     body.set("email", $("#registerEmail").value.trim());
     body.set("password", password);
+    // The form cannot submit without the required consent checkbox.
+    body.set("accept_terms", $("#registerAcceptTerms").checked ? "true" : "false");
     await requestJson("/api/v1/auth/register", { method: "POST", body });
     form.reset();
     if (await refreshApplicationAuth()) {
@@ -2702,7 +2817,10 @@ $("#authGuestButton").addEventListener("click", async event => {
   message.textContent = "Đang tạo tài khoản dùng thử…";
   message.classList.remove("error");
   try {
-    const payload = await requestJson("/api/v1/auth/guest", { method: "POST" });
+    // The notice under the button states that a trial means accepting the terms.
+    const body = new FormData();
+    body.set("accept_terms", "true");
+    const payload = await requestJson("/api/v1/auth/guest", { method: "POST", body });
     if (await refreshApplicationAuth()) {
       await startProtectedApplication();
       const { email, password } = payload.credentials;
@@ -2951,6 +3069,9 @@ $$("[data-admin-subtab]").forEach(tabBtn => {
     } else if (tabName === "billing") {
       $("#adminSubtabBilling")?.classList.remove("is-hidden");
       loadAdminBilling();
+    } else if (tabName === "contact") {
+      $("#adminSubtabContact")?.classList.remove("is-hidden");
+      loadAdminContact();
     } else if (tabName === "system") {
       $("#adminSubtabSystem")?.classList.remove("is-hidden");
       startAdminSystemRefresh();
@@ -2986,6 +3107,22 @@ $("#adminJobsList")?.addEventListener("click", async event => {
   }
 });
 $("#refreshAdminBilling")?.addEventListener("click", loadAdminBilling);
+$("#refreshAdminContact")?.addEventListener("click", loadAdminContact);
+$("#adminContactFilter")?.addEventListener("change", loadAdminContact);
+$("#adminContactList")?.addEventListener("click", async event => {
+  const button = event.target.closest("[data-admin-resolve-contact]");
+  if (!button) return;
+  const messageId = encodeURIComponent(button.closest("[data-contact-id]").dataset.contactId);
+  button.disabled = true;
+  try {
+    await requestJson(`/api/v1/admin/contact-messages/${messageId}/resolve`, { method: "POST" });
+    toast("Đã đánh dấu tin nhắn là đã xử lý");
+    await loadAdminContact();
+  } catch (err) {
+    toast(err.message, true);
+    button.disabled = false;
+  }
+});
 $("#adminBillingFilter")?.addEventListener("change", loadAdminBilling);
 $("#adminBillingList")?.addEventListener("click", async event => {
   const confirmBtn = event.target.closest("[data-admin-confirm-order]");

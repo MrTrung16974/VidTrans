@@ -1,3 +1,4 @@
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,7 +7,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from application.seo_routes import PLACEHOLDER, create_seo_router
+from application.seo_routes import INFO_PAGES, PLACEHOLDER, create_seo_router
 
 FRONTEND = Path(__file__).resolve().parents[2] / "web"
 
@@ -65,3 +66,56 @@ class SeoRouteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InfoPageTests(unittest.TestCase):
+    """Public about/contact/policy pages: served at clean URLs without login, listed for crawlers."""
+
+    def client(self) -> TestClient:
+        app = FastAPI()
+        app.include_router(create_seo_router(FRONTEND))
+        return TestClient(app)
+
+    def test_each_page_is_served_with_absolute_canonical(self) -> None:
+        with patch.dict("os.environ", {"VIDTRANS_PUBLIC_BASE_URL": "https://vidtrans.example.vn"}):
+            client = self.client()
+            for slug in INFO_PAGES:
+                with self.subTest(slug=slug):
+                    response = client.get(f"/{slug}")
+                    self.assertEqual(response.status_code, 200)
+                    self.assertIn("text/html", response.headers["content-type"])
+                    self.assertNotIn(PLACEHOLDER, response.text)
+                    self.assertIn(f'<link rel="canonical" href="https://vidtrans.example.vn/{slug}" />',
+                                  response.text)
+
+    def test_sitemap_lists_every_page(self) -> None:
+        with patch.dict("os.environ", {"VIDTRANS_PUBLIC_BASE_URL": "https://vidtrans.example.vn"}):
+            sitemap = self.client().get("/sitemap.xml").text
+        for slug in INFO_PAGES:
+            self.assertIn(f"<loc>https://vidtrans.example.vn/{slug}</loc>", sitemap)
+
+    def test_pages_and_app_share_a_footer_linking_every_page(self) -> None:
+        files = [FRONTEND / "index.html", *(FRONTEND / "pages" / f"{slug}.html" for slug in INFO_PAGES)]
+        for path in files:
+            html = path.read_text(encoding="utf-8")
+            footer = html.split('<footer class="site-footer', 1)[1].split("</footer>", 1)[0]
+            for slug in INFO_PAGES:
+                with self.subTest(page=path.name, link=slug):
+                    self.assertIn(f'href="/{slug}"', footer)
+            self.assertIn("mr.trung16974@gmail.com", footer)
+
+    def test_static_web_container_serves_the_same_pages(self) -> None:
+        nginx = (FRONTEND / "docker" / "default.conf.template").read_text(encoding="utf-8")
+        pattern = re.search(r"location ~ \^/\(([a-z|-]+)\)\$ \{\s+[^}]*try_files /pages/\$1\.html", nginx)
+        self.assertIsNotNone(pattern, "nginx info-page location missing")
+        self.assertEqual(set(pattern.group(1).split("|")), set(INFO_PAGES))
+        sitemap_script = (FRONTEND / "docker" / "40-vidtrans-seo.sh").read_text(encoding="utf-8")
+        self.assertIn("for slug in " + " ".join(INFO_PAGES) + ";", sitemap_script)
+        self.assertIn("COPY pages /usr/share/nginx/html/pages", (FRONTEND / "Dockerfile").read_text(encoding="utf-8"))
+        self.assertIn("!pages/", (FRONTEND / ".dockerignore").read_text(encoding="utf-8").splitlines())
+
+    def test_auth_gate_links_terms_and_privacy(self) -> None:
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        gate = html.split('id="authGate"', 1)[1]
+        self.assertIn('href="/terms"', gate)
+        self.assertIn('href="/privacy"', gate)

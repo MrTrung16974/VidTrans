@@ -137,6 +137,13 @@ class MailerTests(unittest.TestCase):
         self.assertEqual(smtp.messages[0]["To"], "a@test.local")
         self.assertIn("123456", smtp.messages[0].get_content())
 
+    def test_reply_to_is_set_only_when_given(self) -> None:
+        mailer = SmtpMailer(self.config(), smtp_factory=FakeSMTP)
+        mailer.send(to="support@test.local", subject="S", text="t", reply_to="khach@test.local")
+        mailer.send(to="a@test.local", subject="S", text="t")
+        self.assertEqual(FakeSMTP.instances[0].messages[0]["Reply-To"], "khach@test.local")
+        self.assertIsNone(FakeSMTP.instances[1].messages[0]["Reply-To"])
+
     def test_ssl_mode_uses_implicit_tls_client(self) -> None:
         SmtpMailer(self.config(security="ssl", port=465), ssl_factory=FakeSMTP).send(to="a@x.io", subject="S", text="t")
         self.assertNotIn("starttls", FakeSMTP.instances[0].calls)
@@ -226,7 +233,7 @@ class PasswordResetApiTests(unittest.TestCase):
         self.assertEqual(self.mailer.sent[0]["to"], "editor@test.local")
         self.assertEqual(self.mailer.sent[0]["subject"], "[VidTrans] Mã xác nhận đặt lại mật khẩu")
         self.assertIn("Đội ngũ VidTrans", self.mailer.sent[0]["text"])
-        self.assertIn("Liên hệ hỗ trợ: 095510400", self.mailer.sent[0]["text"])
+        self.assertIn("Liên hệ hỗ trợ: 0965 510 400", self.mailer.sent[0]["text"])
 
         confirmed = self.confirm(self.sent_code())
 
