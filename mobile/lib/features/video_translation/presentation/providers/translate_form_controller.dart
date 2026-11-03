@@ -33,18 +33,19 @@ class TranslateFormState {
     bool clearMusic = false,
     String? error,
     bool clearError = false,
-  }) =>
-      TranslateFormState(
-        config: config ?? this.config,
-        files: files ?? this.files,
-        linksText: linksText ?? this.linksText,
-        music: clearMusic ? null : (music ?? this.music),
-        error: clearError ? null : (error ?? this.error),
-      );
+  }) => TranslateFormState(
+    config: config ?? this.config,
+    files: files ?? this.files,
+    linksText: linksText ?? this.linksText,
+    music: clearMusic ? null : (music ?? this.music),
+    error: clearError ? null : (error ?? this.error),
+  );
 }
 
 final translateFormProvider =
-    NotifierProvider<TranslateFormController, TranslateFormState>(TranslateFormController.new);
+    NotifierProvider<TranslateFormController, TranslateFormState>(
+      TranslateFormController.new,
+    );
 
 /// Form state survives tab switches (not auto-disposed) so a half-filled form
 /// is kept while the user looks at other tabs.
@@ -59,7 +60,9 @@ class TranslateFormController extends Notifier<TranslateFormState> {
 
   Future<void> _restore() async {
     final config = await _repo.loadConfig();
-    state = state.copyWith(config: config.copyWith(batchName: state.config.batchName));
+    state = state.copyWith(
+      config: config.copyWith(batchName: state.config.batchName),
+    );
   }
 
   void updateConfig(TranslationConfig config) {
@@ -68,19 +71,40 @@ class TranslateFormController extends Notifier<TranslateFormState> {
 
   void addFiles(List<PickedMedia> files) {
     final known = state.files.map((f) => f.path).toSet();
-    state = state.copyWith(files: [...state.files, ...files.where((f) => known.add(f.path))], clearError: true);
+    state = state.copyWith(
+      files: [...state.files, ...files.where((f) => known.add(f.path))],
+      clearError: true,
+    );
   }
 
   void removeFile(PickedMedia file) {
-    state = state.copyWith(files: state.files.where((f) => f.path != file.path).toList());
+    state = state.copyWith(
+      files: state.files.where((f) => f.path != file.path).toList(),
+    );
   }
 
   void setLinks(String text) {
     state = state.copyWith(linksText: text, clearError: true);
   }
 
+  /// The user's own file; picking one replaces a library track.
   void setMusic(PickedMedia? music) {
-    state = music == null ? state.copyWith(clearMusic: true) : state.copyWith(music: music, clearError: true);
+    state = music == null
+        ? state.copyWith(clearMusic: true)
+        : state.copyWith(
+            music: music,
+            config: state.config.copyWith(musicTrackId: ''),
+            clearError: true,
+          );
+  }
+
+  /// A track of the shared library ('' = none); replaces a picked file.
+  void selectMusicTrack(String trackId) {
+    state = state.copyWith(
+      config: state.config.copyWith(musicTrackId: trackId),
+      clearMusic: trackId.isNotEmpty,
+      clearError: true,
+    );
   }
 
   /// Validation as in submitBatch() of the web app. Null when submittable.
@@ -91,7 +115,11 @@ class TranslateFormController extends Notifier<TranslateFormState> {
           : 'Hãy chọn file hoặc dán ít nhất một link video';
     }
     if (state.sourceCount > 50) return 'Mỗi batch chỉ nhận tối đa 50 video';
-    if (state.config.needsMusic && state.music == null) return 'Mode 3 cần một file nhạc nền';
+    if (state.config.needsMusic &&
+        state.music == null &&
+        state.config.musicTrackId.isEmpty) {
+      return 'Hãy chọn nhạc nền trong thư viện hoặc tải file nhạc lên';
+    }
     return state.config.validate();
   }
 
@@ -107,13 +135,21 @@ class TranslateFormController extends Notifier<TranslateFormState> {
       return null;
     }
     unawaited(_repo.saveConfig(state.config));
-    final done = ref.read(submissionQueueProvider.notifier).enqueue(SubmissionRequest(
-          files: state.files,
-          links: state.links,
-          config: state.config,
-          music: state.config.needsMusic ? state.music : null,
-        ));
-    state = TranslateFormState(config: state.config.copyWith(batchName: const TranslationConfig().batchName));
+    final done = ref
+        .read(submissionQueueProvider.notifier)
+        .enqueue(
+          SubmissionRequest(
+            files: state.files,
+            links: state.links,
+            config: state.config,
+            music: state.config.needsMusic ? state.music : null,
+          ),
+        );
+    state = TranslateFormState(
+      config: state.config.copyWith(
+        batchName: const TranslationConfig().batchName,
+      ),
+    );
     return done;
   }
 }

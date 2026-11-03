@@ -19,12 +19,15 @@ class PendingSubmissionCard extends ConsumerWidget {
     final detail = switch (item.phase) {
       SubmissionPhase.waiting => 'Đang chờ đến lượt',
       SubmissionPhase.downloading =>
-        item.note == null ? 'Đang chuẩn bị link…' : 'Đang tải trên máy ${item.note} · $percent%',
+        item.note == null
+            ? 'Đang chuẩn bị link…'
+            : 'Đang tải trên máy ${item.note} · $percent%',
       SubmissionPhase.uploading => 'Đang tải lên máy chủ $percent%',
       SubmissionPhase.creating => 'Tải lên xong. Đang tạo công việc…',
       SubmissionPhase.failed => item.error ?? 'Không gửi được batch',
     };
-    final indeterminate = item.phase == SubmissionPhase.waiting ||
+    final indeterminate =
+        item.phase == SubmissionPhase.waiting ||
         item.phase == SubmissionPhase.creating ||
         (item.phase == SubmissionPhase.downloading && item.note == null);
 
@@ -37,7 +40,9 @@ class PendingSubmissionCard extends ConsumerWidget {
           Row(
             children: [
               Icon(
-                item.failed ? Icons.error_outline_rounded : Icons.downloading_rounded,
+                item.failed
+                    ? Icons.error_outline_rounded
+                    : Icons.downloading_rounded,
                 size: 18,
                 color: item.failed ? AppColors.redDark : AppColors.brand,
               ),
@@ -47,7 +52,10 @@ class PendingSubmissionCard extends ConsumerWidget {
                   '${item.name} · ${item.sourceCount} nguồn',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
+                  ),
                 ),
               ),
             ],
@@ -63,19 +71,30 @@ class PendingSubmissionCard extends ConsumerWidget {
           ),
           if (!item.failed) ...[
             const SizedBox(height: 8),
-            LinearProgressIndicator(value: indeterminate ? null : item.progress),
+            LinearProgressIndicator(
+              value: indeterminate ? null : item.progress,
+            ),
           ],
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: item.failed
                 ? [
-                    TextButton(onPressed: () => queue.dismiss(item.id), child: const Text('Bỏ')),
+                    TextButton(
+                      onPressed: () => queue.dismiss(item.id),
+                      child: const Text('Bỏ'),
+                    ),
                     const SizedBox(width: 6),
-                    FilledButton(onPressed: () => queue.retry(item.id), child: const Text('Thử lại')),
+                    FilledButton(
+                      onPressed: () => queue.retry(item.id),
+                      child: const Text('Thử lại'),
+                    ),
                   ]
                 : [
-                    OutlinedButton(onPressed: () => queue.cancel(item.id), child: const Text('Hủy tải lên')),
+                    OutlinedButton(
+                      onPressed: () => queue.cancel(item.id),
+                      child: const Text('Hủy tải lên'),
+                    ),
                   ],
           ),
         ],

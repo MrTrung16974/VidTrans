@@ -76,6 +76,10 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   bool _live = false;
   late bool _liveTab = widget.initialLiveMode;
 
+  /// Accessibility mode is off: the service is removed from the manifest so
+  /// Play Protect doesn't block sideloaded installs. See AndroidManifest.xml.
+  static const kA11yModeAvailable = false;
+
   /// Accessibility mode instead of screen capture: text read from the app's
   /// view tree, opaque translations, no capture consent each session.
   bool _a11y = false;
@@ -123,7 +127,8 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
       final controller = _floatingController;
       final running = await controller.isRunning();
       final live = running && await controller.isLive();
-      final granted = await controller.a11yEnabledInSettings();
+      final granted =
+          kA11yModeAvailable && await controller.a11yEnabledInSettings();
       var a11yOn = granted && await controller.a11yTranslating();
       if (granted && _a11yPending && !a11yOn) {
         await _startA11y();
@@ -340,7 +345,9 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
           orElse: () => _mode,
         );
         if (saved.length > 3) _live = saved[3] == 'live';
-        if (saved.length > 4) _a11y = saved[4] == 'a11y';
+        if (saved.length > 4) {
+          _a11y = kA11yModeAvailable && saved[4] == 'a11y';
+        }
         if (saved.length > 5) _aiQuality = saved[5] == 'quality';
       });
     } catch (_) {
@@ -665,10 +672,6 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
           _settingsCard(account),
           const SizedBox(height: 14),
           if (_bytes == null) _pickCard() else _imageCard(result),
-          if (_floatingController.supported) ...[
-            const SizedBox(height: 14),
-            _floatingCard(),
-          ],
         ],
         if (_busy) ...[const SizedBox(height: 14), _progress()],
         if (_error != null) ...[const SizedBox(height: 14), _errorBox(_error!)],
@@ -860,26 +863,28 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        SegmentedButton<bool>(
-          segments: const [
-            ButtonSegment(
-              value: false,
-              icon: Icon(Icons.screenshot_monitor_rounded, size: 18),
-              label: Text('Chụp màn hình'),
-            ),
-            ButtonSegment(
-              value: true,
-              icon: Icon(Icons.accessibility_new_rounded, size: 18),
-              label: Text('Trợ năng'),
-            ),
-          ],
-          selected: {_a11y},
-          showSelectedIcon: false,
-          onSelectionChanged: _floatingBusy
-              ? null
-              : (selection) => _setA11yMode(selection.first),
-        ),
+        if (kA11yModeAvailable) ...[
+          const SizedBox(height: 12),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(
+                value: false,
+                icon: Icon(Icons.screenshot_monitor_rounded, size: 18),
+                label: Text('Chụp màn hình'),
+              ),
+              ButtonSegment(
+                value: true,
+                icon: Icon(Icons.accessibility_new_rounded, size: 18),
+                label: Text('Trợ năng'),
+              ),
+            ],
+            selected: {_a11y},
+            showSelectedIcon: false,
+            onSelectionChanged: _floatingBusy
+                ? null
+                : (selection) => _setA11yMode(selection.first),
+          ),
+        ],
         const SizedBox(height: 12),
         _floating
             ? OutlinedButton.icon(

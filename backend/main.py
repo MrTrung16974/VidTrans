@@ -96,6 +96,8 @@ from infrastructure.push_notifications import FcmSender, JobPushNotifier, job_me
 from infrastructure.realtime import SOCKET_IO_PATH, RealtimeServer
 from application.device_routes import DeviceRouteDependencies, create_device_router
 from application.contact_routes import ContactRouteDependencies, create_contact_router
+from application.music_routes import MusicRouteDependencies, create_music_router
+from infrastructure.music_library import MusicLibraryStore, MusicTrackNotFound, probe_audio_duration
 from domain.legal import SUPPORT_PHONE, TERMS_VERSION, support_email
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
@@ -391,6 +393,42 @@ app.add_middleware(
 JOB_EVENTS = JobEventHub(lambda job_ids: job_change_snapshot(job_ids))
 DEVICE_STORE = DeviceStore(DATABASE_TARGET)
 CONTACT_MESSAGES = ContactMessageStore(DATABASE_TARGET)
+MUSIC_LIBRARY = MusicLibraryStore(
+    DATABASE_TARGET,
+    WORK_DIR / "music_library",
+    probe=lambda path: probe_audio_duration(path, ffprobe=FFPROBE),
+)
+
+
+def resolve_background_music(
+    background_music: UploadFile | None, background_music_id: str, target_dir: Path,
+) -> Path | None:
+    """Store the job's background music in ``target_dir``: the user's own upload
+    wins, otherwise a copy of the chosen library track (so deleting it from the
+    library never breaks a queued or resumed job)."""
+    if background_music is not None and background_music.filename:
+        music_ext = Path(background_music.filename).suffix or ".mp3"
+        path = target_dir / f"background{music_ext}"
+        with path.open("wb") as buffer:
+            shutil.copyfileobj(background_music.file, buffer)
+        return path
+    track_id = background_music_id.strip()
+    if not track_id:
+        return None
+    try:
+        track = MUSIC_LIBRARY.get(track_id)
+    except MusicTrackNotFound as exc:
+        raise HTTPException(status_code=400, detail="Bản nhạc nền đã chọn không còn trong thư viện") from exc
+    source = MUSIC_LIBRARY.file_path(track)
+    if not source.is_file():
+        raise HTTPException(status_code=400, detail="File nhạc nền đã chọn không còn trên máy chủ")
+    path = target_dir / f"background{track['extension']}"
+    shutil.copyfile(source, path)
+    return path
+
+
+def has_background_music(background_music: UploadFile | None, background_music_id: str) -> bool:
+    return (background_music is not None and bool(background_music.filename)) or bool(background_music_id.strip())
 PUSH_NOTIFIER = JobPushNotifier(DEVICE_STORE, FcmSender.from_env(), lambda job_id: JOB_SERVICE.get(job_id))
 JOB_SERVICE = JobService(
     JobStore(DATABASE_TARGET),
@@ -6460,6 +6498,7 @@ async def process_video_endpoint(
     translation_provider: str = Form(""),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
+    background_music_id: str = Form("", max_length=64),
     whisper_model: str = Form("medium"),
     keep_original_audio: bool = Form(True),
     original_audio_volume: float = Form(DEFAULT_ORIGINAL_AUDIO_VOLUME),
@@ -6526,8 +6565,8 @@ async def process_video_endpoint(
         ).validate()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
-        raise HTTPException(status_code=400, detail="background_music is required for mode 3")
+    if request.mode is ProcessingMode.DUBBED_WITH_MUSIC and not has_background_music(background_music, background_music_id):
+        raise HTTPException(status_code=400, detail="Chế độ 3 cần chọn nhạc nền từ thư viện hoặc tải file nhạc lên")
     tts_voices: dict[str, str] = {}
     if request.mode.dubbing:
         try:
@@ -6559,12 +6598,15 @@ async def process_video_endpoint(
         TENANT_GOVERNANCE.release(job_id)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    background_music_path = None
-    if background_music is not None:
-        music_ext = Path(background_music.filename or "music.mp3").suffix or ".mp3"
-        background_music_path = upload_dir / f"background{music_ext}"
-        with background_music_path.open("wb") as buffer:
-            shutil.copyfileobj(background_music.file, buffer)
+    try:
+        background_music_path = (
+            resolve_background_music(background_music, background_music_id, upload_dir)
+            if request.mode is ProcessingMode.DUBBED_WITH_MUSIC else None
+        )
+    except HTTPException:
+        video_path.unlink(missing_ok=True)
+        TENANT_GOVERNANCE.release(job_id)
+        raise
 
     style_payload = None
     if subtitle_style:
@@ -6693,6 +6735,7 @@ async def create_batch_endpoint(
     translation_provider: str = Form(""),
     speech_rate: float = Form(1.0),
     background_music: UploadFile | None = File(default=None),
+    background_music_id: str = Form("", max_length=64),
     whisper_model: str = Form("medium"),
     keep_original_audio: bool = Form(True),
     original_audio_volume: float = Form(DEFAULT_ORIGINAL_AUDIO_VOLUME),
@@ -6805,8 +6848,8 @@ async def create_batch_endpoint(
         SubtitleLayoutOptions.from_style(style_payload or {})
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if processing_request.mode is ProcessingMode.DUBBED_WITH_MUSIC and background_music is None:
-        raise HTTPException(status_code=400, detail="background_music is required for mode 3")
+    if processing_request.mode is ProcessingMode.DUBBED_WITH_MUSIC and not has_background_music(background_music, background_music_id):
+        raise HTTPException(status_code=400, detail="Chế độ 3 cần chọn nhạc nền từ thư viện hoặc tải file nhạc lên")
     tts_voices: dict[str, str] = {}
     if processing_request.mode.dubbing:
         try:
@@ -6824,6 +6867,16 @@ async def create_batch_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     validate_tiktok_auto_publish(processing_request, owner_user_id)
+    music_from_library = (
+        processing_request.mode is ProcessingMode.DUBBED_WITH_MUSIC
+        and not (background_music is not None and background_music.filename)
+    )
+    if music_from_library:
+        try:
+            if not MUSIC_LIBRARY.file_path(MUSIC_LIBRARY.get(background_music_id.strip())).is_file():
+                raise MusicTrackNotFound("missing file")
+        except MusicTrackNotFound as exc:
+            raise HTTPException(status_code=400, detail="Bản nhạc nền đã chọn không còn trong thư viện") from exc
 
     limit = account_plan_limit(account)
     if limit is not None:
@@ -6840,11 +6893,10 @@ async def create_batch_endpoint(
     reserve_batch_quota([*upload_job_ids, *source_job_ids], account)
     normalized_name = " ".join(batch_name.split())[:120] or f"Batch {batch_id[-6:]}"
     background_music_path: Path | None = None
-    if background_music is not None:
-        music_ext = Path(background_music.filename or "music.mp3").suffix or ".mp3"
-        background_music_path = tenant_job_dir(UPLOAD_DIR, owner_user_id, batch_id) / f"background{music_ext}"
-        with background_music_path.open("wb") as buffer:
-            shutil.copyfileobj(background_music.file, buffer)
+    if processing_request.mode is ProcessingMode.DUBBED_WITH_MUSIC:
+        background_music_path = resolve_background_music(
+            background_music, background_music_id, tenant_job_dir(UPLOAD_DIR, owner_user_id, batch_id),
+        )
 
     batch_config = {
         "mode": int(processing_request.mode),
@@ -7690,6 +7742,12 @@ DEVICE_ROUTE_DEPS = DeviceRouteDependencies(
     push_enabled=lambda: PUSH_NOTIFIER.enabled,
 )
 app.include_router(create_device_router(DEVICE_ROUTE_DEPS))
+app.include_router(create_music_router(MusicRouteDependencies(
+    store=MUSIC_LIBRARY,
+    current_account=lambda request: current_account(request),
+    require_admin=lambda request: require_roles(request, "owner", "admin"),
+    audit=lambda **event: TENANT_GOVERNANCE.audit(**event),
+)))
 app.include_router(create_contact_router(ContactRouteDependencies(
     store=CONTACT_MESSAGES,
     mailer=MAILER,

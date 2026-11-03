@@ -25,16 +25,17 @@ class FormSection extends StatelessWidget {
   final List<Widget> children;
 
   Color _defaultStepAccent(int? step) => switch (step) {
-        1 => AppColors.brand,
-        2 => AppColors.teal,
-        3 => const Color(0xFF6366F1),
-        4 => const Color(0xFF334155),
-        _ => AppColors.brand,
-      };
+    1 => AppColors.brand,
+    2 => AppColors.teal,
+    3 => const Color(0xFF6366F1),
+    4 => const Color(0xFF334155),
+    _ => AppColors.brand,
+  };
 
   @override
   Widget build(BuildContext context) {
-    final resolvedAccent = accentColor ??
+    final resolvedAccent =
+        accentColor ??
         (stepNumber != null ? _defaultStepAccent(stepNumber) : null);
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -61,11 +62,11 @@ class FormSection extends StatelessWidget {
   }
 
   static List<Widget> _spaced(List<Widget> children) => [
-        for (var i = 0; i < children.length; i++) ...[
-          if (i > 0) const SizedBox(height: 12),
-          children[i],
-        ],
-      ];
+    for (var i = 0; i < children.length; i++) ...[
+      if (i > 0) const SizedBox(height: 12),
+      children[i],
+    ],
+  ];
 }
 
 /// Dropdown bound to an outside value. Options in [disabled] are shown with
@@ -123,8 +124,9 @@ class SelectField extends StatelessWidget {
             ),
           ),
       ],
-      onChanged:
-          enabled ? (next) => next == null ? null : onChanged(next) : null,
+      onChanged: enabled
+          ? (next) => next == null ? null : onChanged(next)
+          : null,
     );
   }
 }

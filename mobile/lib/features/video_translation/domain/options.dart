@@ -84,7 +84,12 @@ const backgroundStyleOptions = <Option>[
 ];
 
 /// Order of the web `<select>`s; the server status decides which are usable.
-const translationProviderOrder = ['google', 'gemini', 'qwen3', 'translategemma'];
+const translationProviderOrder = [
+  'google',
+  'gemini',
+  'qwen3',
+  'translategemma',
+];
 const ttsProviderOrder = ['edge', 'azure', 'elevenlabs', 'cit'];
 
 /// Providers the server can synthesize a voice sample for.

@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261103-glass-dock" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261103-music-library" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261103-glass-dock" />
   </head>
   <body>
@@ -472,10 +472,17 @@
                             <input type="checkbox" name="keep_original_audio" value="true" checked />
                             <span>Giữ âm thanh ban đầu của video dưới giọng thuyết minh</span>
                           </label>
-                          <label id="musicField" class="field wide is-hidden">
+                          <div id="musicField" class="field wide is-hidden">
                             <span>Nhạc nền dùng chung</span>
-                            <input type="file" name="background_music" accept="audio/*" />
-                          </label>
+                            <div class="music-picker">
+                              <select id="backgroundMusicId" name="background_music_id" aria-label="Chọn nhạc nền từ thư viện">
+                                <option value="">— Tự tải file nhạc của bạn —</option>
+                              </select>
+                              <button id="previewBackgroundMusic" class="button secondary mini-btn" type="button" disabled>▶ Nghe thử</button>
+                            </div>
+                            <input id="backgroundMusicFile" type="file" name="background_music" accept="audio/*" aria-label="Tải file nhạc nền" />
+                            <small class="field-hint">Chọn một bản trong thư viện, hoặc để “Tự tải file” và chọn file nhạc trên máy.</small>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1674,6 +1681,7 @@
             <button class="admin-subtab" type="button" data-admin-subtab="jobs">🔍 Giám sát Jobs<span class="subtab-text-extra"> toàn hệ thống</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="billing">💳 Đối soát<span class="subtab-text-extra"> thanh toán</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="contact">✉️ Liên hệ<span class="subtab-text-extra"> khách hàng</span><b id="adminContactBadge" class="nav-badge is-zero">0</b></button>
+            <button class="admin-subtab" type="button" data-admin-subtab="music">🎵 Nhạc nền<span class="subtab-text-extra"> lồng tiếng</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="system">📊 Hệ thống<span class="subtab-text-extra"> &amp; tài nguyên</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="access">🔐 Phân quyền<span class="subtab-text-extra"> gói &amp; menu</span></button>
             <button class="admin-subtab" type="button" data-admin-subtab="audit">🛡️ Nhật ký kiểm toán<span class="subtab-text-extra"> (Audit)</span></button>
@@ -1917,6 +1925,28 @@
               </div>
               <div id="adminContactList" class="admin-contact-list">
                 <div class="empty-state"><strong>Đang tải tin nhắn…</strong></div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminSubtabMusic" class="admin-subtab-pane is-hidden">
+            <section class="card admin-jobs-panel">
+              <div class="admin-toolbar admin-jobs-toolbar">
+                <div class="admin-list-title">
+                  <strong>Thư viện nhạc nền</strong>
+                  <small>Nhạc tải lên ở đây hiện cho mọi người dùng chọn khi lồng tiếng (chế độ Phụ đề + lồng tiếng + nhạc nền). MP3/M4A/AAC/WAV/OGG, tối đa 30 MB.</small>
+                </div>
+                <button id="refreshAdminMusic" class="button secondary" type="button" title="Làm mới">
+                  <span class="refresh-symbol">↻</span> Làm mới
+                </button>
+              </div>
+              <form id="adminMusicUploadForm" class="admin-music-upload">
+                <label class="field"><span>Tên bản nhạc (để trống = tên file)</span><input name="title" type="text" maxlength="120" placeholder="Ví dụ: Lofi nhẹ nhàng" /></label>
+                <label class="field"><span>File nhạc</span><input name="file" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg,audio/*" required /></label>
+                <button class="button primary" type="submit">⬆ Tải lên</button>
+              </form>
+              <div id="adminMusicList" class="admin-contact-list">
+                <div class="empty-state"><strong>Đang tải thư viện nhạc…</strong></div>
               </div>
             </section>
           </div>
@@ -2476,6 +2506,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261102-access-config"></script>
+    <script type="module" src="/js/app.js?v=20261103-music-library"></script>
   </body>
 </html>

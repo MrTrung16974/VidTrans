@@ -7,7 +7,7 @@ import '../../data/translation_repository.dart';
 
 /// Plays the server-generated voice sample. CIT synthesizes it on the server
 /// CPU, so the first play can take a while.
-class VoicePreviewButton extends ConsumerStatefulWidget {
+class VoicePreviewButton extends StatelessWidget {
   const VoicePreviewButton({
     super.key,
     required this.provider,
@@ -18,20 +18,43 @@ class VoicePreviewButton extends ConsumerStatefulWidget {
   final String voiceKey;
 
   @override
-  ConsumerState<VoicePreviewButton> createState() => _VoicePreviewButtonState();
+  Widget build(BuildContext context) => AudioPreviewButton(
+    sourceKey: '$provider/$voiceKey',
+    uri: (repo) => repo.voicePreviewUri(provider, voiceKey),
+    loadingLabel: 'Đang tạo…',
+    errorText:
+        'Không phát được bản nghe thử. Kiểm tra cấu hình nhà cung cấp giọng đọc.',
+  );
 }
 
-class _VoicePreviewButtonState extends ConsumerState<VoicePreviewButton> {
+/// Plays one audio file of the API (auth headers included) until it ends or
+/// the user taps Dừng. Changing [sourceKey] stops the current playback.
+class AudioPreviewButton extends ConsumerStatefulWidget {
+  const AudioPreviewButton({
+    super.key,
+    required this.sourceKey,
+    required this.uri,
+    this.loadingLabel = 'Đang tải…',
+    this.errorText = 'Không phát được bản nghe thử.',
+  });
+
+  final String sourceKey;
+  final Uri Function(TranslationRepository repo) uri;
+  final String loadingLabel;
+  final String errorText;
+
+  @override
+  ConsumerState<AudioPreviewButton> createState() => _AudioPreviewButtonState();
+}
+
+class _AudioPreviewButtonState extends ConsumerState<AudioPreviewButton> {
   VideoPlayerController? _player;
   bool _loading = false;
 
   @override
-  void didUpdateWidget(VoicePreviewButton oldWidget) {
+  void didUpdateWidget(AudioPreviewButton oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.provider != widget.provider ||
-        oldWidget.voiceKey != widget.voiceKey) {
-      _stop();
-    }
+    if (oldWidget.sourceKey != widget.sourceKey) _stop();
   }
 
   @override
@@ -50,7 +73,7 @@ class _VoicePreviewButtonState extends ConsumerState<VoicePreviewButton> {
     final repo = ref.read(translationRepositoryProvider);
     setState(() => _loading = true);
     final player = VideoPlayerController.networkUrl(
-      repo.voicePreviewUri(widget.provider, widget.voiceKey),
+      widget.uri(repo),
       httpHeaders: await repo.authHeaders(),
     );
     try {
@@ -70,11 +93,9 @@ class _VoicePreviewButtonState extends ConsumerState<VoicePreviewButton> {
     } catch (_) {
       await player.dispose();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-            'Không phát được bản nghe thử. Kiểm tra cấu hình nhà cung cấp giọng đọc.',
-          ),
-        ));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(widget.errorText)));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -110,7 +131,9 @@ class _VoicePreviewButtonState extends ConsumerState<VoicePreviewButton> {
                 size: 18,
                 color: playing ? Colors.white : AppColors.brand,
               ),
-        label: Text(_loading ? 'Đang tạo…' : (playing ? 'Dừng' : 'Nghe thử')),
+        label: Text(
+          _loading ? widget.loadingLabel : (playing ? 'Dừng' : 'Nghe thử'),
+        ),
       ),
     );
   }

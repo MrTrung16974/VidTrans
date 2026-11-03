@@ -48,16 +48,15 @@ class PendingSubmission {
     String? note,
     bool clearNote = false,
     String? error,
-  }) =>
-      PendingSubmission(
-        id: id,
-        name: name,
-        sourceCount: sourceCount,
-        phase: phase ?? this.phase,
-        progress: progress ?? this.progress,
-        note: clearNote ? null : (note ?? this.note),
-        error: error,
-      );
+  }) => PendingSubmission(
+    id: id,
+    name: name,
+    sourceCount: sourceCount,
+    phase: phase ?? this.phase,
+    progress: progress ?? this.progress,
+    note: clearNote ? null : (note ?? this.note),
+    error: error,
+  );
 }
 
 /// Everything a batch needs, copied from the form when the user pressed start.
@@ -91,7 +90,9 @@ class _Task {
 }
 
 final submissionQueueProvider =
-    NotifierProvider<SubmissionQueue, List<PendingSubmission>>(SubmissionQueue.new);
+    NotifierProvider<SubmissionQueue, List<PendingSubmission>>(
+      SubmissionQueue.new,
+    );
 
 /// Runs started batches one at a time in the background (download on the
 /// phone, upload, create), so the translate screen is free right away.
@@ -129,7 +130,14 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
     task
       ..cancelled = false
       ..done = Completer();
-    _update(id, (s) => s.copyWith(phase: SubmissionPhase.waiting, progress: 0, clearNote: true));
+    _update(
+      id,
+      (s) => s.copyWith(
+        phase: SubmissionPhase.waiting,
+        progress: 0,
+        clearNote: true,
+      ),
+    );
     unawaited(_pump());
     return task.done.future;
   }
@@ -154,7 +162,10 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
     for (final file in task.phoneDownloads.values) {
       _deleteQuietly(file);
     }
-    state = [for (final s in state) if (s.id != id) s];
+    state = [
+      for (final s in state)
+        if (s.id != id) s,
+    ];
   }
 
   Future<void> _pump() async {
@@ -162,7 +173,9 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
     _running = true;
     try {
       while (true) {
-        final next = state.where((s) => s.phase == SubmissionPhase.waiting).firstOrNull;
+        final next = state
+            .where((s) => s.phase == SubmissionPhase.waiting)
+            .firstOrNull;
         if (next == null) break;
         final task = _tasks[next.id];
         if (task == null) break;
@@ -182,9 +195,14 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
       final serverLinks = await _downloadOnPhone(id, task);
       if (task.cancelled) throw const ApiException('Đã hủy tải lên');
       phase = SubmissionPhase.uploading;
-      _update(id, (s) => s.copyWith(phase: phase, progress: 0, clearNote: true));
+      _update(
+        id,
+        (s) => s.copyWith(phase: phase, progress: 0, clearNote: true),
+      );
       final request = task.request;
-      final phoneFiles = [for (final link in request.links) ?task.phoneDownloads[link]];
+      final phoneFiles = [
+        for (final link in request.links) ?task.phoneDownloads[link],
+      ];
       // The choice is remembered, but only honoured while the account has a logo.
       final applyLogo = request.config.applyLogo && await _accountHasLogo();
       final batch = await _repo.createBatch(
@@ -197,7 +215,9 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
         onProgress: (sent, total) {
           if (total <= 0) return;
           final progress = sent / total;
-          phase = progress >= 1 ? SubmissionPhase.creating : SubmissionPhase.uploading;
+          phase = progress >= 1
+              ? SubmissionPhase.creating
+              : SubmissionPhase.uploading;
           _update(id, (s) => s.copyWith(phase: phase, progress: progress));
         },
       );
@@ -205,9 +225,13 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
         _deleteQuietly(file);
       }
       _tasks.remove(id);
-      state = [for (final s in state) if (s.id != id) s];
+      state = [
+        for (final s in state)
+          if (s.id != id) s,
+      ];
       // Refresh in place when the list is open; it loads fresh otherwise.
-      if (ref.exists(jobListProvider)) unawaited(ref.read(jobListProvider.notifier).refresh());
+      if (ref.exists(jobListProvider))
+        unawaited(ref.read(jobListProvider.notifier).refresh());
       task.done.complete(batch);
     } catch (error) {
       final uploadFinished = phase == SubmissionPhase.creating;
@@ -221,7 +245,8 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
         id,
         task,
         task.cancelled ? 'Đã hủy tải lên' : errorMessage(error),
-        resetKey: rejected || !uploadStarted || (task.cancelled && !uploadFinished),
+        resetKey:
+            rejected || !uploadStarted || (task.cancelled && !uploadFinished),
       );
     } finally {
       task.cancelToken = null;
@@ -230,7 +255,14 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
 
   void _fail(String id, _Task task, String message, {required bool resetKey}) {
     if (resetKey) task.idempotencyKey = null;
-    _update(id, (s) => s.copyWith(phase: SubmissionPhase.failed, clearNote: true, error: message));
+    _update(
+      id,
+      (s) => s.copyWith(
+        phase: SubmissionPhase.failed,
+        clearNote: true,
+        error: message,
+      ),
+    );
     if (!task.done.isCompleted) task.done.complete(null);
   }
 
@@ -244,28 +276,42 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
     final downloader = ref.read(phoneVideoDownloaderProvider);
     final pending = [
       for (final link in links)
-        if (policy.onPhone(link) && !task.phoneDownloads.containsKey(link)) link,
+        if (policy.onPhone(link) && !task.phoneDownloads.containsKey(link))
+          link,
     ];
     for (final (index, link) in pending.indexed) {
       if (task.cancelled) break;
-      if (index > 0) await Future<void>.delayed(const Duration(milliseconds: 1500));
-      _update(id, (s) => s.copyWith(
-            progress: 0,
-            note: '${socialPlatformOf(link) ?? 'Video'} ${index + 1}/${pending.length}',
-          ));
+      if (index > 0)
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+      _update(
+        id,
+        (s) => s.copyWith(
+          progress: 0,
+          note:
+              '${socialPlatformOf(link) ?? 'Video'} ${index + 1}/${pending.length}',
+        ),
+      );
       try {
         final video = await downloader.download(
           link,
           cancelToken: task.cancelToken,
-          onProgress: (progress) => _update(id, (s) => s.copyWith(progress: progress)),
+          onProgress: (progress) =>
+              _update(id, (s) => s.copyWith(progress: progress)),
         );
-        task.phoneDownloads[link] =
-            PickedMedia(path: video.path, name: video.name, size: video.size, sourceUrl: video.sourceUrl);
+        task.phoneDownloads[link] = PickedMedia(
+          path: video.path,
+          name: video.name,
+          size: video.size,
+          sourceUrl: video.sourceUrl,
+        );
       } on PhoneDownloadException {
         // Left for the server, which tries it with its own downloader.
       }
     }
-    return [for (final link in links) if (!task.phoneDownloads.containsKey(link)) link];
+    return [
+      for (final link in links)
+        if (!task.phoneDownloads.containsKey(link)) link,
+    ];
   }
 
   /// Waits for the branding settings instead of reading a value that may not
@@ -278,9 +324,13 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
     }
   }
 
-  PendingSubmission? _find(String id) => state.where((s) => s.id == id).firstOrNull;
+  PendingSubmission? _find(String id) =>
+      state.where((s) => s.id == id).firstOrNull;
 
-  void _update(String id, PendingSubmission Function(PendingSubmission) change) {
+  void _update(
+    String id,
+    PendingSubmission Function(PendingSubmission) change,
+  ) {
     state = [for (final s in state) s.id == id ? change(s) : s];
   }
 

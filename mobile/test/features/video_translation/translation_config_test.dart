@@ -113,10 +113,17 @@ void main() {
       voiceKey: 'adam',
       voiceGender: 'male',
       speechRate: 1.25,
+      musicTrackId: 'lofi01',
       subtitle: SubtitleStyle(placementMode: 'bottom_safe', textColor: '#ffeb3b'),
     );
     final restored = TranslationConfig.fromPrefs(jsonDecode(jsonEncode(config.toPrefs())) as Map<String, dynamic>);
     expect(restored.toFormFields()..remove('batch_name'), config.toFormFields()..remove('batch_name'));
+  });
+
+  test('library music track is sent only in mode 3', () {
+    expect(const TranslationConfig(mode: 3, musicTrackId: 'abc').toFormFields()['background_music_id'], 'abc');
+    expect(const TranslationConfig(mode: 3).toFormFields().containsKey('background_music_id'), isFalse);
+    expect(const TranslationConfig(mode: 2, musicTrackId: 'abc').toFormFields().containsKey('background_music_id'), isFalse);
   });
 
   test('extractLinks finds each link once', () {

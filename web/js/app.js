@@ -530,6 +530,7 @@ async function startProtectedApplication() {
     canManageSources ? refreshDouyinAuthStatus() : Promise.resolve(),
     tiktokWorkspace.refresh(),
     refreshUserBrandingAvatar(),
+    loadMusicLibrary(),
   ]);
   clearInterval(state.pollTimer);
   state.pollTimer = null;
@@ -1860,6 +1861,135 @@ function renderAdminContact(messages) {
   }).join("");
 }
 
+// ---- Background-music library (admin uploads, users pick it for dubbing) ----
+
+function formatTrackLength(seconds) {
+  const total = Math.round(Number(seconds) || 0);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+let musicPreview = null;
+
+function stopMusicPreview() {
+  if (musicPreview) musicPreview.pause();
+  musicPreview = null;
+  const button = $("#previewBackgroundMusic");
+  if (button) button.textContent = "▶ Nghe thử";
+}
+
+function syncMusicPicker() {
+  const select = $("#backgroundMusicId");
+  const file = $("#backgroundMusicFile");
+  if (!select || !file) return;
+  const fromLibrary = Boolean(select.value);
+  file.classList.toggle("is-hidden", fromLibrary);
+  if (fromLibrary) file.value = "";
+  $("#previewBackgroundMusic").disabled = !fromLibrary;
+  stopMusicPreview();
+}
+
+async function loadMusicLibrary() {
+  const select = $("#backgroundMusicId");
+  if (!select) return;
+  let items = [];
+  try {
+    items = (await requestJson("/api/v1/music-tracks")).items || [];
+  } catch {
+    // The picker still works with a user upload when the library is unavailable.
+  }
+  state.musicTracks = items;
+  const current = select.value;
+  select.innerHTML = '<option value="">— Tự tải file nhạc của bạn —</option>' + items.map(track =>
+    `<option value="${escapeHtml(track.track_id)}">${escapeHtml(track.title)} (${formatTrackLength(track.duration_seconds)})</option>`,
+  ).join("");
+  if (items.some(track => track.track_id === current)) select.value = current;
+  syncMusicPicker();
+}
+
+$("#backgroundMusicId")?.addEventListener("change", syncMusicPicker);
+$("#previewBackgroundMusic")?.addEventListener("click", () => {
+  const trackId = $("#backgroundMusicId").value;
+  if (!trackId) return;
+  if (musicPreview) return stopMusicPreview();
+  musicPreview = new Audio(`/api/v1/music-tracks/${encodeURIComponent(trackId)}/audio`);
+  musicPreview.addEventListener("ended", stopMusicPreview);
+  musicPreview.play().catch(() => { stopMusicPreview(); toast("Không phát được bản nhạc", true); });
+  $("#previewBackgroundMusic").textContent = "⏸ Dừng";
+});
+
+async function loadAdminMusic() {
+  const list = $("#adminMusicList");
+  if (!list) return;
+  list.innerHTML = '<div class="empty-state"><strong>Đang tải thư viện nhạc…</strong></div>';
+  try {
+    const items = (await requestJson("/api/v1/music-tracks")).items || [];
+    if (!items.length) {
+      list.innerHTML = '<div class="empty-state"><strong>Chưa có bản nhạc nào</strong><span>Tải nhạc lên để người dùng chọn khi lồng tiếng.</span></div>';
+      return;
+    }
+    list.innerHTML = items.map(track => `
+      <article class="admin-music-item" data-music-id="${escapeHtml(track.track_id)}" data-music-title="${escapeHtml(track.title)}">
+        <div class="admin-music-info">
+          <strong>${escapeHtml(track.title)}</strong>
+          <small>${formatTrackLength(track.duration_seconds)} · ${formatBytes(Number(track.size_bytes))} · ${escapeHtml(track.extension.replace(".", "").toUpperCase())} · ${escapeHtml(new Date(track.created_at).toLocaleString("vi-VN"))}</small>
+        </div>
+        <audio controls preload="none" src="${escapeHtml(track.audio_url)}"></audio>
+        <div class="admin-music-actions">
+          <button class="button secondary mini-btn" type="button" data-admin-rename-music>Đổi tên</button>
+          <button class="button secondary mini-btn" type="button" data-admin-delete-music>Xoá</button>
+        </div>
+      </article>`).join("");
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state error"><strong>${escapeHtml(err.message)}</strong></div>`;
+  }
+}
+
+$("#refreshAdminMusic")?.addEventListener("click", loadAdminMusic);
+$("#adminMusicUploadForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $('button[type="submit"]', form);
+  const data = new FormData(form);
+  const file = data.get("file");
+  if (!(file instanceof File) || !file.name) return toast("Hãy chọn file nhạc", true);
+  if (file.size > 30 * 1024 * 1024) return toast("File nhạc vượt quá 30 MB", true);
+  button.disabled = true;
+  try {
+    await requestJson("/api/v1/admin/music-tracks", { method: "POST", body: data });
+    form.reset();
+    toast("Đã thêm nhạc nền vào thư viện");
+    await Promise.all([loadAdminMusic(), loadMusicLibrary()]);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#adminMusicList")?.addEventListener("click", async event => {
+  const item = event.target.closest("[data-music-id]");
+  if (!item) return;
+  const trackId = encodeURIComponent(item.dataset.musicId);
+  try {
+    if (event.target.closest("[data-admin-rename-music]")) {
+      const title = prompt("Tên mới cho bản nhạc:", item.dataset.musicTitle);
+      if (!title || !title.trim()) return;
+      const body = new FormData();
+      body.set("title", title.trim());
+      await requestJson(`/api/v1/admin/music-tracks/${trackId}`, { method: "POST", body });
+      toast("Đã đổi tên");
+    } else if (event.target.closest("[data-admin-delete-music]")) {
+      if (!confirm(`Xoá "${item.dataset.musicTitle}" khỏi thư viện? Các job đã tạo vẫn giữ nhạc của mình.`)) return;
+      await requestJson(`/api/v1/admin/music-tracks/${trackId}`, { method: "DELETE" });
+      toast("Đã xoá bản nhạc");
+    } else {
+      return;
+    }
+    await Promise.all([loadAdminMusic(), loadMusicLibrary()]);
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 const SYSTEM_REFRESH_MS = 5000;
 
 function usageLevel(percent, warn = 70, danger = 85) {
@@ -2202,7 +2332,14 @@ async function submitBatch(event) {
   if (music instanceof File && !music.name) formData.delete("background_music");
   const sourceCookies = formData.get("source_cookies");
   if (sourceCookies instanceof File && !sourceCookies.name) formData.delete("source_cookies");
-  if ($("#mode").value === "3" && !formData.has("background_music")) return toast("Mode 3 cần một file nhạc nền", true);
+  if ($("#mode").value === "3") {
+    // An uploaded file wins over the library pick; send only one of them.
+    if (formData.has("background_music")) formData.delete("background_music_id");
+    else if (!formData.get("background_music_id")) return toast("Chế độ nhạc nền: hãy chọn nhạc trong thư viện hoặc tải file nhạc lên", true);
+  } else {
+    formData.delete("background_music");
+    formData.delete("background_music_id");
+  }
 
   const pendingUpload = {
     id: crypto.randomUUID?.() || `upload-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -3130,6 +3267,9 @@ $$("[data-admin-subtab]").forEach(tabBtn => {
     } else if (tabName === "contact") {
       $("#adminSubtabContact")?.classList.remove("is-hidden");
       loadAdminContact();
+    } else if (tabName === "music") {
+      $("#adminSubtabMusic")?.classList.remove("is-hidden");
+      loadAdminMusic();
     } else if (tabName === "system") {
       $("#adminSubtabSystem")?.classList.remove("is-hidden");
       startAdminSystemRefresh();

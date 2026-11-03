@@ -20,11 +20,15 @@ class TranslationProviderInfo {
 
   String get statusNote {
     if (!allowed) return 'cần gói Creator/Pro';
-    if (!configured) return const {'translategemma', 'qwen3'}.contains(key) ? 'chưa chạy Ollama' : 'chưa cấu hình key';
+    if (!configured)
+      return const {'translategemma', 'qwen3'}.contains(key)
+          ? 'chưa chạy Ollama'
+          : 'chưa cấu hình key';
     return '';
   }
 
-  factory TranslationProviderInfo.fromJson(Map<String, dynamic> json) => TranslationProviderInfo(
+  factory TranslationProviderInfo.fromJson(Map<String, dynamic> json) =>
+      TranslationProviderInfo(
         key: json['key'] as String,
         label: json['label'] as String? ?? json['key'] as String,
         configured: json['configured'] == true,
@@ -32,14 +36,20 @@ class TranslationProviderInfo {
         description: json['description'] as String? ?? '',
       );
 
-  static List<TranslationProviderInfo> listFromJson(Map<String, dynamic> json) => [
-        for (final item in json['providers'] as List? ?? const [])
-          TranslationProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)),
-      ];
+  static List<TranslationProviderInfo> listFromJson(
+    Map<String, dynamic> json,
+  ) => [
+    for (final item in json['providers'] as List? ?? const [])
+      TranslationProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)),
+  ];
 }
 
 class TtsVoice {
-  const TtsVoice({required this.key, required this.gender, required this.label});
+  const TtsVoice({
+    required this.key,
+    required this.gender,
+    required this.label,
+  });
 
   final String key;
   final String gender;
@@ -48,10 +58,10 @@ class TtsVoice {
   String get displayLabel => '${gender == 'male' ? 'Nam' : 'Nữ'} — $label';
 
   factory TtsVoice.fromJson(Map<String, dynamic> json) => TtsVoice(
-        key: json['key'].toString(),
-        gender: json['gender'] as String? ?? 'female',
-        label: json['label'] as String? ?? json['key'].toString(),
-      );
+    key: json['key'].toString(),
+    gender: json['gender'] as String? ?? 'female',
+    label: json['label'] as String? ?? json['key'].toString(),
+  );
 }
 
 /// `GET /api/v1/tts-providers` item.
@@ -82,7 +92,8 @@ class TtsProviderInfo {
 
   String get statusNote {
     if (!allowed) return 'cần gói Creator/Pro';
-    if (!configured) return key == 'cit' ? 'chưa mở ứng dụng' : 'chưa cấu hình key';
+    if (!configured)
+      return key == 'cit' ? 'chưa mở ứng dụng' : 'chưa cấu hình key';
     return '';
   }
 
@@ -95,7 +106,8 @@ class TtsProviderInfo {
           TtsVoice(key: 'male', gender: 'male', label: maleVoiceLabel),
         ];
 
-  factory TtsProviderInfo.fromJson(Map<String, dynamic> json) => TtsProviderInfo(
+  factory TtsProviderInfo.fromJson(Map<String, dynamic> json) =>
+      TtsProviderInfo(
         key: json['key'] as String,
         label: json['label'] as String? ?? json['key'] as String,
         configured: json['configured'] == true,
@@ -111,14 +123,17 @@ class TtsProviderInfo {
       );
 
   static List<TtsProviderInfo> listFromJson(Map<String, dynamic> json) => [
-        for (final item in json['providers'] as List? ?? const [])
-          TtsProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)),
-      ];
+    for (final item in json['providers'] as List? ?? const [])
+      TtsProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)),
+  ];
 }
 
 /// Picks a usable provider when the remembered one is locked, with the same
 /// fallbacks as the web form.
-String pickTranslationProvider(String current, List<TranslationProviderInfo> providers) {
+String pickTranslationProvider(
+  String current,
+  List<TranslationProviderInfo> providers,
+) {
   final byKey = {for (final p in providers) p.key: p};
   if (byKey[current]?.usable ?? false) return current;
   for (final key in const ['gemini', 'translategemma']) {

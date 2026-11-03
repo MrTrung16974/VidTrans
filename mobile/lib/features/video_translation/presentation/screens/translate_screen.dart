@@ -169,9 +169,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     if (readOnly) {
       return Scaffold(
         backgroundColor: AppColors.bg,
-        appBar: const StudioTopBar(
-          activeStudioPill: StudioCategoryPill.video,
-        ),
+        appBar: const StudioTopBar(activeStudioPill: StudioCategoryPill.video),
         body: StudioEmptyState(
           icon: Icons.lock_outline_rounded,
           title: 'Tài khoản chỉ xem',
@@ -195,9 +193,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: const StudioTopBar(
-        activeStudioPill: StudioCategoryPill.video,
-      ),
+      appBar: const StudioTopBar(activeStudioPill: StudioCategoryPill.video),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
         children: [
@@ -687,12 +683,63 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           ),
         ],
         if (config.needsMusic) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
+          _musicPicker(config, state),
+        ],
+      ],
+    );
+  }
+
+  /// Mode 3: a track of the admin-managed library, or the user's own file.
+  Widget _musicPicker(TranslationConfig config, TranslateFormState state) {
+    final library = ref.watch(musicTracksProvider);
+    final tracks = library.valueOrNull ?? const <MusicTrack>[];
+    final selected = tracks.any((t) => t.id == config.musicTrackId)
+        ? config.musicTrackId
+        : '';
+    if (library.hasValue &&
+        selected.isEmpty &&
+        config.musicTrackId.isNotEmpty) {
+      // The remembered track was removed from the library: forget it.
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _form.selectMusicTrack(''),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: SelectField(
+                label: 'Nhạc nền',
+                value: selected,
+                helper: tracks.isEmpty
+                    ? 'Thư viện chưa có nhạc — hãy tải file nhạc của bạn.'
+                    : null,
+                options: [
+                  (value: '', label: 'Tự tải file nhạc của bạn'),
+                  for (final t in tracks)
+                    (value: t.id, label: '${t.title} (${t.durationLabel})'),
+                ],
+                onChanged: _form.selectMusicTrack,
+              ),
+            ),
+            if (selected.isNotEmpty)
+              AudioPreviewButton(
+                sourceKey: selected,
+                uri: (repo) => repo.musicTrackAudioUri(selected),
+                errorText: 'Không phát được bản nhạc.',
+              ),
+          ],
+        ),
+        if (selected.isEmpty) ...[
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _pickMusic,
             icon: const Icon(Icons.music_note_outlined),
             label: Text(
-              state.music?.name ?? 'Chọn nhạc nền dùng chung (MP3/WAV/M4A)',
+              state.music?.name ?? 'Chọn file nhạc nền (MP3/WAV/M4A)',
               overflow: TextOverflow.ellipsis,
             ),
           ),

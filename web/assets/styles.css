@@ -6977,3 +6977,18 @@ input[type="file"]::-webkit-file-upload-button:active {
   .access-menu-table td:last-child::before { content: none; }
   .access-menu-table input[type="number"] { max-width: none; }
 }
+
+/* Background-music library: admin upload row and the dubbing picker. */
+.admin-music-upload { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; padding: 4px 0 14px; }
+.admin-music-item { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.admin-music-item .admin-music-info { flex: 1 1 220px; min-width: 0; display: grid; gap: 2px; }
+.admin-music-item .admin-music-info strong { overflow-wrap: anywhere; }
+.admin-music-item audio { flex: 1 1 240px; max-width: 100%; height: 36px; }
+.admin-music-item .admin-music-actions { display: flex; gap: 8px; }
+.music-picker { display: flex; gap: 8px; align-items: center; }
+.music-picker select { flex: 1; min-width: 0; }
+#musicField { display: grid; gap: 8px; }
+#musicField.is-hidden { display: none; }
+@media (max-width: 720px) {
+  .admin-music-upload { grid-template-columns: 1fr; }
+}
