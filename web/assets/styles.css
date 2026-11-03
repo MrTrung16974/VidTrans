@@ -4478,15 +4478,15 @@ input[type="file"]::-webkit-file-upload-button:active {
     transform: translateX(-50%) !important;
     z-index: 1000 !important;
     margin: 0 !important;
-    background: linear-gradient(135deg, rgba(43, 24, 16, 0.93) 0%, rgba(28, 25, 23, 0.95) 52%, rgba(15, 23, 42, 0.95) 100%) !important;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 250, 245, 0.96) 100%) !important;
     backdrop-filter: blur(28px) saturate(190%) !important;
     -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
-    border: 1.2px solid rgba(251, 146, 60, 0.36) !important;
+    border: 1.5px solid #e2e8f0 !important;
     border-radius: 999px !important;
     box-shadow:
-      0 18px 38px -6px rgba(2, 6, 23, 0.42),
-      0 6px 18px -4px rgba(234, 88, 12, 0.22),
-      inset 0 1px 0 rgba(255, 237, 213, 0.18) !important;
+      0 14px 34px -6px rgba(15, 23, 42, 0.14),
+      0 4px 12px -2px rgba(234, 88, 12, 0.08),
+      inset 0 1px 0 #ffffff !important;
     display: flex !important;
     align-items: center !important;
     white-space: nowrap !important;
@@ -4503,12 +4503,12 @@ input[type="file"]::-webkit-file-upload-button:active {
     flex-direction: column !important;
     align-items: center !important;
     justify-content: center !important;
-    color: rgba(255, 247, 237, 0.76) !important;
+    color: #64748b !important;
     background: transparent !important;
     box-shadow: none !important;
     transform: none !important;
     position: relative !important;
-    border: 1px solid transparent !important;
+    border: 1.5px solid transparent !important;
     border-radius: 999px !important;
     text-decoration: none !important;
     white-space: nowrap !important;
@@ -4516,8 +4516,8 @@ input[type="file"]::-webkit-file-upload-button:active {
   }
   .nav-tabs a:hover {
     transform: none !important;
-    background: rgba(255, 247, 237, 0.08) !important;
-    color: #ffffff !important;
+    background: rgba(241, 245, 249, 0.85) !important;
+    color: #0f172a !important;
     box-shadow: none !important;
   }
 
@@ -4527,7 +4527,7 @@ input[type="file"]::-webkit-file-upload-button:active {
     flex: 0 0 22px !important;
     background: transparent !important;
     box-shadow: none !important;
-    color: rgba(255, 247, 237, 0.78) !important;
+    color: #64748b !important;
     display: grid !important;
     place-items: center !important;
     border-radius: 0 !important;
@@ -4545,35 +4545,35 @@ input[type="file"]::-webkit-file-upload-button:active {
     font-weight: 600 !important;
     line-height: 1.05 !important;
     letter-spacing: -0.015em !important;
-    color: rgba(255, 247, 237, 0.76) !important;
+    color: #64748b !important;
     text-align: center !important;
     white-space: nowrap !important;
   }
 
-  /* Active item highlight - Netflix capsule pill in VidTrans warm orange palette */
+  /* Active item highlight - Netflix capsule pill matching VidTrans light studio card style */
   .nav-tabs a.active {
-    background: linear-gradient(180deg, #f97316 0%, #ea580c 55%, #c2410c 100%) !important;
-    color: #ffffff !important;
-    border: 1px solid rgba(254, 215, 170, 0.6) !important;
+    background: linear-gradient(180deg, #fffaf5 0%, #ffedd5 100%) !important;
+    color: var(--brand, #ea580c) !important;
+    border: 1.5px solid #ea580c !important;
     border-radius: 999px !important;
     box-shadow:
-      0 6px 16px -2px rgba(234, 88, 12, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.32) !important;
+      0 4px 12px -2px rgba(234, 88, 12, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
   }
   .nav-tabs a.active:hover {
     transform: none !important;
   }
   .nav-tabs a.active > i {
-    color: #ffffff !important;
+    color: var(--brand, #ea580c) !important;
     background: transparent !important;
     box-shadow: none !important;
   }
   .nav-tabs a.active > i svg {
-    stroke: #ffffff !important;
+    stroke: var(--brand, #ea580c) !important;
     stroke-width: 2.2 !important;
   }
   .nav-tabs a.active span {
-    color: #ffffff !important;
+    color: var(--brand-dark, #c2410c) !important;
     font-weight: 800 !important;
   }
   .nav-tabs a.active::after {
@@ -4592,9 +4592,9 @@ input[type="file"]::-webkit-file-upload-button:active {
     font-weight: 900 !important;
     line-height: 13px !important;
     border-radius: 999px !important;
-    border: 1.2px solid #0f172a !important;
+    border: 1.5px solid #ffffff !important;
     margin: 0 !important;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important;
+    box-shadow: 0 2px 6px rgba(234, 88, 12, 0.35) !important;
     z-index: 2 !important;
   }
   .nav-tabs a .nav-badge.is-zero {
@@ -4606,8 +4606,8 @@ input[type="file"]::-webkit-file-upload-button:active {
     color: #ffffff !important;
   }
   .nav-tabs a.active .nav-badge.has-active {
-    background: #fde047 !important;
-    color: #0f172a !important;
+    background: var(--brand, #ea580c) !important;
+    color: #ffffff !important;
   }
 
   body:has(#authGate:not(.is-hidden)) .nav-tabs {

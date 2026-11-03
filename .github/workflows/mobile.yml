@@ -55,11 +55,26 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
-      - run: flutter build apk --debug
+      # Sign with the shared VidTrans key so CI and local APKs can update each
+      # other on a phone. Without the secrets the build falls back to debug key.
+      - name: Restore release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/vidtrans-upload.jks"
+          cat > android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/vidtrans-upload.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=upload
+          keyPassword=$KEYSTORE_PASSWORD
+          EOF
+      - run: flutter build apk --release --dart-define=VIDTRANS_API_BASE=https://vidtrans.cloud
       - uses: actions/upload-artifact@v4
         with:
-          name: vidtrans-debug-apk
-          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
+          name: vidtrans-release-apk
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 7
 
   ios:

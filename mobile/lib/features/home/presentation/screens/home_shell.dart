@@ -233,15 +233,14 @@ class _FloatingNetflixDock extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x3D0F172A),
+            color: Color(0x220F172A),
             blurRadius: 28,
             spreadRadius: -2,
             offset: Offset(0, 12),
           ),
           BoxShadow(
-            color: Color(0x22EA580C),
-            blurRadius: 16,
-            spreadRadius: -4,
+            color: Color(0x14EA580C),
+            blurRadius: 12,
             offset: Offset(0, 4),
           ),
         ],
@@ -251,23 +250,21 @@ class _FloatingNetflixDock extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
           child: Container(
-            height: compact ? 60 : 66,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            height: compact ? 60 : 64,
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
                 colors: [
-                  Color(0xED2B1810),
-                  Color(0xF21C1917),
-                  Color(0xF20F172A),
+                  Color(0xF5FFFFFF),
+                  Color(0xF5FFFAF5),
                 ],
-                stops: [0.0, 0.52, 1.0],
               ),
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
-                color: const Color(0x5CFB923C),
-                width: 1.2,
+                color: const Color(0xFFE2E8F0),
+                width: 1.5,
               ),
             ),
             child: LayoutBuilder(
@@ -289,22 +286,20 @@ class _FloatingNetflixDock extends StatelessWidget {
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
-                                Color(0xFFF97316),
-                                Color(0xFFEA580C),
-                                Color(0xFFC2410C),
+                                Color(0xFFFFFAF5),
+                                Color(0xFFFFEDD5),
                               ],
-                              stops: [0.0, 0.55, 1.0],
                             ),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                              color: const Color(0x99FED7AA),
-                              width: 1.15,
+                              color: AppColors.brand,
+                              width: 1.5,
                             ),
                             boxShadow: const [
                               BoxShadow(
-                                color: Color(0x66EA580C),
-                                blurRadius: 14,
-                                offset: Offset(0, 3),
+                                color: Color(0x2AEA580C),
+                                blurRadius: 10,
+                                offset: Offset(0, 2),
                               ),
                             ],
                           ),
@@ -347,8 +342,8 @@ class _DockButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fgColor = selected ? Colors.white : const Color(0xC7FFF7ED);
-    final labelColor = selected ? Colors.white : const Color(0xC2FFF7ED);
+    final fgColor = selected ? AppColors.brand : const Color(0xFF64748B);
+    final labelColor = selected ? AppColors.brandDark : const Color(0xFF64748B);
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -387,22 +382,20 @@ class _DockButton extends StatelessWidget {
                         ),
                         decoration: BoxDecoration(
                           color: selected
-                              ? const Color(0xFFFDE047)
-                              : AppColors.brand,
+                              ? AppColors.brand
+                              : const Color(0xFF0F172A),
                           borderRadius: BorderRadius.circular(999),
                           border: Border.all(
-                            color: const Color(0xFF0F172A),
-                            width: 1.2,
+                            color: Colors.white,
+                            width: 1.5,
                           ),
                         ),
                         child: Text(
                           '${item.badgeCount}',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 9,
                             fontWeight: FontWeight.w900,
-                            color: selected
-                                ? const Color(0xFF0F172A)
-                                : Colors.white,
+                            color: Colors.white,
                           ),
                         ),
                       ),
