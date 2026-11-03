@@ -3320,7 +3320,7 @@ def process_video(
         )
         translation_cache_hit = translation_checkpoint is not None
         if same_language:
-            translation_cache_hit = False
+            # Cheap and deterministic, so always rebuilt; a stored checkpoint is reused as-is.
             translated_segments = passthrough_segments(segments, language=target_language)
             update_job(
                 job_id,
@@ -3364,7 +3364,7 @@ def process_video(
                         **translation_kwargs,
                     )
         record_job_stage_cache(job_id, "translation", translation_cache_hit)
-        if translation_cache_hit:
+        if translation_cache_hit and not same_language:
             update_job(job_id, step_detail="Đã dùng lại bản dịch hợp lệ", progress=0.46)
             if subtitle_source != "independent":
                 # Translations cached before the leak check may still carry Chinese names.
@@ -3420,7 +3420,10 @@ def process_video(
         })
         update_job(job_id, translation_file=stored_artifact_name(translation_path))
         ensure_translation_complete(translated_segments, target_language=target_language)
-        if not translation_cache_hit and not same_language:
+        # Same-language passthrough is committed too: later stages (TTS, render)
+        # chain their checksums off this checkpoint, and the fingerprint already
+        # holds the source/target pair, so it never leaks into another target.
+        if not translation_cache_hit:
             translation_checkpoint = checkpoint_store.commit_json(
                 "translation",
                 fingerprint=translation_fingerprint,
