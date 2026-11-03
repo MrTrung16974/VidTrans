@@ -212,6 +212,7 @@ from pipeline.translation import (
     ensure_translation_complete,
     filter_meaningful_segments,
     fit_translations_to_voice,
+    passthrough_segments,
     repair_leaked_translations,
     segment_filter_signature,
     translate_segments,
@@ -3298,8 +3299,9 @@ def process_video(
         )
         if effective_source_language == "auto":
             raise RuntimeError("Không xác định được ngôn ngữ nguồn từ âm thanh")
-        if effective_source_language == target_language:
-            raise RuntimeError("Ngôn ngữ nhận diện trùng với ngôn ngữ đích")
+        # Already in the target language: nothing to translate, keep the original words
+        # and go on to subtitles/dubbing instead of failing the job.
+        same_language = effective_source_language == target_language
         translation_fingerprint = fingerprint_payload(
             {
                 "version": 1,
@@ -3317,7 +3319,18 @@ def process_video(
             validator=valid_translation_checkpoint,
         )
         translation_cache_hit = translation_checkpoint is not None
-        if translation_checkpoint is not None:
+        if same_language:
+            translation_cache_hit = False
+            translated_segments = passthrough_segments(segments, language=target_language)
+            update_job(
+                job_id,
+                same_language_passthrough=True,
+                step_detail=(
+                    f"Nguồn đã là {language_profile(target_language).label_vi}: "
+                    "giữ nguyên lời gốc, không dịch"
+                ),
+            )
+        elif translation_checkpoint is not None:
             translated_segments = list(translation_checkpoint.payload["segments"])
         else:
             with measure_job_stage(job_id, "translation", video_duration=video_duration):
@@ -3364,7 +3377,7 @@ def process_video(
                 )
                 if repaired:
                     update_job(job_id, step_detail=f"Đã sửa {repaired} câu dịch còn sót chữ gốc")
-        if mode in (2, 3) and target_language == "vi":
+        if mode in (2, 3) and target_language == "vi" and not same_language:
             fit_dubbing_translations(job_id, translated_segments, source_language=effective_source_language)
         translation_fallback_cues = sum(
             1 for segment in translated_segments if segment.get("translation_status") == "source_fallback"
@@ -3376,6 +3389,11 @@ def process_video(
             translation_detail = (
                 f"Đã dịch đầy đủ; {translation_backup_cues} câu phải dịch bằng nhà cung cấp dự phòng "
                 "vì AI dịch đã chọn bị lỗi"
+            )
+        elif same_language:
+            translation_detail = (
+                f"Nguồn đã là {language_profile(target_language).label_vi}: giữ nguyên lời gốc, "
+                + ("chỉ lồng tiếng" if mode in (2, 3) else "chỉ tạo phụ đề")
             )
         else:
             translation_detail = "Đã dịch đầy đủ các câu"
@@ -3402,7 +3420,7 @@ def process_video(
         })
         update_job(job_id, translation_file=stored_artifact_name(translation_path))
         ensure_translation_complete(translated_segments, target_language=target_language)
-        if not translation_cache_hit:
+        if not translation_cache_hit and not same_language:
             translation_checkpoint = checkpoint_store.commit_json(
                 "translation",
                 fingerprint=translation_fingerprint,

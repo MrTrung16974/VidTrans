@@ -185,9 +185,6 @@ class LeakRepairTests(unittest.TestCase):
         self.assertEqual(segments[3]["text"], "世 giới")  # Still leaking: keep the original.
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RecordingCondenser:
     def __init__(self, replies: dict[str, str]) -> None:
@@ -441,3 +438,35 @@ class BrokenProviderFallbackTests(unittest.TestCase):
         ensure_translation_complete(translated)
         self.assertEqual(broken.calls, 1)  # Marked down after the first 404, not retried per cue.
         self.assertTrue(all(item["translation_status"] == "translated" for item in translated))
+
+
+class SameLanguagePassthroughTests(unittest.TestCase):
+    def test_target_language_source_is_kept_and_passes_completeness_check(self) -> None:
+        from pipeline.translation import ensure_translation_complete, passthrough_segments
+
+        segments = [
+            {"start": 0, "end": 1.5, "text": "  Xin chào   các bạn ", "subtitle_layout": {"old": 1}},
+            {"start": 2, "end": 3, "text": "♪", "skip_subtitle": True},
+        ]
+        result = passthrough_segments(segments, language="vi")
+
+        self.assertEqual(result[0]["text"], "Xin chào các bạn")
+        self.assertEqual(result[0]["source_text"], "Xin chào các bạn")
+        self.assertEqual(result[0]["translation_status"], "source_passthrough")
+        self.assertEqual(result[1]["translation_status"], "skipped")
+        self.assertNotIn("subtitle_layout", result[0])
+        ensure_translation_complete(result, target_language="vi")
+
+    def test_independent_subtitles_pass_through_target_language_group(self) -> None:
+        from pipeline.translation import translate_segments_by_source_language
+
+        result = translate_segments_by_source_language(
+            [{"start": 0, "end": 1, "text": "Chào", "source_language": "vi"}],
+            target_language="vi", default_source_language="vi",
+            translator_factory=lambda *_: (_ for _ in ()).throw(AssertionError("must not translate")),
+        )
+        self.assertEqual(result[0]["text"], "Chào")
+        self.assertEqual(result[0]["translation_status"], "source_passthrough")
+
+if __name__ == "__main__":
+    unittest.main()

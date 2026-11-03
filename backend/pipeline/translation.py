@@ -635,6 +635,30 @@ def translate_segments(
     return output
 
 
+def passthrough_segments(segments: Sequence[dict[str, Any]], *, language: str) -> list[dict[str, Any]]:
+    """Cues already in the target language: keep the spoken text as the "translation".
+
+    Used when the source is detected as the target language, so the job only
+    subtitles/dubs the original words instead of failing.
+    """
+    output = []
+    for segment in segments:
+        source = _clean(str(segment.get("source_text") or segment.get("text") or ""))
+        result = {
+            **segment, "start": float(segment["start"]), "end": float(segment["end"]),
+            "source_text": source, "text": source,
+            "translation_status": "skipped" if segment.get("skip_subtitle") else "source_passthrough",
+            "translation_provider": "passthrough",
+            "translation_fallback": False,
+            "source_language": language,
+            "target_language": language,
+        }
+        result.pop("subtitle_layout", None)
+        result.pop("translation_error", None)
+        output.append(result)
+    return output
+
+
 def translate_segments_by_source_language(
     segments: Sequence[dict[str, Any]],
     *,
@@ -671,15 +695,10 @@ def translate_segments_by_source_language(
                 }
             continue
         if source_language == target_language:
-            for index, segment in indexed_segments:
-                output[index] = {
-                    **segment,
-                    "source_text": _clean(str(segment.get("text") or "")),
-                    "translation_status": "source_passthrough",
-                    "translation_provider": "passthrough",
-                    "source_language": source_language,
-                    "target_language": target_language,
-                }
+            for (index, _), segment in zip(
+                indexed_segments, passthrough_segments([segment for _, segment in indexed_segments], language=source_language)
+            ):
+                output[index] = segment
             continue
         translated = translate_segments(
             [segment for _, segment in indexed_segments],
