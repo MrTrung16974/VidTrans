@@ -175,6 +175,7 @@ from pipeline.ocr import (
     OCRConfig,
     annotate_ocr_segments_with_asr,
     extract_burned_subtitle_segments,
+    get_default_reader,
     merge_independent_ocr_asr_segments,
     merge_ocr_and_asr_segments,
     split_repeated_captions,
@@ -2791,6 +2792,27 @@ def burn_subtitles(
             return False
 
 
+CAPTION_CHECK_MIN_CONFIDENCE = 0.6
+
+
+def caption_text_checker() -> Callable[[Sequence[Path]], bool] | None:
+    """OCR check that a found caption band really holds text, or None without OCR."""
+    if SETTINGS.ocr_backend == "off":
+        return None
+
+    def has_caption_text(frames: Sequence[Path]) -> bool:
+        reader = get_default_reader(SETTINGS.ocr_backend, SETTINGS.ocr_model)
+        with _ocr_slots:
+            for frame in frames:
+                for line in reader.read(frame):
+                    letters = sum(1 for character in line.text if character.isalpha())
+                    if letters >= 2 and line.confidence >= CAPTION_CHECK_MIN_CONFIDENCE:
+                        return True
+        return False
+
+    return has_caption_text
+
+
 def normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized = []
     for segment in raw_segments:
@@ -3100,6 +3122,7 @@ def recognize_video_source(
                         ffmpeg=FFMPEG,
                         frame_size=(source_probe.width, source_probe.height),
                         config=CaptionAlignmentConfig(roi_top=ocr_roi_top, roi_bottom=ocr_roi_bottom),
+                        has_caption_text=caption_text_checker(),
                     )
             except JobCancelled:
                 raise
@@ -3214,6 +3237,8 @@ def process_video(
                 "asr_vad_gap_recovery": 2,
                 # Stock outros ("Ghiền Mì Gõ", "subscribe") dropped, songs heard again as lyrics.
                 "asr_stock_filter": 1,
+                # Caption alignment checks the band with OCR and keeps leftover words in order.
+                "caption_alignment": 2,
                 "ocr_enabled": SETTINGS.ocr_backend != "off",
                 "ocr_backend": SETTINGS.ocr_backend,
                 "ocr_sample_fps": ocr_sample_fps,

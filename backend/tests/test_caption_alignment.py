@@ -149,5 +149,39 @@ class CaptionTimedCueTests(unittest.TestCase):
         self.assertEqual(subtitle_render_window(segments, 0), (1.0, 2.0))
 
 
+class FalseCaptionTests(unittest.TestCase):
+    def test_leftover_words_between_captions_stay_separate_and_in_order(self) -> None:
+        # Job 8850e74a: "xuân," "đi" "ngày" fell between captions and became one cue
+        # spanning 8.3-13.8 s, which later split into cues out of order.
+        words = [_word("Quân", 7.0, 7.7), _word("ơi,", 7.7, 8.0), _word("xuân,", 8.3, 8.56),
+                 _word("vẫn", 8.9, 9.2), _word("buồn", 9.2, 9.7), _word("đi", 12.68, 12.9),
+                 _word("xíu", 13.2, 13.6)]
+        segment = {"start": 7.0, "end": 13.6, "text": "Quân ơi, xuân, vẫn buồn đi xíu", "words": words}
+        cues = align_words_to_captions([segment], [(7.0, 8.0), (8.83, 9.77), (13.13, 13.7)],
+                                       CaptionAlignmentConfig(min_word_coverage=0.5, max_speech_lead=0.0))
+        cues = segment_subtitle_cues(cues)
+        starts = [cue["start"] for cue in cues]
+        self.assertEqual(starts, sorted(starts))
+        self.assertIn("xuân,", [cue["text"] for cue in cues])
+        self.assertIn("đi", [cue["text"] for cue in cues])
+
+    def test_caption_band_without_text_keeps_whisper_timing(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from pipeline.caption_alignment import align_speech_to_burned_captions
+
+        segments = [{"start": 0.0, "end": 2.0, "text": "Kìa mùa xuân", "words": [_word("Kìa", 0.0, 0.5)]}]
+        checked = []
+        with patch("pipeline.caption_alignment.detect_caption_intervals", return_value=[(0.0, 2.0)]), \
+                patch("pipeline.caption_alignment.caption_check_frames", return_value=[Path("band.png")]):
+            result = align_speech_to_burned_captions(
+                Path("v.mp4"), segments, ffmpeg="ffmpeg", frame_size=(1080, 1920),
+                has_caption_text=lambda frames: checked.append(list(frames)) or False,
+            )
+        self.assertIs(result, segments)
+        self.assertEqual(checked, [[Path("band.png")]])
+
+
 if __name__ == "__main__":
     unittest.main()

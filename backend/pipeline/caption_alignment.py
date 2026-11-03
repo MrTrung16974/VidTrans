@@ -12,9 +12,10 @@ from __future__ import annotations
 import logging
 import math
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 from pipeline.ocr import _subtitle_change_signature
 from pipeline.subtitle_segmentation import _joined_text
@@ -305,8 +306,9 @@ def align_words_to_captions(
         return None
 
     assigned: dict[int, list[tuple[int, dict[str, Any]]]] = {}
-    leftovers: list[tuple[int, dict[str, Any]]] = []
-    for item, (spoken_start, spoken_end) in zip(words, _spoken_spans(words, config)):
+    # (word position, item): positions tell which leftover words are actually adjacent.
+    leftovers: list[tuple[int, tuple[int, dict[str, Any]]]] = []
+    for position, (item, (spoken_start, spoken_end)) in enumerate(zip(words, _spoken_spans(words, config))):
         start = spoken_start + offset
         end = spoken_end + offset
         overlap, slot = max(
@@ -320,7 +322,7 @@ def align_words_to_captions(
                 for index, (first, last) in enumerate(intervals)
             )
             if distance > config.word_snap_seconds:
-                leftovers.append(item)
+                leftovers.append((position, item))
                 continue
         assigned.setdefault(slot, []).append(item)
 
@@ -347,12 +349,17 @@ def align_words_to_captions(
 
     # Speech outside every caption keeps Whisper timing, trimmed so it never
     # overlaps a caption window.
+    # Only consecutive words form one cue: words of one Whisper segment that fall
+    # between different captions must not become a single cue spanning them
+    # (job 8850e74a: "xuân, đi ngày" ran 8.3-13.8 s across four captions).
     groups: list[list[tuple[int, dict[str, Any]]]] = []
-    for item in leftovers:
-        if groups and groups[-1][-1][0] == item[0]:
+    previous_position = None
+    for position, item in leftovers:
+        if groups and previous_position == position - 1 and groups[-1][-1][0] == item[0]:
             groups[-1].append(item)
         else:
             groups.append([item])
+        previous_position = position
     for group in groups:
         start = float(group[0][1]["start"])
         end = float(group[-1][1]["end"])
@@ -462,6 +469,33 @@ def detect_caption_intervals(
     return caption_intervals(density, changes, times, segments, config)
 
 
+CAPTION_CHECK_FRAMES = 3
+
+
+def caption_check_frames(
+    video_path: Path,
+    intervals: Sequence[tuple[float, float]],
+    directory: Path,
+    *,
+    ffmpeg: str,
+    config: CaptionAlignmentConfig,
+) -> list[Path]:
+    """The caption band of the middle frame of the longest intervals, as PNG files."""
+    longest = sorted(intervals, key=lambda span: span[1] - span[0], reverse=True)[:CAPTION_CHECK_FRAMES]
+    height = config.roi_bottom - config.roi_top
+    frames: list[Path] = []
+    for index, (first, last) in enumerate(longest):
+        output = directory / f"caption_check_{index}.png"
+        subprocess.run(
+            [ffmpeg, "-v", "error", "-y", "-ss", f"{(first + last) / 2:.3f}", "-i", str(video_path),
+             "-frames:v", "1", "-vf", f"crop=iw:ih*{height:.4f}:0:ih*{config.roi_top:.4f}", str(output)],
+            check=True, capture_output=True, timeout=60,
+        )
+        if output.is_file():
+            frames.append(output)
+    return frames
+
+
 def align_speech_to_burned_captions(
     video_path: Path,
     segments: list[dict[str, Any]],
@@ -469,8 +503,14 @@ def align_speech_to_burned_captions(
     ffmpeg: str,
     frame_size: tuple[int, int],
     config: CaptionAlignmentConfig | None = None,
+    has_caption_text: Callable[[Sequence[Path]], bool] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return caption-aligned speech cues, or the input when there are no captions."""
+    """Return caption-aligned speech cues, or the input when there are no captions.
+
+    The band scan only sees strokes, so a busy picture (flowers, patterned clothes
+    moving in the bottom third) can pass for captions. ``has_caption_text`` reads a
+    few of the found caption frames and vetoes the alignment when none holds text.
+    """
 
     config = config or CaptionAlignmentConfig()
     intervals = detect_caption_intervals(
@@ -483,4 +523,11 @@ def align_speech_to_burned_captions(
     if not intervals:
         logger.info("No burned-in caption band found; keeping Whisper timing")
         return segments
+    if has_caption_text is not None:
+        with tempfile.TemporaryDirectory(prefix="caption-check-") as directory:
+            frames = caption_check_frames(video_path, intervals, Path(directory), ffmpeg=ffmpeg, config=config)
+            if frames and not has_caption_text(frames):
+                logger.info("Caption band holds no readable text in %d sampled frame(s); keeping Whisper timing",
+                            len(frames))
+                return segments
     return align_words_to_captions(segments, intervals, config) or segments
