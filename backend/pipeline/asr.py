@@ -71,6 +71,46 @@ def _silent(audio: Any, rate: int, start: float, end: float) -> bool:
     return clip.size == 0 or float(np.sqrt(np.mean(np.square(clip)))) < SILENT_GAP_RMS
 
 
+# Stock lines Whisper "hears" in music or silence: outros of the videos it was trained
+# on. A strong phrase never occurs in real speech, so it always goes; a weak one is
+# dropped only when Whisper itself thinks the audio is probably not speech.
+STOCK_HALLUCINATION_STRONG = re.compile(
+    r"ghiền\s*mì\s*gõ|la\s*la\s*school|amara\.org|明镜与点点|请不吝点赞|字幕由|"
+    r"không\s+bỏ\s+lỡ\s+những\s+video\s+hấp\s+dẫn",
+    re.IGNORECASE,
+)
+STOCK_HALLUCINATION_WEAK = re.compile(
+    r"subscribe|đăng\s*ký\s*(cho\s*)?kênh|cảm\s*ơn\s*các\s*bạn\s*đã\s*(theo\s*dõi|xem)|"
+    r"hẹn\s*gặp\s*lại\s*các\s*bạn|thanks?\s*(you\s*)?for\s*watching|谢谢观看|订阅",
+    re.IGNORECASE,
+)
+STOCK_WEAK_MIN_NO_SPEECH_PROB = 0.4
+# A short cue that tells Whisper the audio is sung: with it, a song comes out as its
+# lyrics instead of a stock outro. Only languages listed here get the sung retry.
+LYRICS_PROMPTS = {"vi": "Lời bài hát:", "en": "Lyrics:", "zh": "歌词：", "ja": "歌詞：", "ko": "가사:"}
+
+
+def is_stock_hallucination(segment: dict[str, Any]) -> bool:
+    text = str(segment.get("text") or "")
+    if STOCK_HALLUCINATION_STRONG.search(text):
+        return True
+    return bool(
+        STOCK_HALLUCINATION_WEAK.search(text)
+        and float(segment.get("no_speech_prob") or 0.0) >= STOCK_WEAK_MIN_NO_SPEECH_PROB
+    )
+
+
+def _spoken_seconds(segments: Sequence[dict[str, Any]]) -> float:
+    """Seconds of audio covered by cues that hold text (overlaps counted once)."""
+    spans = [(float(s["start"]), float(s["end"])) for s in segments if str(s.get("text") or "").strip()]
+    return sum(end - start for start, end in _merge_spans(spans))
+
+
+def drop_stock_hallucinations(segments: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    kept = [segment for segment in segments if not is_stock_hallucination(segment)]
+    return kept, len(segments) - len(kept)
+
+
 def drop_repetition_loops(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove Whisper repetition-loop output so the time it covered can be re-heard.
 
@@ -329,9 +369,38 @@ class ASRService:
                     result = self._recover_lost_speech(model, audio, result, attempt, [*muted, *no_speech])
             else:
                 result = self._openai_result(model, audio, attempt)
+            kept, dropped = drop_stock_hallucinations(result.segments)
+            if dropped:
+                logger.warning("Dropped %d stock Whisper hallucination segment(s)", dropped)
+                result = ASRResult(kept, result.detected_language, result.language_probability, result.repeated)
+            if dropped:
+                # A stock outro where audio plays is almost always a song: Whisper lost the
+                # lyrics there. Hear it again as lyrics and keep whichever covers more.
+                sung = self._transcribe_as_lyrics(model, audio, forced or result.detected_language, progress)
+                if sung is not None and _spoken_seconds(sung.segments) > _spoken_seconds(result.segments):
+                    return sung
             if any((segment.get("text") or "").strip() for segment in result.segments):
                 return result
         return ASRResult([])
+
+    def _transcribe_as_lyrics(
+        self, model: Any, audio: Any, language: str | None, progress: ProgressCallback | None,
+    ) -> ASRResult | None:
+        prompt = LYRICS_PROMPTS.get(str(language or "").split("-")[0].lower())
+        if not prompt or self.config.engine != "faster":
+            return None
+        logger.info("Stock hallucination found; hearing the audio again as sung lyrics (%s)", language)
+        result = self._faster_result(
+            model, audio, {"language": language, "beam": True, "vad": False, "strict": False, "prompt": prompt}, progress,
+        )
+        prompt_text = _loop_text(prompt)
+        kept = [
+            segment for segment in drop_stock_hallucinations(result.segments)[0]
+            if _loop_text(segment.get("text")) and _loop_text(segment.get("text")) != prompt_text
+        ]
+        if not kept:
+            return None
+        return ASRResult(kept, result.detected_language, result.language_probability, result.repeated)
 
     def transcribe_chinese(
         self, model_name: str, media_path: Path, *, progress: ProgressCallback | None = None,
@@ -435,6 +504,8 @@ class ASRService:
             options.update(temperature=0, condition_on_previous_text=False)
         elif attempt["strict"]:
             options.update(temperature=0, condition_on_previous_text=True, hallucination_silence_threshold=1.0)
+        if attempt.get("prompt"):
+            options.update(temperature=0, condition_on_previous_text=False, initial_prompt=attempt["prompt"])
         generator, info = model.transcribe(audio, **options)
         total = float(getattr(info, "duration", 0) or 0) or None
         segments = []

@@ -250,3 +250,40 @@ class ChunkedFeatureTests(unittest.TestCase):
                 self.assertEqual(actual.shape, expected.shape)
                 np.testing.assert_array_equal(actual, expected)
 
+
+
+def _scored(start, end, text, no_speech_prob):
+    segment = _segment(start, end, text)
+    segment.no_speech_prob = no_speech_prob
+    return segment
+
+
+class StockHallucinationTests(unittest.TestCase):
+    OUTRO = "Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn"
+
+    def test_song_heard_as_stock_outro_is_heard_again_as_lyrics(self):
+        # Job 8850e74a: a 15 s Tết song came out as the "Ghiền Mì Gõ" outro, no lyrics.
+        model = FakeFasterModel([
+            [_scored(0.0, 8.5, self.OUTRO, 0.62)],
+            [_scored(0.0, 7.0, "Lời bài hát:", 0.08), _scored(0.0, 7.0, "Kìa mùa xuân đang đến trước thềm", 0.08),
+             _scored(7.0, 15.0, "Ta chung nhau đi xin mừng", 0.08)],
+        ])
+        result = service(model).transcribe("medium", Path("v.mp4"), source_language="vi")
+        self.assertEqual([s["text"] for s in result.segments],
+                         ["Kìa mùa xuân đang đến trước thềm", "Ta chung nhau đi xin mừng"])
+        self.assertEqual(model.calls[1]["initial_prompt"], "Lời bài hát:")
+        self.assertFalse(model.calls[1]["vad_filter"])
+
+    def test_real_speech_mentioning_subscribe_is_kept_without_a_retry(self):
+        model = FakeFasterModel([[_scored(0.0, 3.0, "Các bạn nhớ subscribe kênh nhé", 0.05)]])
+        result = service(model).transcribe("medium", Path("v.mp4"), source_language="vi")
+        self.assertEqual([s["text"] for s in result.segments], ["Các bạn nhớ subscribe kênh nhé"])
+        self.assertEqual(len(model.calls), 1)
+
+    def test_outro_after_speech_is_dropped_and_shorter_lyrics_retry_is_ignored(self):
+        model = FakeFasterModel([
+            [_scored(0.0, 9.0, "Hôm nay mình nấu món phở", 0.05), _scored(9.0, 12.0, self.OUTRO, 0.7)],
+            [_scored(0.0, 2.0, "la la", 0.3)],
+        ])
+        result = service(model).transcribe("medium", Path("v.mp4"), source_language="vi")
+        self.assertEqual([s["text"] for s in result.segments], ["Hôm nay mình nấu món phở"])
