@@ -5,11 +5,15 @@ import json
 import math
 import logging
 import re
+import shutil
+import subprocess
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ContextManager
 from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit, urlunsplit
+
+from infrastructure.tiktok_slideshow import MAX_IMAGES, render_slideshow, slideshow_duration
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,8 @@ class SocialVideoDownloadCancelled(SocialVideoDownloadError):
     pass
 
 
+SLIDESHOW_KEY = "_vidtrans_slideshow"
+SLIDESHOW_MAX_FILE_BYTES = 40 * 1024 * 1024
 AUDIO_ONLY_EXTENSIONS = {"mp3", "m4a", "aac", "opus", "ogg", "wav", "flac"}
 
 
@@ -285,16 +291,76 @@ class SocialVideoDownloader:
         data = payload.get("data") or {}
         if payload.get("code") != 0:
             return None
-        if data.get("images"):
-            raise SocialVideoDownloadError(
-                "Link TikTok này là bài đăng ảnh (slideshow), không có video. Hãy dùng link một video"
-            )
+        images = [str(image) for image in (data.get("images") or []) if image]
+        if images:
+            music = data.get("music") or (data.get("music_info") or {}).get("play")
+            return {"id": str(data.get("id") or "photo"), "title": data.get("title") or "Ảnh TikTok",
+                    "duration": slideshow_duration(min(len(images), MAX_IMAGES)), "ext": "mp4",
+                    SLIDESHOW_KEY: {"images": images[:MAX_IMAGES], "music": str(music) if music else None}}
         play = data.get("hdplay") or data.get("play")
         if not play:
             return None
         return {"id": str(data.get("id") or "video"), "title": data.get("title") or "Video TikTok",
                 "duration": data.get("duration"), "ext": "mp4",
                 "url": urljoin("https://www.tikwm.com/", play)}
+
+    def _download_slideshow(
+        self,
+        info: dict[str, Any],
+        destination_stem: Path,
+        *,
+        progress_callback: ProgressCallback | None,
+        cancel_requested: CancelCallback | None,
+    ) -> dict[str, Any]:
+        """Fetch a photo post's images and soundtrack, render them to ``<stem>.mp4``."""
+        slideshow = info[SLIDESHOW_KEY]
+        image_urls: list[str] = slideshow["images"]
+        scratch = destination_stem.with_name(destination_stem.name + ".slideshow")
+        shutil.rmtree(scratch, ignore_errors=True)
+        scratch.mkdir(parents=True)
+        try:
+            images: list[Path] = []
+            for index, image_url in enumerate(image_urls):
+                if cancel_requested and cancel_requested():
+                    raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
+                images.append(self._fetch_to(image_url, scratch / f"image_{index:02d}"))
+                if progress_callback:
+                    progress_callback(index + 1, len(image_urls) + 1)
+            audio = None
+            if slideshow.get("music"):
+                try:
+                    audio = self._fetch_to(slideshow["music"], scratch / "music")
+                except Exception as music_error:
+                    logger.warning("TikTok slideshow music download failed; using silence: %s", music_error)
+            if cancel_requested and cancel_requested():
+                raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
+            output = destination_stem.with_name(destination_stem.name + ".mp4")
+            temporary = scratch / "slideshow.mp4"
+            try:
+                duration = render_slideshow(self.ffmpeg_location or "ffmpeg", images, audio, temporary)
+            except subprocess.CalledProcessError as render_error:
+                detail = (render_error.stderr or b"").decode("utf-8", errors="ignore")[-300:]
+                logger.warning("TikTok slideshow render failed: %s", detail)
+                raise SocialVideoDownloadError("Không dựng được video từ bài đăng ảnh TikTok") from render_error
+            temporary.replace(output)
+            if progress_callback:
+                progress_callback(len(image_urls) + 1, len(image_urls) + 1)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        logger.info("Rendered TikTok photo post %s from %d images", info.get("id"), len(images))
+        return {"id": info.get("id"), "title": info.get("title"), "duration": duration}
+
+    def _fetch_to(self, url: str, stem: Path) -> Path:
+        """Download ``url`` to ``stem`` (size-capped) and return the written path."""
+        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.tiktok.com/"})
+        with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
+            data = response.read(SLIDESHOW_MAX_FILE_BYTES + 1)
+        if len(data) > SLIDESHOW_MAX_FILE_BYTES:
+            raise SocialVideoDownloadError("Ảnh trong bài đăng TikTok quá lớn")
+        if not data:
+            raise RuntimeError(f"Empty file from {urlsplit(url).netloc}")
+        stem.write_bytes(data)
+        return stem
 
     def _ssstik_info(self, url: str) -> dict[str, Any] | None:
         """yt-dlp info for the download link ssstik.io renders, or None when it has none."""
@@ -547,9 +613,15 @@ class SocialVideoDownloader:
                 if rejected:
                     raise SocialVideoDownloadError(rejected)
                 progress_hook({})
-                with self._create_ydl(options) as ydl:
-                    downloaded_info = ydl.process_ie_result(info, download=True)
-                    sanitized = ydl.sanitize_info(downloaded_info) if hasattr(ydl, "sanitize_info") else dict(downloaded_info or info)
+                if info.get(SLIDESHOW_KEY):
+                    sanitized = self._download_slideshow(
+                        info, destination_stem, progress_callback=progress_callback,
+                        cancel_requested=cancel_requested,
+                    )
+                else:
+                    with self._create_ydl(options) as ydl:
+                        downloaded_info = ydl.process_ie_result(info, download=True)
+                        sanitized = ydl.sanitize_info(downloaded_info) if hasattr(ydl, "sanitize_info") else dict(downloaded_info or info)
             except SocialVideoDownloadError:
                 cleanup()
                 raise

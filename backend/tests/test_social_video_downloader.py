@@ -540,9 +540,6 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             self.assertTrue(cookie_path.is_file())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class DouyinCanonicalUrlTests(unittest.TestCase):
     VIDEO = "https://www.douyin.com/video/7661982102736473384"
@@ -585,3 +582,129 @@ class DouyinCanonicalUrlTests(unittest.TestCase):
             )
         self.assertEqual(seen, {"url": self.VIDEO, "allowed": ["douyin"]})
         self.assertEqual(result.source_url, self.VIDEO)
+
+
+class AudioOnlyYoutubeDL:
+    """yt-dlp that resolves a TikTok post to its soundtrack only, as it does from a server IP."""
+
+    processed: list[dict] = []
+
+    def __init__(self, options: dict) -> None:
+        self.options = options
+
+    def __enter__(self) -> "AudioOnlyYoutubeDL":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def extract_info(self, url: str, *, download: bool) -> dict:
+        info = {"id": "1", "ext": "mp3", "vcodec": "none", "formats": [{"format_id": "audio", "ext": "mp3", "vcodec": "none"}]}
+        reason = self.options["match_filter"](info)
+        if reason:
+            return {}  # yt-dlp skips the entry and downloads nothing
+        raise AssertionError("audio-only info must be filtered")
+
+    def process_ie_result(self, info: dict, *, download: bool) -> dict:
+        AudioOnlyYoutubeDL.processed.append(info)
+        Path(self.options["outtmpl"].replace("%(ext)s", "mp4")).write_bytes(b"video")
+        return info
+
+    @staticmethod
+    def sanitize_info(info: dict) -> dict:
+        return dict(info)
+
+
+class FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> "FakeResponse":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def read(self, limit: int = -1) -> bytes:
+        return self.body
+
+
+def fake_urlopen(tikwm_data: dict):
+    import json as _json
+
+    def opener(request, timeout=None):
+        url = request.full_url if hasattr(request, "full_url") else str(request)
+        if url.startswith("https://www.tikwm.com/api/"):
+            return FakeResponse(_json.dumps({"code": 0, "data": tikwm_data}).encode())
+        if "ssstik" in url:
+            raise AssertionError("ssstik must not run when tikwm answers")
+        return FakeResponse(b"bytes-of-" + url.encode())
+
+    return opener
+
+
+class AudioOnlyFallbackTests(unittest.TestCase):
+    def setUp(self) -> None:
+        AudioOnlyYoutubeDL.processed = []
+
+    def test_audio_only_tiktok_video_downloads_tikwm_hd_file(self) -> None:
+        data = {"id": "77", "title": "Clip", "duration": 15, "play": "https://cdn/sd.mp4", "hdplay": "https://cdn/hd.mp4"}
+        with TemporaryDirectory() as directory, patch("urllib.request.urlopen", side_effect=fake_urlopen(data)):
+            result = SocialVideoDownloader(ydl_factory=AudioOnlyYoutubeDL).download(
+                "https://www.tiktok.com/@a/video/77", Path(directory) / "job"
+            )
+        self.assertEqual(AudioOnlyYoutubeDL.processed[0]["url"], "https://cdn/hd.mp4")
+        self.assertEqual(result.path.suffix, ".mp4")
+
+    def test_tiktok_photo_post_is_rendered_into_a_video(self) -> None:
+        data = {"id": "88", "title": "Ảnh", "images": ["https://cdn/1.jpeg", "https://cdn/2.jpeg"], "music": "https://cdn/m.mp3"}
+        calls = []
+
+        def fake_render(ffmpeg, images, audio, output, **kwargs):
+            calls.append(([path.read_bytes() for path in images], audio.read_bytes() if audio else None))
+            Path(output).write_bytes(b"slideshow")
+            return 6.0
+
+        with TemporaryDirectory() as directory, \
+                patch("urllib.request.urlopen", side_effect=fake_urlopen(data)), \
+                patch("infrastructure.social_video_downloader.render_slideshow", side_effect=fake_render):
+            stem = Path(directory) / "job"
+            result = SocialVideoDownloader(ydl_factory=AudioOnlyYoutubeDL).download(
+                "https://www.tiktok.com/@a/photo/88", stem
+            )
+            self.assertEqual(result.path, (Path(directory) / "job.mp4").resolve())
+            self.assertEqual(result.path.read_bytes(), b"slideshow")
+            self.assertEqual(result.duration, 6.0)
+            # The scratch folder with the raw images is removed.
+            self.assertEqual(sorted(path.name for path in Path(directory).iterdir()), ["job.mp4"])
+        self.assertEqual(calls, [([b"bytes-of-https://cdn/1.jpeg", b"bytes-of-https://cdn/2.jpeg"], b"bytes-of-https://cdn/m.mp3")])
+        self.assertEqual(AudioOnlyYoutubeDL.processed, [])
+
+    def test_audio_only_youtube_reports_missing_video(self) -> None:
+        with TemporaryDirectory() as directory, \
+                patch("urllib.request.urlopen", side_effect=AssertionError("no TikTok fallback for YouTube")):
+            with self.assertRaisesRegex(SocialVideoDownloadError, "không có video"):
+                SocialVideoDownloader(ydl_factory=AudioOnlyYoutubeDL).download(
+                    "https://www.youtube.com/watch?v=abcdefghijk", Path(directory) / "job"
+                )
+
+
+class SlideshowCommandTests(unittest.TestCase):
+    def test_command_fits_every_image_and_loops_music(self) -> None:
+        from infrastructure.tiktok_slideshow import build_slideshow_command
+
+        command = build_slideshow_command("ffmpeg", [Path("a.jpg"), Path("b.jpg")], Path("m.mp3"), Path("o.mp4"))
+        self.assertEqual(command.count("-loop"), 2)
+        self.assertIn("-stream_loop", command)
+        self.assertEqual(command[command.index("-t", command.index("-filter_complex")) + 1], "6.000")
+        self.assertIn("+faststart", command)
+
+    def test_command_without_music_adds_silence(self) -> None:
+        from infrastructure.tiktok_slideshow import build_slideshow_command
+
+        command = build_slideshow_command("ffmpeg", [Path("a.jpg")], None, Path("o.mp4"))
+        self.assertIn("anullsrc=r=44100:cl=stereo", command)
+
+
+if __name__ == "__main__":
+    unittest.main()
