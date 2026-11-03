@@ -75,3 +75,32 @@ class VocalSeparator:
             output.writeframes(pcm.tobytes())
         temporary.replace(output_path)
         return output_path
+
+
+# A 100 ms frame holds a voice when the vocal stem keeps a fair part of the mix's
+# level: Demucs leaves an instrumental's bleed well under a quarter of it.
+VOICE_FRAME_SECONDS = 0.1
+VOICE_MIN_LEVEL = 0.01
+VOICE_MIN_SHARE_OF_MIX = 0.25
+
+
+def voiced_seconds(
+    vocals: np.ndarray,
+    mix: np.ndarray,
+    spans: list[tuple[float, float]],
+    *,
+    sample_rate: int = OUTPUT_SAMPLE_RATE,
+) -> float:
+    """Seconds inside ``spans`` where the vocal stem carries a voice, not bleed."""
+
+    frame = int(sample_rate * VOICE_FRAME_SECONDS)
+    voiced = 0
+    for start, end in spans:
+        first = int(start * sample_rate)
+        last = min(int(end * sample_rate), len(vocals), len(mix))
+        for offset in range(first, last - frame + 1, frame):
+            voice = float(np.sqrt(np.mean(np.square(vocals[offset:offset + frame], dtype=np.float64))))
+            whole = float(np.sqrt(np.mean(np.square(mix[offset:offset + frame], dtype=np.float64))))
+            if voice >= VOICE_MIN_LEVEL and voice >= VOICE_MIN_SHARE_OF_MIX * whole:
+                voiced += 1
+    return voiced * VOICE_FRAME_SECONDS

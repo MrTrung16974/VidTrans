@@ -115,7 +115,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         return;
       }
       final existing = ref.read(translateFormProvider).links.toSet();
-      final fresh = extractLinks(raw).where((l) => !existing.contains(l)).toList();
+      final fresh = extractLinks(
+        raw,
+      ).where((l) => !existing.contains(l)).toList();
       if (fresh.length != _clipboardLinks.length ||
           !fresh.every(_clipboardLinks.contains)) {
         setState(() => _clipboardLinks = fresh);
@@ -130,9 +132,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       final raw = data?.text?.trim() ?? '';
       if (!mounted) return;
       if (raw.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Bộ nhớ tạm đang trống')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Bộ nhớ tạm đang trống')));
         return;
       }
       final added = _form.appendLinksText(raw);
@@ -149,7 +151,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         if (found.isNotEmpty) {
           setState(() => _clipboardLinks = const []);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Link trong bộ nhớ tạm đã có trong danh sách')),
+            const SnackBar(
+              content: Text('Link trong bộ nhớ tạm đã có trong danh sách'),
+            ),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -221,12 +225,24 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     FocusScope.of(context).unfocus();
     _update((c) => c.copyWith(batchName: _batchName.text));
     final count = ref.read(translateFormProvider).sourceCount;
-    if (_form.submit() == null) return;
+    if (_form.submit() == null) {
+      final err = ref.read(translateFormProvider).error;
+      if (err != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(err), behavior: SnackBarBehavior.floating),
+        );
+      }
+      if (count == 0) {
+        _jumpToStep(1, _step1Key);
+      }
+      return;
+    }
     _links.clear();
     _batchName.text = ref.read(translateFormProvider).config.batchName;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Đã đưa $count nguồn vào tiến trình, đang tải dưới nền'),
+        content: Text('Đã đưa $count video vào tiến trình, đang tải dưới nền'),
+        behavior: SnackBarBehavior.floating,
       ),
     );
     context.go('/jobs');
@@ -318,7 +334,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final tts = ref.watch(ttsProvidersProvider).valueOrNull;
     _reconcile(config, translation, tts);
 
-    final showQuickBar = state.sourceCount > 0 && !_atBottomSubmit;
+    // Keep the start bar visible like the web UI, including the empty 0/50
+    // state. Pressing it without a source shows validation and jumps back to
+    // the source step; hide it only when the full submit card is in view.
+    final showQuickBar = !_atBottomSubmit;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -331,10 +350,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               14,
               14,
               14,
-              studioDockBottomPadding(
-                context,
-                extra: showQuickBar ? 82 : 24,
-              ),
+              studioDockBottomPadding(context, extra: showQuickBar ? 82 : 24),
             ),
             children: [
               _heroHeader(),
@@ -666,7 +682,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                   onPressed: _pasteFromClipboard,
                   child: const Text(
                     'Dán ngay',
-                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 IconButton(
@@ -1448,8 +1467,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               ? (v) => _update(
                   (c) => c.copyWith(
                     keepOriginalAudio: v,
-                    originalAudioVolume:
-                        v && c.originalAudioVolume <= 0 ? 0.25 : c.originalAudioVolume,
+                    originalAudioVolume: v && c.originalAudioVolume <= 0
+                        ? 0.25
+                        : c.originalAudioVolume,
                   ),
                 )
               : null,
@@ -1807,14 +1827,33 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     );
   }
 
+  static String _langName(String code) {
+    return switch (code.toLowerCase()) {
+      'auto' => 'Tự động',
+      'zh-cn' || 'zh' => 'Trung',
+      'vi' => 'Việt',
+      'en' => 'Anh',
+      'ja' => 'Nhật',
+      'ko' => 'Hàn',
+      'th' => 'Thái',
+      'id' => 'Indo',
+      'es' => 'Tây Ban Nha',
+      _ => code.toUpperCase(),
+    };
+  }
+
   Widget _quickSubmitBar(TranslateFormState state) {
     final config = state.config;
     final modeLabel = switch (config.mode) {
-      1 => 'Chỉ phụ đề',
+      1 => 'Phụ đề',
       2 => 'Phụ đề + Voice',
-      4 => 'Chỉ tải về',
+      4 => 'Chỉ tải video',
       _ => 'Voice + Nhạc',
     };
+    final langLabel = config.downloadOnly
+        ? 'Chỉ tải video gốc'
+        : '${_langName(config.sourceLanguage)} → ${_langName(config.targetLanguage)}';
+
     return Material(
       color: Colors.transparent,
       child: Container(
@@ -1839,26 +1878,23 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
             child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+              padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xE8FFFFFF),
-                    Color(0xF2FFFAF5),
-                  ],
+                  colors: [Color(0xF0FFFFFF), Color(0xF8FFFAF5)],
                 ),
                 borderRadius: BorderRadius.circular(999),
-                border: Border.all(
-                  color: const Color(0xE6FED7AA),
-                  width: 1.5,
-                ),
+                border: Border.all(color: const Color(0xE6FED7AA), width: 1.5),
               ),
               child: Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
                         begin: Alignment.topCenter,
@@ -1900,9 +1936,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                             ),
                           ),
                           Text(
-                            config.downloadOnly
-                                ? 'Tải video gốc'
-                                : '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
+                            langLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1916,14 +1950,66 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  StudioGradientButton(
-                    expanded: false,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                    icon: Icons.rocket_launch_rounded,
-                    label: config.downloadOnly
-                        ? 'Tải ngay (${state.sourceCount})'
-                        : 'Bắt đầu (${state.sourceCount})',
-                    onPressed: _submit,
+                  InkWell(
+                    onTap: _submit,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFF97316), Color(0xFFEA580C)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: const Color(0x4DFFFFFF),
+                          width: 1,
+                        ),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x59EA580C),
+                            blurRadius: 14,
+                            spreadRadius: -2,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      padding: const EdgeInsets.fromLTRB(13, 7, 7, 7),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            config.downloadOnly
+                                ? (state.sourceCount > 0
+                                      ? 'Tải ngay (${state.sourceCount})'
+                                      : 'Bắt đầu tải')
+                                : (state.sourceCount > 0
+                                      ? 'Bắt đầu (${state.sourceCount})'
+                                      : 'Bắt đầu xử lý'),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 22,
+                            height: 22,
+                            decoration: const BoxDecoration(
+                              color: Color(0x38FFFFFF),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 13,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1937,7 +2023,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   Widget _submitCard(TranslateFormState state) {
     final config = state.config;
     final modeLabel = switch (config.mode) {
-      1 => 'Chỉ phụ đề',
+      1 => 'Phụ đề',
       2 => 'Phụ đề + Thuyết minh',
       4 => 'Chỉ tải video',
       _ => 'Phụ đề + Dub + Nhạc',
@@ -1987,7 +2073,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     label: 'Ngôn ngữ',
                     value: config.downloadOnly
                         ? 'Giữ nguyên'
-                        : '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
+                        : '${_langName(config.sourceLanguage)} → ${_langName(config.targetLanguage)}',
                   ),
                 ),
               ],
@@ -2016,8 +2102,12 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             onPressed: _submit,
             icon: Icons.rocket_launch_rounded,
             label: state.sourceCount > 0
-                ? 'Bắt đầu xử lý batch (${state.sourceCount} nguồn)'
-                : 'Bắt đầu xử lý batch',
+                ? (config.downloadOnly
+                      ? 'Tải batch (${state.sourceCount} video)'
+                      : 'Bắt đầu xử lý batch (${state.sourceCount} video)')
+                : (config.downloadOnly
+                      ? 'Bắt đầu tải video'
+                      : 'Bắt đầu xử lý batch'),
           ),
         ],
       ),
@@ -2250,31 +2340,31 @@ class _SubtitlePreviewMonitor extends StatelessWidget {
               ),
             ],
           ),
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: style.backgroundStyle == 'none'
-                      ? Colors.transparent
-                      : bg.withValues(alpha: 0.78),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  'Xin chào! Đây là phụ đề tiếng Việt tự động',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: fg,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w800,
-                  ),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: style.backgroundStyle == 'none'
+                    ? Colors.transparent
+                    : bg.withValues(alpha: 0.78),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                'Xin chào! Đây là phụ đề tiếng Việt tự động',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: fg,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ),
-          ],
-        ),
-      );
-    }
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _LinkSourceTile extends StatelessWidget {
@@ -2370,19 +2460,22 @@ class _SmartSourceNoticeState extends State<_SmartSourceNotice> {
     (
       icon: Icons.photo_library_outlined,
       title: 'Bài đăng ảnh TikTok → tự dựng thành video',
-      body: 'Mỗi ảnh hiện 3 giây kèm nhạc nền của bài. Bài ảnh không có lời nói, '
+      body:
+          'Mỗi ảnh hiện 3 giây kèm nhạc nền của bài. Bài ảnh không có lời nói, '
           'nên hãy chọn phụ đề lấy từ chữ trên ảnh (OCR).',
     ),
     (
       icon: Icons.hd_outlined,
       title: 'Tự lấy bản HD, không logo TikTok',
-      body: 'Khi TikTok chặn tải trực tiếp, hệ thống tự chuyển nguồn dự phòng '
+      body:
+          'Khi TikTok chặn tải trực tiếp, hệ thống tự chuyển nguồn dự phòng '
           'và ưu tiên bản gốc chất lượng cao nhất.',
     ),
     (
       icon: Icons.translate_rounded,
       title: 'Video đã đúng ngôn ngữ đích → không dịch',
-      body: 'Ví dụ video tiếng Việt, đích tiếng Việt: giữ nguyên lời gốc, '
+      body:
+          'Ví dụ video tiếng Việt, đích tiếng Việt: giữ nguyên lời gốc, '
           'chỉ tạo phụ đề hoặc lồng tiếng.',
     ),
   ];
@@ -2405,7 +2498,11 @@ class _SmartSourceNoticeState extends State<_SmartSourceNotice> {
               padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
               child: Row(
                 children: [
-                  const Icon(Icons.auto_awesome_rounded, size: 18, color: AppColors.brand),
+                  const Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 18,
+                    color: AppColors.brand,
+                  ),
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
@@ -2426,7 +2523,9 @@ class _SmartSourceNoticeState extends State<_SmartSourceNotice> {
                     ),
                   ),
                   Icon(
-                    _expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    _expanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
                     size: 18,
                     color: AppColors.brand,
                   ),

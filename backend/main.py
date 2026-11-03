@@ -205,7 +205,7 @@ from pipeline.audio_scene import (
 )
 from pipeline.caption_alignment import CaptionAlignmentConfig, align_speech_to_burned_captions
 from pipeline.speaker_embedding import SpeakerEmbedder
-from pipeline.vocal_separation import VocalSeparator
+from pipeline.vocal_separation import VocalSeparator, voiced_seconds
 from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, TikTokPost, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
@@ -942,6 +942,11 @@ AUDIO_SCENE_ENABLED = _env_flag("VIDTRANS_AUDIO_SCENE", "on") in {"1", "true", "
 VOCAL_SEPARATION_MODE = _env_flag("VIDTRANS_VOCAL_SEPARATION", "off")
 VOCAL_SEPARATION_MAX_SECONDS = float(os.environ.get("VIDTRANS_VOCAL_SEPARATION_MAX_SECONDS", "240") or 240)
 VOCAL_SEPARATION_MIN_MUSIC_SHARE = 0.5
+# Clips the classifier hears as music for most of their length get one Demucs pass
+# to find sung lyrics there, whatever VIDTRANS_VOCAL_SEPARATION says.
+SONG_VOCAL_CHECK_ENABLED = _env_flag("VIDTRANS_SONG_VOCAL_CHECK", "on") in {"1", "true", "yes", "on"}
+SONG_CLIP_MIN_MUTED_SHARE = 0.5
+SONG_MIN_VOICED_SECONDS = 3.0
 SPEAKER_EMBEDDING_ENABLED = _env_flag("VIDTRANS_SPEAKER_EMBEDDING", "on") in {"1", "true", "yes", "on"}
 AUDIO_SCENES = AudioSceneClassifier()
 VOCAL_SEPARATOR = VocalSeparator()
@@ -2911,25 +2916,49 @@ def prepare_speech_audio(
         "Job %s soundtrack: music under %.0f%% of speech, %d music-only span(s) %s",
         job_id, music_share * 100, len(muted), muted,
     )
+    duration = video_duration or len(samples) / 16000
+    muted_seconds = sum(end - start for start, end in muted)
     # Pure music everywhere: let Whisper try the lyrics rather than hear nothing.
-    if muted and sum(end - start for start, end in muted) >= (video_duration or 0) - 1.0:
+    if muted and muted_seconds >= duration - 1.0:
         muted = []
     speech_media = video_path
-    wants_separation = VOCAL_SEPARATION_MODE == "always" or (
+    separation_by_mode = VOCAL_SEPARATION_MODE == "always" or (
         VOCAL_SEPARATION_MODE == "auto"
         and music_share >= VOCAL_SEPARATION_MIN_MUSIC_SHARE
-        and (video_duration or 0) <= VOCAL_SEPARATION_MAX_SECONDS
+        and duration <= VOCAL_SEPARATION_MAX_SECONDS
     )
-    if wants_separation:
+    # Mostly "music" to the classifier, which scores sung lyrics low: on a song or
+    # lip-sync clip the lyrics are the content, so check the vocal stem for a voice
+    # before muting it (TikTok 87f54b58 kept only 4.5 s of a 58 s song).
+    song_check = (
+        SONG_VOCAL_CHECK_ENABLED
+        and bool(muted)
+        and muted_seconds >= SONG_CLIP_MIN_MUTED_SHARE * duration
+        and duration <= VOCAL_SEPARATION_MAX_SECONDS
+    )
+    if separation_by_mode or song_check:
         try:
             update_job(job_id, step_detail="Đang tách giọng nói khỏi nhạc nền")
             with measure_job_stage(job_id, "vocal_separation", video_duration=video_duration):
                 ensure_job_active(job_id)
-                speech_media = VOCAL_SEPARATOR.separate(video_path, work_dir / VOCALS_FILENAME)
+                vocals_path = VOCAL_SEPARATOR.separate(video_path, work_dir / VOCALS_FILENAME)
+            speech_media = vocals_path
+            if song_check:
+                vocals = decode_audio(str(vocals_path), sampling_rate=16000)
+                heard = voiced_seconds(vocals, samples, muted)
+                logger.info(
+                    "Job %s: vocal stem carries a voice for %.1fs of %.1fs muted as music",
+                    job_id, heard, muted_seconds,
+                )
+                if heard >= SONG_MIN_VOICED_SECONDS:
+                    muted = []
+                elif not separation_by_mode:
+                    speech_media = video_path
         except JobCancelled:
             raise
         except Exception:
             logger.warning("Vocal separation failed for job %s; using the original audio", job_id, exc_info=True)
+            speech_media = video_path
     return speech_media, muted
 
 
@@ -3130,6 +3159,13 @@ def recognize_video_source(
             except Exception:
                 logger.warning("Caption alignment failed; keeping Whisper timing", exc_info=True)
     if not segments:
+        music_seconds = sum(end - start for start, end in music_only_regions(scenes)) if scenes else 0.0
+        if video_duration and music_seconds >= SONG_CLIP_MIN_MUTED_SHARE * video_duration:
+            raise RuntimeError(
+                "Video chủ yếu là nhạc/tiếng hát và không nhận diện được lời nào để dịch "
+                "(kể cả sau khi tách giọng khỏi nhạc). Video kiểu hát nhép hoặc chỉ có nhạc "
+                "không có lời rõ thì không tạo được phụ đề."
+            )
         raise RuntimeError(
             "Không nhận diện được phụ đề hoặc lời thoại nguồn. "
             "Kiểm tra vùng OCR, ngôn ngữ nguồn hoặc thử Whisper model lớn hơn."
