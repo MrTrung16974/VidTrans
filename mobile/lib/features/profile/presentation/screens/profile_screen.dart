@@ -68,7 +68,12 @@ class ProfileScreen extends ConsumerWidget {
           await ref.read(sessionProvider.notifier).reload();
         },
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+          padding: EdgeInsets.fromLTRB(
+            14,
+            14,
+            14,
+            studioDockBottomPadding(context),
+          ),
           children: [
             StudioPageHeader(
               eyebrow: 'Tài khoản & gắn logo',

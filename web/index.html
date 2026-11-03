@@ -123,6 +123,37 @@
             </div>
           </div>
 
+          <nav class="workflow-steps-nav" aria-label="Các bước cấu hình batch">
+            <a href="#workflow-source" class="is-active">
+              <span class="step-nav-badge">1</span>
+              <div>
+                <strong>Nguồn video</strong>
+                <small>Thiết bị hoặc link MXH</small>
+              </div>
+            </a>
+            <a href="#workflow-config">
+              <span class="step-nav-badge">2</span>
+              <div>
+                <strong>Cấu hình xử lý</strong>
+                <small>Ngôn ngữ &amp; lồng tiếng AI</small>
+              </div>
+            </a>
+            <a href="#workflow-subtitle" data-translation-only>
+              <span class="step-nav-badge">3</span>
+              <div>
+                <strong>Vị trí phụ đề</strong>
+                <small>Cỡ chữ &amp; khung preview</small>
+              </div>
+            </a>
+            <a href="#workflow-publish" data-translation-only>
+              <span class="step-nav-badge">4</span>
+              <div>
+                <strong>Nội dung đăng</strong>
+                <small>Caption &amp; hashtag TikTok</small>
+              </div>
+            </a>
+          </nav>
+
           <form id="batchForm" class="workflow-grid">
             <div class="workflow-main">
               <!-- BƯỚC 1: THÊM VIDEO NGUỒN -->
@@ -150,7 +181,7 @@
                     <small>Hỗ trợ MP4, MOV, MKV · Tối đa 50 video</small>
                   </label>
 
-                  <label class="link-source-field" for="sourceLinks">
+                  <div class="link-source-field">
                     <div class="link-source-top">
                       <span class="link-source-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -158,14 +189,18 @@
                           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                         </svg>
                       </span>
-                      <div class="link-source-copy">
+                      <label class="link-source-copy" for="sourceLinks">
                         <span class="source-option-kicker">Mạng xã hội</span>
                         <strong>Dán link TikTok / Douyin / YouTube / Facebook</strong>
                         <small>Hỗ trợ link web hoặc đoạn chia sẻ từ ứng dụng</small>
+                      </label>
+                      <div class="link-source-actions">
+                        <button id="quickPasteLinksBtn" class="button secondary mini-btn" type="button" title="Dán nhanh liên kết từ bộ nhớ tạm">📋 Dán nhanh</button>
+                        <button id="clearLinksBtn" class="button secondary mini-btn cancel-btn is-hidden" type="button" title="Xóa toàn bộ liên kết">✕ Xóa</button>
                       </div>
                     </div>
                     <textarea id="sourceLinks" name="source_links" rows="4" maxlength="12000" placeholder="Dán link TikTok, Douyin, YouTube hoặc Facebook — mỗi link một dòng"></textarea>
-                  </label>
+                  </div>
                 </div>
 
                 <div class="source-auth-row is-hidden" data-admin-only hidden>
@@ -312,12 +347,14 @@
                           </select>
                         </label>
 
-                        <div class="language-flow-arrow" aria-hidden="true">
+                        <button type="button" id="swapLanguagesBtn" class="language-flow-arrow" title="Đảo chiều ngôn ngữ nguồn và đích" aria-label="Đảo chiều ngôn ngữ nguồn và đích">
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                            <polyline points="12 5 19 12 12 19"></polyline>
+                            <polyline points="17 1 21 5 17 9"></polyline>
+                            <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+                            <polyline points="7 23 3 19 7 15"></polyline>
+                            <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
                           </svg>
-                        </div>
+                        </button>
 
                         <label class="field">
                           <span class="field-label-group"><span>Ngôn ngữ đầu ra (Dịch sang)</span></span>
@@ -926,7 +963,7 @@
           </div>
 
           <div class="metric-grid">
-            <article class="metric-card metric-queued">
+            <article class="metric-card metric-queued" data-status-filter="queued" role="button" tabindex="0" title="Bấm để lọc tiến trình đang chờ">
               <div class="metric-top">
                 <span class="metric-title">Đang chờ / Đặt lịch</span>
                 <span class="metric-badge queued-badge" aria-hidden="true">
@@ -937,7 +974,7 @@
               <small class="metric-desc">Trong hàng đợi xử lý</small>
             </article>
 
-            <article class="metric-card metric-processing">
+            <article class="metric-card metric-processing" data-status-filter="processing" role="button" tabindex="0" title="Bấm để lọc tiến trình đang chạy">
               <div class="metric-top">
                 <span class="metric-title">Đang chạy</span>
                 <span class="metric-badge processing-badge" aria-hidden="true">
@@ -948,7 +985,7 @@
               <small class="metric-desc">Dịch, lồng tiếng & ghép sub</small>
             </article>
 
-            <article class="metric-card metric-completed">
+            <article class="metric-card metric-completed" data-status-filter="completed" role="button" tabindex="0" title="Bấm để lọc tiến trình hoàn tất">
               <div class="metric-top">
                 <span class="metric-title">Hoàn tất</span>
                 <span class="metric-badge completed-badge" aria-hidden="true">
@@ -959,7 +996,7 @@
               <small class="metric-desc">Sẵn sàng xuất hoặc duyệt đăng</small>
             </article>
 
-            <article class="metric-card metric-failed">
+            <article class="metric-card metric-failed" data-status-filter="failed" role="button" tabindex="0" title="Bấm để lọc tiến trình lỗi">
               <div class="metric-top">
                 <span class="metric-title">Cần chú ý</span>
                 <span class="metric-badge failed-badge" aria-hidden="true">

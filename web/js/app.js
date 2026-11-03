@@ -772,7 +772,10 @@ function addFiles(files) {
 
 function renderFiles() {
   $("#fileCount").textContent = String(state.files.length + state.links.length);
-  $("#fileList").innerHTML = state.files.map((file, index) => `
+  const clearAllHeader = state.files.length > 1
+    ? `<div class="source-list-toolbar"><span>Đã chọn ${state.files.length} file video</span><button class="button secondary mini-btn cancel-btn" type="button" data-clear-files="true">✕ Xóa hết file</button></div>`
+    : "";
+  $("#fileList").innerHTML = clearAllHeader + state.files.map((file, index) => `
     <div class="file-item">
       <span class="file-item-icon">VID</span>
       <div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small>${formatBytes(file.size)}</small></div>
@@ -805,7 +808,14 @@ function extractSourceLinks(value) {
 }
 
 function renderSourceLinks() {
-  state.links = extractSourceLinks($("#sourceLinks").value);
+  const rawValue = $("#sourceLinks").value;
+  state.links = extractSourceLinks(rawValue);
+  $("#clearLinksBtn")?.classList.toggle("is-hidden", !rawValue.trim());
+  if (rawValue.trim() && state.links.length === 0) {
+    $("#linkList").innerHTML = `<div class="link-warning-note">⚠️ Chưa nhận diện được liên kết hợp lệ (hỗ trợ TikTok, Douyin, YouTube, Facebook).</div>`;
+    renderFiles();
+    return;
+  }
   $("#linkList").innerHTML = state.links.map(link => {
     const hostname = new URL(link).hostname.toLowerCase();
     const platform = hostname.includes("douyin") ? "DY"
@@ -815,6 +825,7 @@ function renderSourceLinks() {
     return `<div class="file-item link-item">
       <span class="file-item-icon">${platform}</span>
       <div><strong title="${escapeHtml(link)}">${escapeHtml(link)}</strong><small>Sẽ tải trong hàng đợi nền</small></div>
+      <button class="file-remove" type="button" data-link-remove="${escapeHtml(link)}" aria-label="Xóa liên kết ${escapeHtml(link)}">✕</button>
     </div>`;
   }).join("");
   renderFiles();
@@ -867,6 +878,13 @@ function updateFormSummary() {
   const sourceLanguage = $("#sourceLanguage").value;
   const targetLanguage = $("#targetLanguage").value;
   $("#languageSummary").textContent = `${languageLabels[sourceLanguage]} → ${languageLabels[targetLanguage]}`;
+  const swapBtn = $("#swapLanguagesBtn");
+  if (swapBtn) {
+    swapBtn.disabled = sourceLanguage === "auto";
+    swapBtn.title = sourceLanguage === "auto"
+      ? "Chọn ngôn ngữ nguồn cụ thể để đảo chiều"
+      : "Đảo chiều ngôn ngữ nguồn và đích";
+  }
   $("#previewVietnamese").textContent = previewTexts[targetLanguage];
   const subtitleSource = $("#subtitleSource");
   const ocrAllowed = sourceLanguage === "zh-CN";
@@ -3183,11 +3201,52 @@ $("#billingView").addEventListener("click", async event => {
 
 $("#files").addEventListener("change", event => addFiles(event.target.files));
 $("#sourceLinks").addEventListener("input", renderSourceLinks);
+$("#quickPasteLinksBtn")?.addEventListener("click", async () => {
+  try {
+    const text = (await navigator.clipboard.readText())?.trim();
+    if (!text) return toast("Bộ nhớ tạm đang trống", true);
+    const input = $("#sourceLinks");
+    input.value = input.value.trim() ? `${input.value.trim()}\n${text}` : text;
+    renderSourceLinks();
+    const found = extractSourceLinks(text).length;
+    toast(found ? `Đã dán ${found} liên kết video` : "Đã dán nội dung từ bộ nhớ tạm");
+  } catch (_) {
+    $("#sourceLinks").focus();
+    toast("Hãy nhấn Ctrl+V (hoặc Cmd+V) để dán liên kết vào ô", true);
+  }
+});
+$("#clearLinksBtn")?.addEventListener("click", () => {
+  $("#sourceLinks").value = "";
+  renderSourceLinks();
+});
+$("#linkList")?.addEventListener("click", event => {
+  const removeBtn = event.target.closest("[data-link-remove]");
+  if (!removeBtn) return;
+  const targetUrl = removeBtn.dataset.linkRemove;
+  const remaining = state.links.filter(url => url !== targetUrl);
+  $("#sourceLinks").value = remaining.join("\n");
+  renderSourceLinks();
+});
 $("#fileList").addEventListener("click", event => {
+  if (event.target.closest("[data-clear-files]")) {
+    state.files = [];
+    syncInputFiles();
+    renderFiles();
+    return;
+  }
   const button = event.target.closest("[data-file-index]");
   if (!button) return;
   state.files.splice(Number(button.dataset.fileIndex), 1);
   syncInputFiles(); renderFiles();
+});
+$("#swapLanguagesBtn")?.addEventListener("click", () => {
+  const src = $("#sourceLanguage");
+  const tgt = $("#targetLanguage");
+  if (!src || !tgt || src.value === "auto") return;
+  const prevSrc = src.value;
+  src.value = tgt.value;
+  tgt.value = prevSrc;
+  updateFormSummary();
 });
 const dropZone = $("#dropZone");
 ["dragenter", "dragover"].forEach(type => dropZone.addEventListener(type, event => { event.preventDefault(); dropZone.classList.add("dragging"); }));
@@ -3354,9 +3413,36 @@ $("#adminBillingList")?.addEventListener("click", async event => {
 });
 $("#refreshAdminAudit")?.addEventListener("click", loadAdminAudit);
 $("#adminAuditActionFilter")?.addEventListener("change", loadAdminAudit);
+function syncMetricFilterCards() {
+  const active = $("#statusFilter")?.value || "";
+  $$(".metric-card[data-status-filter]").forEach(card => {
+    const selected = card.dataset.statusFilter === active;
+    card.classList.toggle("is-active", selected);
+    card.setAttribute("aria-pressed", String(selected));
+  });
+}
 $("#statusFilter").addEventListener("change", () => {
+  syncMetricFilterCards();
   state.jobsPage = 1;
   loadJobs();
+});
+$$(".metric-card[data-status-filter]").forEach(card => {
+  const toggleFilter = () => {
+    const select = $("#statusFilter");
+    if (!select) return;
+    const target = card.dataset.statusFilter;
+    select.value = select.value === target ? "" : target;
+    syncMetricFilterCards();
+    state.jobsPage = 1;
+    loadJobs();
+  };
+  card.addEventListener("click", toggleFilter);
+  card.addEventListener("keydown", event => {
+    if (["Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      toggleFilter();
+    }
+  });
 });
 $("#jobSearch").addEventListener("input", () => {
   state.jobsPage = 1;

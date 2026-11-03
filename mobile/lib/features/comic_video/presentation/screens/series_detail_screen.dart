@@ -212,15 +212,23 @@ class _SeriesView extends ConsumerWidget {
       ),
       floatingActionButton: readOnly
           ? null
-          : FloatingActionButton.extended(
-              onPressed: () => context.push('/comic/series/${series.id}/episode'),
-              icon: const Icon(Icons.add),
-              label: Text('Thêm tập ${series.nextEpisodeNumber}'),
+          : Padding(
+              padding: EdgeInsets.only(bottom: studioDockClearance(context)),
+              child: FloatingActionButton.extended(
+                onPressed: () => context.push('/comic/series/${series.id}/episode'),
+                icon: const Icon(Icons.add),
+                label: Text('Thêm tập ${series.nextEpisodeNumber}'),
+              ),
             ),
       body: RefreshIndicator(
         onRefresh: () => ref.read(seriesDetailProvider(series.id).notifier).reload(),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            studioDockBottomPadding(context, extra: 64),
+          ),
           children: [
             StudioCard(
               child: Column(

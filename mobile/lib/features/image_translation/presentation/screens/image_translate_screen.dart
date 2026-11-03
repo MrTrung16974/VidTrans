@@ -550,15 +550,18 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     );
   }
 
-  Widget _locked() => StudioEmptyState(
-    icon: Icons.lock_outline_rounded,
-    title: 'Gói của bạn chưa có tính năng Dịch ảnh',
-    subtitle: 'Liên hệ quản trị viên hoặc nâng cấp gói để sử dụng.',
-    action: FilledButton(
-      onPressed: () => Navigator.of(
-        context,
-      ).push(MaterialPageRoute<void>(builder: (_) => const BillingScreen())),
-      child: const Text('Xem gói dịch vụ'),
+  Widget _locked() => Padding(
+    padding: EdgeInsets.only(bottom: studioDockClearance(context)),
+    child: StudioEmptyState(
+      icon: Icons.lock_outline_rounded,
+      title: 'Gói của bạn chưa có tính năng Dịch ảnh',
+      subtitle: 'Liên hệ quản trị viên hoặc nâng cấp gói để sử dụng.',
+      action: FilledButton(
+        onPressed: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute<void>(builder: (_) => const BillingScreen())),
+        child: const Text('Xem gói dịch vụ'),
+      ),
     ),
   );
 
@@ -656,7 +659,12 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   Widget _body(Account account) {
     final result = _result;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
+      padding: EdgeInsets.fromLTRB(
+        14,
+        14,
+        14,
+        studioDockBottomPadding(context, extra: 40),
+      ),
       children: [
         _heroBanner(),
         const SizedBox(height: 14),
@@ -696,6 +704,8 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
           child: Text(imageLanguage(code)?.label ?? code),
         ),
     ];
+    final canSwap =
+        !_busy && _source != autoLanguage && imageTargetCodes.contains(_source);
     return StudioCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -704,6 +714,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  key: ValueKey('img_src_$_source'),
                   initialValue: _source,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Từ'),
@@ -716,16 +727,33 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
                         },
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Icon(
-                  Icons.arrow_forward_rounded,
-                  color: AppColors.muted,
-                  size: 20,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: IconButton(
+                  tooltip: canSwap
+                      ? 'Đảo chiều ngôn ngữ'
+                      : 'Chọn ngôn ngữ nguồn cụ thể để đảo chiều',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: canSwap
+                      ? () {
+                          setState(() {
+                            final prevSource = _source;
+                            _source = _target;
+                            _target = prevSource;
+                          });
+                          _settingsChanged();
+                        }
+                      : null,
+                  icon: Icon(
+                    Icons.swap_horiz_rounded,
+                    color: canSwap ? AppColors.brandDark : AppColors.muted,
+                    size: 22,
+                  ),
                 ),
               ),
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  key: ValueKey('img_tgt_$_target'),
                   initialValue: _target,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Sang'),

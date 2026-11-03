@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
@@ -28,12 +29,18 @@ class TranslateScreen extends ConsumerStatefulWidget {
 class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   late final TextEditingController _links;
   late final TextEditingController _batchName;
+  final _scrollController = ScrollController();
+  late final AppLifecycleListener _lifecycle;
   int _activeStep = 1;
+  bool _atBottomSubmit = false;
+  List<String> _clipboardLinks = const [];
+  String? _dismissedClipboardRaw;
 
   final _step1Key = GlobalKey();
   final _step2Key = GlobalKey();
   final _step3Key = GlobalKey();
   final _step4Key = GlobalKey();
+  final _submitCardKey = GlobalKey();
 
   TranslateFormController get _form => ref.read(translateFormProvider.notifier);
 
@@ -43,13 +50,128 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final state = ref.read(translateFormProvider);
     _links = TextEditingController(text: state.linksText);
     _batchName = TextEditingController(text: state.config.batchName);
+    _scrollController.addListener(_onScroll);
+    _lifecycle = AppLifecycleListener(onResume: _checkClipboard);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkClipboard());
   }
 
   @override
   void dispose() {
+    _lifecycle.dispose();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     _links.dispose();
     _batchName.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!mounted) return;
+    var nextStep = 1;
+    final viewportTop = 160.0;
+    for (final entry in [
+      (step: 1, key: _step1Key),
+      (step: 2, key: _step2Key),
+      (step: 3, key: _step3Key),
+      (step: 4, key: _step4Key),
+    ]) {
+      final ctx = entry.key.currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject();
+      if (box is RenderBox && box.hasSize) {
+        final dy = box.localToGlobal(Offset.zero).dy;
+        if (dy <= viewportTop) nextStep = entry.step;
+      }
+    }
+    var submitVisible = false;
+    final submitCtx = _submitCardKey.currentContext;
+    if (submitCtx != null) {
+      final box = submitCtx.findRenderObject();
+      if (box is RenderBox && box.hasSize) {
+        final dy = box.localToGlobal(Offset.zero).dy;
+        final screenHeight = MediaQuery.sizeOf(context).height;
+        submitVisible = dy < screenHeight - 100;
+      }
+    }
+    if (nextStep != _activeStep || submitVisible != _atBottomSubmit) {
+      setState(() {
+        _activeStep = nextStep;
+        _atBottomSubmit = submitVisible;
+      });
+    }
+  }
+
+  Future<void> _checkClipboard() async {
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final raw = data?.text?.trim() ?? '';
+      if (!mounted) return;
+      if (raw.isEmpty || raw == _dismissedClipboardRaw) {
+        if (_clipboardLinks.isNotEmpty) {
+          setState(() => _clipboardLinks = const []);
+        }
+        return;
+      }
+      final existing = ref.read(translateFormProvider).links.toSet();
+      final fresh = extractLinks(raw).where((l) => !existing.contains(l)).toList();
+      if (fresh.length != _clipboardLinks.length ||
+          !fresh.every(_clipboardLinks.contains)) {
+        setState(() => _clipboardLinks = fresh);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    HapticFeedback.selectionClick();
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final raw = data?.text?.trim() ?? '';
+      if (!mounted) return;
+      if (raw.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bộ nhớ tạm đang trống')),
+        );
+        return;
+      }
+      final added = _form.appendLinksText(raw);
+      if (added > 0) {
+        _links.text = ref.read(translateFormProvider).linksText;
+        setState(() => _clipboardLinks = const []);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Đã dán $added link video hợp lệ')),
+        );
+      } else {
+        // Still paste raw text if no existing links so user sees what they pasted,
+        // or notify if links were already added.
+        final found = extractLinks(raw);
+        if (found.isNotEmpty) {
+          setState(() => _clipboardLinks = const []);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Link trong bộ nhớ tạm đã có trong danh sách')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook trong bộ nhớ tạm',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _removeLink(String url) {
+    HapticFeedback.selectionClick();
+    _form.removeLink(url);
+    _links.text = ref.read(translateFormProvider).linksText;
+  }
+
+  void _clearLinks() {
+    HapticFeedback.selectionClick();
+    _form.clearLinks();
+    _links.clear();
   }
 
   void _update(TranslationConfig Function(TranslationConfig) change) =>
@@ -191,55 +313,83 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final tts = ref.watch(ttsProvidersProvider).valueOrNull;
     _reconcile(config, translation, tts);
 
+    final showQuickBar = state.sourceCount > 0 && !_atBottomSubmit;
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: const StudioTopBar(activeStudioPill: StudioCategoryPill.video),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+      body: Stack(
         children: [
-          _heroHeader(),
-          const SizedBox(height: 14),
-          _workflowStepsNav(),
-          const SizedBox(height: 14),
-          KeyedSubtree(key: _step1Key, child: _sourcesSection(state)),
-          KeyedSubtree(
-            key: _step2Key,
-            child: FormSection(
-              stepNumber: 2,
-              title: 'Cấu hình xử lý',
-              subtitle: 'Đặt tên lô và chọn chế độ âm thanh đầu ra',
-              children: [
-                TextField(
-                  controller: _batchName,
-                  maxLength: 120,
-                  decoration: const InputDecoration(
-                    hintText: 'Ví dụ: Review phim tập 1-10',
-                    labelText: 'Tên batch (tùy chọn)',
-                    counterText: '',
-                    prefixIcon: Icon(Icons.folder_outlined, size: 19),
-                  ),
-                  onChanged: (value) =>
-                      _update((c) => c.copyWith(batchName: value)),
-                ),
-                _modeBody(state),
-              ],
+          ListView(
+            controller: _scrollController,
+            padding: EdgeInsets.fromLTRB(
+              14,
+              14,
+              14,
+              studioDockBottomPadding(
+                context,
+                extra: showQuickBar ? 82 : 24,
+              ),
             ),
+            children: [
+              _heroHeader(),
+              const SizedBox(height: 14),
+              _workflowStepsNav(),
+              const SizedBox(height: 14),
+              KeyedSubtree(key: _step1Key, child: _sourcesSection(state)),
+              KeyedSubtree(
+                key: _step2Key,
+                child: FormSection(
+                  stepNumber: 2,
+                  title: 'Cấu hình xử lý',
+                  subtitle: 'Đặt tên lô và chọn chế độ âm thanh đầu ra',
+                  children: [
+                    TextField(
+                      controller: _batchName,
+                      maxLength: 120,
+                      decoration: const InputDecoration(
+                        hintText: 'Ví dụ: Review phim tập 1-10',
+                        labelText: 'Tên batch (tùy chọn)',
+                        counterText: '',
+                        prefixIcon: Icon(Icons.folder_outlined, size: 19),
+                      ),
+                      onChanged: (value) =>
+                          _update((c) => c.copyWith(batchName: value)),
+                    ),
+                    _modeBody(state),
+                  ],
+                ),
+              ),
+              // Download-only skips every translation step; the logo still applies.
+              if (!config.downloadOnly) ...[
+                _languageSection(config, translation),
+                _recognitionSection(config),
+                if (config.hasVoice)
+                  _voiceSection(config, tts)
+                else
+                  _mode1VoiceNotice(),
+                _audioSection(config),
+              ],
+              _logoSection(config),
+              if (!config.downloadOnly) ...[
+                KeyedSubtree(
+                  key: _step3Key,
+                  child: _subtitleStyleSection(config),
+                ),
+                KeyedSubtree(key: _step4Key, child: _tiktokSection(config)),
+                _ocrSection(config),
+              ],
+              const SizedBox(height: 4),
+              KeyedSubtree(key: _submitCardKey, child: _submitCard(state)),
+            ],
           ),
-          // Download-only skips every translation step; the logo still applies.
-          if (!config.downloadOnly) ...[
-            _languageSection(config, translation),
-            _recognitionSection(config),
-            if (config.hasVoice) _voiceSection(config, tts),
-            _audioSection(config),
-          ],
-          _logoSection(config),
-          if (!config.downloadOnly) ...[
-            KeyedSubtree(key: _step3Key, child: _subtitleStyleSection(config)),
-            KeyedSubtree(key: _step4Key, child: _tiktokSection(config)),
-            _ocrSection(config),
-          ],
-          const SizedBox(height: 4),
-          _submitCard(state),
+          if (showQuickBar)
+            Positioned(
+              left: 14,
+              right: 14,
+              bottom: studioDockClearance(context),
+              child: _quickSubmitBar(state),
+            ),
         ],
       ),
     );
@@ -423,6 +573,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
   Widget _sourcesSection(TranslateFormState state) {
     final links = state.links;
+    final hasInvalidLinkText =
+        state.linksText.trim().isNotEmpty && links.isEmpty;
+
     return FormSection(
       stepNumber: 1,
       title: 'Thêm video nguồn',
@@ -430,6 +583,85 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           'Tải file từ thiết bị hoặc dán liên kết TikTok, Douyin, YouTube hoặc Facebook — tối đa 50 video mỗi batch.',
       trailing: StudioEyebrow(label: '${state.sourceCount}/50 nguồn'),
       children: [
+        if (_clipboardLinks.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFF0FDFA), Color(0xFFCCFBF1)],
+              ),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: AppColors.tealBorder),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.content_paste_go_rounded,
+                  size: 19,
+                  color: AppColors.tealDark,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Phát hiện ${_clipboardLinks.length} link video vừa sao chép',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.tealDark,
+                        ),
+                      ),
+                      Text(
+                        _clipboardLinks.first,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.tealText,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.tonal(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: AppColors.teal,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                  ),
+                  onPressed: _pasteFromClipboard,
+                  child: const Text(
+                    'Dán ngay',
+                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Ẩn gợi ý',
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    size: 16,
+                    color: AppColors.tealDark,
+                  ),
+                  onPressed: () async {
+                    final clip = await Clipboard.getData(Clipboard.kTextPlain);
+                    if (!mounted) return;
+                    setState(() {
+                      _dismissedClipboardRaw = clip?.text?.trim();
+                      _clipboardLinks = const [];
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
         StudioDashedBox(
           onTap: _pickVideos,
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
@@ -452,13 +684,39 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     ),
                   ),
                   if (state.files.isNotEmpty)
-                    Text(
-                      '${state.files.length} file đã chọn',
-                      style: const TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.teal,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${state.files.length} file đã chọn',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.teal,
+                          ),
+                        ),
+                        if (state.files.length > 1) ...[
+                          const SizedBox(width: 8),
+                          InkWell(
+                            onTap: _form.clearFiles,
+                            borderRadius: BorderRadius.circular(6),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 2,
+                              ),
+                              child: Text(
+                                'Xóa hết',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.redDark,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                 ],
               ),
@@ -577,10 +835,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   // Flexible: narrow phones or large system font sizes.
-                  const Flexible(
+                  const Expanded(
                     child: Text(
                       '1B · TỪ LIÊN KẾT MẠNG XÃ HỘI',
                       maxLines: 1,
@@ -593,13 +850,75 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                       ),
                     ),
                   ),
-                  if (links.isNotEmpty) const SizedBox(width: 8),
-                  if (links.isNotEmpty)
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: _pasteFromClipboard,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.tealSoft,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: AppColors.tealBorder),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.content_paste_rounded,
+                            size: 13,
+                            color: AppColors.tealDark,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'Dán nhanh',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.tealDark,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (state.linksText.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    InkWell(
+                      onTap: _clearLinks,
+                      borderRadius: BorderRadius.circular(999),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: AppColors.lineStrong),
+                        ),
+                        child: const Text(
+                          'Xóa',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (links.isNotEmpty) ...[
+                    const SizedBox(width: 6),
                     StudioStatusPill(
                       status: 'ready',
                       label: '${links.length} link',
                       compact: true,
                     ),
+                  ],
                 ],
               ),
               const SizedBox(height: 8),
@@ -611,12 +930,56 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 keyboardType: TextInputType.multiline,
                 decoration: const InputDecoration(
                   hintText:
-                      'Dán link TikTok, Douyin, YouTube hoặc Facebook — mỗi link một dòng',
+                      'Dán link hoặc đoạn chia sẻ TikTok, Douyin, YouTube, Facebook…',
                   counterText: '',
                   prefixIcon: Icon(Icons.link_rounded, color: AppColors.teal),
                 ),
                 onChanged: _form.setLinks,
               ),
+              if (hasInvalidLinkText) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.amberSoft,
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(color: AppColors.amberBorder),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        size: 15,
+                        color: AppColors.amberDark,
+                      ),
+                      SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Chưa nhận diện được link TikTok, Douyin, YouTube hoặc Facebook hợp lệ.',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.amberText,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (links.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                for (var i = 0; i < links.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 6),
+                  _LinkSourceTile(
+                    url: links[i],
+                    onRemove: () => _removeLink(links[i]),
+                  ),
+                ],
+              ],
             ],
           ),
         ),
@@ -784,36 +1147,54 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 child: Row(
                   children: [
                     const Expanded(child: Divider()),
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 10),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.brandSoft,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: AppColors.brandBorder),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.south_rounded,
-                            size: 13,
-                            color: AppColors.brandDark,
-                          ),
-                          SizedBox(width: 4),
-                          Text(
-                            'CHUYỂN ĐỔI SANG',
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.5,
-                              color: AppColors.brandDark,
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: config.sourceLanguage != 'auto'
+                              ? () {
+                                  HapticFeedback.selectionClick();
+                                  _form.swapLanguages();
+                                }
+                              : null,
+                          borderRadius: BorderRadius.circular(999),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.brandSoft,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: AppColors.brandBorder),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  config.sourceLanguage != 'auto'
+                                      ? Icons.swap_vert_rounded
+                                      : Icons.south_rounded,
+                                  size: 13,
+                                  color: AppColors.brandDark,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  config.sourceLanguage != 'auto'
+                                      ? 'ĐẢO NGÔN NGỮ'
+                                      : 'CHUYỂN ĐỔI SANG',
+                                  style: const TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.5,
+                                    color: AppColors.brandDark,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        ],
+                        ),
                       ),
                     ),
                     const Expanded(child: Divider()),
@@ -1262,6 +1643,170 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     );
   }
 
+  Widget _mode1VoiceNotice() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            alignment: Alignment.center,
+            child: const Icon(
+              Icons.record_voice_over_outlined,
+              size: 19,
+              color: AppColors.amberDark,
+            ),
+          ),
+          const SizedBox(width: 11),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Đang giữ 100% âm thanh gốc',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.ink,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Muốn lồng tiếng thuyết minh AI tiếng Việt?',
+                  style: TextStyle(fontSize: 11.5, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              side: const BorderSide(color: AppColors.brandBorder),
+              backgroundColor: Colors.white,
+            ),
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              _update((c) => c.copyWith(mode: 2));
+            },
+            child: const Text(
+              'Bật lồng tiếng ➔',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+                color: AppColors.brandDark,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _quickSubmitBar(TranslateFormState state) {
+    final config = state.config;
+    final modeLabel = switch (config.mode) {
+      1 => 'Chỉ phụ đề',
+      2 => 'Phụ đề + Voice',
+      4 => 'Chỉ tải về',
+      _ => 'Voice + Nhạc',
+    };
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(13, 9, 10, 9),
+        decoration: BoxDecoration(
+          color: const Color(0xF50F172A),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.14),
+          ),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x330F172A),
+              blurRadius: 20,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.brand.withValues(alpha: 0.22),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: AppColors.brand.withValues(alpha: 0.5),
+                ),
+              ),
+              child: Text(
+                '${state.sourceCount}/50',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFFFDBA74),
+                ),
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    modeLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Text(
+                    config.downloadOnly
+                        ? 'Tải video gốc'
+                        : '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      color: Color(0xFF94A3B8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            StudioGradientButton(
+              expanded: false,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              icon: Icons.rocket_launch_rounded,
+              label: config.downloadOnly
+                  ? 'Tải ngay (${state.sourceCount})'
+                  : 'Bắt đầu (${state.sourceCount})',
+              onPressed: _submit,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _submitCard(TranslateFormState state) {
     final config = state.config;
     final modeLabel = switch (config.mode) {
@@ -1576,26 +2121,103 @@ class _SubtitlePreviewMonitor extends StatelessWidget {
               ),
             ],
           ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: style.backgroundStyle == 'none'
-                    ? Colors.transparent
-                    : bg.withValues(alpha: 0.78),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'Xin chào! Đây là phụ đề tiếng Việt tự động',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: fg,
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w800,
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: style.backgroundStyle == 'none'
+                      ? Colors.transparent
+                      : bg.withValues(alpha: 0.78),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'Xin chào! Đây là phụ đề tiếng Việt tự động',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
+          ],
+        ),
+      );
+    }
+}
+
+class _LinkSourceTile extends StatelessWidget {
+  const _LinkSourceTile({required this.url, required this.onRemove});
+
+  final String url;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final code = shortSocialPlatformCode(url);
+    final badgeColor = switch (code) {
+      'DY' => const Color(0xFF0F172A),
+      'YT' => const Color(0xFFDC2626),
+      'FB' => const Color(0xFF2563EB),
+      _ => AppColors.tealDark,
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 26,
+            decoration: BoxDecoration(
+              color: badgeColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(color: badgeColor.withValues(alpha: 0.25)),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              code,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w900,
+                color: badgeColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  url,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.2,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink,
+                  ),
+                ),
+                const Text(
+                  'Sẽ tải tự động trong hàng đợi nền',
+                  style: TextStyle(fontSize: 10.5, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Xóa link này',
+            icon: const Icon(Icons.close_rounded, size: 17),
+            onPressed: onRemove,
           ),
         ],
       ),

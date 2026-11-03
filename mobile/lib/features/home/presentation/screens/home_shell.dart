@@ -1008,7 +1008,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
 
 /// Horizontal Netflix-style pill menu bar (`[Dịch Video] [Dịch Ảnh · MỚI] [Dịch Nổi] [Công cụ ▾]`)
 /// styled in VidTrans Studio's warm orange, cream, and slate color palette.
-class _StudioNetflixPillBar extends StatelessWidget {
+class _StudioNetflixPillBar extends StatefulWidget {
   const _StudioNetflixPillBar({
     required this.activePill,
     required this.canTranslateImages,
@@ -1022,43 +1022,105 @@ class _StudioNetflixPillBar extends StatelessWidget {
   final VoidCallback onOpenAllTools;
 
   @override
+  State<_StudioNetflixPillBar> createState() => _StudioNetflixPillBarState();
+}
+
+class _StudioNetflixPillBarState extends State<_StudioNetflixPillBar> {
+  final _videoKey = GlobalKey();
+  final _imageKey = GlobalKey();
+  final _liveKey = GlobalKey();
+  final _toolsKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToActive());
+  }
+
+  @override
+  void didUpdateWidget(covariant _StudioNetflixPillBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.activePill != widget.activePill) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToActive());
+    }
+  }
+
+  void _scrollToActive() {
+    if (!mounted) return;
+    // When "Dịch Nổi" is active, ensure the rightmost "Công cụ" pill is also
+    // brought into view so it is never clipped off the right edge.
+    final targetKey = switch (widget.activePill) {
+      StudioCategoryPill.video => _videoKey,
+      StudioCategoryPill.image => _imageKey,
+      StudioCategoryPill.live => _toolsKey,
+    };
+    final ctx = targetKey.currentContext ?? _liveKey.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+        alignment: widget.activePill == StudioCategoryPill.live ? 1.0 : 0.3,
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 395;
+    final gap = compact ? 6.0 : 8.0;
     return SizedBox(
       height: 46,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+        padding: EdgeInsets.fromLTRB(compact ? 12 : 14, 2, compact ? 12 : 14, 10),
         child: Row(
           children: [
-            _NetflixPillButton(
-              icon: Icons.movie_filter_rounded,
-              label: 'Dịch Video',
-              selected: activePill == StudioCategoryPill.video,
-              onTap: () => onSelectPill(StudioCategoryPill.video),
-            ),
-            if (canTranslateImages) ...[
-              const SizedBox(width: 8),
-              _NetflixPillButton(
-                icon: Icons.image_search_rounded,
-                label: 'Dịch Ảnh',
-                badge: 'MỚI',
-                selected: activePill == StudioCategoryPill.image,
-                onTap: () => onSelectPill(StudioCategoryPill.image),
+            KeyedSubtree(
+              key: _videoKey,
+              child: _NetflixPillButton(
+                icon: Icons.movie_filter_rounded,
+                label: 'Dịch Video',
+                compact: compact,
+                selected: widget.activePill == StudioCategoryPill.video,
+                onTap: () => widget.onSelectPill(StudioCategoryPill.video),
               ),
-              const SizedBox(width: 8),
-              _NetflixPillButton(
-                icon: Icons.touch_app_rounded,
-                label: 'Dịch Nổi',
-                selected: activePill == StudioCategoryPill.live,
-                onTap: () => onSelectPill(StudioCategoryPill.live),
+            ),
+            if (widget.canTranslateImages) ...[
+              SizedBox(width: gap),
+              KeyedSubtree(
+                key: _imageKey,
+                child: _NetflixPillButton(
+                  icon: Icons.image_search_rounded,
+                  label: 'Dịch Ảnh',
+                  badge: 'MỚI',
+                  compact: compact,
+                  selected: widget.activePill == StudioCategoryPill.image,
+                  onTap: () => widget.onSelectPill(StudioCategoryPill.image),
+                ),
+              ),
+              SizedBox(width: gap),
+              KeyedSubtree(
+                key: _liveKey,
+                child: _NetflixPillButton(
+                  icon: Icons.touch_app_rounded,
+                  label: 'Dịch Nổi',
+                  compact: compact,
+                  selected: widget.activePill == StudioCategoryPill.live,
+                  onTap: () => widget.onSelectPill(StudioCategoryPill.live),
+                ),
               ),
             ],
-            const SizedBox(width: 8),
-            _NetflixPillButton(
-              label: 'Công cụ',
-              trailingIcon: Icons.keyboard_arrow_down_rounded,
-              selected: false,
-              onTap: onOpenAllTools,
+            SizedBox(width: gap),
+            KeyedSubtree(
+              key: _toolsKey,
+              child: _NetflixPillButton(
+                label: 'Công cụ',
+                trailingIcon: Icons.keyboard_arrow_down_rounded,
+                compact: compact,
+                selected: false,
+                onTap: widget.onOpenAllTools,
+              ),
             ),
           ],
         ),
@@ -1075,6 +1137,7 @@ class _NetflixPillButton extends StatelessWidget {
     this.icon,
     this.badge,
     this.trailingIcon,
+    this.compact = false,
   });
 
   final String label;
@@ -1083,6 +1146,7 @@ class _NetflixPillButton extends StatelessWidget {
   final IconData? icon;
   final String? badge;
   final IconData? trailingIcon;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1103,7 +1167,7 @@ class _NetflixPillButton extends StatelessWidget {
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
           height: 34,
-          padding: const EdgeInsets.symmetric(horizontal: 13),
+          padding: EdgeInsets.symmetric(horizontal: compact ? 10.5 : 13),
           decoration: BoxDecoration(
             gradient: selected
                 ? const LinearGradient(

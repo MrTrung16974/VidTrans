@@ -126,8 +126,24 @@ void main() {
     expect(const TranslationConfig(mode: 2, musicTrackId: 'abc').toFormFields().containsKey('background_music_id'), isFalse);
   });
 
-  test('extractLinks finds each link once', () {
-    final links = extractLinks('xem https://v.douyin.com/abc/ và\nhttps://www.tiktok.com/@a/video/1 https://v.douyin.com/abc/');
-    expect(links, ['https://v.douyin.com/abc/', 'https://www.tiktok.com/@a/video/1']);
+  test('extractLinks finds each link once and strips trailing punctuation', () {
+    final links = extractLinks(
+      'xem https://v.douyin.com/abc/， và\n'
+      'https://www.tiktok.com/@a/video/1#frag). '
+      'https://v.douyin.com/abc/ '
+      'https://example.com/not-supported '
+      'https://youtu.be/dQw4w9WgXcQ! '
+      'https://fb.watch/xyz123/',
+    );
+    expect(links, [
+      'https://v.douyin.com/abc/',
+      'https://www.tiktok.com/@a/video/1',
+      'https://youtu.be/dQw4w9WgXcQ',
+      'https://fb.watch/xyz123/',
+    ]);
+    expect(shortSocialPlatformCode('https://v.douyin.com/abc/'), 'DY');
+    expect(shortSocialPlatformCode('https://www.tiktok.com/@a/video/1'), 'TT');
+    expect(shortSocialPlatformCode('https://youtu.be/dQw4w9WgXcQ'), 'YT');
+    expect(shortSocialPlatformCode('https://fb.watch/xyz123/'), 'FB');
   });
 }

@@ -34,10 +34,13 @@ class ComicHomeScreen extends ConsumerWidget {
         ),
         floatingActionButton: readOnly
             ? null
-            : FloatingActionButton.extended(
-                onPressed: () => context.push('/comic/new'),
-                icon: const Icon(Icons.add),
-                label: const Text('Tạo truyện mới'),
+            : Padding(
+                padding: EdgeInsets.only(bottom: studioDockClearance(context)),
+                child: FloatingActionButton.extended(
+                  onPressed: () => context.push('/comic/new'),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Tạo truyện mới'),
+                ),
               ),
         body: const TabBarView(children: [_SeriesTab(), _VideosTab()]),
       ),
@@ -60,7 +63,12 @@ class _SeriesTab extends ConsumerWidget {
       data: (items) => RefreshIndicator(
         onRefresh: () => ref.refresh(comicSeriesListProvider.future),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 96),
+          padding: EdgeInsets.fromLTRB(
+            14,
+            14,
+            14,
+            studioDockBottomPadding(context, extra: 64),
+          ),
           children: [
             StudioPageHeader(
               eyebrow: 'Truyện → Video',
@@ -179,7 +187,12 @@ class _VideosTab extends ConsumerWidget {
         onRefresh: () => ref.read(comicProjectsProvider.notifier).refresh(),
         child: page.items.isEmpty
             ? ListView(
-                padding: const EdgeInsets.all(24),
+                padding: EdgeInsets.fromLTRB(
+                  24,
+                  24,
+                  24,
+                  studioDockBottomPadding(context, extra: 64),
+                ),
                 children: const [
                   SizedBox(height: 60),
                   StudioEmptyState(
@@ -195,7 +208,12 @@ class _VideosTab extends ConsumerWidget {
                   return false;
                 },
                 child: ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    studioDockBottomPadding(context, extra: 64),
+                  ),
                   itemCount: page.items.length + (page.hasMore ? 1 : 0),
                   separatorBuilder: (_, _) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {

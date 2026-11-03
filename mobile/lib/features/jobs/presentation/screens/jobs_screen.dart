@@ -214,7 +214,12 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
             onRefresh: () => ref.read(jobListProvider.notifier).refresh(),
             child: ListView(
                 controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+                padding: EdgeInsets.fromLTRB(
+                  14,
+                  14,
+                  14,
+                  studioDockBottomPadding(context),
+                ),
                 children: [
                   StudioPageHeader(
                     eyebrow: 'Background Jobs · Thời gian thực',
@@ -281,6 +286,12 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                               : 'Trong danh sách',
                           icon: Icons.layers_outlined,
                           accentColor: AppColors.ink,
+                          selected: filter == null,
+                          onTap: () {
+                            ref.read(jobPageProvider.notifier).state = 1;
+                            ref.read(jobStatusFilterProvider.notifier).state =
+                                null;
+                          },
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -297,6 +308,12 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                           borderColor: processingCount > 0
                               ? AppColors.blueBorder
                               : AppColors.line,
+                          selected: filter == 'processing',
+                          onTap: () {
+                            ref.read(jobPageProvider.notifier).state = 1;
+                            ref.read(jobStatusFilterProvider.notifier).state =
+                                filter == 'processing' ? null : 'processing';
+                          },
                         ),
                       ),
                     ],
@@ -311,6 +328,12 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                           subtitle: 'Trong hàng đợi',
                           icon: Icons.schedule_rounded,
                           accentColor: AppColors.amberDark,
+                          selected: filter == 'queued',
+                          onTap: () {
+                            ref.read(jobPageProvider.notifier).state = 1;
+                            ref.read(jobStatusFilterProvider.notifier).state =
+                                filter == 'queued' ? null : 'queued';
+                          },
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -321,6 +344,12 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                           subtitle: 'Sẵn sàng tải về',
                           icon: Icons.check_circle_outline_rounded,
                           accentColor: AppColors.greenDark,
+                          selected: filter == 'completed',
+                          onTap: () {
+                            ref.read(jobPageProvider.notifier).state = 1;
+                            ref.read(jobStatusFilterProvider.notifier).state =
+                                filter == 'completed' ? null : 'completed';
+                          },
                         ),
                       ),
                     ],

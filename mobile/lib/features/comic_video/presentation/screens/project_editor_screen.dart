@@ -310,7 +310,7 @@ class _EditorState extends ConsumerState<_Editor> {
     final pagination = project.pagination;
     final ratio = (project.settings['aspect_ratio'] ?? ComicJobInfo.of(project.job).aspectRatio) == '16:9' ? 16 / 9 : 9 / 16;
     return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: EdgeInsets.only(bottom: studioDockBottomPadding(context)),
       children: [
         _header(readOnly),
         if (storyboard == null)
@@ -394,7 +394,7 @@ class _EditorState extends ConsumerState<_Editor> {
 
     return SafeArea(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: EdgeInsets.fromLTRB(12, 8, 12, studioDockClearance(context)),
         decoration: const BoxDecoration(
           color: AppColors.surface,
           border: Border(top: BorderSide(color: AppColors.border)),
@@ -441,7 +441,7 @@ class _EditorState extends ConsumerState<_Editor> {
       ]);
     }
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, studioDockBottomPadding(context)),
       children: [
         for (final c in characters)
           Padding(
@@ -487,7 +487,7 @@ class _EditorState extends ConsumerState<_Editor> {
     final media = project.media;
     final world = storyboard == null ? '' : (storyboard.worldVi.isNotEmpty ? storyboard.worldVi : storyboard.world);
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, studioDockBottomPadding(context)),
       children: [
         if (world.isNotEmpty)
           Padding(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/widgets/studio_widgets.dart';
 import '../../domain/bulk_actions.dart';
 import '../../domain/job.dart';
 
@@ -43,7 +44,14 @@ class JobBulkBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 6, 12, 10),
+          // Extra bottom space so the floating HomeShell dock does not cover
+          // the bulk action buttons.
+          padding: EdgeInsets.fromLTRB(
+            8,
+            6,
+            12,
+            studioDockClearance(context),
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

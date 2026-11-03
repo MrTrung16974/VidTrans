@@ -1,3 +1,5 @@
+import '../../source_download/domain/download_policy.dart';
+
 /// Choice lists from the web form (web/index.html, `#batchForm`).
 typedef Option = ({String value, String label});
 
@@ -95,13 +97,32 @@ const ttsProviderOrder = ['edge', 'azure', 'elevenlabs', 'cit'];
 /// Providers the server can synthesize a voice sample for.
 const voicePreviewProviders = {'edge', 'elevenlabs', 'cit'};
 
-/// Pulls social video links from pasted text. The server does the
-/// authoritative extraction; this only counts and lists them for the UI.
+/// Pulls social video links from pasted text, matching `extractSourceLinks` in
+/// `web/js/app.js`: strips trailing punctuation/fragments and keeps only
+/// supported TikTok, Douyin, YouTube, and Facebook URLs.
 List<String> extractLinks(String text) {
-  final pattern = RegExp(r'https?://[^\s<>"]+', caseSensitive: false);
+  final pattern = RegExp(r'https?://[^\s<>\[\]"\x27]+', caseSensitive: false);
+  final trailingPunct = RegExp(r'[.,;:!?\)\]\}，。；：！？）】》、]+$');
   final seen = <String>{};
-  return [
-    for (final match in pattern.allMatches(text))
-      if (seen.add(match.group(0)!)) match.group(0)!,
-  ];
+  final result = <String>[];
+  for (final match in pattern.allMatches(text)) {
+    final raw = match.group(0)!.replaceAll(trailingPunct, '');
+    final uri = Uri.tryParse(raw);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) continue;
+    final clean = uri.removeFragment().toString();
+    if (socialPlatformOf(clean) != null && seen.add(clean)) {
+      result.add(clean);
+    }
+  }
+  return result;
+}
+
+/// Short 2-letter badge code matching `.link-item .file-item-icon` on the web.
+String shortSocialPlatformCode(String url) {
+  return switch (socialPlatformOf(url)) {
+    'Douyin' => 'DY',
+    'YouTube' => 'YT',
+    'Facebook' => 'FB',
+    _ => 'TT',
+  };
 }

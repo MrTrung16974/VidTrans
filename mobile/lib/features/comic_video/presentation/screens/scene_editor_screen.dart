@@ -209,7 +209,12 @@ class _SceneEditorState extends ConsumerState<_SceneEditor> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          studioDockBottomPadding(context),
+        ),
         children: [
           if (project.locked)
             Padding(

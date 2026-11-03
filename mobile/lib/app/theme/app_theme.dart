@@ -36,6 +36,7 @@ class AppColors {
 
   // Studio Teal (--teal)
   static const teal = Color(0xFF0F766E);
+  static const tealDark = Color(0xFF115E59);
   static const tealBright = Color(0xFF14B8A6);
   static const tealLight = Color(0xFFCCFBF1);
   static const tealSoft = Color(0xFFF0FDFA);

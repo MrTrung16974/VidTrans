@@ -83,8 +83,52 @@ class TranslateFormController extends Notifier<TranslateFormState> {
     );
   }
 
+  void clearFiles() {
+    state = state.copyWith(files: const [], clearError: true);
+  }
+
   void setLinks(String text) {
     state = state.copyWith(linksText: text, clearError: true);
+  }
+
+  void clearLinks() {
+    state = state.copyWith(linksText: '', clearError: true);
+  }
+
+  void removeLink(String url) {
+    final remaining = state.links.where((l) => l != url).toList();
+    state = state.copyWith(linksText: remaining.join('\n'), clearError: true);
+  }
+
+  /// Appends [raw] (e.g. from the system clipboard) and normalizes to clean
+  /// line-separated social links when valid URLs are found. Returns how many
+  /// new valid links were added.
+  int appendLinksText(String raw) {
+    final incoming = extractLinks(raw);
+    if (incoming.isEmpty) return 0;
+    final current = state.links;
+    final known = current.toSet();
+    final added = incoming.where(known.add).toList();
+    if (added.isEmpty) return 0;
+    final merged = [...current, ...added].join('\n');
+    state = state.copyWith(linksText: merged, clearError: true);
+    return added.length;
+  }
+
+  /// Swaps [sourceLanguage] and [targetLanguage] when [sourceLanguage] is a
+  /// concrete language (not `auto`).
+  bool swapLanguages() {
+    final src = state.config.sourceLanguage;
+    final dst = state.config.targetLanguage;
+    if (src == 'auto' || src == dst) return false;
+    final canSwap =
+        sourceLanguageOptions.any((o) => o.value == dst) &&
+        targetLanguageOptions.any((o) => o.value == src);
+    if (!canSwap) return false;
+    updateConfig(
+      state.config.copyWith(sourceLanguage: dst, targetLanguage: src),
+    );
+    return true;
   }
 
   /// The user's own file; picking one replaces a library track.

@@ -17,16 +17,28 @@ class VidTransLogo extends StatelessWidget {
       width: size,
       height: size,
       child: CustomPaint(
-        painter: _VidTransLogoPainter(),
+        painter: const VidTransLogoPainter(),
       ),
     );
   }
 }
 
-class _VidTransLogoPainter extends CustomPainter {
+/// Also used by `tool/generate_app_icons_test.dart` to render the launcher
+/// icons, so the phone icon is the same mark as in the app.
+class VidTransLogoPainter extends CustomPainter {
+  const VidTransLogoPainter({this.drawTile = true});
+
+  /// False draws only the "V" and the play badge (adaptive-icon foreground).
+  final bool drawTile;
+
   @override
   void paint(Canvas canvas, Size size) {
     final s = size.width / 64.0;
+    if (drawTile) _paintTile(canvas, s);
+    _paintMark(canvas, s);
+  }
+
+  void _paintTile(Canvas canvas, double s) {
 
     // 1. Main rounded square background (x:4, y:4, w:56, h:56, rx:17)
     final bgRect = RRect.fromRectAndRadius(
@@ -58,7 +70,9 @@ class _VidTransLogoPainter extends CustomPainter {
       ),
       strokePaint,
     );
+  }
 
+  void _paintMark(Canvas canvas, double s) {
     // 2. White "V" path: M17 19 H25.2 L31.9 36.2 L38.6 19 H46.7 L35.5 45 H28.2 L17 19 Z
     final vPath = Path()
       ..moveTo(17 * s, 19 * s)
@@ -805,6 +819,23 @@ class StudioEmptyState extends StatelessWidget {
   }
 }
 
+/// Height of the floating dock area at the bottom of [HomeShell], including
+/// the device's physical bottom safe area inset.
+double studioDockClearance(BuildContext context) {
+  final viewBottom = MediaQuery.viewPaddingOf(context).bottom;
+  final padBottom = MediaQuery.paddingOf(context).bottom;
+  final hardwareBottom = viewBottom > 0
+      ? viewBottom
+      : (padBottom > 0 && padBottom < 50 ? padBottom : 16.0);
+  return 84.0 + hardwareBottom;
+}
+
+/// Bottom scroll padding that clears the floating glassmorphic dock in [HomeShell]
+/// with generous breathing room so the last card/button sits high above the menu.
+double studioDockBottomPadding(BuildContext context, {double extra = 32}) {
+  return studioDockClearance(context) + extra;
+}
+
 /// Metric card matching `.metric-card` in `web/assets/styles.css`.
 class StudioMetricCard extends StatelessWidget {
   const StudioMetricCard({
@@ -817,6 +848,8 @@ class StudioMetricCard extends StatelessWidget {
     this.borderColor = AppColors.line,
     this.icon,
     this.iconBackgroundColor,
+    this.selected = false,
+    this.onTap,
   });
 
   final String label;
@@ -827,6 +860,8 @@ class StudioMetricCard extends StatelessWidget {
   final Color borderColor;
   final IconData? icon;
   final Color? iconBackgroundColor;
+  final bool selected;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -834,13 +869,25 @@ class StudioMetricCard extends StatelessWidget {
         (accentColor == AppColors.ink
             ? AppColors.surfaceMuted
             : accentColor.withValues(alpha: 0.12));
+    final resolvedBorder = selected
+        ? (accentColor == AppColors.ink ? AppColors.brand : accentColor)
+        : borderColor;
+    final resolvedBg = selected && backgroundColor == AppColors.surface
+        ? (accentColor == AppColors.ink
+              ? AppColors.brandTint
+              : accentColor.withValues(alpha: 0.08))
+        : backgroundColor;
 
-    return Container(
+    final content = AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
       decoration: BoxDecoration(
-        color: backgroundColor,
+        color: resolvedBg,
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: borderColor),
+        border: Border.all(
+          color: resolvedBorder,
+          width: selected ? 1.5 : 1.0,
+        ),
         boxShadow: AppColors.cardShadow,
       ),
       child: Column(
@@ -854,11 +901,11 @@ class StudioMetricCard extends StatelessWidget {
                   label.toUpperCase(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 10.5,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.45,
-                    color: AppColors.muted,
+                    color: selected ? accentColor : AppColors.muted,
                   ),
                 ),
               ),
@@ -902,6 +949,17 @@ class StudioMetricCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+
+    if (onTap == null) return content;
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(15),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
+        child: content,
       ),
     );
   }

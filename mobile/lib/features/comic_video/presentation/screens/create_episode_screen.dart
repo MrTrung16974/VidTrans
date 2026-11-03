@@ -242,7 +242,12 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
         ]),
         bottomNavigationBar: SafeArea(
           child: Container(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.fromLTRB(
+              12,
+              12,
+              12,
+              studioDockClearance(context),
+            ),
             decoration: const BoxDecoration(
               color: AppColors.surface,
               border: Border(top: BorderSide(color: AppColors.border)),

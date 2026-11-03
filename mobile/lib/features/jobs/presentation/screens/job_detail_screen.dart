@@ -81,7 +81,12 @@ class _JobDetail extends ConsumerWidget {
     final canPublish = account?.canPublishSocial ?? false;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        studioDockBottomPadding(context),
+      ),
       children: [
         StudioCard(
           topAccentColor: AppColors.brand,

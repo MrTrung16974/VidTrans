@@ -206,7 +206,12 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
     final text = Theme.of(context).textTheme;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        14,
+        16,
+        studioDockBottomPadding(context),
+      ),
       children: [
         StudioCard(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
