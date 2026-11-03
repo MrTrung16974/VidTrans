@@ -274,6 +274,53 @@ class SocialVideoDownloader:
             ) from exc
         return yt_dlp.YoutubeDL(options)
 
+    def _tikwm_info(self, url: str) -> dict[str, Any] | None:
+        """yt-dlp info for the HD (falling back to SD) no-watermark file from tikwm.com."""
+        request = urllib.request.Request(
+            f"https://www.tikwm.com/api/?url={quote(url, safe='')}&hd=1",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
+            payload = json.loads(response.read(2 * 1024 * 1024))
+        data = payload.get("data") or {}
+        if payload.get("code") != 0:
+            return None
+        if data.get("images"):
+            raise SocialVideoDownloadError(
+                "Link TikTok này là bài đăng ảnh (slideshow), không có video. Hãy dùng link một video"
+            )
+        play = data.get("hdplay") or data.get("play")
+        if not play:
+            return None
+        return {"id": str(data.get("id") or "video"), "title": data.get("title") or "Video TikTok",
+                "duration": data.get("duration"), "ext": "mp4",
+                "url": urljoin("https://www.tikwm.com/", play)}
+
+    def _ssstik_info(self, url: str) -> dict[str, Any] | None:
+        """yt-dlp info for the download link ssstik.io renders, or None when it has none."""
+        try:
+            request = urllib.request.Request(
+                "https://ssstik.io/abc?url=dl",
+                data=urlencode({"id": url, "locale": "en", "tt": "1"}).encode("utf-8"),
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Hx-Request": "true",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
+                html = response.read(10 * 1024 * 1024).decode("utf-8", errors="ignore")
+        except Exception as ssstik_err:
+            logger.warning("ssstik.io fallback failed: %s", ssstik_err)
+            return None
+        match = re.search(r'class="[^"]*download_link[^"]*".*?href="([^"#]+)"', html)
+        if not match:
+            match = re.search(r'class="[^"]*download_link[^"]*".*?data-directurl="([^"#]+)"', html)
+        if not match:
+            return None
+        return {"id": "video", "title": "Video TikTok", "duration": None, "ext": "mp4",
+                "url": match.group(1).replace("&amp;", "&"), "http_headers": {"Referer": "https://ssstik.io/"}}
+
     def download(
         self,
         url: str,
@@ -483,47 +530,19 @@ class SocialVideoDownloader:
                     if browser_cookie_path.is_file():
                         options["cookiefile"] = str(browser_cookie_path)
                 else:
+                    # tikwm first: its hdplay is the original-resolution upload
+                    # (often 1080p HEVC), while ssstik serves a smaller render.
                     info = None
-                    # Try ssstik.io first (more reliable)
                     try:
-                        req_url = "https://ssstik.io/abc?url=dl"
-                        req_data = urlencode({"id": normalized_url, "locale": "en", "tt": "1"}).encode('utf-8')
-                        request = urllib.request.Request(req_url, data=req_data, headers={
-                            "User-Agent": "Mozilla/5.0",
-                            "Content-Type": "application/x-www-form-urlencoded",
-                            "Hx-Request": "true"
-                        })
-                        with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
-                            html = response.read(10 * 1024 * 1024).decode('utf-8', errors='ignore')
-                        match = re.search(r'class="[^"]*download_link[^"]*".*?href="([^"#]+)"', html)
-                        if not match:
-                            match = re.search(r'class="[^"]*download_link[^"]*".*?data-directurl="([^"#]+)"', html)
-                        if match:
-                            info = {
-                                "id": "video",
-                                "title": "Video TikTok",
-                                "duration": None,
-                                "ext": "mp4",
-                                "url": match.group(1).replace('&amp;', '&'),
-                                "http_headers": {"Referer": "https://ssstik.io/"}
-                            }
-                    except Exception as ssstik_err:
-                        logger.warning("ssstik.io fallback failed: %s", ssstik_err)
-
-                    # Try tikwm.com if ssstik.io failed
+                        info = self._tikwm_info(normalized_url)
+                    except SocialVideoDownloadError:
+                        raise
+                    except Exception as tikwm_err:
+                        logger.warning("tikwm.com fallback failed: %s", tikwm_err)
                     if not info:
-                        request = urllib.request.Request(
-                            f"https://www.tikwm.com/api/?url={quote(normalized_url, safe='')}&hd=1",
-                            headers={"User-Agent": "Mozilla/5.0"},
-                        )
-                        with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
-                            payload = json.loads(response.read(2 * 1024 * 1024))
-                        data = payload.get("data") or {}
-                        if payload.get("code") != 0 or not data.get("play"):
-                            raise RuntimeError("Both ssstik.io and tikwm.com API fallbacks failed")
-                        info = {"id": str(data.get("id") or "video"), "title": data.get("title") or "Video TikTok",
-                                "duration": data.get("duration"), "ext": "mp4",
-                                "url": urljoin("https://www.tikwm.com/", data["play"])}
+                        info = self._ssstik_info(normalized_url)
+                    if not info:
+                        raise RuntimeError("Both tikwm.com and ssstik.io API fallbacks failed")
                 rejected = match_filter(info)
                 if rejected:
                     raise SocialVideoDownloadError(rejected)
