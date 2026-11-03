@@ -359,6 +359,10 @@ class ASRService:
             {"language": forced, "beam": False, "vad": False, "strict": False},
             {"language": None, "beam": False, "vad": False, "strict": False},
         ]
+        if forced is None:
+            # With auto detection the last retry is the same pass again: on a song with no
+            # speech that alone cost ~15 minutes of CPU (job 87f54b58).
+            attempts.pop()
         for index, attempt in enumerate(attempts):
             if index == 1:
                 logger.warning("No transcript segments with requested language, retrying with simpler whisper settings")
@@ -505,6 +509,11 @@ class ASRService:
             options.update(temperature=0, condition_on_previous_text=False)
         elif attempt["strict"]:
             options.update(temperature=0, condition_on_previous_text=True, hallucination_silence_threshold=1.0)
+        else:
+            # Retries run on full audio without VAD, mostly over music. The default
+            # temperature ladder re-decodes every window up to 6 times there: 58 s of a
+            # song took ~15 min on the 4-core VPS for nothing but hallucinations.
+            options.update(temperature=0, condition_on_previous_text=False)
         if attempt.get("prompt"):
             options.update(temperature=0, condition_on_previous_text=False, initial_prompt=attempt["prompt"])
         generator, info = model.transcribe(audio, **options)
