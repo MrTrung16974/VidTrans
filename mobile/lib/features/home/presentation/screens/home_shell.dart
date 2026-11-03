@@ -711,6 +711,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
 
     showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetContext) {
@@ -871,6 +872,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
     final account = ref.read(sessionProvider).valueOrNull;
     showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetContext) {

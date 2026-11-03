@@ -4,6 +4,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/widgets/error_view.dart';
+import '../../../../core/widgets/studio_widgets.dart';
 import '../../../../core/widgets/video_controls.dart';
 import '../../data/jobs_repository.dart';
 
@@ -64,12 +65,15 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
           style: TextStyle(color: Colors.white, fontSize: 16),
         ),
       ),
-      body: Center(
-        child: _error != null
-            ? ErrorView(message: _error!)
-            : controller == null
-                ? const CircularProgressIndicator(color: AppColors.brand)
-                : ControlledVideo(controller: controller),
+      body: Padding(
+        padding: EdgeInsets.only(bottom: studioDockClearance(context)),
+        child: Center(
+          child: _error != null
+              ? ErrorView(message: _error!)
+              : controller == null
+                  ? const CircularProgressIndicator(color: AppColors.brand)
+                  : ControlledVideo(controller: controller),
+        ),
       ),
     );
   }

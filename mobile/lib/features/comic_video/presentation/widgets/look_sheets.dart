@@ -15,6 +15,7 @@ Map<String, dynamic> changedFields(Map<String, String> initial, Map<String, Stri
 
 Future<void> showLookSheet(BuildContext context, {required WidgetBuilder builder}) => showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,

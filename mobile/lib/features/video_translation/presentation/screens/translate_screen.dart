@@ -292,17 +292,20 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       return Scaffold(
         backgroundColor: AppColors.bg,
         appBar: const StudioTopBar(activeStudioPill: StudioCategoryPill.video),
-        body: StudioEmptyState(
-          icon: Icons.lock_outline_rounded,
-          title: 'Tài khoản chỉ xem',
-          subtitle: 'Tài khoản chỉ xem không thể tạo công việc mới.',
-          action: canTranslateImages
-              ? OutlinedButton.icon(
-                  onPressed: () => context.go('/translate/image'),
-                  icon: const Icon(Icons.image_search_rounded, size: 18),
-                  label: const Text('Dịch ảnh chụp màn hình'),
-                )
-              : null,
+        body: Padding(
+          padding: EdgeInsets.only(bottom: studioDockClearance(context)),
+          child: StudioEmptyState(
+            icon: Icons.lock_outline_rounded,
+            title: 'Tài khoản chỉ xem',
+            subtitle: 'Tài khoản chỉ xem không thể tạo công việc mới.',
+            action: canTranslateImages
+                ? OutlinedButton.icon(
+                    onPressed: () => context.go('/translate/image'),
+                    icon: const Icon(Icons.image_search_rounded, size: 18),
+                    label: const Text('Dịch ảnh chụp màn hình'),
+                  )
+                : null,
+          ),
         ),
       );
     }

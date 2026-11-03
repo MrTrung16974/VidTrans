@@ -835,12 +835,12 @@ double studioDockClearance(BuildContext context) {
   final hardwareBottom = viewBottom > 0
       ? viewBottom
       : (padBottom > 0 && padBottom < 50 ? padBottom : 16.0);
-  return 84.0 + hardwareBottom;
+  return 92.0 + hardwareBottom;
 }
 
 /// Bottom scroll padding that clears the floating glassmorphic dock in [HomeShell]
 /// with generous breathing room so the last card/button sits high above the menu.
-double studioDockBottomPadding(BuildContext context, {double extra = 32}) {
+double studioDockBottomPadding(BuildContext context, {double extra = 40}) {
   return studioDockClearance(context) + extra;
 }
 

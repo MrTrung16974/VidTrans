@@ -113,7 +113,12 @@ class _SettingsFormState extends ConsumerState<_SettingsForm> {
     final enabled = !readOnly && _busy == null;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        14,
+        16,
+        studioDockBottomPadding(context),
+      ),
       children: [
         _ImageCard(
           title: 'Logo thương hiệu',

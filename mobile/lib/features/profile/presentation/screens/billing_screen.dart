@@ -96,6 +96,7 @@ class _BillingBody extends ConsumerWidget {
   ) async {
     final provider = await showModalBottomSheet<String>(
       context: context,
+      useRootNavigator: true,
       builder: (context) => _ProviderSheet(plan: plan, overview: overview),
     );
     if (provider == null || !context.mounted) return;
@@ -121,6 +122,7 @@ class _BillingBody extends ConsumerWidget {
   ) async {
     await showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       builder: (sheetContext) => _PaymentSheet(
         order: order,
@@ -181,7 +183,12 @@ class _BillingBody extends ConsumerWidget {
     final currentPlan = overview.account.plan ?? 'free';
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
+      padding: EdgeInsets.fromLTRB(
+        14,
+        14,
+        14,
+        studioDockBottomPadding(context, extra: 44),
+      ),
       children: [
         const StudioPageHeader(
           eyebrow: 'Gói dịch vụ & thanh toán',
