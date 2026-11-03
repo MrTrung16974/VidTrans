@@ -209,7 +209,12 @@ class ScreenTranslatorService : Service() {
         projection = granted
         capture = ScreenCapture(this, granted, workerHandler).also { it.ensureStarted() }
         startEngine()
-        bubble = FloatingBubble(this, onTap = { onBubbleTap() }, onLongPress = { toggleLive() }).also { button ->
+        bubble = FloatingBubble(
+            this,
+            onTap = { onBubbleTap() },
+            onLongPress = { toggleLive() },
+            onDismiss = { main.post { stopSelf() } }, // dropped on the bin
+        ).also { button ->
             button.show()
             button.post {
                 val at = IntArray(2)

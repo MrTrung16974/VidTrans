@@ -67,8 +67,95 @@ class OverlayRegion(
 }
 
 /**
+ * Bin shown at the bottom of the screen while the floating button is
+ * dragged: dropping the button on it switches the translator off.
+ */
+@SuppressLint("ViewConstructor")
+private class DismissTarget(context: Context, trusted: Boolean) : FrameLayout(context) {
+    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val size = context.dp(64f)
+    private val circle = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.argb(200, 15, 23, 42))
+        setStroke(context.dp(2f), Color.WHITE)
+    }
+    private val params = WindowManager.LayoutParams(
+        size, size, overlayType(trusted),
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        PixelFormat.TRANSLUCENT,
+    ).apply {
+        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        y = context.dp(56f)
+    }
+    var attached = false
+        private set
+
+    init {
+        background = circle
+        elevation = context.dp(6f).toFloat()
+        val icon = android.widget.ImageView(context).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            setColorFilter(Color.WHITE)
+        }
+        val pad = context.dp(16f)
+        addView(icon, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
+            setMargins(pad, pad, pad, pad)
+        })
+    }
+
+    /**
+     * Added (hidden) before the button's own window, so the button is drawn
+     * above it when it snaps onto the bin.
+     */
+    fun attach() {
+        if (attached) return
+        visibility = INVISIBLE
+        windowManager.addView(this, params)
+        attached = true
+    }
+
+    fun detach() {
+        if (attached) windowManager.removeViewImmediate(this)
+        attached = false
+    }
+
+    fun show() {
+        if (!attached) return
+        visibility = VISIBLE
+        alpha = 0f
+        animate().alpha(1f).setDuration(120).start()
+    }
+
+    fun hide() {
+        animate().cancel()
+        visibility = INVISIBLE
+        hot = false
+    }
+
+    /** Centre on screen, or null before it is laid out. */
+    fun center(): Pair<Float, Float>? {
+        if (!attached || visibility != VISIBLE || width == 0) return null
+        val at = IntArray(2)
+        getLocationOnScreen(at)
+        return (at[0] + width / 2f) to (at[1] + height / 2f)
+    }
+
+    /** The button is over the bin: bigger and red, so letting go clearly removes it. */
+    var hot = false
+        set(value) {
+            if (field == value) return
+            field = value
+            circle.setColor(if (value) Color.parseColor("#DC2626") else Color.argb(200, 15, 23, 42))
+            animate().scaleX(if (value) 1.25f else 1f).scaleY(if (value) 1.25f else 1f).setDuration(100).start()
+        }
+}
+
+/**
  * Draggable round button floating over other apps. Tap = translate the
  * screen; the service hides it while capturing so it is not in the frame.
+ * While dragged a bin appears at the bottom: dropping the button there
+ * calls [onDismiss] (switch the translator off).
  */
 @SuppressLint("ViewConstructor", "ClickableViewAccessibility")
 class FloatingBubble(
@@ -76,7 +163,9 @@ class FloatingBubble(
     private val onTap: () -> Unit,
     private val onLongPress: () -> Unit,
     trusted: Boolean = false,
+    private val onDismiss: (() -> Unit)? = null,
 ) : FrameLayout(context) {
+    private val bin = DismissTarget(context, trusted)
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val label = TextView(context).apply {
         text = "Dịch"
@@ -140,6 +229,11 @@ class FloatingBubble(
         var startY = 0
         var dragging = false
         var longPressed = false
+        // Screen position of the window's origin minus params (status bar…), for snapping onto the bin.
+        var originX = 0
+        var originY = 0
+        var homeX = 0
+        var homeY = 0
         val longPress = Runnable {
             if (!dragging) {
                 longPressed = true
@@ -160,18 +254,51 @@ class FloatingBubble(
                     val dx = event.rawX - downX
                     val dy = event.rawY - downY
                     if (dragging || abs(dx) > slop || abs(dy) > slop) {
+                        if (!dragging) {
+                            val at = IntArray(2)
+                            getLocationOnScreen(at)
+                            originX = at[0] - params.x
+                            originY = at[1] - params.y
+                            if (onDismiss != null) bin.show()
+                        }
                         dragging = true
                         removeCallbacks(longPress)
                         params.x = (startX + dx).toInt()
                         params.y = (startY + dy).toInt()
+                        val target = bin.center()
+                        val near = target != null && kotlin.math.hypot(
+                            event.rawX - target.first, event.rawY - target.second,
+                        ) < context.dp(72f)
+                        if (near && !bin.hot) performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                        bin.hot = near
+                        if (near && target != null) {
+                            // Snap onto the bin.
+                            params.x = (target.first - width / 2f - originX).toInt()
+                            params.y = (target.second - height / 2f - originY).toInt()
+                        } else {
+                            homeX = params.x
+                            homeY = params.y
+                        }
                         if (attached) windowManager.updateViewLayout(this, params)
                     }
                 }
                 MotionEvent.ACTION_UP -> {
                     removeCallbacks(longPress)
-                    if (!dragging && !longPressed && (!busy || live)) onTap()
+                    val dropped = dragging && bin.hot
+                    bin.hide()
+                    if (dropped) {
+                        // Next time it appears where it was before the bin.
+                        params.x = homeX
+                        params.y = homeY
+                        onDismiss?.invoke()
+                    } else if (!dragging && !longPressed && (!busy || live)) {
+                        onTap()
+                    }
                 }
-                MotionEvent.ACTION_CANCEL -> removeCallbacks(longPress)
+                MotionEvent.ACTION_CANCEL -> {
+                    removeCallbacks(longPress)
+                    bin.hide()
+                }
             }
             true
         }
@@ -186,6 +313,7 @@ class FloatingBubble(
 
     fun show() {
         if (!attached) {
+            if (onDismiss != null) bin.attach()
             windowManager.addView(this, params)
             attached = true
         }
@@ -198,6 +326,7 @@ class FloatingBubble(
     }
 
     fun remove() {
+        bin.detach()
         if (attached) windowManager.removeViewImmediate(this)
         attached = false
     }

@@ -172,7 +172,11 @@ class AccessibilityTranslatorService : AccessibilityService() {
                 .also { it.show() }
         }
         if (bubble == null) {
-            bubble = FloatingBubble(this, onTap = ::togglePaused, onLongPress = ::retranslate, trusted = true)
+            bubble = FloatingBubble(
+                this, onTap = ::togglePaused, onLongPress = ::retranslate, trusted = true,
+                // Dropped on the bin: translating off (the app shows it as off too).
+                onDismiss = { main.post { prefs.edit().putBoolean(KEY_ENABLED, false).apply() } },
+            )
                 .also { it.live = !paused }
         }
         bubble?.show()
