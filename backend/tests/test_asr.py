@@ -274,6 +274,15 @@ class StockHallucinationTests(unittest.TestCase):
         self.assertEqual(model.calls[1]["initial_prompt"], "Lời bài hát:")
         self.assertFalse(model.calls[1]["vad_filter"])
 
+    def test_chinese_subtitle_group_credit_is_dropped(self):
+        # Job 0f019ab1: a whole Douyin clip came out as this one line.
+        from pipeline.asr import is_stock_hallucination
+
+        self.assertTrue(is_stock_hallucination({"text": "翻译组 中文字幕组", "no_speech_prob": 0.1}))
+        self.assertTrue(is_stock_hallucination({"text": "请不吝点赞 订阅 转发", "no_speech_prob": 0.1}))
+        self.assertFalse(is_stock_hallucination({"text": "记得点赞关注", "no_speech_prob": 0.05}))
+        self.assertFalse(is_stock_hallucination({"text": "刑警只是瞥了眼街边的电视", "no_speech_prob": 0.6}))
+
     def test_real_speech_mentioning_subscribe_is_kept_without_a_retry(self):
         model = FakeFasterModel([[_scored(0.0, 3.0, "Các bạn nhớ subscribe kênh nhé", 0.05)]])
         result = service(model).transcribe("medium", Path("v.mp4"), source_language="vi")

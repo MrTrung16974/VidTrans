@@ -76,12 +76,13 @@ def _silent(audio: Any, rate: int, start: float, end: float) -> bool:
 # dropped only when Whisper itself thinks the audio is probably not speech.
 STOCK_HALLUCINATION_STRONG = re.compile(
     r"ghiền\s*mì\s*gõ|la\s*la\s*school|amara\.org|明镜与点点|请不吝点赞|字幕由|"
+    r"不吝点赞|字幕组|中文字幕|翻译组|字幕志愿者|优优独播剧场|yoyo\s*television|"
     r"không\s+bỏ\s+lỡ\s+những\s+video\s+hấp\s+dẫn",
     re.IGNORECASE,
 )
 STOCK_HALLUCINATION_WEAK = re.compile(
     r"subscribe|đăng\s*ký\s*(cho\s*)?kênh|cảm\s*ơn\s*các\s*bạn\s*đã\s*(theo\s*dõi|xem)|"
-    r"hẹn\s*gặp\s*lại\s*các\s*bạn|thanks?\s*(you\s*)?for\s*watching|谢谢观看|订阅",
+    r"hẹn\s*gặp\s*lại\s*các\s*bạn|thanks?\s*(you\s*)?for\s*watching|谢谢观看|感谢观看|谢谢大家|订阅|点赞",
     re.IGNORECASE,
 )
 STOCK_WEAK_MIN_NO_SPEECH_PROB = 0.4

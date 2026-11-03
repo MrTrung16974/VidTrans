@@ -3254,7 +3254,7 @@ def process_video(
                 "asr_vad_min_silence_ms": ASR_SERVICE.config.vad_min_silence_ms,
                 "asr_vad_gap_recovery": 2,
                 # Stock outros ("Ghiền Mì Gõ", "subscribe") dropped, songs heard again as lyrics.
-                "asr_stock_filter": 1,
+                "asr_stock_filter": 2,
                 # Caption alignment checks the band with OCR and keeps leftover words in order.
                 "caption_alignment": 2,
                 "ocr_enabled": SETTINGS.ocr_backend != "off",
