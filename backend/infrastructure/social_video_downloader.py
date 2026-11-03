@@ -52,6 +52,26 @@ class SocialVideoDownloadCancelled(SocialVideoDownloadError):
     pass
 
 
+AUDIO_ONLY_EXTENSIONS = {"mp3", "m4a", "aac", "opus", "ogg", "wav", "flac"}
+
+
+class _AudioOnlySource(RuntimeError):
+    """yt-dlp resolved the post to audio only; the browser/API fallbacks may still find the video."""
+
+
+def _has_no_video_track(info: dict[str, Any]) -> bool:
+    """True when yt-dlp says every format is audio-only (vcodec "none").
+
+    An unknown vcodec (missing key, as in the browser/API fallbacks) counts as video.
+    """
+    formats = info.get("formats") or [info]
+    for item in formats:
+        vcodec = item.get("vcodec")
+        if vcodec != "none" and not (vcodec is None and str(item.get("ext") or "").lower() in AUDIO_ONLY_EXTENSIONS):
+            return False
+    return True
+
+
 def _download_failure_message(platform: str, error: Exception, *, used_cookies: bool) -> str:
     message = " ".join(str(error).split())
     if platform == "YouTube" and any(marker in message.lower() for marker in YOUTUBE_AUTH_ERROR_MARKERS):
@@ -287,6 +307,15 @@ class SocialVideoDownloader:
         def match_filter(info: dict[str, Any], *, incomplete: bool = False) -> str | None:
             del incomplete
             reason = None
+            if _has_no_video_track(info):
+                if platform in {"TikTok", "Douyin"}:
+                    # TikTok's web page can hide the video from a server IP and leave only
+                    # the soundtrack mp3; raising sends the download to the API fallbacks.
+                    raise _AudioOnlySource("yt-dlp found only an audio track")
+                reason = (
+                    "Link này là bài đăng ảnh hoặc chỉ có âm thanh, không có video. "
+                    "Hãy dùng link một video"
+                )
             duration = info.get("duration")
             if duration is not None and float(duration) > self.max_duration_seconds:
                 reason = (
