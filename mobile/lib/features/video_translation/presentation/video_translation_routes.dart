@@ -7,10 +7,17 @@ import 'screens/translate_screen.dart';
 final translationRoutes = <RouteBase>[
   GoRoute(
     path: '/translate',
-    builder: (_, _) => const TranslateScreen(),
+    pageBuilder: (_, _) => const NoTransitionPage(child: TranslateScreen()),
     routes: [
-      // Screenshot translation (phase 1 of the screen translator).
-      GoRoute(path: 'image', builder: (_, _) => const ImageTranslateScreen()),
+      // Screenshot & live screen translation studio.
+      GoRoute(
+        path: 'image',
+        pageBuilder: (_, state) => NoTransitionPage(
+          child: ImageTranslateScreen(
+            initialLiveMode: state.uri.queryParameters['mode'] == 'live',
+          ),
+        ),
+      ),
     ],
   ),
 ];

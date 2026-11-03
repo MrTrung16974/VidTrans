@@ -109,6 +109,17 @@ class ScreenTranslatorEngine {
   final BlockTranslator online;
 
   Future<Object?> handle(MethodCall call) async {
+    if (call.method == 'translateTexts') {
+      final args = Map<String, Object?>.from(call.arguments as Map);
+      return translateTexts(
+        texts: [
+          for (final text in (args['texts'] as List? ?? const [])) '$text',
+        ],
+        source: args['source'] as String? ?? 'auto',
+        target: args['target'] as String? ?? 'vi',
+        mode: args['mode'] as String? ?? TranslationMode.online.name,
+      );
+    }
     if (call.method != 'translate') throw MissingPluginException(call.method);
     final args = Map<String, Object?>.from(call.arguments as Map);
     return translate(
@@ -118,18 +129,76 @@ class ScreenTranslatorEngine {
       height: args['height']! as int,
       source: args['source'] as String? ?? 'auto',
       target: args['target'] as String? ?? 'vi',
-      mode: args['mode'] as String? ?? TranslationMode.offline.name,
+      mode: args['mode'] as String? ?? TranslationMode.online.name,
       ignore: [
         for (final area in (args['ignore'] as List? ?? const []))
-          if (area is List && area.length == 4)
-            Rect.fromLTRB(
-              (area[0] as num).toDouble(),
-              (area[1] as num).toDouble(),
-              (area[2] as num).toDouble(),
-              (area[3] as num).toDouble(),
-            ),
+          ?_rectOf(area),
       ],
+      clip: _rectOf(args['clip']),
+      ocrOffsetY: (args['ocrOffsetY'] as num?)?.toDouble() ?? 0,
     );
+  }
+
+  BlockTranslator _translatorFor(String mode) => switch (mode) {
+    _ when mode == TranslationMode.online.name => online,
+    // On-device test of capture and overlay without models or a server
+    // (integration_test/screen_translator_test.dart); not in release builds.
+    'debug-echo' when kDebugMode => const _EchoTranslator(),
+    _ => offline,
+  };
+
+  /// Accessibility mode: the app's own text, read from its view tree (exact
+  /// text and positions, no OCR). Returns `{translations: [...]}` aligned with
+  /// [texts] — null where the text needs no translation (already in the
+  /// target language, numbers, a time) — or `{error, message}`.
+  Future<Map<String, Object?>> translateTexts({
+    required List<String> texts,
+    required String source,
+    required String target,
+    required String mode,
+  }) async {
+    final translator = _translatorFor(mode);
+    final languages = <String>[
+      for (final text in texts)
+        source == 'auto' ? await pipeline.detect(text) : source,
+    ];
+    final groups = <String, List<String>>{};
+    for (var i = 0; i < texts.length; i++) {
+      if (!shouldTranslate(texts[i], languages[i], target)) continue;
+      final group = groups.putIfAbsent(languages[i], () => []);
+      if (!group.contains(texts[i])) group.add(texts[i]);
+    }
+    final missing = <String>{};
+    final result = <String, Map<String, String>>{};
+    try {
+      for (final MapEntry(key: language, value: group) in groups.entries) {
+        try {
+          final values = await translator.translate(
+            group,
+            source: language,
+            target: target,
+          );
+          result[language] = {
+            for (var i = 0; i < group.length; i++) group[i]: values[i],
+          };
+        } on ModelsMissing catch (error) {
+          missing.addAll(error.languages);
+        }
+      }
+    } catch (error) {
+      return {'error': 'failed', 'message': errorMessage(error)};
+    }
+    if (result.isEmpty && missing.isNotEmpty) {
+      return {'error': 'models_missing', 'languages': missing.toList()};
+    }
+    return {
+      'translations': [
+        for (var i = 0; i < texts.length; i++)
+          (result[languages[i]]?[texts[i]]?.trim().isNotEmpty ?? false)
+              ? result[languages[i]]![texts[i]]
+              : null,
+      ],
+    };
   }
 
   /// Returns `{found, translated, regions: [...]}` or `{error, message,
@@ -143,14 +212,10 @@ class ScreenTranslatorEngine {
     required String target,
     required String mode,
     List<Rect> ignore = const [],
+    Rect? clip,
+    double ocrOffsetY = 0,
   }) async {
-    final translator = switch (mode) {
-      _ when mode == TranslationMode.online.name => online,
-      // On-device test of capture and overlay without models or a server
-      // (integration_test/screen_translator_test.dart); not in release builds.
-      'debug-echo' when kDebugMode => const _EchoTranslator(),
-      _ => offline,
-    };
+    final translator = _translatorFor(mode);
     final missingModels = <String>{};
     try {
       final regions = await pipeline.analyze(
@@ -161,6 +226,8 @@ class ScreenTranslatorEngine {
         source: source,
         target: target,
         ignore: ignore,
+        clip: clip,
+        ocrOffsetY: ocrOffsetY,
         translate: (texts, {required source, required target}) async {
           try {
             return await translator.translate(
@@ -194,6 +261,15 @@ class ScreenTranslatorEngine {
     }
   }
 }
+
+Rect? _rectOf(Object? value) => value is List && value.length == 4
+    ? Rect.fromLTRB(
+        (value[0] as num).toDouble(),
+        (value[1] as num).toDouble(),
+        (value[2] as num).toDouble(),
+        (value[3] as num).toDouble(),
+      )
+    : null;
 
 List<double> _rect(Rect rect) => [rect.left, rect.top, rect.right, rect.bottom];
 

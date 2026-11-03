@@ -95,16 +95,38 @@ class ImageTranslationPipeline {
     required TranslateStep translate,
     void Function(TranslationStage stage)? onStage,
     List<ui.Rect> ignore = const [],
+    ui.Rect? clip,
+    double ocrOffsetY = 0,
   }) async {
     onStage?.call(TranslationStage.reading);
     final size = ui.Size(width.toDouble(), height.toDouble());
     final bounds = ui.Offset.zero & size;
-    final blocks = [
+    // [imagePath] may be a horizontal strip of the screen starting at
+    // [ocrOffsetY] (live mode reads only what scrolled in).
+    final read = [
       for (final block in await ocr(imagePath, ocrScriptFor(source)))
+        ocrOffsetY == 0
+            ? block
+            : OcrBlock(
+                text: block.text,
+                box: block.box.shift(ui.Offset(0, ocrOffsetY)),
+                lines: [
+                  for (final line in block.lines)
+                    line.shift(ui.Offset(0, ocrOffsetY)),
+                ],
+              ),
+    ];
+    final blocks = [
+      for (final block in read)
         if (block.box.intersect(bounds).width > 1 &&
             block.box.intersect(bounds).height > 1 &&
             // e.g. the status and navigation bars of a live screen capture
-            !ignore.any((area) => area.contains(block.box.center)))
+            !ignore.any((area) => area.contains(block.box.center)) &&
+            // Text cut by the edge of the visible area is translated once
+            // it has scrolled fully into view, not half a sentence now.
+            (clip == null ||
+                (block.box.top > clip.top + 2 &&
+                    block.box.bottom < clip.bottom - 2)))
           OcrBlock(
             text: block.text,
             box: block.box.intersect(bounds),

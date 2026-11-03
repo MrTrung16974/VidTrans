@@ -78,13 +78,24 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       body: shell,
       bottomNavigationBar: keyboardOpen
           ? const SizedBox.shrink()
-          : ColoredBox(
-              color: AppColors.bg,
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    AppColors.bg.withValues(alpha: 0.0),
+                    AppColors.bg.withValues(alpha: 0.88),
+                    AppColors.bg,
+                  ],
+                  stops: const [0.0, 0.35, 1.0],
+                ),
+              ),
               child: Padding(
                 padding: EdgeInsets.fromLTRB(
-                  12,
+                  14,
                   isCompactHeight ? 4 : 6,
-                  12,
+                  14,
                   bottomMargin,
                 ),
                 child: Align(
@@ -219,32 +230,45 @@ class _FloatingNetflixDock extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(32),
+        borderRadius: BorderRadius.circular(999),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x240F172A),
-            blurRadius: 30,
+            color: Color(0x3D0F172A),
+            blurRadius: 28,
             spreadRadius: -2,
             offset: Offset(0, 12),
           ),
           BoxShadow(
-            color: Color(0x0D0F172A),
-            blurRadius: 8,
-            offset: Offset(0, 3),
+            color: Color(0x22EA580C),
+            blurRadius: 16,
+            spreadRadius: -4,
+            offset: Offset(0, 4),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(32),
+        borderRadius: BorderRadius.circular(999),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
           child: Container(
-            height: compact ? 58 : 64,
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+            height: compact ? 60 : 66,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.94),
-              borderRadius: BorderRadius.circular(32),
-              border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xED2B1810),
+                  Color(0xF21C1917),
+                  Color(0xF20F172A),
+                ],
+                stops: [0.0, 0.52, 1.0],
+              ),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: const Color(0x5CFB923C),
+                width: 1.2,
+              ),
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -264,18 +288,23 @@ class _FloatingNetflixDock extends StatelessWidget {
                             gradient: const LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
-                              colors: [Color(0xFFFFFBF7), Color(0xFFFFF3E6)],
+                              colors: [
+                                Color(0xFFF97316),
+                                Color(0xFFEA580C),
+                                Color(0xFFC2410C),
+                              ],
+                              stops: [0.0, 0.55, 1.0],
                             ),
-                            borderRadius: BorderRadius.circular(25),
+                            borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                              color: const Color(0x66FB923C),
+                              color: const Color(0x99FED7AA),
                               width: 1.15,
                             ),
                             boxShadow: const [
                               BoxShadow(
-                                color: Color(0x22EA580C),
-                                blurRadius: 8,
-                                offset: Offset(0, 2),
+                                color: Color(0x66EA580C),
+                                blurRadius: 14,
+                                offset: Offset(0, 3),
                               ),
                             ],
                           ),
@@ -318,10 +347,8 @@ class _DockButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fgColor = selected ? AppColors.brand : const Color(0xFF64748B);
-    final labelColor = selected
-        ? const Color(0xFFC2410C)
-        : const Color(0xFF64748B);
+    final fgColor = selected ? Colors.white : const Color(0xC7FFF7ED);
+    final labelColor = selected ? Colors.white : const Color(0xC2FFF7ED);
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -360,17 +387,22 @@ class _DockButton extends StatelessWidget {
                         ),
                         decoration: BoxDecoration(
                           color: selected
-                              ? AppColors.brand
-                              : const Color(0xFF0F172A),
+                              ? const Color(0xFFFDE047)
+                              : AppColors.brand,
                           borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: Colors.white, width: 1.2),
+                          border: Border.all(
+                            color: const Color(0xFF0F172A),
+                            width: 1.2,
+                          ),
                         ),
                         child: Text(
                           '${item.badgeCount}',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            color: selected
+                                ? const Color(0xFF0F172A)
+                                : Colors.white,
                           ),
                         ),
                       ),
@@ -519,19 +551,53 @@ class _DockIconPainter extends CustomPainter {
       oldDelegate.selected != selected;
 }
 
+/// Netflix-style category pills displayed directly under the `StudioTopBar`
+/// brand row (`[Dịch Video]  [Dịch Ảnh · MỚI]  [Dịch Nổi]  [Công cụ ▾]`).
+enum StudioCategoryPill { video, image, live }
+
 /// Global Studio Top Header Bar matching `.topbar` in `web/index.html` & `web/assets/styles.css`:
 /// - Left: `[V] VidTrans` brand lockup
 /// - Right: circular system status indicator + circular user avatar opening the Studio User Menu
+/// - Optional Netflix-style category pill bar (`activeStudioPill`)
 /// - Bottom: `2.5px` orange gradient accent line
 class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
-  const StudioTopBar({super.key, this.bottom, this.extraActions});
+  const StudioTopBar({
+    super.key,
+    this.bottom,
+    this.extraActions,
+    this.activeStudioPill,
+    this.onSelectStudioPill,
+  });
 
   final PreferredSizeWidget? bottom;
   final List<Widget>? extraActions;
+  final StudioCategoryPill? activeStudioPill;
+  final ValueChanged<StudioCategoryPill>? onSelectStudioPill;
+
+  double get _categoryBarHeight => activeStudioPill != null ? 46.0 : 0.0;
 
   @override
-  Size get preferredSize =>
-      Size.fromHeight(60 + (bottom?.preferredSize.height ?? 0));
+  Size get preferredSize => Size.fromHeight(
+    60 + _categoryBarHeight + (bottom?.preferredSize.height ?? 0),
+  );
+
+  void _handleSelectPill(BuildContext context, StudioCategoryPill pill) {
+    HapticFeedback.selectionClick();
+    if (onSelectStudioPill != null) {
+      onSelectStudioPill!(pill);
+      return;
+    }
+    final router = GoRouter.maybeOf(context);
+    if (router == null) return;
+    switch (pill) {
+      case StudioCategoryPill.video:
+        router.go('/translate');
+      case StudioCategoryPill.image:
+        router.go('/translate/image');
+      case StudioCategoryPill.live:
+        router.go('/translate/image?mode=live');
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -556,7 +622,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                 child: Row(
                   children: [
                     InkWell(
-                      onTap: () => context.go('/translate'),
+                      onTap: () => GoRouter.maybeOf(context)?.go('/translate'),
                       borderRadius: BorderRadius.circular(10),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
@@ -605,7 +671,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                       activeCount: activeCount,
                       onTap: () {
                         HapticFeedback.lightImpact();
-                        context.go('/jobs');
+                        GoRouter.maybeOf(context)?.go('/jobs');
                       },
                     ),
                     const SizedBox(width: 10),
@@ -620,6 +686,17 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                 ),
               ),
             ),
+            if (activeStudioPill != null)
+              _StudioNetflixPillBar(
+                activePill: activeStudioPill!,
+                canTranslateImages:
+                    account?.hasFeature(PlanFeature.imageTranslation) ?? true,
+                onSelectPill: (pill) => _handleSelectPill(context, pill),
+                onOpenAllTools: () {
+                  HapticFeedback.lightImpact();
+                  _showStudioCategorySheet(context, ref, activeStudioPill!);
+                },
+              ),
             ?bottom,
             // Crisp 2.5px orange gradient accent line matching `.topbar::after`
             Container(
@@ -638,6 +715,175 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
           ],
         ),
       ),
+    );
+  }
+
+  void _showStudioCategorySheet(
+    BuildContext context,
+    WidgetRef ref,
+    StudioCategoryPill currentPill,
+  ) {
+    final account = ref.read(sessionProvider).valueOrNull;
+    final canTranslateImages =
+        account?.hasFeature(PlanFeature.imageTranslation) ?? true;
+    final canUseComics = account?.canUseComics ?? true;
+    final canPublishSocial = account?.canPublishSocial ?? true;
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: AppColors.brandBorder),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x2E0F172A),
+                blurRadius: 34,
+                offset: Offset(0, 14),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 38,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFCBD5E1),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFEA580C), Color(0xFFF97316)],
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.grid_view_rounded,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Danh mục công cụ VidTrans',
+                              style: TextStyle(
+                                fontSize: 15.5,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.ink,
+                              ),
+                            ),
+                            Text(
+                              'Chọn nhanh chế độ dịch và công cụ sáng tạo',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _UserMenuTile(
+                    icon: Icons.movie_filter_rounded,
+                    title: 'Dịch Video Hàng Loạt (Batch Studio)',
+                    subtitle:
+                        'Dịch, lồng tiếng AI & ghép phụ đề tới 50 video/lô',
+                    selected: currentPill == StudioCategoryPill.video,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      _handleSelectPill(context, StudioCategoryPill.video);
+                    },
+                  ),
+                  if (canTranslateImages) ...[
+                    _UserMenuTile(
+                      icon: Icons.image_search_rounded,
+                      title: 'Dịch Ảnh Chụp Màn Hình',
+                      subtitle:
+                          'Quét OCR chữ Trung, Anh… và thay bằng tiếng Việt ngay trên ảnh',
+                      badge: 'MỚI',
+                      selected: currentPill == StudioCategoryPill.image,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _handleSelectPill(context, StudioCategoryPill.image);
+                      },
+                    ),
+                    _UserMenuTile(
+                      icon: Icons.touch_app_rounded,
+                      title: 'Nút Dịch Nổi Trực Tiếp (Live Overlay)',
+                      subtitle:
+                          'Bật nút dịch nổi trên WeChat, Zalo, trình duyệt, app đọc truyện',
+                      badge: 'HOT',
+                      selected: currentPill == StudioCategoryPill.live,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _handleSelectPill(context, StudioCategoryPill.live);
+                      },
+                    ),
+                  ],
+                  if (canUseComics)
+                    _UserMenuTile(
+                      icon: Icons.auto_stories_rounded,
+                      title: 'Truyện Chữ → Video Hoạt Hình AI',
+                      subtitle:
+                          'Chuyển tiểu thuyết, truyện chữ thành tập phim AI tự động',
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        GoRouter.maybeOf(context)?.go('/comic');
+                      },
+                    ),
+                  _UserMenuTile(
+                    icon: Icons.bolt_rounded,
+                    title: 'Tiến Trình & Tải Video',
+                    subtitle: 'Theo dõi hàng đợi xử lý và tải kết quả về máy',
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      GoRouter.maybeOf(context)?.go('/jobs');
+                    },
+                  ),
+                  if (canPublishSocial)
+                    _UserMenuTile(
+                      icon: Icons.share_rounded,
+                      title: 'Đăng Bài Mạng Xã Hội',
+                      subtitle:
+                          'Lên lịch và đăng video lên TikTok, YouTube, Facebook',
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        GoRouter.maybeOf(context)?.go('/social');
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -780,6 +1026,200 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
   }
 }
 
+/// Horizontal Netflix-style pill menu bar (`[Dịch Video] [Dịch Ảnh · MỚI] [Dịch Nổi] [Công cụ ▾]`)
+/// styled in VidTrans Studio's warm orange, cream, and slate color palette.
+class _StudioNetflixPillBar extends StatelessWidget {
+  const _StudioNetflixPillBar({
+    required this.activePill,
+    required this.canTranslateImages,
+    required this.onSelectPill,
+    required this.onOpenAllTools,
+  });
+
+  final StudioCategoryPill activePill;
+  final bool canTranslateImages;
+  final ValueChanged<StudioCategoryPill> onSelectPill;
+  final VoidCallback onOpenAllTools;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 46,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+        child: Row(
+          children: [
+            _NetflixPillButton(
+              icon: Icons.movie_filter_rounded,
+              label: 'Dịch Video',
+              selected: activePill == StudioCategoryPill.video,
+              onTap: () => onSelectPill(StudioCategoryPill.video),
+            ),
+            if (canTranslateImages) ...[
+              const SizedBox(width: 8),
+              _NetflixPillButton(
+                icon: Icons.image_search_rounded,
+                label: 'Dịch Ảnh',
+                badge: 'MỚI',
+                selected: activePill == StudioCategoryPill.image,
+                onTap: () => onSelectPill(StudioCategoryPill.image),
+              ),
+              const SizedBox(width: 8),
+              _NetflixPillButton(
+                icon: Icons.touch_app_rounded,
+                label: 'Dịch Nổi',
+                selected: activePill == StudioCategoryPill.live,
+                onTap: () => onSelectPill(StudioCategoryPill.live),
+              ),
+            ],
+            const SizedBox(width: 8),
+            _NetflixPillButton(
+              label: 'Công cụ',
+              trailingIcon: Icons.keyboard_arrow_down_rounded,
+              selected: false,
+              onTap: onOpenAllTools,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NetflixPillButton extends StatelessWidget {
+  const _NetflixPillButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+    this.badge,
+    this.trailingIcon,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final String? badge;
+  final IconData? trailingIcon;
+
+  @override
+  Widget build(BuildContext context) {
+    final isHighlightedUnselected = badge != null && !selected;
+    final fgColor = selected
+        ? Colors.white
+        : (isHighlightedUnselected
+              ? const Color(0xFF9A3412)
+              : const Color(0xFF1E293B));
+    final iconColor = selected ? Colors.white : AppColors.brand;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          height: 34,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: BoxDecoration(
+            gradient: selected
+                ? const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFEA580C), Color(0xFFF97316)],
+                  )
+                : isHighlightedUnselected
+                ? const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+                  )
+                : const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xFFFFFFFF), Color(0xFFF8FAFC)],
+                  ),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFFFB923C)
+                  : isHighlightedUnselected
+                  ? const Color(0xFFFDBA74)
+                  : const Color(0xFFCBD5E1),
+              width: 1.2,
+            ),
+            boxShadow: selected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x38EA580C),
+                      blurRadius: 10,
+                      offset: Offset(0, 3),
+                    ),
+                  ]
+                : const [
+                    BoxShadow(
+                      color: Color(0x0A0F172A),
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 15.5, color: iconColor),
+                const SizedBox(width: 5.5),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                  color: fgColor,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              if (badge != null) ...[
+                const SizedBox(width: 5),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5.5,
+                    vertical: 1.5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Colors.white.withValues(alpha: 0.24)
+                        : AppColors.brand,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    badge!,
+                    style: const TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      letterSpacing: 0.2,
+                      height: 1.0,
+                    ),
+                  ),
+                ),
+              ],
+              if (trailingIcon != null) ...[
+                const SizedBox(width: 2),
+                Icon(trailingIcon, size: 17, color: fgColor),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _UserMenuTile extends StatelessWidget {
   const _UserMenuTile({
     required this.icon,
@@ -787,6 +1227,8 @@ class _UserMenuTile extends StatelessWidget {
     required this.subtitle,
     required this.onTap,
     this.danger = false,
+    this.selected = false,
+    this.badge,
   });
 
   final IconData icon;
@@ -794,20 +1236,35 @@ class _UserMenuTile extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
   final bool danger;
+  final bool selected;
+  final String? badge;
 
   @override
   Widget build(BuildContext context) {
-    final color = danger ? AppColors.red : AppColors.ink;
-    final iconBg = danger ? AppColors.redSoft : AppColors.brandSoft;
-    final iconColor = danger ? AppColors.red : AppColors.brand;
+    final color = danger
+        ? AppColors.red
+        : (selected ? AppColors.brandDark : AppColors.ink);
+    final iconBg = danger
+        ? AppColors.redSoft
+        : (selected ? AppColors.brand : AppColors.brandSoft);
+    final iconColor = danger
+        ? AppColors.red
+        : (selected ? Colors.white : AppColors.brand);
 
     return Material(
-      color: Colors.transparent,
+      color: selected ? AppColors.brandTint : Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
-        child: Padding(
+        child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: selected
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.brandBorder),
+                )
+              : null,
           child: Row(
             children: [
               Container(
@@ -825,13 +1282,27 @@ class _UserMenuTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: color,
-                      ),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            title,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: color,
+                            ),
+                          ),
+                        ),
+                        if (badge != null) ...[
+                          const SizedBox(width: 6),
+                          StudioStatusPill(
+                            label: badge!,
+                            compact: true,
+                            showDot: false,
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 1),
                     Text(
@@ -845,9 +1316,11 @@ class _UserMenuTile extends StatelessWidget {
                 ),
               ),
               Icon(
-                Icons.chevron_right_rounded,
+                selected ? Icons.check_circle_rounded : Icons.chevron_right_rounded,
                 size: 20,
-                color: danger ? AppColors.red : AppColors.muted,
+                color: danger
+                    ? AppColors.red
+                    : (selected ? AppColors.brand : AppColors.muted),
               ),
             ],
           ),

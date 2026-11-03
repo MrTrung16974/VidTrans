@@ -169,14 +169,16 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     if (readOnly) {
       return Scaffold(
         backgroundColor: AppColors.bg,
-        appBar: const StudioTopBar(),
+        appBar: const StudioTopBar(
+          activeStudioPill: StudioCategoryPill.video,
+        ),
         body: StudioEmptyState(
           icon: Icons.lock_outline_rounded,
           title: 'Tài khoản chỉ xem',
           subtitle: 'Tài khoản chỉ xem không thể tạo công việc mới.',
           action: canTranslateImages
               ? OutlinedButton.icon(
-                  onPressed: () => context.push('/translate/image'),
+                  onPressed: () => context.go('/translate/image'),
                   icon: const Icon(Icons.image_search_rounded, size: 18),
                   label: const Text('Dịch ảnh chụp màn hình'),
                 )
@@ -193,18 +195,14 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: const StudioTopBar(),
+      appBar: const StudioTopBar(
+        activeStudioPill: StudioCategoryPill.video,
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
         children: [
           _heroHeader(),
           const SizedBox(height: 14),
-          if (canTranslateImages) ...[
-            _ImageTranslateEntry(
-              onTap: () => context.push('/translate/image'),
-            ),
-            const SizedBox(height: 14),
-          ],
           _workflowStepsNav(),
           const SizedBox(height: 14),
           KeyedSubtree(key: _step1Key, child: _sourcesSection(state)),
@@ -336,14 +334,17 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               Expanded(child: _stepNavItem(steps[1])),
             ],
           ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(child: _stepNavItem(steps[2])),
-              const SizedBox(width: 6),
-              Expanded(child: _stepNavItem(steps[3])),
-            ],
-          ),
+          // Download-only keeps just steps 1-2: indexing 2 and 3 would throw.
+          if (steps.length > 2) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(child: _stepNavItem(steps[2])),
+                const SizedBox(width: 6),
+                Expanded(child: _stepNavItem(steps[3])),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -580,17 +581,23 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    '1B · TỪ LIÊN KẾT MẠNG XÃ HỘI',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.5,
-                      color: AppColors.teal,
+                  // Flexible: narrow phones or large system font sizes.
+                  const Flexible(
+                    child: Text(
+                      '1B · TỪ LIÊN KẾT MẠNG XÃ HỘI',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                        color: AppColors.teal,
+                      ),
                     ),
                   ),
-                  const Spacer(),
+                  if (links.isNotEmpty) const SizedBox(width: 8),
                   if (links.isNotEmpty)
                     StudioStatusPill(
                       status: 'ready',
@@ -1543,75 +1550,6 @@ class _SubtitlePreviewMonitor extends StatelessWidget {
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Entry to screenshot translation ("Dịch ảnh") from the video translation tab.
-class _ImageTranslateEntry extends StatelessWidget {
-  const _ImageTranslateEntry({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return StudioCard(
-      onTap: onTap,
-      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
-      borderColor: AppColors.brandBorder,
-      backgroundColor: AppColors.brandTint,
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.brandBorder),
-            ),
-            child: const Icon(
-              Icons.image_search_rounded,
-              color: AppColors.brand,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        'Dịch ảnh chụp màn hình',
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.ink,
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 6),
-                    StudioStatusPill(
-                      label: 'MỚI',
-                      compact: true,
-                      showDot: false,
-                    ),
-                  ],
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Thay chữ Trung, Anh… trong ảnh bằng tiếng Việt, ngay trên điện thoại',
-                  style: TextStyle(fontSize: 12.5, color: AppColors.muted),
-                ),
-              ],
-            ),
-          ),
-          const Icon(Icons.chevron_right_rounded, color: AppColors.brand),
         ],
       ),
     );

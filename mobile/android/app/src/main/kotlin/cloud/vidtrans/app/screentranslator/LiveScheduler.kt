@@ -22,6 +22,8 @@ class FrameSignature(
     val rows: Int,
     val luma: ByteArray,
     val timestampNanos: Long,
+    /** Full-resolution row summary of the content area, for scroll tracking. */
+    val profile: RowProfile? = null,
 ) {
     /** Screen x/y of the sample in column [c] / row [r]. */
     fun sampleX(c: Int) = ((c + 0.5f) * width / cols).toInt()
@@ -54,29 +56,47 @@ class FrameSignature(
 /**
  * Live (continuous) translation, decoupled from Android so it is unit tested:
  *
- *   SETTLING ──screen still for settleMs──▶ TRANSLATING ──result──▶ SHOWING
- *      ▲  ▲                                     │ screen changed           │
- *      │  └──────── stale result dropped ◀──────┘                          │
- *      └──────────── screen changed: hide the old translation ◀────────────┘
+ *   SETTLING ──still settleMs──▶ TRANSLATING (full) ──result──▶ SHOWING
+ *                                                              │   ▲
+ *                                       content scrolled       ▼   │ result
+ *                                   TRACKING ──still──▶ TRANSLATING (more)
  *
- * The overlay is always hidden before a frame is captured, so the
- * translator never reads its own output. Changes right after the overlay
- * appears are its own drawing and are ignored for [graceMs].
+ * While SHOWING, a scroll does not hide the translation: the overlay moves
+ * with the content (TRACKING) and, once the screen is still, only the text
+ * that scrolled in is read and translated (TRANSLATE_MORE) — no flicker.
+ * Any other change (new page, dialog) hides it and starts over (SETTLING →
+ * full TRANSLATE, overlay hidden so the translator never reads its output).
+ * Changes right after the overlay was redrawn are its own drawing and are
+ * ignored for [graceMs]. A result that arrives after a non-scroll change is
+ * dropped; after a scroll it is moved by the caller instead.
  */
 class LiveScheduler(
     private val settleMs: Long = 350,
+    private val moreSettleMs: Long = 160,
     private val minGapMs: Long = 400,
     private val graceMs: Long = 400,
 ) {
-    enum class State { IDLE, SETTLING, TRANSLATING, SHOWING }
-    enum class Action { NONE, HIDE_OVERLAY, TRANSLATE }
+    enum class State { IDLE, SETTLING, TRANSLATING, SHOWING, TRACKING }
+    enum class Action { NONE, HIDE_OVERLAY, TRANSLATE, TRANSLATE_MORE }
 
     var state = State.IDLE
+        private set
+
+    /** The running translation keeps the overlay (true) or replaces a hidden one. */
+    var incremental = false
         private set
     private var lastChangeMs = 0L
     private var lastDoneMs = Long.MIN_VALUE / 2
     private var graceUntilMs = Long.MIN_VALUE / 2
     private var stale = false
+    private var lastScrollMs = Long.MIN_VALUE / 2
+
+    /**
+     * How long the screen must stay still after a scroll before it counts as
+     * stopped: 2.5 frame intervals of the scroll itself (a phone at 60 fps
+     * settles in [moreSettleMs]; a slow device needs longer).
+     */
+    private var scrollSettleMs = moreSettleMs
 
     val active get() = state != State.IDLE
 
@@ -90,21 +110,53 @@ class LiveScheduler(
         state = State.IDLE
     }
 
-    /** Translate as soon as possible (button tapped while live). */
+    /** Translate everything again as soon as possible (button tapped while live). */
     fun forceNow(nowMs: Long): Action {
         if (!active) return Action.NONE
-        val wasShowing = state == State.SHOWING
+        val hadOverlay = state == State.SHOWING || state == State.TRACKING ||
+            (state == State.TRANSLATING && incremental)
         if (state == State.TRANSLATING) stale = true
         if (state != State.TRANSLATING) state = State.SETTLING
         lastChangeMs = nowMs - settleMs
         lastDoneMs = Long.MIN_VALUE / 2
-        return if (wasShowing) Action.HIDE_OVERLAY else Action.NONE
+        return if (hadOverlay) Action.HIDE_OVERLAY else Action.NONE
     }
 
-    /** The screen content changed (two consecutive frames differ). */
+    /** Our own overlay was drawn within the grace period. */
+    fun inGrace(nowMs: Long) = nowMs < graceUntilMs
+
+    /** Start over with a full translation as soon as possible (old translations dropped). */
+    fun restart(nowMs: Long) {
+        if (!active) return
+        state = State.SETTLING
+        stale = false
+        lastChangeMs = nowMs - settleMs
+    }
+
+    /** The overlay was redrawn by us (new or moved regions): ignore the next frames. */
+    fun onOverlayDrawn(nowMs: Long) {
+        graceUntilMs = nowMs + graceMs
+    }
+
+    /** The content scrolled by a known distance and the overlay was moved with it. */
+    fun onScrolled(nowMs: Long) {
+        val interval = nowMs - lastScrollMs
+        if (interval in 1..1000) scrollSettleMs = (interval * 5 / 2).coerceIn(moreSettleMs, 800)
+        lastScrollMs = nowMs
+        when (state) {
+            State.SHOWING, State.TRACKING -> {
+                state = State.TRACKING
+                lastChangeMs = nowMs
+            }
+            State.TRANSLATING -> lastChangeMs = nowMs // caller moves the result too
+            else -> Unit
+        }
+    }
+
+    /** The screen content changed in a way that is not a scroll. */
     fun onScreenChanged(nowMs: Long): Action = when (state) {
         State.IDLE -> Action.NONE
-        State.SHOWING ->
+        State.SHOWING, State.TRACKING ->
             if (nowMs < graceUntilMs) Action.NONE // our own overlay being drawn
             else {
                 state = State.SETTLING
@@ -116,24 +168,34 @@ class LiveScheduler(
             Action.NONE
         }
         State.TRANSLATING -> {
-            stale = true
-            lastChangeMs = nowMs
-            Action.NONE
+            if (incremental && nowMs < graceUntilMs) {
+                Action.NONE
+            } else {
+                stale = true
+                lastChangeMs = nowMs
+                // An incremental run still shows the old overlay: it is wrong now.
+                if (incremental) Action.HIDE_OVERLAY else Action.NONE
+            }
         }
     }
 
     /** Called every ~100 ms while live. */
     fun onTick(nowMs: Long): Action {
-        if (state != State.SETTLING) return Action.NONE
-        if (nowMs - lastChangeMs < settleMs || nowMs - lastDoneMs < minGapMs) return Action.NONE
+        val settle = when (state) {
+            State.SETTLING -> settleMs
+            State.TRACKING -> scrollSettleMs
+            else -> return Action.NONE
+        }
+        if (nowMs - lastChangeMs < settle || nowMs - lastDoneMs < minGapMs) return Action.NONE
+        incremental = state == State.TRACKING
         state = State.TRANSLATING
         stale = false
-        return Action.TRANSLATE
+        return if (incremental) Action.TRANSLATE_MORE else Action.TRANSLATE
     }
 
     /**
      * A translation finished. True when it should be shown; false when the
-     * screen changed meanwhile (positions are outdated) or live was stopped.
+     * screen changed meanwhile in a way that is not a scroll, or live stopped.
      */
     fun onTranslated(nowMs: Long): Boolean {
         lastDoneMs = nowMs

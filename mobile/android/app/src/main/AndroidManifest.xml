@@ -45,6 +45,20 @@
             android:name=".screentranslator.ScreenTranslatorService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <!-- Optional accessibility mode of the screen translator: reads the
+             text of the app on screen from its view tree (no capture, no OCR). -->
+        <service
+            android:name=".screentranslator.AccessibilityTranslatorService"
+            android:exported="false"
+            android:label="@string/screen_translator_a11y_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/screen_translator_accessibility" />
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

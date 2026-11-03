@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="screen_translator_a11y_label">VidTrans – Dịch màn hình</string>
+    <string name="screen_translator_a11y_summary">Dịch chữ của ứng dụng đang mở và hiển thị bản dịch đè lên đúng chỗ.</string>
+    <string name="screen_translator_a11y_description">VidTrans đọc chữ hiển thị trên màn hình của ứng dụng đang mở (không đọc ô nhập liệu hay mật khẩu) để dịch sang ngôn ngữ bạn chọn và vẽ bản dịch đè lên đúng vị trí. Ở chế độ Online, chữ được gửi tới máy chủ VidTrans để dịch; ở chế độ Offline, mọi thứ xử lý trên máy. Ảnh chụp màn hình chỉ dùng để lấy màu nền, không lưu và không gửi đi. Bạn tắt dịch bất cứ lúc nào trong ứng dụng hoặc trong Cài đặt › Hỗ trợ tiếp cận.</string>
+</resources>

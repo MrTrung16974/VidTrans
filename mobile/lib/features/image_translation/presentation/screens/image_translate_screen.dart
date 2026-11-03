@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,7 @@ import '../../../../core/auth/account.dart';
 import '../../../../core/auth/session_controller.dart';
 import '../../../../core/errors/api_exception.dart';
 import '../../../../core/widgets/studio_widgets.dart';
+import '../../../home/presentation/screens/home_shell.dart';
 import '../../../profile/presentation/screens/billing_screen.dart';
 import '../../../screen_translator/screen_translator_controller.dart';
 import '../../data/block_translators.dart';
@@ -30,11 +32,12 @@ const _stageLabels = {
 
 const _prefsKey = 'image_translation.settings';
 
-/// "Dịch ảnh": pick a screenshot, read its text on the phone, translate it
-/// and paint the translation over the original text (phase 1 of the screen
-/// translator plan).
+/// "Dịch ảnh & Dịch nổi": pick a screenshot or activate the live floating
+/// screen translator overlay.
 class ImageTranslateScreen extends ConsumerStatefulWidget {
-  const ImageTranslateScreen({super.key});
+  const ImageTranslateScreen({super.key, this.initialLiveMode = false});
+
+  final bool initialLiveMode;
 
   @override
   ConsumerState<ImageTranslateScreen> createState() =>
@@ -61,6 +64,17 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
 
   /// Live (phase 3): translate again by itself whenever the screen settles.
   bool _live = false;
+  late bool _liveTab = widget.initialLiveMode;
+
+  /// Accessibility mode instead of screen capture: text read from the app's
+  /// view tree, opaque translations, no capture consent each session.
+  bool _a11y = false;
+
+  /// The user switched the VidTrans service on in Settings › Accessibility.
+  bool _a11yGranted = false;
+
+  /// Turn on as soon as the user comes back from the accessibility settings.
+  bool _a11yPending = false;
   late final AppLifecycleListener _lifecycle;
 
   bool get _busy => _stage != null;
@@ -79,6 +93,14 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant ImageTranslateScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialLiveMode != oldWidget.initialLiveMode) {
+      setState(() => _liveTab = widget.initialLiveMode);
+    }
+  }
+
+  @override
   void dispose() {
     _lifecycle.dispose();
     _result?.dispose();
@@ -88,11 +110,21 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   Future<void> _refreshFloating() async {
     if (!_floatingController.supported) return;
     try {
-      final running = await _floatingController.isRunning();
-      final live = running && await _floatingController.isLive();
+      final controller = _floatingController;
+      final running = await controller.isRunning();
+      final live = running && await controller.isLive();
+      final granted = await controller.a11yEnabledInSettings();
+      var a11yOn = granted && await controller.a11yTranslating();
+      if (granted && _a11yPending && !a11yOn) {
+        await _startA11y();
+        a11yOn = true;
+      }
+      _a11yPending = false;
       if (!mounted) return;
       setState(() {
-        _floating = running;
+        _a11yGranted = granted;
+        if (a11yOn) _a11y = true;
+        _floating = _a11y ? a11yOn : running;
         if (running) _live = live;
       });
     } catch (_) {}
@@ -101,7 +133,11 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   /// Saves the choice and hands it to a running floating button.
   void _settingsChanged() {
     _saveSettings();
-    if (_floating) {
+    if (_floating && _a11y) {
+      _floatingController
+          .setA11yConfig(source: _source, target: _target, mode: _mode.name)
+          .catchError((_) {});
+    } else if (_floating) {
       _floatingController
           .updateSettings(
             source: _source,
@@ -119,7 +155,16 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     setState(() => _floatingBusy = true);
     try {
       if (_floating) {
-        await controller.stop();
+        if (_a11y) {
+          await controller.setA11yConfig(
+            enabled: false,
+            source: _source,
+            target: _target,
+            mode: _mode.name,
+          );
+        } else {
+          await controller.stop();
+        }
         if (mounted) setState(() => _floating = false);
         return;
       }
@@ -136,6 +181,10 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
             .read(offlineTranslatorProvider)
             .missingModels(needed);
         if (missing.isNotEmpty && !await _askDownload(missing)) return;
+      }
+      if (_a11y) {
+        await _toggleA11yOn();
+        return;
       }
       if (!await controller.canDrawOverlays()) {
         if (!mounted) return;
@@ -189,6 +238,82 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     }
   }
 
+  /// Accessibility mode: needs the service switched on in the system
+  /// settings once (after a clear explanation of what it reads), then turns
+  /// on and off from here without asking again.
+  Future<void> _toggleA11yOn() async {
+    final controller = _floatingController;
+    if (!await controller.a11yEnabledInSettings()) {
+      if (!mounted) return;
+      final open = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Bật Dịch vụ Trợ năng của VidTrans'),
+          content: const SingleChildScrollView(
+            child: Text(
+              'Ở chế độ Trợ năng, VidTrans đọc chữ đang hiển thị của ứng dụng bạn mở '
+              '(không đọc ô nhập liệu hay mật khẩu) để dịch và che kín chữ gốc bằng bản dịch, '
+              'đúng vị trí, cuộn theo ngay.\n\n'
+              '• Chế độ Online: chữ được gửi tới máy chủ VidTrans để dịch, không lưu lại.\n'
+              '• Chế độ Offline: dịch hoàn toàn trên máy.\n'
+              '• Ảnh chụp màn hình chỉ dùng để lấy màu nền, không lưu, không gửi đi.\n\n'
+              'Trong Cài đặt › Hỗ trợ tiếp cận, chọn “VidTrans – Dịch màn hình” và bật lên, '
+              'rồi quay lại ứng dụng. Bạn có thể tắt bất cứ lúc nào.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Không đồng ý'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Đồng ý, mở cài đặt'),
+            ),
+          ],
+        ),
+      );
+      if (open == true) {
+        _a11yPending = true;
+        await controller.openAccessibilitySettings();
+      }
+      return;
+    }
+    await _startA11y();
+    if (!mounted) return;
+    setState(() => _floating = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Đã bật dịch Trợ năng. Mở ứng dụng bất kỳ: chữ được dịch và che kín tại chỗ. '
+          'Chạm nút nổi để tạm dừng, nhấn giữ để dịch lại.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _startA11y() async {
+    final controller = _floatingController;
+    // One translator at a time: both would draw over the same text.
+    if (await controller.isRunning()) await controller.stop();
+    _saveSettings();
+    await controller.setA11yConfig(
+      enabled: true,
+      source: _source,
+      target: _target,
+      mode: _mode.name,
+    );
+  }
+
+  Future<void> _setA11yMode(bool a11y) async {
+    if (a11y == _a11y || _floatingBusy) return;
+    // Switching mode switches the running translator off.
+    if (_floating) await _toggleFloating();
+    if (!mounted) return;
+    setState(() => _a11y = a11y);
+    _saveSettings();
+  }
+
   Future<void> _restoreSettings() async {
     try {
       final saved = (await SharedPreferences.getInstance()).getStringList(
@@ -205,6 +330,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
           orElse: () => _mode,
         );
         if (saved.length > 3) _live = saved[3] == 'live';
+        if (saved.length > 4) _a11y = saved[4] == 'a11y';
       });
     } catch (_) {
       // Preferences are a convenience; defaults are fine.
@@ -218,6 +344,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
         _target,
         _mode.name,
         if (_live) 'live' else 'tap',
+        if (_a11y) 'a11y' else 'capture',
       ]);
     } catch (_) {}
   }
@@ -381,9 +508,22 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     final allowed = account?.hasFeature(PlanFeature.imageTranslation) ?? false;
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: const StudioSubBar(
-        title: 'Dịch ảnh',
-        subtitle: 'Thay chữ trong ảnh chụp màn hình',
+      appBar: StudioTopBar(
+        activeStudioPill: _liveTab
+            ? StudioCategoryPill.live
+            : StudioCategoryPill.image,
+        onSelectStudioPill: (pill) {
+          switch (pill) {
+            case StudioCategoryPill.video:
+              context.go('/translate');
+            case StudioCategoryPill.image:
+              setState(() => _liveTab = false);
+              context.go('/translate/image');
+            case StudioCategoryPill.live:
+              setState(() => _liveTab = true);
+              context.go('/translate/image?mode=live');
+          }
+        },
       ),
       body: allowed ? _body(account!) : _locked(),
     );
@@ -401,18 +541,121 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     ),
   );
 
+  Widget _heroBanner() {
+    final isLive = _liveTab;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: AppColors.studioHeroGradient,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.brandBorder),
+        boxShadow: AppColors.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.brandSoft,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: AppColors.brandBorder),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isLive
+                          ? Icons.bolt_rounded
+                          : Icons.document_scanner_rounded,
+                      size: 13,
+                      color: AppColors.brandDark,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      isLive ? 'DỊCH MÀN HÌNH LIVE' : 'AI OCR & DỊCH ẢNH',
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.brandDark,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  isLive ? 'Nút nổi đa ứng dụng' : 'Giữ nguyên bố cục ảnh',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.muted,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            isLive
+                ? 'Nút dịch nổi trên mọi ứng dụng'
+                : 'Dịch ảnh chụp màn hình tức thì',
+            style: const TextStyle(
+              fontSize: 19,
+              fontWeight: FontWeight.w900,
+              color: AppColors.ink,
+              letterSpacing: -0.4,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            isLive
+                ? 'Bật nút “Dịch” nổi trên WeChat, Zalo, Telegram, trình duyệt hoặc truyện để dịch trực tiếp không cần chụp màn hình.'
+                : 'Quét chữ Trung, Anh, Nhật, Hàn… trong ảnh chụp màn hình và thay bằng tiếng Việt ngay tại vị trí chữ gốc.',
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppColors.muted,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _body(Account account) {
     final result = _result;
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
       children: [
-        _settingsCard(account),
+        _heroBanner(),
         const SizedBox(height: 14),
-        if (_floatingController.supported) ...[
-          _floatingCard(),
+        if (_liveTab) ...[
+          if (_floatingController.supported) ...[
+            _floatingCard(),
+            const SizedBox(height: 14),
+          ],
+          _settingsCard(account),
           const SizedBox(height: 14),
+          if (_bytes == null) _pickCard() else _imageCard(result),
+        ] else ...[
+          _settingsCard(account),
+          const SizedBox(height: 14),
+          if (_bytes == null) _pickCard() else _imageCard(result),
+          if (_floatingController.supported) ...[
+            const SizedBox(height: 14),
+            _floatingCard(),
+          ],
         ],
-        if (_bytes == null) _pickCard() else _imageCard(result),
         if (_busy) ...[const SizedBox(height: 14), _progress()],
         if (_error != null) ...[const SizedBox(height: 14), _errorBox(_error!)],
         if (result != null && result.translatedCount > 0) ...[
@@ -560,7 +803,9 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
                   const SizedBox(height: 2),
                   Text(
                     _floating
-                        ? 'Đang bật — chạm nút “Dịch” trên WeChat, Zalo, web… để dịch màn hình.'
+                        ? (_a11y
+                              ? 'Đang bật — chữ trên WeChat, Zalo, web… được dịch và che kín tại chỗ.'
+                              : 'Đang bật — chạm nút “Dịch” trên WeChat, Zalo, web… để dịch màn hình.')
                         : 'Dịch ngay trên WeChat, Zalo, Telegram, web, truyện… không cần chụp màn hình.',
                     style: const TextStyle(
                       fontSize: 12.5,
@@ -574,42 +819,94 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
           ],
         ),
         const SizedBox(height: 12),
+        SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment(
+              value: false,
+              icon: Icon(Icons.screenshot_monitor_rounded, size: 18),
+              label: Text('Chụp màn hình'),
+            ),
+            ButtonSegment(
+              value: true,
+              icon: Icon(Icons.accessibility_new_rounded, size: 18),
+              label: Text('Trợ năng'),
+            ),
+          ],
+          selected: {_a11y},
+          showSelectedIcon: false,
+          onSelectionChanged: _floatingBusy
+              ? null
+              : (selection) => _setA11yMode(selection.first),
+        ),
+        const SizedBox(height: 12),
         _floating
             ? OutlinedButton.icon(
                 onPressed: _floatingBusy ? null : _toggleFloating,
                 icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                label: const Text('Tắt nút dịch nổi'),
+                label: Text(_a11y ? 'Tắt dịch Trợ năng' : 'Tắt nút dịch nổi'),
               )
             : FilledButton.icon(
                 onPressed: _floatingBusy || _busy ? null : _toggleFloating,
-                icon: const Icon(Icons.touch_app_rounded, size: 18),
-                label: Text(_floatingBusy ? 'Đang bật…' : 'Bật nút dịch nổi'),
+                icon: Icon(
+                  _a11y && !_a11yGranted
+                      ? Icons.settings_accessibility_rounded
+                      : Icons.touch_app_rounded,
+                  size: 18,
+                ),
+                label: Text(
+                  _floatingBusy
+                      ? 'Đang bật…'
+                      : !_a11y
+                      ? 'Bật nút dịch nổi'
+                      : _a11yGranted
+                      ? 'Bật dịch Trợ năng'
+                      : 'Bật trong Cài đặt Trợ năng',
+                ),
               ),
-        SwitchListTile.adaptive(
-          contentPadding: EdgeInsets.zero,
-          value: _live,
-          onChanged: _floatingBusy
-              ? null
-              : (value) {
-                  setState(() => _live = value);
-                  _settingsChanged();
-                },
-          title: const Text(
-            'Tự dịch liên tục (Live)',
-            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+        if (_a11y) ...[
+          const SizedBox(height: 10),
+          const Text(
+            'Đọc chữ trực tiếp từ ứng dụng (không chụp, không OCR): dịch chính xác, che kín chữ gốc, '
+            'cuộn tới đâu bản dịch theo tới đó và vẫn chạm, cuộn app bên dưới bình thường. '
+            'Không dịch được chữ nằm trong ảnh, video, game — dùng “Chụp màn hình” cho các trường hợp đó. '
+            'Chạm nút nổi để tạm dừng, nhấn giữ để dịch lại.',
+            style: TextStyle(
+              fontSize: 11.5,
+              color: AppColors.muted,
+              height: 1.4,
+            ),
           ),
-          subtitle: const Text(
-            'Cuộn hay đổi màn hình là tự dịch lại khi màn hình đứng yên; vẫn chạm, cuộn app bên dưới được. '
-            'Lớp dịch hơi trong suốt (Android yêu cầu). Nhấn giữ nút nổi để bật/tắt nhanh. Tốn pin hơn.',
-            style: TextStyle(fontSize: 11.5, height: 1.35),
+        ] else ...[
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: _live,
+            onChanged: _floatingBusy
+                ? null
+                : (value) {
+                    setState(() => _live = value);
+                    _settingsChanged();
+                  },
+            title: const Text(
+              'Tự dịch liên tục (Live)',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+            ),
+            subtitle: const Text(
+              'Cuộn hay đổi màn hình là tự dịch lại khi màn hình đứng yên; vẫn chạm, cuộn app bên dưới được. '
+              'Lớp dịch hơi trong suốt (Android yêu cầu). Nhấn giữ nút nổi để bật/tắt nhanh. Tốn pin hơn.',
+              style: TextStyle(fontSize: 11.5, height: 1.35),
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Mỗi lần bật, Android hỏi quyền chia sẻ màn hình. VidTrans chỉ chụp một khung khi bạn chạm nút, '
-          'không quay video và không lưu ảnh. Chạm vào bản dịch để đóng.',
-          style: TextStyle(fontSize: 11.5, color: AppColors.muted, height: 1.4),
-        ),
+          const SizedBox(height: 6),
+          const Text(
+            'Mỗi lần bật, Android hỏi quyền chia sẻ màn hình. VidTrans chỉ chụp một khung khi bạn chạm nút, '
+            'không quay video và không lưu ảnh. Chạm vào bản dịch để đóng.',
+            style: TextStyle(
+              fontSize: 11.5,
+              color: AppColors.muted,
+              height: 1.4,
+            ),
+          ),
+        ],
       ],
     ),
   );

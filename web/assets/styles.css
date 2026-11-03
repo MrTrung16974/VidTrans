@@ -4478,12 +4478,15 @@ input[type="file"]::-webkit-file-upload-button:active {
     transform: translateX(-50%) !important;
     z-index: 1000 !important;
     margin: 0 !important;
-    background: rgba(255, 255, 255, 0.94) !important;
+    background: linear-gradient(135deg, rgba(43, 24, 16, 0.93) 0%, rgba(28, 25, 23, 0.95) 52%, rgba(15, 23, 42, 0.95) 100%) !important;
     backdrop-filter: blur(28px) saturate(190%) !important;
     -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
-    border: 1px solid rgba(226, 232, 240, 0.95) !important;
-    border-radius: 32px !important;
-    box-shadow: 0 12px 30px -4px rgba(15, 23, 42, 0.12), 0 3px 8px rgba(15, 23, 42, 0.04), inset 0 1px 1px rgba(255, 255, 255, 1) !important;
+    border: 1.2px solid rgba(251, 146, 60, 0.36) !important;
+    border-radius: 999px !important;
+    box-shadow:
+      0 18px 38px -6px rgba(2, 6, 23, 0.42),
+      0 6px 18px -4px rgba(234, 88, 12, 0.22),
+      inset 0 1px 0 rgba(255, 237, 213, 0.18) !important;
     display: flex !important;
     align-items: center !important;
     white-space: nowrap !important;
@@ -4500,20 +4503,21 @@ input[type="file"]::-webkit-file-upload-button:active {
     flex-direction: column !important;
     align-items: center !important;
     justify-content: center !important;
-    color: #64748b !important;
+    color: rgba(255, 247, 237, 0.76) !important;
     background: transparent !important;
     box-shadow: none !important;
     transform: none !important;
     position: relative !important;
     border: 1px solid transparent !important;
+    border-radius: 999px !important;
     text-decoration: none !important;
     white-space: nowrap !important;
-    transition: all 0.16s ease !important;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
   }
   .nav-tabs a:hover {
     transform: none !important;
-    background: rgba(241, 245, 249, 0.8) !important;
-    color: #0f172a !important;
+    background: rgba(255, 247, 237, 0.08) !important;
+    color: #ffffff !important;
     box-shadow: none !important;
   }
 
@@ -4523,50 +4527,54 @@ input[type="file"]::-webkit-file-upload-button:active {
     flex: 0 0 22px !important;
     background: transparent !important;
     box-shadow: none !important;
-    color: #64748b !important;
+    color: rgba(255, 247, 237, 0.78) !important;
     display: grid !important;
     place-items: center !important;
     border-radius: 0 !important;
     position: relative !important;
   }
   .nav-tabs a > i svg {
-    width: 18px !important;
-    height: 18px !important;
+    width: 19px !important;
+    height: 19px !important;
     stroke: currentColor !important;
     stroke-width: 2 !important;
   }
 
   .nav-tabs a span {
-    font-size: 0.61rem !important;
+    font-size: 0.65rem !important;
     font-weight: 600 !important;
-    line-height: 1 !important;
-    letter-spacing: -0.02em !important;
-    color: #64748b !important;
+    line-height: 1.05 !important;
+    letter-spacing: -0.015em !important;
+    color: rgba(255, 247, 237, 0.76) !important;
     text-align: center !important;
     white-space: nowrap !important;
   }
 
-  /* Active item highlight - warm brand accent */
+  /* Active item highlight - Netflix capsule pill in VidTrans warm orange palette */
   .nav-tabs a.active {
-    background: #fff7ed !important;
-    color: var(--brand, #ea580c) !important;
-    border: 1px solid rgba(251, 146, 60, 0.35) !important;
-    box-shadow: 0 2px 6px rgba(234, 88, 12, 0.12) !important;
+    background: linear-gradient(180deg, #f97316 0%, #ea580c 55%, #c2410c 100%) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(254, 215, 170, 0.6) !important;
+    border-radius: 999px !important;
+    box-shadow:
+      0 6px 16px -2px rgba(234, 88, 12, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.32) !important;
   }
   .nav-tabs a.active:hover {
     transform: none !important;
   }
   .nav-tabs a.active > i {
-    color: var(--brand, #ea580c) !important;
+    color: #ffffff !important;
     background: transparent !important;
     box-shadow: none !important;
   }
   .nav-tabs a.active > i svg {
-    stroke: var(--brand, #ea580c) !important;
+    stroke: #ffffff !important;
+    stroke-width: 2.2 !important;
   }
   .nav-tabs a.active span {
-    color: var(--brand-dark, #c2410c) !important;
-    font-weight: 700 !important;
+    color: #ffffff !important;
+    font-weight: 800 !important;
   }
   .nav-tabs a.active::after {
     display: none !important;
@@ -4575,17 +4583,18 @@ input[type="file"]::-webkit-file-upload-button:active {
   /* Badge indicator */
   .nav-tabs a .nav-badge {
     position: absolute !important;
-    top: 1px !important;
-    right: calc(50% - 15px) !important;
-    min-width: 14px !important;
-    height: 14px !important;
-    padding: 0 3px !important;
+    top: 3px !important;
+    right: calc(50% - 17px) !important;
+    min-width: 15px !important;
+    height: 15px !important;
+    padding: 0 3.5px !important;
     font-size: 0.58rem !important;
-    font-weight: 800 !important;
-    line-height: 14px !important;
+    font-weight: 900 !important;
+    line-height: 13px !important;
     border-radius: 999px !important;
+    border: 1.2px solid #0f172a !important;
     margin: 0 !important;
-    box-shadow: 0 1px 4px rgba(234, 88, 12, 0.4) !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important;
     z-index: 2 !important;
   }
   .nav-tabs a .nav-badge.is-zero {
@@ -4595,6 +4604,10 @@ input[type="file"]::-webkit-file-upload-button:active {
     display: inline-grid !important;
     background: linear-gradient(135deg, var(--brand), #ea580c) !important;
     color: #ffffff !important;
+  }
+  .nav-tabs a.active .nav-badge.has-active {
+    background: #fde047 !important;
+    color: #0f172a !important;
   }
 
   body:has(#authGate:not(.is-hidden)) .nav-tabs {
@@ -4606,21 +4619,21 @@ input[type="file"]::-webkit-file-upload-button:active {
 @media (min-width: 641px) and (max-width: 1024px) {
   .nav-tabs {
     width: auto !important;
-    max-width: 460px !important;
-    padding: 5px 8px !important;
-    gap: 6px !important;
+    max-width: 480px !important;
+    padding: 5px 6px !important;
+    gap: 4px !important;
     justify-content: center !important;
   }
   .nav-tabs a {
     flex: 0 1 auto !important;
-    min-width: 72px !important;
-    height: 48px !important;
-    padding: 4px 12px !important;
-    border-radius: 16px !important;
-    gap: 2px !important;
+    min-width: 84px !important;
+    height: 52px !important;
+    padding: 4px 16px !important;
+    border-radius: 999px !important;
+    gap: 3px !important;
   }
   .nav-tabs a span {
-    font-size: 0.66rem !important;
+    font-size: 0.69rem !important;
   }
 }
 
@@ -4706,28 +4719,29 @@ input[type="file"]::-webkit-file-upload-button:active {
   .nav-label-full { display: none !important; }
   .nav-label-short { display: inline !important; }
 
-  /* Phone Bottom Bar (width <= 640px) - 4 tab cốt lõi tinh gọn như trước */
+  /* Phone Bottom Bar (width <= 640px) - Netflix capsule pill dock in VidTrans palette */
   .nav-tabs {
-    width: min(390px, calc(100vw - 20px)) !important;
-    max-width: 390px !important;
-    padding: 4px 6px !important;
+    width: min(400px, calc(100vw - 24px)) !important;
+    max-width: 400px !important;
+    padding: 5px !important;
     gap: 4px !important;
+    border-radius: 999px !important;
     justify-content: space-around !important;
     overflow-x: hidden !important;
   }
   .nav-tabs a {
     flex: 1 1 0 !important;
-    min-width: 58px !important;
+    min-width: 60px !important;
     width: auto !important;
-    height: 48px !important;
-    min-height: 48px !important;
-    padding: 4px 2px !important;
-    border-radius: 14px !important;
-    gap: 2px !important;
+    height: 52px !important;
+    min-height: 52px !important;
+    padding: 5px 4px !important;
+    border-radius: 999px !important;
+    gap: 3px !important;
     flex-shrink: 0 !important;
   }
   .nav-tabs a span {
-    font-size: 0.64rem !important;
+    font-size: 0.67rem !important;
   }
   .page-heading {
     padding: 22px 0 14px;

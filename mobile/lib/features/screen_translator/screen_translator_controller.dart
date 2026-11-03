@@ -59,6 +59,39 @@ class ScreenTranslatorController {
   });
 
   Future<void> stop() => _channel.invokeMethod<void>('stop');
+
+  // Accessibility mode (AccessibilityTranslatorService): the text comes from
+  // the app's view tree, no screen capture consent and no OCR.
+
+  /// The user switched VidTrans on in Settings › Accessibility.
+  Future<bool> a11yEnabledInSettings() async =>
+      await _channel.invokeMethod<bool>('a11yEnabled') ?? false;
+
+  Future<void> openAccessibilitySettings() =>
+      _channel.invokeMethod<void>('openAccessibilitySettings');
+
+  /// Whether the app asked the service to translate (it may still be off in
+  /// the system settings).
+  Future<bool> a11yTranslating() async {
+    final config = await _channel.invokeMapMethod<String, Object?>(
+      'a11yConfig',
+    );
+    return config?['enabled'] == true;
+  }
+
+  /// Turns translating on/off and/or hands over the languages; the service
+  /// picks the change up at once.
+  Future<void> setA11yConfig({
+    bool? enabled,
+    required String source,
+    required String target,
+    required String mode,
+  }) => _channel.invokeMethod<void>('setA11yConfig', {
+    'enabled': ?enabled,
+    'source': source,
+    'target': target,
+    'mode': mode,
+  });
 }
 
 final screenTranslatorControllerProvider = Provider<ScreenTranslatorController>(

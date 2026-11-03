@@ -85,11 +85,54 @@ class ScreenTranslatorService : Service() {
     private var mode = "online"
     private var live = false
 
-    // Live mode (phase 3): see LiveScheduler.
-    private val scheduler = LiveScheduler()
+    // Live mode (phase 3): see LiveScheduler. Grace counts from each real draw
+    // of the overlay (see onDrawn), so a slow device that composes it late does
+    // not take our own drawing for the page changing.
+    private val scheduler = LiveScheduler(graceMs = 500)
     @Volatile private var previousFrame: FrameSignature? = null
     @Volatile private var ignoreAreas: List<PixelRect> = emptyList()
     private var overlayHiddenAtNanos = 0L
+
+    /** Live overlay drawn on screen. */
+    @Volatile private var overlayShown = false
+
+    /** Live overlay exists (drawn, or parked while the screen changes). */
+    @Volatile private var overlayTracking = false
+
+    /** A full live translation is running (nothing of ours on screen). */
+    @Volatile private var translating = false
+
+    /**
+     * The clean frame (captured with nothing of ours on screen) every live
+     * translation is placed against, and how far the content has moved since
+     * it at the last measurement. Measuring "base → now" in one go, between
+     * two frames that both show all text, cannot drift and cannot mistake one
+     * chat bubble for its look-alike neighbour.
+     */
+    @Volatile private var base: RowProfile? = null
+    private var baseTotal = 0
+
+    /** Base frame of the running full translation (its capture). */
+    @Volatile private var pendingBase: RowProfile? = null
+
+    /** [baseTotal] when the running incremental translation captured its frame. */
+    private var totalAtCapture = 0
+
+    /** Content scroll during a running full translation, from clean frames. */
+    private var scrollSinceCapture = 0
+
+    /** Net content move at the last settle: where new text appeared. */
+    private var movedAtSettle = 0
+
+    /** The last settle dropped translations: the next read covers the whole screen. */
+    private var readEverything = false
+
+    /** When the screen last changed under the overlay (main thread clock). */
+    private var lastScrollMs = Long.MIN_VALUE / 2
+
+    /** Last frame's scroll: flings are smooth, so it predicts the next one. */
+    @Volatile private var lastDy: Int? = null
+    private var translateStartedMs = 0L
     private var lastLiveError = ""
     private val ticker = object : Runnable {
         override fun run() {
@@ -195,42 +238,183 @@ class ScreenTranslatorService : Service() {
         liveNow = live
         bubble?.live = live
         if (live == scheduler.active) return
-        overlay?.remove()
-        overlay = null
+        setOverlay(null)
         bubble?.show()
         main.removeCallbacks(ticker)
         if (live) {
             previousFrame = null
             lastLiveError = ""
             ignoreAreas = currentIgnoreAreas()
+            screen.contentRows = contentRows()
             screen.onFrame = { frame -> onLiveFrame(frame) }
             scheduler.start(nowMs())
             main.post(ticker)
         } else {
             scheduler.stop()
             screen.onFrame = null
+            screen.contentRows = null
         }
+        overlayShown = false
     }
 
-    /** Capture thread: compare with the previous frame. */
+    /** Rows between the status bar and the navigation bar. */
+    private fun contentRows(): Pair<Int, Int>? {
+        val (width, height) = capture?.size() ?: return null
+        var top = 0
+        var bottom = height
+        for (area in systemBarAreas(width, height)) {
+            if (area[1] == 0) top = maxOf(top, area[3]) else bottom = minOf(bottom, area[1])
+        }
+        return top to bottom
+    }
+
+    private fun setOverlay(next: TranslationOverlay?) {
+        overlay?.remove()
+        overlay = next
+        if (next == null) base = null
+        capture?.overlayMask = emptyList()
+        next?.let { view ->
+            var drawnBoxes = emptyList<PixelRect>()
+            view.onDrawn = {
+                scheduler.onOverlayDrawn(nowMs())
+                // Frames from now on show this drawing (and maybe still the previous
+                // one): keep both out of the minor-change check.
+                val boxes = view.boxes(margin = 8)
+                capture?.overlayMask = drawnBoxes + boxes
+                drawnBoxes = boxes
+            }
+            contentRows()?.let { (top, bottom) ->
+                view.clipTop = top.toFloat()
+                view.clipBottom = bottom.toFloat()
+            }
+            view.show()
+        }
+        overlayShown = next != null
+        overlayTracking = next != null
+    }
+
+    private fun park(view: TranslationOverlay) {
+        if (view.parked) return
+        view.parked = true
+        overlayShown = false
+        capture?.overlayMask = emptyList()
+    }
+
+    /**
+     * Capture thread: compare with the previous frame.
+     *
+     * With our overlay on screen, frames mix our drawing with the moving app,
+     * so they are not measured: any real change parks (hides) the overlay and
+     * keeps it; once the screen is still it is placed by one clean
+     * measurement against the base frame. Without an overlay (a full
+     * translation running) clean frames are measured so its result can be
+     * moved; anything that is not a scroll starts over.
+     */
     private fun onLiveFrame(frame: FrameSignature) {
         val previous = previousFrame
         previousFrame = frame
-        if (previous != null && frame.differsFrom(previous, ignoreAreas)) {
-            main.post { act(scheduler.onScreenChanged(nowMs())) }
+        if (previous == null || !frame.differsFrom(previous, ignoreAreas)) return
+        val before = previous.profile
+        val now = frame.profile
+        if (overlayTracking) {
+            // A small in-place change (cursor, scrollbar, spinner) keeps it drawn.
+            val minor = overlayShown && before != null && now != null &&
+                ScrollEstimator.stillCost(before, now) < ScrollEstimator.MINOR_CHANGE
+            main.post { onChangeUnderOverlay(minor) }
+            return
         }
+        if (translating) {
+            val shift = if (before != null && now != null) ScrollEstimator.estimate(before, now, hint = lastDy) else null
+            lastDy = if (shift != null && shift.confident) shift.dy else null
+            if (shift != null && shift.confident) {
+                main.post {
+                    scrollSinceCapture += shift.dy
+                    lastScrollMs = nowMs()
+                    scheduler.onScrolled(lastScrollMs)
+                }
+                return
+            }
+        }
+        main.post { act(scheduler.onScreenChanged(nowMs())) }
+    }
+
+    private fun onChangeUnderOverlay(minor: Boolean) {
+        val view = overlay ?: return
+        val now = nowMs()
+        if (!view.parked && scheduler.inGrace(now)) return // our own drawing appearing
+        if (!minor) park(view)
+        lastScrollMs = now
+        scheduler.onScrolled(now)
     }
 
     private fun act(action: LiveScheduler.Action) {
+        if (action != LiveScheduler.Action.NONE) Log.d(TAG, "live action $action (state ${scheduler.state})")
         when (action) {
             LiveScheduler.Action.NONE -> Unit
             LiveScheduler.Action.HIDE_OVERLAY -> {
-                overlay?.remove()
-                overlay = null
+                setOverlay(null)
                 overlayHiddenAtNanos = System.nanoTime()
             }
             LiveScheduler.Action.TRANSLATE -> translateLive()
+            LiveScheduler.Action.TRANSLATE_MORE -> {
+                if (!settle()) {
+                    // Another page, or scrolled too far to place the old translations.
+                    setOverlay(null)
+                    overlayHiddenAtNanos = System.nanoTime()
+                    scheduler.restart(nowMs())
+                    return
+                }
+                translateMore()
+            }
         }
+    }
+
+    /**
+     * The screen is still again: measure base → now once, place the kept
+     * translations and show them at once. False when they cannot be placed.
+     */
+    private fun settle(): Boolean {
+        val view = overlay ?: return false
+        val from = base
+        val now = previousFrame?.profile
+        if (from == null || now == null) {
+            Log.d(TAG, "settle: no base (${from != null}) or frame profile (${now != null})")
+            return false
+        }
+        // Whole range, no hint: once per settle, and a hint could stop at a look-alike.
+        val shift = ScrollEstimator.estimate(from, now, maxShift = from.rows / 2)
+        val total = when {
+            shift == null -> {
+                Log.d(TAG, "settle: base ${from.top}-${from.bottom}/${from.cols} vs ${now.top}-${now.bottom}/${now.cols}")
+                return false
+            }
+            shift.confident -> shift.dy
+            shift.stillCost < ScrollEstimator.MINOR_CHANGE -> 0 // nothing moved since the base
+            else -> {
+                Log.d(TAG, "settle: cannot place ($shift)")
+                return false
+            }
+        }
+        Log.d(TAG, "settle: content moved $total px since base ($shift)")
+        movedAtSettle = total - baseTotal
+        val dropped = view.place(total, shift::isFixed) { top, bottom, move ->
+            ScrollEstimator.regionMatches(from, now, top, bottom, move)
+        }
+        // Dropped translations leave text anywhere on screen: read it all again.
+        readEverything = dropped > 0
+        if (view.parked) {
+            // The overlay was hidden, so this frame is clean: make it the new
+            // base, so the next scroll is measured from here (short distances,
+            // always overlapping) instead of from the first translation.
+            base = now
+            baseTotal = 0
+            view.rebase()
+            view.parked = false
+            overlayShown = true
+        } else {
+            baseTotal = total
+        }
+        return true
     }
 
     /** System bars and the floating button (with a margin for its shadow). */
@@ -242,9 +426,51 @@ class ScreenTranslatorService : Service() {
         return areas + PixelRect(button.left - margin, button.top - margin, button.right + margin, button.bottom + margin)
     }
 
+    /**
+     * After a settle: read only the strip that scrolled in (plus one line of
+     * margin for text the edge had cut), skip text already translated, and
+     * add the results to the overlay that stays on screen.
+     */
+    private fun translateMore() {
+        translateStartedMs = nowMs()
+        val screen = capture ?: return
+        val rows = contentRows() ?: return translateLive()
+        bubble?.busy = true
+        totalAtCapture = baseTotal
+        val moved = if (readEverything) 0 else movedAtSettle
+        val margin = (64 * resources.displayMetrics.density).toInt()
+        val (top, bottom) = rows
+        val strip = when {
+            // No net scroll (small in-place change) or a long one: read everything
+            // not translated yet.
+            moved == 0 || kotlin.math.abs(moved) > (bottom - top) * 0.6 -> top to bottom
+            moved < 0 -> maxOf(top, bottom + moved - margin) to bottom // scrolled down: new text below
+            else -> top to minOf(bottom, top + moved + margin) // scrolled up: new text above
+        }
+        val skip = overlay?.boxes(margin = 6).orEmpty()
+        workerHandler.post {
+            val frame = try {
+                screen.frameAfter(0, timeoutMs = 100)
+            } catch (error: Exception) {
+                Log.e(TAG, "live capture failed", error)
+                null
+            }
+            when {
+                frame == null -> main.post { liveFailed("") }
+                frame.looksBlank() -> main.post { liveFailed("Ứng dụng này chặn chụp màn hình nên không dịch được.") }
+                else -> sendToEngine(frame, live = true, extraIgnore = skip, strip = strip)
+            }
+        }
+    }
+
     private fun translateLive() {
+        translateStartedMs = nowMs()
+        translating = true
         val screen = capture ?: return
         bubble?.busy = true
+        scrollSinceCapture = 0
+        lastDy = null
+        val rows = contentRows()
         val after = overlayHiddenAtNanos + 40_000_000L
         workerHandler.post {
             val frame = try {
@@ -254,6 +480,8 @@ class ScreenTranslatorService : Service() {
                 Log.e(TAG, "live capture failed", error)
                 null
             }
+            // Nothing of ours is on screen: this frame becomes the base.
+            pendingBase = rows?.let { (top, bottom) -> frame?.rowProfile(top, bottom) }
             when {
                 frame == null -> main.post { liveFailed("") }
                 frame.looksBlank() -> main.post { liveFailed("Ứng dụng này chặn chụp màn hình nên không dịch được.") }
@@ -264,8 +492,14 @@ class ScreenTranslatorService : Service() {
 
     @Suppress("UNCHECKED_CAST")
     private fun showLiveResult(result: Any?) {
+        translating = false
         bubble?.busy = false
         val map = result as? Map<String, Any?> ?: return liveFailed("Dịch thất bại.")
+        Log.d(
+            TAG,
+            "live result in ${nowMs() - translateStartedMs} ms: found=${map["found"]} " +
+                "regions=${(map["regions"] as? List<*>)?.size} error=${map["error"]} ${map["message"] ?: ""}",
+        )
         when (map["error"]) {
             "models_missing" -> {
                 liveFailed("Chưa có gói dịch offline. Mở VidTrans → Dịch ảnh để tải, hoặc chuyển sang Online.")
@@ -276,15 +510,37 @@ class ScreenTranslatorService : Service() {
             }
             "failed" -> return liveFailed(map["message"] as? String ?: "Dịch thất bại.")
         }
-        if (!scheduler.onTranslated(nowMs())) return // the screen moved on meanwhile
+        val incremental = scheduler.incremental
+        if (!scheduler.onTranslated(nowMs())) return // another page meanwhile
         lastLiveError = ""
         val regions = (map["regions"] as? List<Any?>).orEmpty().map { OverlayRegion.fromMap(it as Map<String, Any?>) }
-        overlay?.remove()
-        overlay = if (regions.isEmpty()) null
-        else TranslationOverlay(this, regions, null, interactive = false) {}.also { it.show() }
+        val current = overlay
+        if (incremental && current != null) {
+            // Read where the content stood at capture (base + totalAtCapture).
+            if (regions.isNotEmpty()) current.add(regions, totalAtCapture)
+            if (current.parked) scheduler.onScrolled(nowMs()) // changed meanwhile: settle again
+        } else if (regions.isEmpty() || pendingBase == null) {
+            setOverlay(null)
+        } else {
+            val view = TranslationOverlay(this, emptyList(), null, interactive = false) {}
+            view.add(regions, 0)
+            setOverlay(view)
+            base = pendingBase
+            // The content may have scrolled while translating (measured on clean frames).
+            baseTotal = scrollSinceCapture
+            view.place(baseTotal, isFixed = { false })
+            if (nowMs() - lastScrollMs < 200) {
+                // Still scrolling: stay hidden, reappear when the screen is still.
+                park(view)
+                scheduler.onScrolled(nowMs())
+            }
+        }
+        scheduler.onOverlayDrawn(nowMs())
     }
 
     private fun liveFailed(message: String) {
+        translating = false
+        Log.w(TAG, "live translation failed: $message")
         bubble?.busy = false
         scheduler.onFailed(nowMs())
         // Say it once, not on every scroll.
@@ -348,12 +604,23 @@ class ScreenTranslatorService : Service() {
     }
 
     /** Runs on the worker thread: writes the OCR input, then calls Dart. */
-    private fun sendToEngine(frame: CapturedFrame, live: Boolean) {
+    private fun sendToEngine(
+        frame: CapturedFrame,
+        live: Boolean,
+        extraIgnore: List<PixelRect> = emptyList(),
+        strip: Pair<Int, Int>? = null,
+    ) {
         val file = File(cacheDir, "screen_translator_${System.currentTimeMillis()}.jpg")
+        // OCR reads only [strip] when given: less image, faster answer.
+        val stripTop = strip?.first?.coerceIn(0, frame.height - 1) ?: 0
+        val stripBottom = strip?.second?.coerceIn(stripTop + 1, frame.height) ?: frame.height
         try {
             val bitmap = Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888)
             bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(frame.rgba))
-            FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+            val ocrImage = if (stripTop == 0 && stripBottom == frame.height) bitmap
+            else Bitmap.createBitmap(bitmap, 0, stripTop, frame.width, stripBottom - stripTop)
+            FileOutputStream(file).use { ocrImage.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+            if (ocrImage !== bitmap) ocrImage.recycle()
             bitmap.recycle()
         } catch (error: Exception) {
             Log.e(TAG, "could not write capture", error)
@@ -371,7 +638,15 @@ class ScreenTranslatorService : Service() {
             // Status and navigation bars: system text (clock, carrier, …)
             // is not part of the app being translated.
             // …nor is the floating button.
-            "ignore" to (if (live) ignoreAreas.map { it.toList() } else systemBarAreas(frame.width, frame.height)),
+            "ignore" to (
+                if (live) (ignoreAreas + extraIgnore).map { it.toList() }
+                else systemBarAreas(frame.width, frame.height)
+                ),
+            "ocrOffsetY" to stripTop,
+            // Live: skip text cut by the edges of the visible area (or the strip).
+            "clip" to if (live) contentRows()?.let { (top, bottom) ->
+                listOf(0, maxOf(top, if (stripTop > 0) stripTop else top), frame.width, minOf(bottom, stripBottom))
+            } else null,
         )
         fun fail(message: String) = if (live) liveFailed(message) else finish(message)
         main.post {

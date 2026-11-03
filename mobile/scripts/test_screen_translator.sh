@@ -60,8 +60,14 @@ if [ "$LIVE" = live ]; then
   $ADB shell 'echo "_ --disable-fre --no-default-browser-check --no-first-run" > /data/local/tmp/chrome-command-line'
   PAGE=$(python3 -c '
 import urllib.parse
+# 24 different messages, like a real chat (repeated text would let any
+# translator mistake one message for another).
 msgs = ["你今天有时间开会吗？", "我们下午三点在会议室见面吧", "好的，没问题", "记得带上项目报告",
-        "客户明天上午来公司参观", "请提前准备好演示文稿", "晚上一起吃饭吗？", "这家餐厅的菜很好吃"] * 3
+        "客户明天上午来公司参观", "请提前准备好演示文稿", "晚上一起吃饭吗？", "这家餐厅的菜很好吃",
+        "周末你打算去哪里玩？", "我想去海边看看日出", "天气预报说明天会下雨", "那我们改天再去吧",
+        "你的新工作怎么样？", "同事们都很友好", "老板对我的方案很满意", "恭喜你啊，太棒了",
+        "下个月我要去上海出差", "需要我帮你订酒店吗？", "不用了，公司已经安排好了", "路上注意安全",
+        "这本书你看完了吗？", "还没有，内容有点难懂", "我可以给你讲讲重点", "太好了，谢谢你"]
 rows = "".join(
     "<div style=\"margin:22px 0;text-align:%s\"><span style=\"display:inline-block;padding:12px 16px;"
     "border-radius:6px;font-size:20px;background:%s\">%s</span></div>"
@@ -85,10 +91,25 @@ print("data:text/html;charset=utf-8," + urllib.parse.quote(html))')
   shot live_1_chrome
   size=$($ADB shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1)
   W=${size%x*}; H=${size#*x}
-  $ADB shell input swipe $(( W / 2 )) $(( H * 3 / 4 )) $(( W / 2 )) $(( H / 4 )) 300
+  # A slow drag, photographed half-way: the translation must move with the text.
+  $ADB shell input swipe $(( W / 2 )) $(( H * 3 / 4 )) $(( W / 2 )) $(( H / 4 )) 1600 &
+  SWIPE=$!
+  sleep 0.9
   shot live_2_scrolling
-  sleep 5
+  wait $SWIPE
+  # Known translations must be back almost at once; new text follows.
+  sleep 0.6
+  shot live_2b_just_stopped
+  sleep 4.5
   shot live_3_after_scroll
+  sleep 6 # let a slow server finish before the next scroll
+  # A short scroll, as when reading: the known translations must come back
+  # in place almost at once (no OCR, no server call).
+  $ADB shell input swipe $(( W / 2 )) $(( H * 3 / 5 )) $(( W / 2 )) $(( H * 2 / 5 )) 700
+  sleep 0.6
+  shot live_4_short_scroll
+  sleep 3
+  shot live_5_short_scroll_done
   # Back to the test app so it can stop the service and finish.
   $ADB shell am start -n "$PKG/.MainActivity" >/dev/null
 else

@@ -32,6 +32,29 @@ class CapturedFrame(val width: Int, val height: Int, val rgba: ByteArray) {
 }
 
 /**
+ * Row profile (see ScrollEstimator) of a captured frame, with nothing masked:
+ * the clean "base" frame live translations are placed against. Same sampling
+ * as ScreenCapture's per-frame profiles so the two can be compared.
+ */
+fun CapturedFrame.rowProfile(top: Int, bottom: Int): RowProfile? {
+    val from = top.coerceIn(0, height)
+    val to = bottom.coerceIn(from, height)
+    if (to - from < 200) return null
+    val cols = PROFILE_COLS
+    val margin = width / 50
+    val xs = IntArray(cols) { i -> margin + ((i + 0.5f) * (width - 2 * margin) / cols).toInt() }
+    val values = IntArray((to - from) * cols)
+    for (y in from until to) {
+        val row = y * width * 4
+        for (k in 0 until cols) values[(y - from) * cols + k] = rgba[row + xs[k] * 4 + 1].toInt() and 0xFF
+    }
+    return RowProfile(from, to, cols, values)
+}
+
+/** Enough sample columns to tell apart look-alike chat bubbles. */
+const val PROFILE_COLS = 40
+
+/**
  * Mirrors the screen into an ImageReader for the whole session. Android 14+
  * allows a single VirtualDisplay per MediaProjection, so it is created once
  * and only resized on rotation. Frames arrive only when the screen changes;
@@ -51,6 +74,10 @@ class ScreenCapture(
     /** Live mode: told about every new frame (on the capture thread). */
     @Volatile
     var onFrame: ((FrameSignature) -> Unit)? = null
+
+    /** Live mode: rows [first, second) between the system bars, profiled for scroll tracking. */
+    @Volatile
+    var contentRows: Pair<Int, Int>? = null
 
     private fun keep(image: Image?) {
         if (image == null) return
@@ -83,7 +110,43 @@ class ScreenCapture(
                 luma[r * cols + c] = ((red * 299 + green * 587 + blue * 114) / 1000).toByte()
             }
         }
-        return FrameSignature(w, h, cols, rows, luma, image.timestamp)
+        return FrameSignature(w, h, cols, rows, luma, image.timestamp, rowProfile(image))
+    }
+
+    /** Live mode: our overlay's boxes; samples inside are masked (see RowProfile). */
+    @Volatile
+    var overlayMask: List<PixelRect> = emptyList()
+
+    /** 24 sample columns of brightness for every content row (see ScrollEstimator). */
+    private fun rowProfile(image: Image): RowProfile? {
+        val (top, bottom) = contentRows ?: return null
+        val h = image.height
+        val w = image.width
+        val from = top.coerceIn(0, h)
+        val to = bottom.coerceIn(from, h)
+        if (to - from < 200) return null
+        val plane = image.planes[0]
+        val buffer = plane.buffer
+        val cols = PROFILE_COLS
+        val margin = w / 50
+        val xs = IntArray(cols) { i -> margin + ((i + 0.5f) * (w - 2 * margin) / cols).toInt() }
+        val mask = overlayMask
+        val values = IntArray((to - from) * cols)
+        for (y in from until to) {
+            val rowStart = y * plane.rowStride
+            val out = (y - from) * cols
+            val covering = mask.filter { y >= it.top && y < it.bottom }
+            for (k in 0 until cols) {
+                val x = xs[k]
+                values[out + k] = if (covering.any { x >= it.left && x < it.right }) {
+                    RowProfile.MASKED
+                } else {
+                    // Green carries most of the brightness; one read per sample keeps this cheap.
+                    buffer.get(rowStart + x * plane.pixelStride + 1).toInt() and 0xFF
+                }
+            }
+        }
+        return RowProfile(from, to, cols, values)
     }
 
     private fun realMetrics(): Triple<Int, Int, Int> {

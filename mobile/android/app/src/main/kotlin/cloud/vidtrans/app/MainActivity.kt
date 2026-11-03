@@ -7,6 +7,7 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import cloud.vidtrans.app.screentranslator.AccessibilityTranslatorService
 import cloud.vidtrans.app.screentranslator.ScreenTranslatorService
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -50,9 +51,43 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(null)
                     }
+                    // Accessibility mode (AccessibilityTranslatorService).
+                    "a11yEnabled" -> result.success(a11yEnabled())
+                    "a11yConnected" -> result.success(AccessibilityTranslatorService.connected)
+                    "openAccessibilitySettings" -> {
+                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        result.success(null)
+                    }
+                    "a11yConfig" -> {
+                        val prefs = getSharedPreferences(AccessibilityTranslatorService.PREFS, Context.MODE_PRIVATE)
+                        result.success(
+                            mapOf(
+                                "enabled" to prefs.getBoolean(AccessibilityTranslatorService.KEY_ENABLED, false),
+                                "connected" to AccessibilityTranslatorService.connected,
+                            ),
+                        )
+                    }
+                    "setA11yConfig" -> {
+                        val settings = settingsOf(call.arguments)
+                        getSharedPreferences(AccessibilityTranslatorService.PREFS, Context.MODE_PRIVATE).edit().apply {
+                            settings["enabled"]?.let { putBoolean(AccessibilityTranslatorService.KEY_ENABLED, it == "true") }
+                            settings["source"]?.let { putString(AccessibilityTranslatorService.KEY_SOURCE, it) }
+                            settings["target"]?.let { putString(AccessibilityTranslatorService.KEY_TARGET, it) }
+                            settings["mode"]?.let { putString(AccessibilityTranslatorService.KEY_MODE, it) }
+                        }.apply()
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /** Whether the user switched VidTrans on in Settings › Accessibility. */
+    private fun a11yEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return false
+        val ours = android.content.ComponentName(this, AccessibilityTranslatorService::class.java)
+        return enabled.split(':').any { android.content.ComponentName.unflattenFromString(it) == ours }
     }
 
     private fun canDrawOverlays(): Boolean =

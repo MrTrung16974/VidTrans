@@ -102,4 +102,60 @@ class LiveSchedulerTest {
         assertEquals(Action.NONE, live.onScreenChanged(10_000))
         assertFalse(live.onTranslated(10_000))
     }
+
+    @Test
+    fun `a scroll keeps the translation and only translates what scrolled in`() {
+        val live = LiveScheduler(settleMs = 300, moreSettleMs = 200, minGapMs = 0, graceMs = 100)
+        live.start(0)
+        assertEquals(Action.TRANSLATE, live.onTick(300))
+        assertTrue(live.onTranslated(800))
+        live.onScrolled(1000)
+        assertEquals(State.TRACKING, live.state)
+        live.onScrolled(1100) // still scrolling; frames 100 ms apart → still for 250 ms
+        assertEquals(Action.NONE, live.onTick(1300))
+        assertEquals(Action.TRANSLATE_MORE, live.onTick(1350))
+        assertTrue(live.incremental)
+        live.onScrolled(1400) // moved again while translating: result is shifted, not dropped
+        assertTrue(live.onTranslated(1500))
+        assertEquals(State.SHOWING, live.state)
+    }
+
+    @Test
+    fun `a new page while tracking hides the translation and starts over`() {
+        val live = LiveScheduler(settleMs = 300, moreSettleMs = 200, minGapMs = 0, graceMs = 100)
+        live.start(0)
+        live.onTick(300)
+        live.onTranslated(800)
+        live.onScrolled(1000)
+        assertEquals(Action.HIDE_OVERLAY, live.onScreenChanged(1050))
+        assertEquals(State.SETTLING, live.state)
+        assertEquals(Action.TRANSLATE, live.onTick(1350))
+        assertFalse(live.incremental)
+    }
+
+    @Test
+    fun `a page change during an incremental run hides it and drops the result`() {
+        val live = LiveScheduler(settleMs = 300, moreSettleMs = 200, minGapMs = 0, graceMs = 100)
+        live.start(0)
+        live.onTick(300)
+        live.onTranslated(800)
+        live.onScrolled(1000)
+        live.onTick(1200)
+        assertEquals(Action.HIDE_OVERLAY, live.onScreenChanged(1300))
+        assertFalse(live.onTranslated(1400))
+        assertEquals(State.SETTLING, live.state)
+    }
+
+    @Test
+    fun `slow frames make the scroll count as stopped later`() {
+        val live = LiveScheduler(settleMs = 300, moreSettleMs = 160, minGapMs = 0, graceMs = 0)
+        live.start(0)
+        live.onTick(300)
+        live.onTranslated(400)
+        live.onScrolled(1000)
+        live.onScrolled(1300) // frames 300 ms apart: wait 750 ms, not 160
+        assertEquals(Action.NONE, live.onTick(1500))
+        assertEquals(Action.NONE, live.onTick(2000))
+        assertEquals(Action.TRANSLATE_MORE, live.onTick(2050))
+    }
 }
