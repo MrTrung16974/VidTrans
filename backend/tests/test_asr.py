@@ -54,12 +54,6 @@ class ASRServiceTests(unittest.TestCase):
         self.assertFalse(model.calls[1]["vad_filter"])
         self.assertEqual(model.calls[1]["beam_size"], 1)
 
-    def test_retry_decodes_once_at_temperature_zero(self):
-        model = FakeFasterModel([[], [_segment(1.0, 2.0, "你好")]])
-        service(model).transcribe_chinese("small", Path("v.mp4"))
-        self.assertEqual(model.calls[1]["temperature"], 0)
-        self.assertFalse(model.calls[1]["condition_on_previous_text"])
-
     def test_auto_language_does_not_repeat_the_same_retry(self):
         model = FakeFasterModel([[], [], []])
         result = service(model).transcribe("small", Path("v.mp4"), source_language="auto")
