@@ -79,11 +79,19 @@ class ScreenTranslatorEngine {
     required this.pipeline,
     required this.offline,
     required this.online,
-  });
+    BlockTranslator? onlineQuality,
+  }) : onlineQuality = onlineQuality ?? online;
 
   factory ScreenTranslatorEngine.create() {
     final ocr = OcrService();
     final detector = BlockLanguageDetector();
+    // The service has no UI: an expired session just fails the call; the app
+    // asks the user to sign in again next time it opens.
+    final api = ApiClient(
+      baseUrl: Env.apiBase,
+      tokens: TokenStorage(),
+      onSessionExpired: () {},
+    );
     return ScreenTranslatorEngine(
       pipeline: ImageTranslationPipeline(
         ocr: ocr.recognize,
@@ -91,22 +99,18 @@ class ScreenTranslatorEngine {
       ),
       offline: CachedBlockTranslator(OfflineBlockTranslator()),
       online: CachedBlockTranslator(
-        OnlineBlockTranslator(
-          // The service has no UI: an expired session just fails the call;
-          // the app asks the user to sign in again next time it opens.
-          ApiClient(
-            baseUrl: Env.apiBase,
-            tokens: TokenStorage(),
-            onSessionExpired: () {},
-          ),
-        ),
+        OnlineBlockTranslator(api, provider: fastOnlineProvider),
       ),
+      onlineQuality: CachedBlockTranslator(OnlineBlockTranslator(api)),
     );
   }
 
   final ImageTranslationPipeline pipeline;
   final BlockTranslator offline;
+
+  /// `online`: fast server translator, `online-quality`: the server's AI.
   final BlockTranslator online;
+  final BlockTranslator onlineQuality;
 
   Future<Object?> handle(MethodCall call) async {
     if (call.method == 'translateTexts') {
@@ -141,6 +145,7 @@ class ScreenTranslatorEngine {
 
   BlockTranslator _translatorFor(String mode) => switch (mode) {
     _ when mode == TranslationMode.online.name => online,
+    onlineQualityMode => onlineQuality,
     // On-device test of capture and overlay without models or a server
     // (integration_test/screen_translator_test.dart); not in release builds.
     'debug-echo' when kDebugMode => const _EchoTranslator(),
@@ -217,8 +222,22 @@ class ScreenTranslatorEngine {
   }) async {
     final translator = _translatorFor(mode);
     final missingModels = <String>{};
+    // Debug builds log how long each stage took (read in `adb logcat -s flutter`).
+    final clock = Stopwatch()..start();
+    var stageAt = Duration.zero;
+    TranslationStage? stage;
+    final timings = <String>[];
+    void mark(TranslationStage? next) {
+      if (stage != null) {
+        timings.add('${stage!.name}=${(clock.elapsed - stageAt).inMilliseconds}ms');
+      }
+      stage = next;
+      stageAt = clock.elapsed;
+    }
+
     try {
       final regions = await pipeline.analyze(
+        onStage: kDebugMode ? mark : null,
         imagePath: imagePath,
         rgba: rgba,
         width: width,
@@ -242,6 +261,10 @@ class ScreenTranslatorEngine {
           }
         },
       );
+      if (kDebugMode) {
+        mark(null);
+        debugPrint('SCREEN_TRANSLATOR timing ($mode, ${regions.length} blocks): ${timings.join(' ')}');
+      }
       final translated = regions.where((region) => region.translated).toList();
       if (translated.isEmpty && missingModels.isNotEmpty) {
         return {'error': 'models_missing', 'languages': missingModels.toList()};

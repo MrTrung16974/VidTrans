@@ -216,12 +216,18 @@ class GoogleVietnameseTranslator:
         errors: list[str] = []
 
         def valid(translated: str) -> bool:
+            # Line breaks preserved and at least one usable line: Google translated this batch.
             result = [line.strip() for line in translated.split("\n")]
-            return len(result) == len(lines) and all(self._valid(src, out) for src, out in zip(lines, result))
+            return len(result) == len(lines) and any(self._valid(src, out) for src, out in zip(lines, result))
 
         translated = self._query_json("\n".join(lines), errors, valid)
         if translated is not None:
-            return [line.strip() for line in translated.split("\n")]
+            # A line Google left in the source script comes back "" and is retried alone,
+            # instead of sending every line of the batch to the weaker MyMemory provider.
+            return [
+                out if self._valid(src, out) else ""
+                for src, out in zip(lines, (line.strip() for line in translated.split("\n")))
+            ]
         try:
             # This provider limits a request to 500 UTF-8 bytes and may not
             # preserve newlines, so translate each complete cue separately.

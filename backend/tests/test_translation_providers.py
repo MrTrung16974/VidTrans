@@ -72,6 +72,7 @@ class TranslationProviderTests(unittest.TestCase):
 
             with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
                 translator = GeminiContextTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+            translator._sleep = lambda _seconds: None
             with self.assertRaises(TranslationUnavailableError):
                 translator.translate_lines(["你好"])
 
@@ -599,3 +600,78 @@ class FallbackReportingTests(unittest.TestCase):
                                     source_language="zh-CN", max_batch_chars=200, sleeper=lambda _seconds: None)
         self.assertFalse(single[0]["translation_fallback"])
         self.assertEqual(single[0]["translation_provider"], "gemini-test")
+
+
+class PartialLlmBatchTests(unittest.TestCase):
+    def test_one_unusable_line_keeps_the_rest_of_the_gemini_batch(self) -> None:
+        requests: list[list[str]] = []
+
+        def opener(request, **_kwargs):
+            sent = json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"].split("items: ", 1)[1])
+            lines = [item["text"] for item in sent]
+            requests.append(lines)
+            # Every reply involving the lyric line is shifted; everything else is fine.
+            return _gemini_reply([
+                {"id": i + 1, "source": "?" if line == JOB_05A05E62_SOURCES[0] else line,
+                 "text": JOB_05A05E62_TRANSLATIONS[JOB_05A05E62_SOURCES.index(line)]}
+                for i, line in enumerate(lines)
+            ])
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+            translator = GeminiContextTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+            self.assertEqual(translator.translate_lines(list(JOB_05A05E62_SOURCES)),
+                             ["", *JOB_05A05E62_TRANSLATIONS[1:]])
+            # A line requested on its own still fails loudly.
+            from infrastructure.translation_prompt import TranslationOutputError
+            with self.assertRaises(TranslationOutputError):
+                translator.translate(JOB_05A05E62_SOURCES[0])
+
+    def test_condense_keeps_good_rewrites_when_one_line_is_mangled(self) -> None:
+        def opener(request, **_kwargs):
+            items = json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"].split("items: ", 1)[1])
+            return _gemini_reply([
+                {"id": item["id"], "source": "?" if item["source"] == "坏" else item["source"],
+                 "text": "ngắn " + item["source"]}
+                for item in items
+            ])
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+            translator = GeminiContextTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+            result = translator.condense_lines(["好", "坏", "行"], ["a", "b", "c"], [3, 3, 3])
+        self.assertEqual(result, ["ngắn 好", "", "ngắn 行"])
+
+
+class GeminiOverloadTests(unittest.TestCase):
+    def _translator(self, codes: list[int | None], models: list[str]):
+        def opener(request, **_kwargs):
+            if "/models?" in request.full_url:
+                return _Response({"models": [{"name": "models/m2", "supportedGenerationMethods": ["generateContent"]}]})
+            models.append(request.full_url.split("/models/", 1)[1].split(":", 1)[0])
+            code = codes.pop(0)
+            if code:
+                raise urllib.error.HTTPError(request.full_url, code, "overloaded", {}, None)
+            return _gemini_reply([{"id": 1, "source": "你好", "text": "Xin chào"}])
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_TRANSLATION_MODEL": "m1",
+                                     "GEMINI_TRANSLATION_MODELS": "m2"}):
+            translator = GeminiContextTranslator(source_language="zh-CN", target_language="vi", opener=opener)
+        translator._sleep = lambda _seconds: None
+        return translator
+
+    def test_momentary_overload_is_retried_on_the_same_model(self) -> None:
+        models: list[str] = []
+        translator = self._translator([503, None], models)
+        self.assertEqual(translator.translate("你好"), "Xin chào")
+        self.assertEqual(models, ["m1", "m1"])
+
+    def test_lasting_overload_moves_to_another_gemini_model(self) -> None:
+        models: list[str] = []
+        translator = self._translator([503, 503, None], models)
+        self.assertEqual(translator.translate("你好"), "Xin chào")
+        self.assertEqual(models, ["m1", "m1", "m2"])
+
+    def test_overload_on_every_model_is_reported_unavailable(self) -> None:
+        from infrastructure.vietnamese_translator import TranslationUnavailableError
+        translator = self._translator([503] * 3, [])
+        with self.assertRaises(TranslationUnavailableError):
+            translator.translate("你好")

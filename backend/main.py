@@ -6359,6 +6359,9 @@ def translation_providers_endpoint(request: Request) -> JSONResponse:
 # One image (screenshot) carries a few dozen text blocks at most.
 MAX_TEXT_TRANSLATION_ITEMS = 80
 MAX_TEXT_TRANSLATION_CHARS = 12_000
+# Concurrent per-line translation requests for one call (Ollama serves them in
+# parallel up to its OLLAMA_NUM_PARALLEL; the rest queue there).
+TEXT_TRANSLATION_WORKERS = max(1, int(os.environ.get("VIDTRANS_TEXT_TRANSLATION_WORKERS", "4") or 4))
 
 
 class TextTranslationRequest(BaseModel):
@@ -6406,14 +6409,31 @@ def translate_texts_endpoint(request: Request, body: TextTranslationRequest) -> 
     translator = create_translation_provider(provider, source_language=source, target_language=target)
     pending = [text for text in dict.fromkeys(texts) if text]
     translated: dict[str, str] = {}
+
+    def translate_each(lines: list[str]) -> dict[str, str]:
+        # Per-line providers (TranslateGemma: one Ollama request per line) would
+        # otherwise add up line by line; a screen of text is 20-50 lines.
+        if len(lines) <= 1:
+            return {line: translator.translate(line) for line in lines}
+        workers = min(TEXT_TRANSLATION_WORKERS, len(lines))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            return dict(zip(lines, pool.map(translator.translate, lines)))
+
+    started = time.monotonic()
     try:
         if pending and hasattr(translator, "translate_lines"):
             translated = dict(zip(pending, translator.translate_lines(pending)))
+            # A line a batch could not translate comes back "" and is retried alone.
+            translated.update(translate_each([text for text in pending if not translated.get(text)]))
         else:
-            translated = {text: translator.translate(text) for text in pending}
+            translated = translate_each(pending)
     except Exception as exc:  # every provider in the fallback chain failed
         logger.warning("Text translation failed (%s): %s", provider, exc)
         raise HTTPException(status_code=502, detail="Máy chủ dịch đang bận, hãy thử lại hoặc dùng chế độ offline") from exc
+    logger.info(
+        "Text translation: %d line(s) %s->%s with %s in %.0f ms",
+        len(pending), source, target, getattr(translator, "name", provider), (time.monotonic() - started) * 1000,
+    )
     return JSONResponse({
         "translations": [translated.get(text, "") for text in texts],
         "source_language": source,

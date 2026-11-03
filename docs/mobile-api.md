@@ -7,7 +7,7 @@ sinh client Dart từ file này, không dùng chung code với web.
 | --- | --- |
 | Production | `https://<tên miền>/api/v1/...` (cùng tên miền với web) |
 | Local, Docker | `http://localhost:5210` (chỉ API) hoặc `http://localhost:5200` (qua container web) |
-| Android emulator | `http://10.0.2.2:5210` |
+| Android thật/emulator qua ADB | `http://127.0.0.1:5210` sau `adb reverse tcp:5210 tcp:5210` |
 | iOS simulator | `http://127.0.0.1:5210` |
 
 ## Sinh client Dart
@@ -64,31 +64,32 @@ Response trả `access_token` mới. Refresh token giữ nguyên hạn ban đầ
 khoá thì refresh trả `401`/`403`: đưa người dùng về màn hình đăng nhập. Đăng xuất trên app chỉ cần
 xoá hai token trong secure storage.
 
-## Tiến trình job theo thời gian thực
+## Tiến trình job và thông báo theo thời gian thực (Socket.IO)
 
-WebSocket `wss://<tên miền>/api/v1/jobs/events`, xác thực bằng header (app native gửi được header,
-trình duyệt thì không):
+App dùng Socket.IO (gói `socket_io_client`) ở path `/api/v1/socket.io`, chỉ transport `websocket`.
+Token gửi trong auth payload, đọc lại mỗi lần kết nối để dùng token đã làm mới:
 
 ```dart
-final channel = IOWebSocketChannel.connect(
-  Uri.parse('wss://vidtrans.cloud/api/v1/jobs/events'),
-  headers: {'Authorization': 'Bearer $accessToken'},
-);
+final socket = io.io('https://vidtrans.cloud', io.OptionBuilder()
+    .setPath('/api/v1/socket.io')
+    .setTransports(['websocket'])
+    .setAuthFn((send) => tokens.read().then((t) => send({'token': t?.accessToken ?? ''})))
+    .build());
 ```
 
-Token sai thì server từ chối ngay lúc bắt tay (client thấy lỗi handshake HTTP 403 hoặc mã đóng
-`4401`). Token hết hạn khi đang kết nối thì server đóng với mã `4401`. Cả hai trường hợp: làm mới
-token rồi kết nối lại. Server không đọc gì từ client; app không cần gửi tin nhắn.
+Token sai hoặc thiếu: server từ chối, client nhận `connect_error` với message `unauthorized`. Token hết hạn
+khi đang kết nối: server gửi `auth_expired` rồi ngắt. Cả hai trường hợp: làm mới token rồi kết nối lại.
+App tự kết nối lại với backoff (1s, 2s, 4s, … tối đa 30s) và trong lúc mất kết nối tải lại
+`GET /api/v1/jobs` khoảng 15 giây/lần. Code ở `mobile/lib/core/websocket/job_events.dart`.
 
 ### Sự kiện
 
-Mọi tin nhắn là JSON có trường `type`. App bỏ qua `type` không biết.
-
-| `type` | Khi nào | Nội dung |
+| Sự kiện | Khi nào | Nội dung |
 | --- | --- | --- |
-| `ready` | Ngay sau khi kết nối | `{"type": "ready"}`. Gọi lại `GET /api/v1/jobs` một lần để lấy những gì đổi trong lúc mất kết nối |
-| `ping` | Sau 25 giây không có sự kiện | `{"type": "ping"}`. Chỉ để giữ kết nối, bỏ qua |
+| `connect` (của Socket.IO) | Kết nối xong | Gọi lại `GET /api/v1/jobs` một lần để lấy những gì đổi trong lúc mất kết nối |
 | `jobs` | Job của tài khoản thay đổi (gộp khoảng 2 tin/giây) | Xem bên dưới |
+| `notification` | Job chuyển sang `completed` hoặc `failed` | `{"type": "job_status", "job_id", "status", "title", "body"}`, cùng nội dung với push FCM |
+| `auth_expired` | Access token hết hạn | Làm mới token rồi kết nối lại |
 
 ```json
 {
@@ -104,16 +105,24 @@ Mọi tin nhắn là JSON có trường `type`. App bỏ qua `type` không biế
   hiển thị nghĩa là job mới: tải lại danh sách để server áp dụng lọc và sắp xếp.
 - `queue_positions`: vị trí trong hàng đợi của các job trong `items`; job không có trong map thì không
   còn xếp hàng (bỏ `queue_position`).
-- `removed`: hiện luôn rỗng (job bị xoá được báo bằng `resync`).
 - `{"type": "jobs", "resync": true, "items": [], "removed": []}`: quá nhiều thay đổi hoặc có job bị xoá.
   Tải lại danh sách qua REST.
+- Tài khoản `owner`/`admin` nhận thay đổi của mọi job (như danh sách job của họ); tài khoản khác chỉ nhận
+  job của mình. `notification` chỉ gửi cho chủ job.
 
-REST là nguồn trạng thái chính. Khi mất kết nối, kết nối lại với backoff (1s, 2s, 4s, … tối đa 30s)
-và poll `GET /api/v1/jobs` khoảng 15 giây/lần cho tới khi nhận lại `ready`, giống web.
+Khi app mở, một kết quả job có thể đến hai lần (sự kiện `notification` và push FCM): app chỉ hiện một
+SnackBar cho mỗi cặp `job_id` + `status`.
+
+REST vẫn là nguồn trạng thái chính.
+
+### WebSocket cũ (web)
+
+Web vẫn dùng `wss://<tên miền>/api/v1/jobs/events` (cookie phiên, cùng định dạng tin `jobs`, thêm
+`ready`/`ping`). Endpoint này giữ nguyên; app mới không dùng.
 
 ## Chống tạo trùng job (Idempotency-Key)
 
-`POST /api/v1/batches` và `POST /api/v1/branding/videos` nhận header tuỳ chọn `Idempotency-Key`
+`POST /api/v1/batches` nhận header tuỳ chọn `Idempotency-Key`
 (tối đa 128 ký tự). App sinh một UUID cho mỗi lần người dùng bấm gửi và giữ nguyên khi gửi lại sau lỗi
 mạng:
 
@@ -132,6 +141,159 @@ Các endpoint app dùng đầu tiên đã có schema response: `AuthToken` (`/au
 `AuthStatus`, `Account` (`GET`/`PUT /me`), `Job`, `JobPage` (`GET /jobs`), `CreatedBatch`, `Batch`,
 `BatchPage`, `QueuedJob`. Mọi schema cho phép trường thêm: payload job lớn dần theo pipeline, nên
 model Dart phải bỏ qua trường lạ thay vì báo lỗi.
+
+## Phân quyền theo gói
+
+`GET /api/v1/me` trả thêm `features`: danh sách tính năng gói của tài khoản được dùng, đọc từ DB
+(bảng `plans`, `plan_features`, `plan_entitlements` — xem `backend/infrastructure/plan_store.py`).
+
+| Tính năng (`feature_key`)  | trial | free | creator | pro | enterprise |
+| -------------------------- | :---: | :--: | :-----: | :-: | :--------: |
+| `comic_video`              |   ✗   |  ✗   |    ✓    |  ✓  |     ✓      |
+| `social_publishing`        |   ✗   |  ✗   |    ✓    |  ✓  |     ✓      |
+| `ai_translation_gemini`    |   ✗   |  ✗   |    ✓    |  ✓  |     ✓      |
+| `ai_tts_elevenlabs`        |   ✗   |  ✗   |    ✓    |  ✓  |     ✓      |
+| `ai_comic_script_gemini`   |   ✗   |  ✗   |    ✓    |  ✓  |     ✓      |
+| `ai_comic_image_gemini`    |   ✗   |  ✗   |    ✓    |  ✓  |     ✓      |
+| `ai_comic_animation_veo`   |   ✗   |  ✗   |    ✓    |  ✓  |     ✓      |
+
+Bảng trên là giá trị mặc định; owner/admin luôn có đủ. Admin đổi trong web: **Quản trị → 🔐 Phân
+quyền gói & menu** (ghi vào DB, có audit `plan_entitlement.update`). Backend tự chặn (`403`) mọi thao
+tác tạo/sửa/đăng khi gói không có quyền; xem và xoá dữ liệu cũ vẫn được.
+
+### Menu điều hướng từ DB
+
+`GET /api/v1/me/menus?platform=mobile` (hoặc `web`) trả các menu tài khoản được thấy, đã lọc theo
+bật/tắt, vai trò tối thiểu và tính năng gói, đúng thứ tự admin cấu hình:
+
+```json
+{"platform": "mobile", "dock_size": 4,
+ "items": [{"key": "translate", "label": "Dịch", "short_label": "Dịch"}, {"key": "jobs", "...": "..."}]}
+```
+
+App hiện `dock_size` mục đầu tiên có màn hình tương ứng (`translate`, `comic`, `jobs`, `social`,
+`upgrade`, `profile`), bỏ qua key lạ, và nạp lại khi app quay về foreground. Khi chưa tải được, app dùng
+bộ menu mặc định giống dữ liệu seed. Admin sửa tên, tên ngắn, thứ tự, bật/tắt, vai trò tối thiểu và
+tính năng yêu cầu của từng menu (bảng `app_menus`, audit `app_menu.update`). Danh sách màn hình là cố
+định trong code; menu Quản trị trên web luôn bật và chỉ dành cho quản trị viên.
+
+API quản trị (owner/admin): `GET /api/v1/admin/access-config`,
+`PUT /api/v1/admin/plan-entitlements/{plan_key}/{feature_key}` `{"enabled": true}`,
+`PUT /api/v1/admin/menus/{platform}/{menu_key}`.
+
+## Dịch ảnh chụp màn hình (giai đoạn 1 của Screen Translator)
+
+App: tab Dịch → **Dịch ảnh chụp màn hình** (`/translate/image`). Cần tính năng gói `image_translation`
+(bật sẵn cho mọi gói, kể cả trial/free; admin tắt được). OCR luôn chạy trên điện thoại (Google ML Kit,
+model tiếng Trung, đọc được cả chữ Latin); ảnh không rời máy.
+
+- **Online** (mặc định, dịch tốt hơn hẳn): chỉ gửi phần chữ đã đọc được:
+
+```
+POST /api/v1/text-translations
+{"texts": ["你今天有时间开会吗？"], "source_language": "zh-CN", "target_language": "vi", "provider": ""}
+→ {"translations": ["..."], "source_language": "zh-CN", "target_language": "vi", "provider": "google-zh-CN-vi"}
+```
+
+- **Offline** (khi không có mạng hoặc không muốn gửi chữ đi): dịch bằng ML Kit trên máy, nhanh (~0,5 s/màn
+  hình) nhưng câu khó hay sai nghĩa; lần đầu hỏi trước khi tải gói ngôn ngữ (~30 MB/ngôn ngữ).
+
+`source_language` phải là ngôn ngữ cụ thể (app tự nhận diện trên máy khi chọn "Tự nhận diện"). Tối đa
+80 đoạn và 12 000 ký tự mỗi lần. `provider` rỗng = mặc định của máy chủ, tự lùi về Google nếu gói không
+dùng được Gemini; chọn thẳng `gemini` khi gói không có `ai_translation_gemini` → `403`. Tài khoản Người
+xem gọi được vì endpoint không lưu gì. Lỗi mọi bộ dịch → `502`.
+
+Kiểm thử trên thiết bị: `flutter test integration_test/image_translation_test.dart -d <thiết bị Android>`.
+iOS cần `pod install` (Podfile khai báo iOS 15.5 và `GoogleMLKit/TextRecognitionChinese`).
+
+### Nút dịch nổi trên mọi ứng dụng (giai đoạn 2, chỉ Android)
+
+App: Dịch → Dịch ảnh chụp màn hình → **Bật nút dịch nổi**. Dùng chung ngôn ngữ và chế độ Offline/Online
+của màn Dịch ảnh (đổi lúc đang bật thì áp dụng ngay).
+
+- Bật lần đầu: quyền **Hiển thị trên ứng dụng khác**; mỗi lần bật: Android hỏi **chia sẻ toàn màn hình**
+  (Android 14+ bắt buộc hỏi lại mỗi phiên; app chỉ cho chọn toàn màn hình). Chế độ Offline tải sẵn gói ngôn
+  ngữ trước khi bật vì dịch vụ chạy nền không hỏi được.
+- Chạm nút **Dịch** nổi → ẩn nút, chụp đúng 1 khung → OCR/dịch bằng chính pipeline của Dịch ảnh trong một
+  Flutter engine nền (`screenTranslatorMain`, chạy được cả khi đã đóng app) → lớp phủ thay chữ đúng vị trí.
+  **Chạm bất kỳ đâu để đóng.** Chữ trên thanh trạng thái/điều hướng được bỏ qua.
+- Không quay video, không lưu ảnh (ảnh JPEG tạm cho OCR bị xoá ngay). Tắt bằng nút trong app hoặc nút
+  **Tắt** trên thông báo; dừng chia sẻ màn hình từ hệ thống cũng tắt dịch vụ.
+- App chặn chụp màn hình (ngân hàng, video DRM) trả về khung đen → báo “Ứng dụng này chặn chụp màn hình”.
+
+Mã: `android/.../screentranslator/` (ScreenTranslatorService, ScreenCapture, OverlayViews),
+`lib/features/screen_translator/`. Kiểm thử trên máy ảo/thiết bị (tự cấp quyền, bấm đồng ý, chạm nút,
+chụp màn hình vào `build/screen_translator_test/`):
+
+```
+scripts/test_screen_translator.sh emulator-5554
+```
+
+**Cuộn trong chế độ Live:** mỗi lần dịch toàn màn hình, khung chụp (sạch, chưa có lớp dịch) làm "khung gốc".
+Màn hình đổi → ẩn lớp dịch nhưng giữ bản dịch; đứng yên lại → đo một lần khung gốc → khung hiện tại
+(`ScrollEstimator`, 40 cột × mọi hàng, bỏ 20% hàng lệch nhất để không vướng thanh tiêu đề/ô nhập) → đặt lại
+bản dịch, kiểm tra từng bản (chữ dưới nó còn đúng không, `regionMatches`, bỏ bản sai như thanh địa chỉ đã ẩn)
+→ hiện ngay, rồi chỉ OCR + dịch phần mới lộ ra. Không đo được (đổi trang, cuộn quá nửa màn hình) → dịch lại toàn bộ.
+Khoảng chờ "đã dừng" tự điều chỉnh theo nhịp khung (60 fps ≈ 0,16 s; máy chậm tới 0,8 s).
+
+**Dịch liên tục (Live, giai đoạn 3):** công tắc “Tự dịch liên tục” trong thẻ nút nổi, hoặc **nhấn giữ nút
+nổi** (nút đổi thành LIVE màu xanh ngọc). Mỗi khung hình mới được so với khung trước bằng ảnh thu nhỏ 72 cột
+(bỏ qua thanh hệ thống và nút nổi); màn hình đổi → ẩn bản dịch cũ; đứng yên ~0,35 s → chụp khung sạch, dịch,
+hiện bản dịch mới; kết quả về muộn (màn hình đã đổi trong lúc dịch) bị bỏ. Logic nằm ở `LiveScheduler.kt`
+(unit test JVM: `cd android && ./gradlew :app:testDebugUnitTest`). Lớp phủ Live **cho chạm/cuộn xuyên qua**
+nên Android 12+ buộc độ đục ≤ 80%: chữ gốc hiện mờ phía sau. Chạm nút LIVE = dịch lại ngay. App Cài đặt
+của Android (và một số app bảo mật) tự ẩn lớp phủ của app khác. Kiểm thử trên thiết bị (Chrome, tiếng Trung):
+
+```
+scripts/test_screen_translator.sh emulator-5554 build/screen_translator_test live
+```
+
+Mặc định test dùng bộ dịch giả (`debug-echo`, chỉ có trong bản debug). Dịch thật:
+`MODE=offline` (tự tải gói zh/en/vi trước, cần Internet) hoặc `MODE=online` (cần backend ở cổng 5210 và
+`adb reverse tcp:5210 tcp:5210`). Máy ảo sau mạng công ty có thể không tải được gói ML Kit; khởi động
+máy ảo với `-dns-server 8.8.8.8` hoặc dùng mạng khác.
+
+**Google Play:** trước khi phát hành phải khai báo trong Play Console quyền
+`FOREGROUND_SERVICE_MEDIA_PROJECTION` (kèm video demo luồng bật nút → dịch) và giải thích
+`SYSTEM_ALERT_WINDOW`; cập nhật chính sách quyền riêng tư phần “nội dung màn hình”.
+
+**Tắt nhanh:** kéo nút nổi (cả hai chế độ) → thùng rác hiện ở cuối màn hình; kéo vào gần sẽ hút vào, thùng
+chuyển đỏ; thả ra = tắt dịch (chế độ chụp: dừng service; Trợ năng: `enabled=false`, service vẫn bật trong Cài đặt).
+
+### Chế độ Trợ năng (Accessibility Service, tuỳ chọn)
+
+Trong thẻ nút dịch nổi chọn **Chụp màn hình | Trợ năng**. Ở chế độ Trợ năng, `AccessibilityTranslatorService.kt`
+đọc chữ trực tiếp từ cây giao diện của app đang mở (không chụp, không OCR) và vẽ bản dịch lên
+`TYPE_ACCESSIBILITY_OVERLAY`: **che kín 100%** mà vẫn chạm/cuộn app bên dưới được, không cần hỏi quyền chia sẻ
+màn hình mỗi lần bật.
+
+- Lần đầu: hộp thoại giải thích (prominent disclosure) → mở Cài đặt › Hỗ trợ tiếp cận → bật
+  “VidTrans – Dịch màn hình”; quay lại app thì tự bật dịch. Sau đó bật/tắt ngay trong app.
+- App ↔ service qua SharedPreferences gốc `screen_translator_a11y` (`enabled`, `source`, `target`, `mode`);
+  kênh `vidtrans/screen_translator`: `a11yEnabled`, `a11yConfig`, `setA11yConfig`, `openAccessibilitySettings`.
+  Bật chế độ này sẽ tắt nút chụp màn hình đang chạy (hai lớp dịch không chồng nhau).
+- Dịch: engine Dart headless, lệnh `translateTexts {texts, source, target, mode}` → `{translations: [...]}`
+  (null = không cần dịch: đã đúng ngôn ngữ đích, số, giờ). Cache theo chữ, nên cuộn lại không dịch lại.
+- Vị trí: khung chữ thật lấy bằng `EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY` (Chrome dùng tên AndroidX
+  `android.core.view…`), đo một lần khi màn hình đứng yên rồi cache. Khi cuộn: ẩn lớp dịch, chờ cây giao diện
+  yên 150 ms và hai lần đọc giống nhau (Chrome cập nhật cây trễ hơn hình) rồi vẽ lại ở vị trí mới, ~0,3–0,6 s.
+- Màu: Android 11+ chụp một ảnh (`takeScreenshot`, chỉ khi màn hình đứng yên, bỏ vùng nút nổi) để lấy màu nền
+  (màu phổ biến nhất trong khung) và màu chữ (màu tương phản phổ biến nhất); Android 8–10: nền xám nhạt, chữ đen.
+- Nút nổi: chạm = tạm dừng/tiếp tục, nhấn giữ = dịch lại màn hình này, kéo xuống thùng rác = tắt dịch. Không đọc ô nhập liệu, mật khẩu, System UI
+  và chính app VidTrans.
+- Giới hạn: chữ trong ảnh/video/game, app tự vẽ chữ (Flutter không bật semantics, game) thì không có trong cây →
+  dùng chế độ Chụp màn hình. Logic thuần ở `A11yText.kt` (unit test `A11yTextTest`).
+
+Thử trên máy ảo không cần bấm tay:
+
+```
+adb shell settings put secure enabled_accessibility_services cloud.vidtrans.app/.screentranslator.AccessibilityTranslatorService
+```
+
+**Google Play (rủi ro cao):** API Trợ năng chỉ được duyệt khi khai báo rõ trong Play Console (form
+AccessibilityService API) + video, có prominent disclosure trong app và trong chính sách quyền riêng tư.
+App không phải công cụ hỗ trợ người khuyết tật (`isAccessibilityTool=false`) nên Google xét kỹ; nếu bị từ chối,
+gỡ service khỏi manifest bản Play và giữ chế độ Trợ năng cho bản phát hành ngoài (APK trực tiếp).
 
 ## Video và file kết quả
 
@@ -195,3 +357,32 @@ không gửi push, mọi thứ khác chạy bình thường.
 
 Tài khoản `viewer` chỉ được gọi các request đọc (GET). Mỗi tài khoản chỉ thấy job, batch và kết nối
 mạng xã hội của chính mình, như trên web.
+
+## Tải video mạng xã hội trên điện thoại
+
+Máy chủ tải link TikTok, Douyin bằng IP datacenter nên hay bị nền tảng coi là bot. App tải những link này
+ngay trên điện thoại (IP nhà mạng, phiên đăng nhập của người dùng), rồi upload file như video chọn từ máy.
+
+1. `GET /api/v1/download/policy` cho biết nền tảng nào tải trên máy:
+
+   ```json
+   {"platforms": {"TikTok": {"mode": "client_then_server"}, "Douyin": {"mode": "client_then_server"},
+                  "YouTube": {"mode": "server"}, "Facebook": {"mode": "server"}}}
+   ```
+
+   `client_then_server`: app thử tải trên máy, không được thì gửi link cho server như cũ. `server`: chỉ server
+   tải. Đổi bằng `VIDTRANS_CLIENT_DOWNLOAD_PLATFORMS` (mặc định `TikTok,Douyin`; để trống thì tắt).
+2. Gửi file tải được trong `files` của `POST /api/v1/batches`, kèm `file_source_urls`: mảng JSON có đúng một
+   phần tử cho mỗi file, theo cùng thứ tự, là link gốc hoặc `null` với file chọn từ máy:
+
+   ```
+   files=<tiktok.mp4>  files=<clip.mp4>  file_source_urls=["https://www.tiktok.com/@a/video/1", null]
+   source_links=https://youtu.be/xyz
+   ```
+
+   Job của file đó có `source_url`, `source_platform` và `source_origin: "client"`. Server không tự tải lại
+   link này khi khởi động lại job.
+
+App mở link trong WebView ẩn (`flutter_inappwebview`), đọc địa chỉ video trong trang, rồi tải bằng
+`background_downloader` với cookie, User-Agent và Referer của WebView. Các link tải lần lượt, nghỉ khoảng
+1,5 giây giữa hai link.

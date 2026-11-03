@@ -10,9 +10,23 @@ hướng dẫn tích hợp: `../docs/mobile-api.md`.
 
 ```bash
 flutter pub get
-flutter run                                   # backend local: 10.0.2.2:5210 (Android) / 127.0.0.1:5210 (iOS)
+adb reverse tcp:5210 tcp:5210                 # Android thật hoặc emulator qua USB/ADB
+flutter run                                   # backend local: 127.0.0.1:5210
 flutter run --dart-define=VIDTRANS_API_BASE=https://vidtrans.cloud
 flutter test && flutter analyze
+```
+
+Sau khi rút/cắm lại điện thoại hoặc ADB khởi động lại, chạy lại `adb reverse`.
+Build production phải truyền URL HTTPS bằng `VIDTRANS_API_BASE`; địa chỉ mặc định
+chỉ dành cho phát triển local.
+
+Với điện thoại Android thật, có thể dùng script để tự thiết lập lại cổng trước
+mỗi lần chạy, tránh lỗi "không kết nối được máy chủ" sau khi ADB đổi transport:
+
+```bash
+./run-android.sh
+# hoặc chọn rõ thiết bị
+./run-android.sh R5CTC1L8Z5Z
 ```
 
 Mạng công ty chặn SSL: Gradle cần truststore có `secrets/mcredit-root-ca.crt`, ví dụ

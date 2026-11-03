@@ -92,11 +92,22 @@ class OfflineBlockTranslator implements BlockTranslator {
   }
 }
 
+/// Online speed choice, sent to the floating translator as its `mode` string
+/// (the native services pass it through unchanged): `online` asks the server
+/// for [fastOnlineProvider], this one for the server's default AI translator.
+const onlineQualityMode = 'online-quality';
+
+/// Google: about 0.1 s per line. The server's AI default (TranslateGemma)
+/// reads better but needs about 0.5 s per line, too slow for a live screen.
+const fastOnlineProvider = 'google';
+
 /// `POST /api/v1/text-translations` — sends the recognised text only.
 class OnlineBlockTranslator implements BlockTranslator {
-  OnlineBlockTranslator(this._api);
+  /// An empty [provider] lets the server choose (its AI default).
+  OnlineBlockTranslator(this._api, {this.provider = ''});
 
   final ApiClient _api;
+  final String provider;
 
   @override
   Future<List<String>> translate(
@@ -110,6 +121,7 @@ class OnlineBlockTranslator implements BlockTranslator {
         'texts': texts,
         'source_language': source,
         'target_language': target,
+        if (provider.isNotEmpty) 'provider': provider,
       },
     );
     final values = (result['translations'] as List? ?? const [])

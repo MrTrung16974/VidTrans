@@ -4478,15 +4478,15 @@ input[type="file"]::-webkit-file-upload-button:active {
     transform: translateX(-50%) !important;
     z-index: 1000 !important;
     margin: 0 !important;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 250, 245, 0.96) 100%) !important;
-    backdrop-filter: blur(28px) saturate(190%) !important;
-    -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
-    border: 1.5px solid #e2e8f0 !important;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.56) 0%, rgba(255, 250, 245, 0.64) 100%) !important;
+    backdrop-filter: blur(22px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(190%) !important;
+    border: 1.5px solid rgba(226, 232, 240, 0.72) !important;
     border-radius: 999px !important;
     box-shadow:
       0 14px 34px -6px rgba(15, 23, 42, 0.14),
       0 4px 12px -2px rgba(234, 88, 12, 0.08),
-      inset 0 1px 0 #ffffff !important;
+      inset 0 1px 0 rgba(255, 255, 255, 0.72) !important;
     display: flex !important;
     align-items: center !important;
     white-space: nowrap !important;
@@ -4552,13 +4552,13 @@ input[type="file"]::-webkit-file-upload-button:active {
 
   /* Active item highlight - Netflix capsule pill matching VidTrans light studio card style */
   .nav-tabs a.active {
-    background: linear-gradient(180deg, #fffaf5 0%, #ffedd5 100%) !important;
+    background: linear-gradient(180deg, rgba(255, 250, 245, 0.84) 0%, rgba(255, 237, 213, 0.88) 100%) !important;
     color: var(--brand, #ea580c) !important;
     border: 1.5px solid #ea580c !important;
     border-radius: 999px !important;
     box-shadow:
-      0 4px 12px -2px rgba(234, 88, 12, 0.2),
-      inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
+      0 4px 12px -2px rgba(234, 88, 12, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.82) !important;
   }
   .nav-tabs a.active:hover {
     transform: none !important;

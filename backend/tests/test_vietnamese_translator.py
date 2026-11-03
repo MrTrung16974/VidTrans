@@ -139,3 +139,20 @@ class RateLimitTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as error:
             ensure_translation_complete(result)
         self.assertIn('VIDTRANS_TRANSLATION_PROXY', str(error.exception))
+
+
+class PartialBatchTests(unittest.TestCase):
+    def test_one_untranslated_line_does_not_send_the_batch_to_mymemory(self):
+        calls = []
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            if 'q=%E4%BD%A0%E5%A5%BD%0A' in request.full_url:  # the batch
+                return io.BytesIO(json.dumps([[['Xin chào\n'], ['小明\n'], ['Cảm ơn']]]).encode())
+            return io.BytesIO(json.dumps([[['Tiểu Minh']]]).encode())
+        translator = GoogleVietnameseTranslator(opener=opener)
+        self.assertEqual(translator.translate_lines(['你好', '小明', '谢谢']), ['Xin chào', '', 'Cảm ơn'])
+        self.assertFalse(any('mymemory' in url for url in calls))
+        segments = [{'start': i, 'end': i + 1, 'text': text} for i, text in enumerate(['你好', '小明', '谢谢'])]
+        result = translate_segments(segments, translator, sleeper=lambda _s: None)
+        self.assertEqual([s['text'] for s in result], ['Xin chào', 'Tiểu Minh', 'Cảm ơn'])
+        self.assertFalse(any('mymemory' in url for url in calls))

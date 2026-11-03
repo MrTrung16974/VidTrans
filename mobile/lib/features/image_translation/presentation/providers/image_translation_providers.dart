@@ -21,8 +21,17 @@ final offlineTranslatorProvider = Provider<OfflineBlockTranslator>(
   (ref) => OfflineBlockTranslator(),
 );
 
+/// The server's AI default ("Chất lượng").
 final onlineTranslatorProvider = Provider<OnlineBlockTranslator>(
   (ref) => OnlineBlockTranslator(ref.watch(apiClientProvider)),
+);
+
+/// "Nhanh": [fastOnlineProvider] on the server.
+final fastOnlineTranslatorProvider = Provider<OnlineBlockTranslator>(
+  (ref) => OnlineBlockTranslator(
+    ref.watch(apiClientProvider),
+    provider: fastOnlineProvider,
+  ),
 );
 
 final imageTranslationPipelineProvider = Provider<ImageTranslationPipeline>((

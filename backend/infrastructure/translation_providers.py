@@ -194,26 +194,36 @@ def translation_provider_statuses() -> list[TranslationProviderStatus]:
 
 
 def translate_halving(translate_chunk, lines: list[str], durations: list[float | None] | None,
-                      *, provider: str) -> list[str]:
+                      *, provider: str, _nested: bool = False) -> list[str]:
     """Retry a batch the model mangled (bad JSON, wrong count, shifted lines) in halves.
 
     A long batch is where an LLM loses track of which line it is on; halves keep
-    the context benefit, and a single line that still fails is a real failure.
+    the context benefit. A single line that still fails inside a batch comes back
+    as "" so the rest of the batch keeps its translations; callers retry only that
+    line. A single line requested on its own still raises.
     """
     try:
         return translate_chunk(lines, durations)
     except TranslationOutputError as exc:
         if len(lines) == 1:
-            raise
+            if not _nested:
+                raise
+            logger.warning("%s could not translate one line of a batch (%s); it is retried alone", provider, exc)
+            return [""]
         middle = len(lines) // 2
         logger.warning("%s returned unusable output for %d lines (%s); retrying in halves",
                        provider, len(lines), exc)
         return [
             *translate_halving(translate_chunk, lines[:middle], durations[:middle] if durations else None,
-                               provider=provider),
+                               provider=provider, _nested=True),
             *translate_halving(translate_chunk, lines[middle:], durations[middle:] if durations else None,
-                               provider=provider),
+                               provider=provider, _nested=True),
         ]
+
+
+# Server-side Gemini errors ("model overloaded") that usually clear within seconds.
+_GEMINI_TRANSIENT_CODES = frozenset({500, 502, 503, 504})
+_GEMINI_TRANSIENT_RETRY_SECONDS = 3.0
 
 
 class GeminiContextTranslator:
@@ -246,6 +256,7 @@ class GeminiContextTranslator:
         ]))
         self.timeout = timeout
         self._open = opener or urllib.request.urlopen
+        self._sleep = time.sleep
         self.name = f"gemini-{self.model}"
         self.history = TranslationHistory()
 
@@ -287,12 +298,21 @@ class GeminiContextTranslator:
         return translated
 
     def condense_lines(self, sources: list[str], translations: list[str], max_syllables: list[int]) -> list[str]:
-        """Shorter rewrites of dubbing lines too long for their source timing."""
-        text = self._generate(
-            condense_system_prompt(self.source_language, self.target_language, "".join(sources)),
-            condense_user_prompt(sources, translations, max_syllables),
-        )
-        return parse_translations(text, len(sources), provider="gemini", sources=sources)
+        """Shorter rewrites of dubbing lines too long for their source timing.
+
+        A mangled reply is retried in halves instead of discarding every rewrite of
+        the batch; a line that still fails comes back "" and keeps its translation.
+        """
+        def chunk(indexes: list[int], _durations) -> list[str]:
+            batch_sources = [sources[i] for i in indexes]
+            text = self._generate(
+                condense_system_prompt(self.source_language, self.target_language, "".join(batch_sources)),
+                condense_user_prompt(batch_sources, [translations[i] for i in indexes],
+                                     [max_syllables[i] for i in indexes]),
+            )
+            return parse_translations(text, len(indexes), provider="gemini", sources=batch_sources)
+
+        return translate_halving(chunk, list(range(len(sources))), None, provider="Gemini condense")
 
     def _generate(self, system: str, user: str) -> str:
         body = json.dumps({
@@ -311,6 +331,8 @@ class GeminiContextTranslator:
             attempted: set[str] = set()
             limited: list[str] = []
             not_found: list[str] = []
+            overloaded: list[str] = []
+            waited = False
             expanded = False
             payload = None
             while queue:
@@ -319,7 +341,17 @@ class GeminiContextTranslator:
                     continue
                 attempted.add(candidate)
                 try:
-                    payload = generate(candidate)
+                    try:
+                        payload = generate(candidate)
+                    except urllib.error.HTTPError as exc:
+                        if exc.code not in _GEMINI_TRANSIENT_CODES or waited:
+                            raise
+                        # "Model overloaded" usually clears in seconds. Failing here would
+                        # hand the rest of the job to the weaker backup translator. Wait
+                        # once per request, so a real outage still falls back promptly.
+                        waited = True
+                        self._sleep(_GEMINI_TRANSIENT_RETRY_SECONDS)
+                        payload = generate(candidate)
                     self.model = candidate
                     self.name = f"gemini-{candidate}"
                     break
@@ -328,6 +360,8 @@ class GeminiContextTranslator:
                         limited.append(candidate)
                     elif exc.code == 404:
                         not_found.append(candidate)
+                    elif exc.code in _GEMINI_TRANSIENT_CODES:
+                        overloaded.append(candidate)
                     else:
                         raise
                     if not expanded:
@@ -339,6 +373,8 @@ class GeminiContextTranslator:
                     raise TranslationRateLimitedError(
                         f"Các model Gemini đã hết hạn mức tạm thời: {attempted_label}"
                     )
+                if overloaded:
+                    raise TranslationUnavailableError(f"Gemini đang quá tải: {attempted_label}")
                 raise TranslationConfigurationError(
                     f"Không tìm thấy model Gemini khả dụng: {attempted_label}"
                 )
@@ -717,7 +753,8 @@ class FallbackTranslator:
         except Exception as exc:
             raise _combined_failure(primary_error, exc) from exc
         self.secondary_used = True
-        self.fallback_sources.update(lines)
+        # A "" value is a line the secondary could not translate either; it is retried alone.
+        self.fallback_sources.update(line for line, value in zip(lines, values) if value)
         logger.warning("%s could not translate %d lines (%s); used %s",
                        getattr(self.primary, "name", "primary"), len(lines),
                        type(primary_error).__name__ if primary_error else "provider down",

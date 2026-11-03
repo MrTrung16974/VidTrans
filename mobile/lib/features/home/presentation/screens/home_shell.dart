@@ -74,57 +74,44 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
 
     return Scaffold(
+      extendBody: true,
       backgroundColor: AppColors.bg,
       body: shell,
       bottomNavigationBar: keyboardOpen
           ? const SizedBox.shrink()
-          : DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    AppColors.bg.withValues(alpha: 0.0),
-                    AppColors.bg.withValues(alpha: 0.88),
-                    AppColors.bg,
-                  ],
-                  stops: const [0.0, 0.35, 1.0],
-                ),
+          : Padding(
+              padding: EdgeInsets.fromLTRB(
+                14,
+                isCompactHeight ? 4 : 6,
+                14,
+                bottomMargin,
               ),
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                  14,
-                  isCompactHeight ? 4 : 6,
-                  14,
-                  bottomMargin,
-                ),
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  heightFactor: 1.0,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
-                    child: _FloatingNetflixDock(
-                      items: items,
-                      currentIndex: currentDockIndex,
-                      compact: isCompactHeight,
-                      onSelect: (index) {
-                        HapticFeedback.selectionClick();
-                        final branch = items[index].branch;
-                        if (branch == null) {
-                          // Upgrade opens the billing page above the dock.
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => const BillingScreen(),
-                            ),
-                          );
-                          return;
-                        }
-                        shell.goBranch(
-                          branch,
-                          initialLocation: branch == shell.currentIndex,
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                heightFactor: 1.0,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: _FloatingNetflixDock(
+                    items: items,
+                    currentIndex: currentDockIndex,
+                    compact: isCompactHeight,
+                    onSelect: (index) {
+                      HapticFeedback.selectionClick();
+                      final branch = items[index].branch;
+                      if (branch == null) {
+                        // Upgrade opens the billing page above the dock.
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const BillingScreen(),
+                          ),
                         );
-                      },
-                    ),
+                        return;
+                      }
+                      shell.goBranch(
+                        branch,
+                        initialLocation: branch == shell.currentIndex,
+                      );
+                    },
                   ),
                 ),
               ),
@@ -248,7 +235,7 @@ class _FloatingNetflixDock extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(999),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+          filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
           child: Container(
             height: compact ? 60 : 64,
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
@@ -257,13 +244,13 @@ class _FloatingNetflixDock extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Color(0xF5FFFFFF),
-                  Color(0xF5FFFAF5),
+                  Color(0x8FFFFFFF),
+                  Color(0x9EFFFAF5),
                 ],
               ),
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
-                color: const Color(0xFFE2E8F0),
+                color: const Color(0xB3E2E8F0),
                 width: 1.5,
               ),
             ),
@@ -286,8 +273,8 @@ class _FloatingNetflixDock extends StatelessWidget {
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
-                                Color(0xFFFFFAF5),
-                                Color(0xFFFFEDD5),
+                                Color(0xD9FFFAF5),
+                                Color(0xE0FFEDD5),
                               ],
                             ),
                             borderRadius: BorderRadius.circular(999),
@@ -297,7 +284,7 @@ class _FloatingNetflixDock extends StatelessWidget {
                             ),
                             boxShadow: const [
                               BoxShadow(
-                                color: Color(0x2AEA580C),
+                                color: Color(0x26EA580C),
                                 blurRadius: 10,
                                 offset: Offset(0, 2),
                               ),

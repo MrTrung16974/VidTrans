@@ -317,6 +317,10 @@ def fit_translations_to_voice(
         text = str(segment.get("text") or "")
         if segment.get("skip_tts") or segment.get("skip_subtitle") or not text or not segment.get("source_text"):
             continue
+        if segment.get("voice_fit_checked") == text:
+            # Already answered for this exact line (e.g. a requeued job reusing its
+            # translation checkpoint); asking again only spends the condenser's quota.
+            continue
         script = _SOURCE_SCRIPT_RE.get(str(segment.get("source_language") or ""))
         leaked = bool(script and script.search(text))
         window = available_voice_window(segments, index)
@@ -340,11 +344,15 @@ def fit_translations_to_voice(
             segment = segments[index]
             value = _clean(value)
             script = _SOURCE_SCRIPT_RE.get(str(segment.get("source_language") or ""))
-            if not value or (script and script.search(value)):
-                continue
-            if not leaked and len(_SYLLABLE_RE.findall(value)) >= len(_SYLLABLE_RE.findall(str(segment["text"]))):
+            if not value:
+                continue  # No usable answer for this line: try again next time.
+            if (script and script.search(value)) or (
+                not leaked and len(_SYLLABLE_RE.findall(value)) >= len(_SYLLABLE_RE.findall(str(segment["text"])))
+            ):
+                segment["voice_fit_checked"] = str(segment["text"])
                 continue
             segment["text_before_fit"] = segment["text"]
+            segment["voice_fit_checked"] = value
             segment["text"] = value
             segment["translation_condensed"] = True
             rewritten += 1

@@ -253,6 +253,13 @@ class DubbingFitTests(unittest.TestCase):
         self.assertEqual(fit_translations_to_voice(segments, Broken()), 0)
         self.assertEqual(segments[0]["text"], self.LONG)
 
+    def test_requeued_job_does_not_condense_the_same_line_again(self) -> None:
+        segments = [_cue(10.0, 11.12, "算个明天大白多钱已经", self.LONG)]
+        first = RecordingCondenser({self.LONG: "Mai đại trắng giá bao nhiêu"})
+        self.assertEqual(fit_translations_to_voice(segments, first), 1)
+        again = RecordingCondenser({})
+        self.assertEqual(fit_translations_to_voice(segments, again), 0)
+        self.assertEqual(again.calls, [])
 
 class EchoLinesTranslator:
     """LLM-style translator that, correctly, returns Latin names and numbers unchanged."""

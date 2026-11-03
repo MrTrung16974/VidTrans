@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:background_downloader/background_downloader.dart';
-import 'package:dio/dio.dart' show CancelToken;
+import 'package:dio/dio.dart' show CancelToken, FormData, MultipartFile;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
@@ -33,10 +34,21 @@ typedef UploadFile = ({String field, String path});
 /// Repeated form fields (lists) are not supported by the OS uploaders; send
 /// them as JSON if an endpoint needs them, or keep using `postMultipart`.
 class BackgroundUploader {
-  BackgroundUploader(this._api, [FileDownloader? downloader]) : _downloader = downloader ?? FileDownloader();
+  BackgroundUploader(
+    this._api, [
+    FileDownloader? downloader,
+    this.startTimeout = const Duration(seconds: 10),
+  ]) : _downloader = downloader ?? FileDownloader();
 
   final ApiClient _api;
   final FileDownloader _downloader;
+
+  /// How long the OS queue may hold a task before it starts. WorkManager only
+  /// runs it on a network Android has validated as having Internet, so on a
+  /// company/captive Wi-Fi (or a dev server reached through `adb reverse`)
+  /// the task would wait forever without an error. Past this delay the task is
+  /// cancelled and the file is sent directly from the app instead.
+  final Duration startTimeout;
 
   Future<Map<String, dynamic>> upload(
     String path, {
@@ -47,16 +59,47 @@ class BackgroundUploader {
     CancelToken? cancelToken,
   }) async {
     var result = await _send(path, fields, files, idempotencyKey, onProgress, cancelToken);
+    if (result == null) {
+      return _uploadDirect(path, fields, files, idempotencyKey, onProgress, cancelToken);
+    }
     if (result.responseStatusCode == 401 &&
         !(cancelToken?.isCancelled ?? false) &&
         await _api.refreshAccessToken() != null) {
       // Same Idempotency-Key: a request the server did accept is not queued twice.
       result = await _send(path, fields, files, idempotencyKey, onProgress, cancelToken);
+      if (result == null) {
+        return _uploadDirect(path, fields, files, idempotencyKey, onProgress, cancelToken);
+      }
     }
     return _decode(result);
   }
 
-  Future<TaskStatusUpdate> _send(
+  /// In-app multipart upload through Dio (refreshes the token on 401 itself).
+  Future<Map<String, dynamic>> _uploadDirect(
+    String path,
+    Map<String, String> fields,
+    List<UploadFile> files,
+    String? idempotencyKey,
+    void Function(double progress)? onProgress,
+    CancelToken? cancelToken,
+  ) async {
+    final form = FormData.fromMap(fields);
+    for (final file in files) {
+      form.files.add(MapEntry(file.field, await MultipartFile.fromFile(file.path)));
+    }
+    return _api.postMultipart<Map<String, dynamic>>(
+      path,
+      form,
+      idempotencyKey: idempotencyKey,
+      cancelToken: cancelToken,
+      onProgress: (sent, total) {
+        if (total > 0) onProgress?.call(sent / total);
+      },
+    );
+  }
+
+  /// Null when the OS never started the task within [startTimeout].
+  Future<TaskStatusUpdate?> _send(
     String path,
     Map<String, String> fields,
     List<UploadFile> files,
@@ -79,9 +122,33 @@ class BackgroundUploader {
       displayName: 'VidTrans',
     );
     cancelToken?.whenCancel.then((_) => _downloader.cancelTaskWithId(task.taskId));
-    return _downloader.upload(task, onProgress: (progress) {
-      if (progress >= 0) onProgress?.call(progress);
+    var started = false;
+    var stalled = false;
+    final watchdog = Timer(startTimeout, () {
+      if (started) return;
+      stalled = true;
+      _downloader.cancelTaskWithId(task.taskId);
     });
+    try {
+      final result = await _downloader.upload(
+        task,
+        onStatus: (status) {
+          if (status != TaskStatus.enqueued) started = true;
+        },
+        onProgress: (progress) {
+          if (progress >= 0) {
+            started = true;
+            onProgress?.call(progress);
+          }
+        },
+      );
+      if (stalled && result.status == TaskStatus.canceled && !(cancelToken?.isCancelled ?? false)) {
+        return null;
+      }
+      return result;
+    } finally {
+      watchdog.cancel();
+    }
   }
 
   static Map<String, dynamic> _decode(TaskStatusUpdate result) {

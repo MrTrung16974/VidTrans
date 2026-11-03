@@ -52,6 +52,16 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   // Online by default: the server translators read far better than the
   // on-device models; Offline stays one tap away for no network or privacy.
   TranslationMode _mode = TranslationMode.online;
+
+  /// Online only: the server's AI translator ("Chất lượng") instead of the
+  /// fast one ("Nhanh", the default; a live screen needs the speed).
+  bool _aiQuality = false;
+
+  /// What the floating translator services receive as `mode`.
+  String get _wireMode => _mode == TranslationMode.offline
+      ? TranslationMode.offline.name
+      : (_aiQuality ? onlineQualityMode : TranslationMode.online.name);
+
   TranslationStage? _stage;
   ImageTranslationResult? _result;
   bool _showOriginal = false;
@@ -135,14 +145,14 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     _saveSettings();
     if (_floating && _a11y) {
       _floatingController
-          .setA11yConfig(source: _source, target: _target, mode: _mode.name)
+          .setA11yConfig(source: _source, target: _target, mode: _wireMode)
           .catchError((_) {});
     } else if (_floating) {
       _floatingController
           .updateSettings(
             source: _source,
             target: _target,
-            mode: _mode.name,
+            mode: _wireMode,
             live: _live,
           )
           .catchError((_) {});
@@ -160,7 +170,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
             enabled: false,
             source: _source,
             target: _target,
-            mode: _mode.name,
+            mode: _wireMode,
           );
         } else {
           await controller.stop();
@@ -215,7 +225,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
       final started = await controller.start(
         source: _source,
         target: _target,
-        mode: _mode.name,
+        mode: _wireMode,
         live: _live,
       );
       if (!mounted) return;
@@ -301,7 +311,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
       enabled: true,
       source: _source,
       target: _target,
-      mode: _mode.name,
+      mode: _wireMode,
     );
   }
 
@@ -331,6 +341,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
         );
         if (saved.length > 3) _live = saved[3] == 'live';
         if (saved.length > 4) _a11y = saved[4] == 'a11y';
+        if (saved.length > 5) _aiQuality = saved[5] == 'quality';
       });
     } catch (_) {
       // Preferences are a convenience; defaults are fine.
@@ -345,6 +356,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
         _mode.name,
         if (_live) 'live' else 'tap',
         if (_a11y) 'a11y' else 'capture',
+        if (_aiQuality) 'quality' else 'fast',
       ]);
     } catch (_) {}
   }
@@ -387,7 +399,9 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
     });
     final BlockTranslator translator = _mode == TranslationMode.offline
         ? ref.read(offlineTranslatorProvider)
-        : ref.read(onlineTranslatorProvider);
+        : _aiQuality
+        ? ref.read(onlineTranslatorProvider)
+        : ref.read(fastOnlineTranslatorProvider);
     try {
       final result = await ref
           .read(imageTranslationPipelineProvider)
@@ -745,11 +759,39 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
                     _settingsChanged();
                   },
           ),
+          if (_mode == TranslationMode.online) ...[
+            const SizedBox(height: 10),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: false,
+                  icon: Icon(Icons.bolt_rounded, size: 18),
+                  label: Text('Nhanh'),
+                ),
+                ButtonSegment(
+                  value: true,
+                  icon: Icon(Icons.auto_awesome_rounded, size: 18),
+                  label: Text('Chất lượng AI'),
+                ),
+              ],
+              selected: {_aiQuality},
+              onSelectionChanged: _busy
+                  ? null
+                  : (value) {
+                      setState(() => _aiQuality = value.first);
+                      _settingsChanged();
+                    },
+            ),
+          ],
           const SizedBox(height: 8),
           Text(
             _mode == TranslationMode.offline
                 ? 'Đọc chữ và dịch ngay trên điện thoại. Ảnh và nội dung không rời khỏi máy.'
-                : 'Đọc chữ trên điện thoại, chỉ gửi phần chữ lên máy chủ VidTrans để dịch. Ảnh không được tải lên.',
+                : _aiQuality
+                ? 'Dịch bằng AI của VidTrans: câu tự nhiên, nhận ra tên riêng, nhưng chậm hơn khoảng 4 lần. '
+                      'Chỉ gửi phần chữ lên máy chủ, ảnh không được tải lên.'
+                : 'Dịch nhanh qua máy chủ VidTrans, hợp để đọc truyện, chat liên tục. '
+                      'Chỉ gửi phần chữ lên máy chủ, ảnh không được tải lên.',
             style: const TextStyle(
               fontSize: 12.5,
               color: AppColors.muted,
