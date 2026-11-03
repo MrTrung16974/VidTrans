@@ -156,7 +156,9 @@ class BrandingJobRunner:
         detail = f"Đang chèn logo ({len(placements)} vị trí)" if len(placements) > 1 else "Đang chèn logo"
         progress("render", 0.0, detail)
         repaired = inpaint and any(placement.cover_box for placement in placements)
-        for copy_audio in (True, False):
+        # Only AAC (or no audio) is copied; Opus/Vorbis in MP4 does not play on iOS.
+        copy_choices = (True, False) if probe.audio_codec in ("", "aac") else (False,)
+        for copy_audio in copy_choices:
             try:
                 if repaired:
                     self._render_inpainted(job_id, video_path, logo_path, output, placements,

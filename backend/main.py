@@ -2696,6 +2696,8 @@ def burn_subtitles_with_pillow(
             "-c:a",
             "aac",
             "-shortest",
+            "-movflags",
+            "+faststart",
             str(output_path),
         ]
     )
@@ -2728,13 +2730,15 @@ def subtitle_render_command(
         cmd.extend(["-filter_complex", graph])
         video_map = ["-map", "[final]"]
     cmd.extend([*VIDEO_ENCODER.args(23), *video_map])
+    # Always AAC (never copy): a source's Opus/Vorbis track in MP4 will not
+    # play on iOS/AVPlayer. faststart puts the index first so phones can stream.
     if audio_path:
-        cmd.extend(["-map", "1:a:0", "-c:a", "aac", "-shortest"])
+        cmd.extend(["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k", "-shortest"])
     elif logo is not None:
-        cmd.extend(["-map", "0:a?", "-c:a", "copy"])
+        cmd.extend(["-map", "0:a?", "-c:a", "aac", "-b:a", "192k"])
     else:
-        cmd.extend(["-c:a", "copy"])
-    cmd.append(str(output_path))
+        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+    cmd.extend(["-movflags", "+faststart", str(output_path)])
     return cmd
 
 

@@ -142,6 +142,17 @@ class ApiClient {
     return {if (current != null) 'Authorization': 'Bearer ${current.accessToken}'};
   }
 
+  /// Fetches the first byte of [path] through Dio so an expired access token is
+  /// refreshed (and a missing file reported) before an outside client such as
+  /// video_player, which cannot refresh on 401, opens the same URL.
+  Future<void> probe(String path) => _send(() => dio.get<List<int>>(
+        path,
+        options: Options(
+          headers: {'Range': 'bytes=0-0'},
+          responseType: ResponseType.bytes,
+        ),
+      ));
+
   Future<T> delete<T>(String path) => _send(() => dio.delete<T>(path));
 
   Future<T> _send<T>(Future<Response<T>> Function() request) async {

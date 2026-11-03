@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/errors/api_exception.dart';
 import '../../../../core/widgets/error_view.dart';
 import '../../../../core/widgets/studio_widgets.dart';
 import '../../../../core/widgets/video_controls.dart';
@@ -29,17 +30,32 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   }
 
   Future<void> _open() async {
+    if (_error != null) setState(() => _error = null);
     final repo = ref.read(jobsRepositoryProvider);
+    final path = '/api/v1/jobs/${widget.jobId}/artifacts/video';
+    final Map<String, String> headers;
+    try {
+      // video_player cannot refresh an expired token; do it through Dio first.
+      headers = await repo.streamHeaders(path);
+    } on ApiException catch (error) {
+      if (mounted) {
+        setState(() => _error = error.statusCode == 404
+            ? 'Video chưa sẵn sàng hoặc đã bị xóa trên máy chủ.'
+            : error.message);
+      }
+      return;
+    }
     final controller = VideoPlayerController.networkUrl(
-      repo.artifactUri('/api/v1/jobs/${widget.jobId}/artifacts/video'),
-      httpHeaders: await repo.authHeaders(),
+      repo.artifactUri(path),
+      httpHeaders: headers,
     );
     try {
       await controller.initialize();
       await controller.play();
       if (!mounted) return controller.dispose();
       setState(() => _controller = controller);
-    } catch (_) {
+    } catch (error) {
+      debugPrint('VideoPlayer failed for job ${widget.jobId}: $error');
       await controller.dispose();
       if (mounted) setState(() => _error = 'Không phát được video.');
     }
@@ -69,7 +85,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
         padding: EdgeInsets.only(bottom: studioDockClearance(context)),
         child: Center(
           child: _error != null
-              ? ErrorView(message: _error!)
+              ? ErrorView(message: _error!, onRetry: _open)
               : controller == null
                   ? const CircularProgressIndicator(color: AppColors.brand)
                   : ControlledVideo(controller: controller),

@@ -19,6 +19,7 @@ class MediaProbe:
     height: int
     fps: float
     has_audio: bool
+    audio_codec: str = ""
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -64,7 +65,7 @@ def probe_media_file(
                 "-v",
                 "error",
                 "-show_entries",
-                "stream=codec_type,width,height,duration,r_frame_rate:format=duration",
+                "stream=codec_type,codec_name,width,height,duration,r_frame_rate:format=duration",
                 "-of",
                 "json",
                 str(path),
@@ -95,6 +96,10 @@ def probe_media_file(
             height=height,
             fps=_parse_fps(video_stream.get("r_frame_rate")),
             has_audio=any(stream.get("codec_type") == "audio" for stream in streams),
+            audio_codec=next(
+                (str(stream.get("codec_name") or "") for stream in streams if stream.get("codec_type") == "audio"),
+                "",
+            ),
         )
     except MediaProbeError:
         raise

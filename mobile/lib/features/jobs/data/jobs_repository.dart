@@ -34,4 +34,11 @@ class JobsRepository {
   Uri artifactUri(String path) => _api.resolve(path);
 
   Future<Map<String, String>> authHeaders() => _api.authHeaders();
+
+  /// Checks the artifact is reachable (refreshing the token if needed) and
+  /// returns headers carrying a valid access token for streaming it.
+  Future<Map<String, String>> streamHeaders(String path) async {
+    await _api.probe(path);
+    return _api.authHeaders();
+  }
 }

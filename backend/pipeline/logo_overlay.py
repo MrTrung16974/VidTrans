@@ -191,6 +191,8 @@ def build_filter_graph(placements: Sequence[Placement], opacity: float, *,
 
 
 def _encode_args(copy_audio: bool, output_path: Path) -> list[str]:
+    # Copying keeps an Opus/Vorbis track from web sources, which MP4 accepts but
+    # iOS/AVPlayer cannot decode, so only a track that is already AAC is copied.
     audio = ["-c:a", "copy"] if copy_audio else ["-c:a", "aac", "-b:a", "192k"]
     return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", *audio,
             "-movflags", "+faststart", str(output_path)]
