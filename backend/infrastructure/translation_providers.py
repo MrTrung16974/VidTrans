@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-from domain.languages import language_profile, validate_language_pair
+from domain.languages import language_profile, normalize_language, validate_language_pair
 from infrastructure.translation_prompt import (
     TranslationHistory,
     TranslationOutputError,
@@ -19,6 +19,8 @@ from infrastructure.translation_prompt import (
     is_traditional_chinese,
     leaks_source_script,
     parse_translations,
+    proofread_system_prompt,
+    proofread_user_prompt,
     system_prompt,
     user_prompt,
 )
@@ -230,8 +232,13 @@ class GeminiContextTranslator:
     supports_markers = False
     accepts_durations = True
 
-    def __init__(self, *, source_language: str, target_language: str, timeout: float = 60.0, opener=None):
-        self.source_language, self.target_language = validate_language_pair(source_language, target_language)
+    def __init__(self, *, source_language: str, target_language: str, timeout: float = 60.0, opener=None,
+                 allow_same_language: bool = False):
+        if allow_same_language and normalize_language(source_language, allow_auto=True) == normalize_language(target_language):
+            # Proofreading a transcript already in the target language.
+            self.source_language = self.target_language = normalize_language(target_language)
+        else:
+            self.source_language, self.target_language = validate_language_pair(source_language, target_language)
         if self.source_language == "auto":
             raise TranslationServiceError("translator requires a detected source language")
         self.api_key = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -313,6 +320,17 @@ class GeminiContextTranslator:
             return parse_translations(text, len(indexes), provider="gemini", sources=batch_sources)
 
         return translate_halving(chunk, list(range(len(sources))), None, provider="Gemini condense")
+
+    def proofread_lines(self, lines: list[str], *, sung: bool = False) -> list[str]:
+        """Corrected versions of consecutive transcript lines (same count and order)."""
+        def chunk(indexes: list[int], _durations) -> list[str]:
+            batch = [lines[i] for i in indexes]
+            text = self._generate(
+                proofread_system_prompt(self.target_language, sung=sung), proofread_user_prompt(batch),
+            )
+            return parse_translations(text, len(indexes), provider="gemini", sources=batch)
+
+        return translate_halving(chunk, list(range(len(lines))), None, provider="Gemini proofread")
 
     def _generate(self, system: str, user: str) -> str:
         body = json.dumps({

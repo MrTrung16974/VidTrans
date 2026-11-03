@@ -214,6 +214,7 @@ from pipeline.translation import (
     filter_meaningful_segments,
     fit_translations_to_voice,
     passthrough_segments,
+    proofread_transcript,
     repair_leaked_translations,
     segment_filter_signature,
     translate_segments,
@@ -3151,6 +3152,23 @@ def recognize_video_source(
     return segments, detected_language, detected_language_probability, source_method, skipped_count
 
 
+def proofread_same_language(job_id: str, segments: list[dict[str, Any]], language: str) -> int:
+    """AI fix of misheard words when the transcript is used as-is (source == target)."""
+    try:
+        proofreader = GeminiContextTranslator(
+            source_language=language, target_language=language, allow_same_language=True,
+        )
+    except Exception as exc:
+        logger.info("Transcript is not proofread: %s", exc)
+        return 0
+    active = [segment for segment in segments if not segment.get("skip_subtitle")]
+    sung = bool(active) and sum(1 for s in active if s.get("audio_type") == "singing") * 2 >= len(active)
+    update_job(job_id, step_detail="AI đang soát lại lời " + ("bài hát" if sung else "thoại") + " nhận diện được")
+    corrected = proofread_transcript(segments, proofreader, sung=sung, check_active=lambda: ensure_job_active(job_id))
+    logger.info("Job %s: AI proofreading corrected %d of %d cue(s)", job_id, corrected, len(active))
+    return corrected
+
+
 def fit_dubbing_translations(job_id: str, segments: list[dict[str, Any]], *, source_language: str) -> None:
     """Shorten translations the dubbing voice cannot say within the source timing."""
     try:
@@ -3331,6 +3349,7 @@ def process_video(
         same_language = effective_source_language == target_language
         translation_fingerprint = fingerprint_payload(
             {
+                **({"same_language_proofread": 1} if same_language else {}),
                 "version": 1,
                 "transcript_checksum": transcript_checkpoint.checksum,
                 "source_language": effective_source_language,
@@ -3346,8 +3365,11 @@ def process_video(
             validator=valid_translation_checkpoint,
         )
         translation_cache_hit = translation_checkpoint is not None
-        if same_language:
-            # Cheap and deterministic, so always rebuilt; a stored checkpoint is reused as-is.
+        if same_language and translation_checkpoint is not None:
+            # The stored passthrough already carries the AI proofreading.
+            translated_segments = list(translation_checkpoint.payload["segments"])
+            update_job(job_id, same_language_passthrough=True)
+        elif same_language:
             translated_segments = passthrough_segments(segments, language=target_language)
             update_job(
                 job_id,
@@ -3357,6 +3379,8 @@ def process_video(
                     "giữ nguyên lời gốc, không dịch"
                 ),
             )
+            proofread = proofread_same_language(job_id, translated_segments, target_language)
+            update_job(job_id, proofread_cues=proofread)
         elif translation_checkpoint is not None:
             translated_segments = list(translation_checkpoint.payload["segments"])
         else:
@@ -3418,9 +3442,11 @@ def process_video(
                 "vì AI dịch đã chọn bị lỗi"
             )
         elif same_language:
+            proofread_count = sum(1 for segment in translated_segments if segment.get("proofread"))
             translation_detail = (
-                f"Nguồn đã là {language_profile(target_language).label_vi}: giữ nguyên lời gốc, "
-                + ("chỉ lồng tiếng" if mode in (2, 3) else "chỉ tạo phụ đề")
+                f"Nguồn đã là {language_profile(target_language).label_vi}: giữ nguyên lời gốc"
+                + (f", AI đã sửa {proofread_count} câu nghe nhầm" if proofread_count else "")
+                + (", chỉ lồng tiếng" if mode in (2, 3) else ", chỉ tạo phụ đề")
             )
         else:
             translation_detail = "Đã dịch đầy đủ các câu"

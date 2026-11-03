@@ -181,6 +181,33 @@ def condense_user_prompt(
     return f"Shorten these {len(items)} items: " + json.dumps(items, ensure_ascii=False)
 
 
+def proofread_system_prompt(language: str, *, sung: bool) -> str:
+    name = language_name(language)
+    kind = "song lyrics" if sung else "speech"
+    return "\n".join([
+        f"You proofread {name} subtitles produced by speech recognition (Whisper) from {kind}.",
+        "Whisper mishears words: near-homophones, wrong tones or diacritics, split or merged words, "
+        "and in songs the singing and music blur the words.",
+        "Rules:",
+        "1. Fix only words that were clearly misheard, plus spelling, diacritics and punctuation. "
+        "Keep every correct word exactly as it is.",
+        "2. Read all lines together: they are consecutive, so use the context of the whole text to decide "
+        "what was really said or sung." + (
+            " If you recognise a well-known song, use its real lyrics for these lines." if sung else ""
+        ),
+        "3. Never translate, summarise, restyle, add or remove lines, or move words between lines: "
+        "each output line must cover the same words as its input line, because its timing is fixed.",
+        "4. When unsure, return the line unchanged.",
+        '5. Reply with JSON only: {"translations": [{"id": <id>, "source": "<the input line copied exactly>", '
+        '"text": "<corrected line>"}]}, one entry per id, in order.',
+    ])
+
+
+def proofread_user_prompt(lines: Sequence[str]) -> str:
+    items = [{"id": index + 1, "text": line} for index, line in enumerate(lines)]
+    return f"Proofread these {len(items)} consecutive lines: " + json.dumps(items, ensure_ascii=False)
+
+
 def _comparable(text: str) -> str:
     """Letters and digits only, Simplified script, case-folded: what an echo must preserve."""
 

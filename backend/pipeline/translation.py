@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from difflib import SequenceMatcher
 from typing import Any, Callable, Protocol, Sequence
 
 from pipeline.tts_timing import available_voice_window
@@ -75,6 +76,17 @@ _SYLLABLE_RE = re.compile(r"\w+")
 
 class TextTranslator(Protocol):
     def translate(self, text: str) -> str | None: ...
+
+
+class LineProofreader(Protocol):
+    def proofread_lines(self, lines: list[str], *, sung: bool = False) -> list[str]: ...
+
+
+# Lines per proofreading request: enough context to recognise a song or a topic.
+_PROOFREAD_BATCH_LINES: int = 60
+# A correction must stay this close to the heard line (letters only); further away
+# it is a rewrite or a line taken from elsewhere, not a fixed mishearing.
+_PROOFREAD_MIN_SIMILARITY = 0.5
 
 
 class LineCondenser(Protocol):
@@ -296,6 +308,55 @@ def repair_leaked_translations(
             segment["translation_repaired"] = True
             repaired += 1
     return repaired
+
+
+def _letters_only(text: str) -> str:
+    return "".join(character for character in text.casefold() if character.isalnum())
+
+
+def proofread_transcript(
+    segments: list[dict[str, Any]],
+    proofreader: LineProofreader,
+    *,
+    sung: bool = False,
+    check_active: Callable[[], None] = lambda: None,
+) -> int:
+    """Let an LLM fix misheard words in cues kept in their own language; return the count.
+
+    Used when the source already is the target language: nothing is translated, so
+    Whisper's mishearings ("mùa son" for "mùa xuân" in a song) would reach the
+    subtitles as they are. Each cue keeps its timing; a correction is kept only when
+    it stays close to what was heard, and the heard text is kept for review.
+    """
+    indexes = [
+        index for index, segment in enumerate(segments)
+        if not segment.get("skip_subtitle") and _clean(str(segment.get("text") or ""))
+    ]
+    corrected = 0
+    for offset in range(0, len(indexes), _PROOFREAD_BATCH_LINES):
+        check_active()
+        batch = indexes[offset : offset + _PROOFREAD_BATCH_LINES]
+        lines = [_clean(str(segments[index]["text"])) for index in batch]
+        try:
+            values = proofreader.proofread_lines(lines, sung=sung)
+        except Exception as exc:
+            logger.warning("Cannot proofread %d transcript lines: %s", len(batch), type(exc).__name__)
+            continue
+        for index, heard, value in zip(batch, lines, values):
+            value = _clean(value)
+            if not value or value == heard:
+                continue
+            similarity = SequenceMatcher(None, _letters_only(heard), _letters_only(value)).ratio()
+            if similarity < _PROOFREAD_MIN_SIMILARITY:
+                logger.info("Proofread rewrite rejected (%.2f similar): %r -> %r", similarity, heard, value)
+                continue
+            segment = segments[index]
+            segment["text_before_proofread"] = heard
+            segment["text"] = value
+            segment["source_text"] = value
+            segment["proofread"] = True
+            corrected += 1
+    return corrected
 
 
 def fit_translations_to_voice(

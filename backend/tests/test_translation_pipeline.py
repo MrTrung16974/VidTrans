@@ -468,5 +468,54 @@ class SameLanguagePassthroughTests(unittest.TestCase):
         self.assertEqual(result[0]["text"], "Chào")
         self.assertEqual(result[0]["translation_status"], "source_passthrough")
 
+
+class ProofreadTranscriptTests(unittest.TestCase):
+    class Proofreader:
+        def __init__(self, answer):
+            self.answer, self.calls = answer, []
+
+        def proofread_lines(self, lines, *, sung=False):
+            self.calls.append((list(lines), sung))
+            return self.answer(lines)
+
+    def _segments(self, *texts):
+        from pipeline.translation import passthrough_segments
+
+        return passthrough_segments([{"start": i, "end": i + 1, "text": t} for i, t in enumerate(texts)], language="vi")
+
+    def test_misheard_words_are_fixed_and_heard_text_kept(self) -> None:
+        from pipeline.translation import proofread_transcript
+
+        segments = self._segments("Kìa, mùa son đang đến trước thềm", "nghe bức chân còn")
+        fixer = self.Proofreader(lambda lines: ["Kìa, mùa xuân đang đến trước thềm", "nghe bước chân còn"])
+        self.assertEqual(proofread_transcript(segments, fixer, sung=True), 2)
+        self.assertEqual(segments[0]["text"], "Kìa, mùa xuân đang đến trước thềm")
+        self.assertEqual(segments[0]["source_text"], "Kìa, mùa xuân đang đến trước thềm")
+        self.assertEqual(segments[0]["text_before_proofread"], "Kìa, mùa son đang đến trước thềm")
+        self.assertTrue(fixer.calls[0][1])
+
+    def test_rewrites_far_from_what_was_heard_are_rejected(self) -> None:
+        from pipeline.translation import proofread_transcript
+
+        segments = self._segments("Hôm nay trời đẹp quá")
+        rewriter = self.Proofreader(lambda lines: ["Một câu hoàn toàn khác biệt về nội dung"])
+        self.assertEqual(proofread_transcript(segments, rewriter), 0)
+        self.assertEqual(segments[0]["text"], "Hôm nay trời đẹp quá")
+        self.assertNotIn("proofread", segments[0])
+
+    def test_skipped_cues_are_not_sent_and_failures_keep_the_text(self) -> None:
+        from pipeline.translation import proofread_transcript
+
+        segments = self._segments("Xin chào", "♪")
+        segments[1]["skip_subtitle"] = True
+
+        def broken(lines):
+            raise RuntimeError("quota")
+
+        failing = self.Proofreader(broken)
+        self.assertEqual(proofread_transcript(segments, failing), 0)
+        self.assertEqual(failing.calls[0][0], ["Xin chào"])
+        self.assertEqual(segments[0]["text"], "Xin chào")
+
 if __name__ == "__main__":
     unittest.main()
