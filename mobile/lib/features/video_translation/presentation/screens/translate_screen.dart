@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -386,13 +388,33 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               KeyedSubtree(key: _submitCardKey, child: _submitCard(state)),
             ],
           ),
-          if (showQuickBar)
-            Positioned(
-              left: 14,
-              right: 14,
-              bottom: studioDockClearance(context),
-              child: _quickSubmitBar(state),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: studioDockClearance(context),
+            child: AnimatedSlide(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              offset: showQuickBar ? Offset.zero : const Offset(0, 0.4),
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut,
+                opacity: showQuickBar ? 1.0 : 0.0,
+                child: IgnorePointer(
+                  ignoring: !showQuickBar,
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: _quickSubmitBar(state),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
+          ),
         ],
       ),
     );
@@ -1796,21 +1818,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     return Material(
       color: Colors.transparent,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xE8FFFFFF),
-              Color(0xF2FFFAF5),
-            ],
-          ),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: const Color(0xE6FED7AA),
-            width: 1.5,
-          ),
           boxShadow: const [
             BoxShadow(
               color: Color(0x220F172A),
@@ -1825,77 +1834,101 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             ),
           ],
         ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+                  colors: [
+                    Color(0xE8FFFFFF),
+                    Color(0xF2FFFAF5),
+                  ],
                 ),
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: const Color(0xFFFDBA74),
-                  width: 1.4,
+                  color: const Color(0xE6FED7AA),
+                  width: 1.5,
                 ),
               ),
-              child: Text(
-                '${state.sourceCount}/50',
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.brandDark,
-                ),
-              ),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _jumpToStep(4, _submitCardKey),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      modeLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.ink,
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+                      ),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: const Color(0xFFFDBA74),
+                        width: 1.4,
                       ),
                     ),
-                    Text(
-                      config.downloadOnly
-                          ? 'Tải video gốc'
-                          : '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: Text(
+                      '${state.sourceCount}/50',
                       style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.muted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w900,
+                        color: AppColors.brandDark,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _jumpToStep(4, _submitCardKey),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            modeLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.ink,
+                            ),
+                          ),
+                          Text(
+                            config.downloadOnly
+                                ? 'Tải video gốc'
+                                : '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  StudioGradientButton(
+                    expanded: false,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    icon: Icons.rocket_launch_rounded,
+                    label: config.downloadOnly
+                        ? 'Tải ngay (${state.sourceCount})'
+                        : 'Bắt đầu (${state.sourceCount})',
+                    onPressed: _submit,
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
-            StudioGradientButton(
-              expanded: false,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-              icon: Icons.rocket_launch_rounded,
-              label: config.downloadOnly
-                  ? 'Tải ngay (${state.sourceCount})'
-                  : 'Bắt đầu (${state.sourceCount})',
-              onPressed: _submit,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1982,7 +2015,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           StudioGradientButton(
             onPressed: _submit,
             icon: Icons.rocket_launch_rounded,
-            label: 'Bắt đầu xử lý batch (${state.sourceCount} nguồn)',
+            label: state.sourceCount > 0
+                ? 'Bắt đầu xử lý batch (${state.sourceCount} nguồn)'
+                : 'Bắt đầu xử lý batch',
           ),
         ],
       ),

@@ -773,6 +773,10 @@ function addFiles(files) {
 function syncMobileQuickBar() {
   const count = state.files.length + state.links.length;
   const mode = $("#mode")?.value || "1";
+  const bar = $("#mobileQuickSubmitBar");
+  if (bar) {
+    bar.classList.toggle("is-active", count > 0);
+  }
   const badge = $("#mobileQuickCountBadge");
   if (badge) {
     badge.textContent = `${count}/50`;
@@ -783,15 +787,23 @@ function syncMobileQuickBar() {
   const quickSub = $("#mobileQuickSub");
   if (quickSub) {
     quickSub.textContent = mode === "4"
-      ? "Chỉ tải video gốc về thiết bị"
-      : `${$("#languageSummary")?.textContent || "Trung → Việt"} · ${$("#placementSummary")?.textContent || "Thay chữ gốc"}`;
+      ? "Chỉ tải video gốc"
+      : ($("#languageSummary")?.textContent || "Trung → Việt");
   }
   const quickSubmitText = $("#mobileQuickSubmitText");
   if (quickSubmitText) {
     if (mode === "4") {
-      quickSubmitText.textContent = count > 0 ? `Tải ngay (${count})` : "Bắt đầu tải";
+      quickSubmitText.textContent = count > 0 ? `Tải ngay (${count})` : "Tải ngay";
     } else {
-      quickSubmitText.textContent = count > 0 ? `Bắt đầu (${count})` : "Bắt đầu xử lý";
+      quickSubmitText.textContent = count > 0 ? `Bắt đầu (${count})` : "Bắt đầu";
+    }
+  }
+  const desktopSubmitSpan = $("#submitButton span");
+  if (desktopSubmitSpan) {
+    if (mode === "4") {
+      desktopSubmitSpan.textContent = count > 0 ? `Bắt đầu tải (${count} video)` : "Bắt đầu tải video";
+    } else {
+      desktopSubmitSpan.textContent = count > 0 ? `Bắt đầu xử lý (${count} video)` : "Bắt đầu xử lý";
     }
   }
 }
@@ -2361,6 +2373,11 @@ async function submitBatch(event) {
   const sourceText = $("#sourceLinks").value.trim();
   if (!state.files.length && !state.links.length) {
     $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const dropZone = $("#dropZone");
+    if (dropZone) {
+      dropZone.classList.add("source-highlight-pulse");
+      setTimeout(() => dropZone.classList.remove("source-highlight-pulse"), 1600);
+    }
     return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
