@@ -97,6 +97,36 @@ class ASRServiceTests(unittest.TestCase):
         # Only 2s of the 28s gap are unmuted, so no recovery pass runs.
         self.assertEqual(len(model.calls), 1)
 
+    def test_no_vad_retry_skips_muted_music_and_keeps_original_times(self):
+        import numpy as np
+
+        # Retry hears 0-3 s, 1 s separator, then 29-40 s: compact 5.0 s is 30.0 s originally.
+        model = FakeFasterModel([[], [_segment(1.0, 2.0, "你好"), _segment(5.0, 6.0, "谢谢")]])
+        model.feature_extractor = SimpleNamespace(sampling_rate=16000)
+        asr = service(model)
+        asr._load_audio = lambda model, path: np.ones(16000 * 40, dtype=np.float32)
+        progress = []
+        result = asr.transcribe("small", Path("v.mp4"), source_language="zh-CN", muted=[(3.0, 29.0)],
+                                progress=lambda at, total: progress.append((at, total)))
+        self.assertEqual(len(model.inputs[1]), 16000 * 15)
+        self.assertEqual([(s["start"], s["end"]) for s in result.segments], [(1.0, 2.0), (30.0, 31.0)])
+        self.assertEqual(result.segments[1]["words"][0]["start"], 30.0)
+        self.assertEqual(progress[-1], (31.0, 40.0))
+        # Same decode settings as before: greedy, no VAD, default temperature ladder.
+        self.assertEqual((model.calls[1]["beam_size"], model.calls[1]["vad_filter"]), (1, False))
+        self.assertNotIn("temperature", model.calls[1])
+
+    def test_fully_muted_audio_is_not_decoded_again_without_vad(self):
+        import numpy as np
+
+        model = FakeFasterModel([[]])
+        model.feature_extractor = SimpleNamespace(sampling_rate=16000)
+        asr = service(model)
+        asr._load_audio = lambda model, path: np.ones(16000 * 40, dtype=np.float32)
+        result = asr.transcribe("small", Path("v.mp4"), source_language="auto", muted=[(0.0, 40.0)])
+        self.assertEqual(result.segments, [])
+        self.assertEqual(len(model.calls), 1)
+
     def test_repetition_loop_is_dropped_and_its_time_heard_again(self):
         import numpy as np
 

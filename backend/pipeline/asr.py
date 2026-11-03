@@ -44,6 +44,10 @@ LOOP_MIN_RUN = 3
 LOOP_REPEATED_UNIT = re.compile(r"(.{1,4}?)\1{4,}")
 LOOP_MIN_SECONDS = 8.0
 LOOP_MIN_CHARS_PER_SECOND = 0.6
+# No-VAD passes skip muted music only when that saves real decode time.
+MIN_MUTED_SAVING_SECONDS = 5.0
+MIN_UNMUTED_PIECE_SECONDS = 0.2
+UNMUTED_SEPARATOR_SECONDS = 1.0
 
 
 def _loop_text(text: str) -> str:
@@ -369,7 +373,10 @@ class ASRService:
             elif index == 2:
                 logger.warning("No transcript segments with requested language, retrying with auto language detection")
             if self.config.engine == "faster":
-                result = self._faster_result(model, audio, attempt, progress)
+                if attempt["strict"]:
+                    result = self._faster_result(model, audio, attempt, progress)
+                else:
+                    result = self._faster_unmuted(model, audio, attempt, progress, muted)
                 if attempt["strict"] and result.segments:
                     result = self._recover_lost_speech(model, audio, result, attempt, [*muted, *no_speech])
             else:
@@ -381,7 +388,7 @@ class ASRService:
             if dropped:
                 # A stock outro where audio plays is almost always a song: Whisper lost the
                 # lyrics there. Hear it again as lyrics and keep whichever covers more.
-                sung = self._transcribe_as_lyrics(model, audio, forced or result.detected_language, progress)
+                sung = self._transcribe_as_lyrics(model, audio, forced or result.detected_language, progress, muted)
                 if sung is not None and _spoken_seconds(sung.segments) > _spoken_seconds(result.segments):
                     return sung
             if any((segment.get("text") or "").strip() for segment in result.segments):
@@ -390,13 +397,15 @@ class ASRService:
 
     def _transcribe_as_lyrics(
         self, model: Any, audio: Any, language: str | None, progress: ProgressCallback | None,
+        muted: Sequence[tuple[float, float]] = (),
     ) -> ASRResult | None:
         prompt = LYRICS_PROMPTS.get(str(language or "").split("-")[0].lower())
         if not prompt or self.config.engine != "faster":
             return None
         logger.info("Stock hallucination found; hearing the audio again as sung lyrics (%s)", language)
-        result = self._faster_result(
-            model, audio, {"language": language, "beam": True, "vad": False, "strict": False, "prompt": prompt}, progress,
+        result = self._faster_unmuted(
+            model, audio, {"language": language, "beam": True, "vad": False, "strict": False, "prompt": prompt},
+            progress, muted,
         )
         prompt_text = _loop_text(prompt)
         kept = [
@@ -487,6 +496,72 @@ class ASRService:
         logger.info("Recovered %d speech segment(s) lost to VAD or repetition loops", len(recovered))
         segments = sorted([*result.segments, *recovered], key=lambda segment: (segment["start"], segment["end"]))
         return ASRResult(segments, result.detected_language, result.language_probability, result.repeated)
+
+    def _faster_unmuted(
+        self, model: Any, audio: Any, attempt: dict[str, Any], progress: ProgressCallback | None,
+        muted: Sequence[tuple[float, float]],
+    ) -> ASRResult:
+        """Decode a no-VAD pass over only the audio left after muting, on the original clock.
+
+        Muted spans are zeros. Without VAD Whisper still decodes them, through its whole
+        temperature ladder: a 58 s song muted down to 4.5 s took ~15 min on the 4-core VPS.
+        Settings are unchanged; the pieces are joined with a short silence between them.
+        """
+        if not muted or not hasattr(audio, "shape"):
+            return self._faster_result(model, audio, attempt, progress)
+        import numpy as np
+
+        rate = int(model.feature_extractor.sampling_rate)
+        total = len(audio) / rate
+        pieces: list[tuple[float, float]] = []
+        cursor = 0.0
+        for start, end in _merge_spans(muted):
+            if start - cursor > 0:
+                pieces.append((cursor, min(start, total)))
+            cursor = max(cursor, end)
+        if total - cursor > 0:
+            pieces.append((cursor, total))
+        pieces = [(start, end) for start, end in pieces if end - start >= MIN_UNMUTED_PIECE_SECONDS]
+        kept = sum(end - start for start, end in pieces)
+        if total - kept < MIN_MUTED_SAVING_SECONDS:
+            return self._faster_result(model, audio, attempt, progress)
+        if not pieces:
+            logger.info("Whole audio is muted music; nothing left to hear without VAD")
+            return ASRResult([], attempt["language"])
+        logger.info("Hearing %.1fs of unmuted audio instead of %.1fs", kept, total)
+        separator = np.zeros(int(UNMUTED_SEPARATOR_SECONDS * rate), dtype=audio.dtype)
+        chunks: list[Any] = []
+        # (start on the compact clock, end there, start on the original clock)
+        table: list[tuple[float, float, float]] = []
+        position = 0.0
+        for start, end in pieces:
+            if chunks:
+                chunks.append(separator)
+                position += len(separator) / rate
+            clip = audio[int(start * rate) : int(end * rate)]
+            chunks.append(clip)
+            table.append((position, position + len(clip) / rate, start))
+            position += len(clip) / rate
+
+        def original(at: float | None) -> float | None:
+            if at is None:
+                return None
+            for begin, finish, origin in reversed(table):
+                if at >= begin:
+                    return origin + min(at, finish) - begin
+            return table[0][2]
+
+        mapped = None
+        if progress:
+            mapped = lambda at, _total: progress(original(at), total)
+        result = self._faster_result(model, np.concatenate(chunks), attempt, mapped)
+        for segment in result.segments:
+            segment["start"] = original(segment["start"])
+            segment["end"] = original(segment["end"])
+            for word in segment["words"]:
+                word["start"] = original(word["start"])
+                word["end"] = original(word["end"])
+        return result
 
     def _faster(self, model: Any, media_path: Path, attempt: dict[str, Any],
                 progress: ProgressCallback | None) -> list[dict[str, Any]]:
