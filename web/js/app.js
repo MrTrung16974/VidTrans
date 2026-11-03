@@ -770,8 +770,35 @@ function addFiles(files) {
   renderFiles();
 }
 
+function syncMobileQuickBar() {
+  const count = state.files.length + state.links.length;
+  const mode = $("#mode")?.value || "1";
+  const badge = $("#mobileQuickCountBadge");
+  if (badge) {
+    badge.textContent = `${count}/50`;
+    badge.classList.toggle("has-sources", count > 0);
+  }
+  const quickMode = $("#mobileQuickMode");
+  if (quickMode) quickMode.textContent = $("#modeSummary")?.textContent || "Phụ đề";
+  const quickSub = $("#mobileQuickSub");
+  if (quickSub) {
+    quickSub.textContent = mode === "4"
+      ? "Chỉ tải video gốc về thiết bị"
+      : `${$("#languageSummary")?.textContent || "Trung → Việt"} · ${$("#placementSummary")?.textContent || "Thay chữ gốc"}`;
+  }
+  const quickSubmitText = $("#mobileQuickSubmitText");
+  if (quickSubmitText) {
+    if (mode === "4") {
+      quickSubmitText.textContent = count > 0 ? `Tải ngay (${count})` : "Bắt đầu tải";
+    } else {
+      quickSubmitText.textContent = count > 0 ? `Bắt đầu (${count})` : "Bắt đầu xử lý";
+    }
+  }
+}
+
 function renderFiles() {
   $("#fileCount").textContent = String(state.files.length + state.links.length);
+  syncMobileQuickBar();
   const clearAllHeader = state.files.length > 1
     ? `<div class="source-list-toolbar"><span>Đã chọn ${state.files.length} file video</span><button class="button secondary mini-btn cancel-btn" type="button" data-clear-files="true">✕ Xóa hết file</button></div>`
     : "";
@@ -916,6 +943,7 @@ function updateFormSummary() {
   // Download-only: the language, voice, subtitle and TikTok steps do not apply.
   $$("[data-translation-only]").forEach(section => section.classList.toggle("is-hidden", mode === "4"));
   $("#submitButton span").textContent = mode === "4" ? "Bắt đầu tải video" : "Bắt đầu xử lý";
+  syncMobileQuickBar();
   $$(".mode-card").forEach(card => {
     const isSelected = card.dataset.modeCard === mode;
     card.classList.toggle("is-selected", isSelected);
@@ -2332,6 +2360,7 @@ async function submitBatch(event) {
   renderSourceLinks();
   const sourceText = $("#sourceLinks").value.trim();
   if (!state.files.length && !state.links.length) {
+    $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
@@ -2371,6 +2400,7 @@ async function submitBatch(event) {
   state.pendingUploads.unshift(pendingUpload);
   const endSubmitLoading = beginApiActionLoading();
   $("#submitButton").disabled = true;
+  if ($("#mobileQuickSubmitButton")) $("#mobileQuickSubmitButton").disabled = true;
   $("#uploadProgress").classList.remove("is-hidden");
   location.hash = "#jobs";
   showView();
@@ -2404,6 +2434,7 @@ async function submitBatch(event) {
     endSubmitLoading();
     pendingUpload.request = null;
     $("#submitButton").disabled = false;
+    if ($("#mobileQuickSubmitButton")) $("#mobileQuickSubmitButton").disabled = false;
     $("#uploadProgress").classList.add("is-hidden");
     $("#uploadFill").style.width = "0";
   }
@@ -3253,6 +3284,23 @@ const dropZone = $("#dropZone");
 ["dragleave", "drop"].forEach(type => dropZone.addEventListener(type, event => { event.preventDefault(); dropZone.classList.remove("dragging"); }));
 dropZone.addEventListener("drop", event => addFiles(event.dataTransfer.files));
 $("#batchForm").addEventListener("submit", submitBatch);
+$("#mobileQuickSummaryTrigger")?.addEventListener("click", () => {
+  const count = state.files.length + state.links.length;
+  const target = count > 0 ? $("#createView .sticky-card") : $("#workflow-source");
+  target?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+if ("IntersectionObserver" in window) {
+  const stickyCard = $("#createView .sticky-card");
+  const quickBar = $("#mobileQuickSubmitBar");
+  if (stickyCard && quickBar) {
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        quickBar.classList.toggle("is-at-bottom", entry.isIntersecting);
+      }
+    }, { threshold: 0.15 });
+    observer.observe(stickyCard);
+  }
+}
 $("#douyinBrowserSync").addEventListener("click", syncDouyinBrowserLogin);
 $("#douyinBrowserReload").addEventListener("click", reloadDouyinBrowserPage);
 $("#douyinBrowserLogout").addEventListener("click", logoutDouyinBrowser);

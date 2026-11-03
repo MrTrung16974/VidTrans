@@ -1821,32 +1821,36 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             ),
             const SizedBox(width: 9),
             Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    modeLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _jumpToStep(4, _submitCardKey),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      modeLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
                     ),
-                  ),
-                  Text(
-                    config.downloadOnly
-                        ? 'Tải video gốc'
-                        : '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 10.5,
-                      color: Color(0xFF94A3B8),
+                    Text(
+                      config.downloadOnly
+                          ? 'Tải video gốc'
+                          : '${config.sourceLanguage.toUpperCase()} → ${config.targetLanguage.toUpperCase()}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        color: Color(0xFF94A3B8),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             const SizedBox(width: 8),
