@@ -345,9 +345,13 @@ class AppTheme {
         hintStyle: TextStyle(color: isDark ? const Color(0xFF64748B) : AppColors.mutedLight, fontSize: 13.5),
         helperStyle: TextStyle(color: muted, fontSize: 12),
       ),
+      // Use finite minimum width (64) instead of Size.fromHeight(...) which sets
+      // width = double.infinity and crushes Expanded siblings inside Row/Wrap/AlertDialog.
+      // Full-width buttons inside ListView or Column(crossAxisAlignment: CrossAxisAlignment.stretch)
+      // still stretch to 100% width automatically via parent tight constraints.
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size.fromHeight(48),
+          minimumSize: const Size(64, 46),
           backgroundColor: AppColors.brand,
           foregroundColor: Colors.white,
           disabledBackgroundColor: isDark ? const Color(0xFF1E293B) : AppColors.surfaceMuted,
@@ -360,7 +364,7 @@ class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size.fromHeight(46),
+          minimumSize: const Size(64, 44),
           foregroundColor: ink,
           backgroundColor: surface,
           side: BorderSide(color: lineStrong, width: 1),

@@ -366,7 +366,9 @@ class _ImageCard extends StatelessWidget {
                     ),
                   ),
                 ],
-                Row(
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
                   children: [
                     TextButton.icon(
                       onPressed: onUpload,

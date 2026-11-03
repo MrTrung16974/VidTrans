@@ -253,9 +253,12 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
               border: Border(top: BorderSide(color: AppColors.border)),
             ),
             child: bible == null
-                ? FilledButton(
-                    onPressed: _busy ? null : _submit,
-                    child: Text(_busy ? 'AI đang tìm nhân vật & bối cảnh mới…' : 'Tạo tập $number'),
+                ? SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: _busy ? null : _submit,
+                      child: Text(_busy ? 'AI đang tìm nhân vật & bối cảnh mới…' : 'Tạo tập $number'),
+                    ),
                   )
                 : Row(children: [
                     Expanded(

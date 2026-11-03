@@ -207,13 +207,17 @@ class StudioEyebrow extends StatelessWidget {
             Icon(icon, size: 13, color: color),
             const SizedBox(width: 5),
           ],
-          Text(
-            label.toUpperCase(),
-            style: TextStyle(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.55,
-              color: color,
+          Flexible(
+            child: Text(
+              label.toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.55,
+                color: color,
+              ),
             ),
           ),
         ],
@@ -265,12 +269,16 @@ class StudioSystemBadge extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              color: fg,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: fg,
+              ),
             ),
           ),
         ],

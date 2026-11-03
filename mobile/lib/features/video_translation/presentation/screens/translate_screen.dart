@@ -628,12 +628,14 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 const SizedBox(width: 8),
                 FilledButton.tonal(
                   style: FilledButton.styleFrom(
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
                     backgroundColor: AppColors.teal,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
+                      horizontal: 11,
+                      vertical: 7,
                     ),
                   ),
                   onPressed: _pasteFromClipboard,
@@ -1648,65 +1650,118 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFFBEB), Color(0xFFFEF3C7)],
+        ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFDE68A)),
+        border: Border.all(color: const Color(0xFFFCD34D)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x12D97706),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: const Color(0xFFFEF3C7),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            alignment: Alignment.center,
-            child: const Icon(
-              Icons.record_voice_over_outlined,
-              size: 19,
-              color: AppColors.amberDark,
-            ),
-          ),
-          const SizedBox(width: 11),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Đang giữ 100% âm thanh gốc',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.ink,
-                  ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: const Color(0xFFFDE68A)),
                 ),
-                SizedBox(height: 2),
-                Text(
-                  'Muốn lồng tiếng thuyết minh AI tiếng Việt?',
-                  style: TextStyle(fontSize: 11.5, color: AppColors.muted),
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.record_voice_over_outlined,
+                  size: 20,
+                  color: AppColors.amberDark,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Đang giữ 100% âm thanh gốc',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.ink,
+                        letterSpacing: -0.15,
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Chế độ Chỉ phụ đề không tạo giọng đọc AI. Bật thuyết minh nếu muốn lồng tiếng Việt tự nhiên.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF78350F),
+                        height: 1.38,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          OutlinedButton(
-            style: OutlinedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              side: const BorderSide(color: AppColors.brandBorder),
-              backgroundColor: Colors.white,
-            ),
-            onPressed: () {
-              HapticFeedback.selectionClick();
-              _update((c) => c.copyWith(mode: 2));
-            },
-            child: const Text(
-              'Bật lồng tiếng ➔',
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w800,
-                color: AppColors.brandDark,
+          const SizedBox(height: 11),
+          Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(11),
+            child: InkWell(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                _update((c) => c.copyWith(mode: 2));
+              },
+              borderRadius: BorderRadius.circular(11),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: AppColors.brandBorder),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 15,
+                      color: AppColors.brand,
+                    ),
+                    SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        'Chuyển sang Phụ đề + Thuyết minh AI',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.2,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.brandDark,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 5),
+                    Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 15,
+                      color: AppColors.brandDark,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

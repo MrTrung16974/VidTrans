@@ -86,12 +86,26 @@ class PendingSubmissionCard extends ConsumerWidget {
                     ),
                     const SizedBox(width: 6),
                     FilledButton(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 38),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                      ),
                       onPressed: () => queue.retry(item.id),
                       child: const Text('Thử lại'),
                     ),
                   ]
                 : [
                     OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 38),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                      ),
                       onPressed: () => queue.cancel(item.id),
                       child: const Text('Hủy tải lên'),
                     ),
