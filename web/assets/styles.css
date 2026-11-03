@@ -7119,3 +7119,16 @@ input[type="file"]::-webkit-file-upload-button:active {
 @media (max-width: 720px) {
   .admin-music-upload { grid-template-columns: 1fr; }
 }
+
+/* "Hệ thống tự xử lý thông minh": what the server handles on its own for a link. */
+.smart-source-notice { margin-top: 10px; border: 1px solid #fed7aa; border-radius: 12px; background: #fff7ed; }
+.smart-source-notice > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; color: var(--brand-dark); font-size: .8rem; font-weight: 800; }
+.smart-source-notice > summary::-webkit-details-marker { display: none; }
+.smart-source-notice > summary::marker { content: ''; }
+.smart-source-notice > summary::after { content: 'Xem ▾'; margin-left: auto; color: var(--brand); font-size: .72rem; font-weight: 700; }
+.smart-source-notice[open] > summary::after { content: 'Thu gọn ▴'; }
+.smart-source-notice ul { display: grid; gap: 8px; margin: 0; padding: 0 12px 12px 34px; }
+.smart-source-notice li { color: var(--ink); }
+.smart-source-notice li::marker { color: var(--brand); }
+.smart-source-notice li strong { display: block; font-size: .78rem; font-weight: 800; }
+.smart-source-notice li small { display: block; margin-top: 2px; color: var(--muted); font-size: .74rem; line-height: 1.4; }

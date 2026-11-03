@@ -988,6 +988,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
             ],
           ),
         ),
+        const SizedBox(height: 12),
+        const _SmartSourceNotice(),
       ],
     );
   }
@@ -2281,6 +2283,134 @@ class _LinkSourceTile extends StatelessWidget {
             icon: const Icon(Icons.close_rounded, size: 17),
             onPressed: onRemove,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Tells the user what the server handles on its own, so a photo post, a
+/// blocked TikTok or a same-language video does not look like a mistake.
+class _SmartSourceNotice extends StatefulWidget {
+  const _SmartSourceNotice();
+
+  @override
+  State<_SmartSourceNotice> createState() => _SmartSourceNoticeState();
+}
+
+class _SmartSourceNoticeState extends State<_SmartSourceNotice> {
+  bool _expanded = false;
+
+  static const _items = <({IconData icon, String title, String body})>[
+    (
+      icon: Icons.photo_library_outlined,
+      title: 'Bài đăng ảnh TikTok → tự dựng thành video',
+      body: 'Mỗi ảnh hiện 3 giây kèm nhạc nền của bài. Bài ảnh không có lời nói, '
+          'nên hãy chọn phụ đề lấy từ chữ trên ảnh (OCR).',
+    ),
+    (
+      icon: Icons.hd_outlined,
+      title: 'Tự lấy bản HD, không logo TikTok',
+      body: 'Khi TikTok chặn tải trực tiếp, hệ thống tự chuyển nguồn dự phòng '
+          'và ưu tiên bản gốc chất lượng cao nhất.',
+    ),
+    (
+      icon: Icons.translate_rounded,
+      title: 'Video đã đúng ngôn ngữ đích → không dịch',
+      body: 'Ví dụ video tiếng Việt, đích tiếng Việt: giữ nguyên lời gốc, '
+          'chỉ tạo phụ đề hoặc lồng tiếng.',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.brandTint,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.brandBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.auto_awesome_rounded, size: 18, color: AppColors.brand),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Hệ thống tự xử lý thông minh',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.brandDark,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _expanded ? 'Thu gọn' : 'Xem',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.brand,
+                    ),
+                  ),
+                  Icon(
+                    _expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    size: 18,
+                    color: AppColors.brand,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Column(
+                children: [
+                  for (final item in _items) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(item.icon, size: 17, color: AppColors.brand),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.title,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.ink,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                item.body,
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  height: 1.35,
+                                  color: AppColors.inkSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
         ],
       ),
     );
