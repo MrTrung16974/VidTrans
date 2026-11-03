@@ -475,16 +475,25 @@ class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return isDark ? const Color(0xFF64748B) : Colors.white70;
+          }
           if (states.contains(WidgetState.selected)) return Colors.white;
           return null;
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return isDark ? const Color(0xFF1E293B) : AppColors.lineStrong;
+          }
           if (states.contains(WidgetState.selected)) return AppColors.brand;
           return null;
         }),
       ),
       checkboxTheme: CheckboxThemeData(
         fillColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return isDark ? const Color(0xFF334155) : AppColors.lineStrong;
+          }
           if (states.contains(WidgetState.selected)) return AppColors.brand;
           return null;
         }),

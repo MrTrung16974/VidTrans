@@ -367,11 +367,11 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               if (!config.downloadOnly) ...[
                 _languageSection(config, translation),
                 _recognitionSection(config),
-                if (config.hasVoice)
-                  _voiceSection(config, tts)
-                else
+                if (config.hasVoice) ...[
+                  _voiceSection(config, tts),
+                  _audioSection(config),
+                ] else
                   _mode1VoiceNotice(),
-                _audioSection(config),
               ],
               _logoSection(config),
               if (!config.downloadOnly) ...[
@@ -1423,22 +1423,32 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           ),
           value: config.keepOriginalAudio,
           onChanged: config.hasVoice
-              ? (v) => _update((c) => c.copyWith(keepOriginalAudio: v))
+              ? (v) => _update(
+                  (c) => c.copyWith(
+                    keepOriginalAudio: v,
+                    originalAudioVolume:
+                        v && c.originalAudioVolume <= 0 ? 0.25 : c.originalAudioVolume,
+                  ),
+                )
               : null,
         ),
         SliderField(
           label: 'Âm lượng tiếng gốc',
-          value: config.originalAudioVolume,
+          value: config.keepOriginalAudio ? config.originalAudioVolume : 0,
           min: 0,
           max: 1,
           divisions: 100,
           format: percent,
-          enabled: config.hasVoice,
-          onChanged: (v) => _update(
-            (c) => c.copyWith(
-              originalAudioVolume: double.parse(v.toStringAsFixed(2)),
-            ),
-          ),
+          enabled: config.hasVoice && config.keepOriginalAudio,
+          onChanged: (v) {
+            final rounded = double.parse(v.toStringAsFixed(2));
+            _update(
+              (c) => c.copyWith(
+                keepOriginalAudio: rounded > 0,
+                originalAudioVolume: rounded,
+              ),
+            );
+          },
         ),
         if (config.needsMusic)
           SliderField(
@@ -1707,7 +1717,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     ),
                     SizedBox(height: 3),
                     Text(
-                      'Chế độ Chỉ phụ đề không tạo giọng đọc AI. Bật thuyết minh nếu muốn lồng tiếng Việt tự nhiên.',
+                      'Chế độ Chỉ phụ đề không tạo giọng đọc AI và không trộn âm thanh. Bật thuyết minh nếu muốn lồng tiếng Việt và điều chỉnh tỷ lệ âm lượng gốc / nhạc nền.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Color(0xFF78350F),
@@ -1786,30 +1796,49 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     return Material(
       color: Colors.transparent,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(13, 9, 10, 9),
+        padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
         decoration: BoxDecoration(
-          color: const Color(0xF50F172A),
-          borderRadius: BorderRadius.circular(18),
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xE8FFFFFF),
+              Color(0xF2FFFAF5),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: Colors.white.withValues(alpha: 0.14),
+            color: const Color(0xE6FED7AA),
+            width: 1.5,
           ),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x330F172A),
-              blurRadius: 20,
-              offset: Offset(0, 8),
+              color: Color(0x220F172A),
+              blurRadius: 28,
+              spreadRadius: -4,
+              offset: Offset(0, 12),
+            ),
+            BoxShadow(
+              color: Color(0x1FEA580C),
+              blurRadius: 12,
+              offset: Offset(0, 4),
             ),
           ],
         ),
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.brand.withValues(alpha: 0.22),
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+                ),
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: AppColors.brand.withValues(alpha: 0.5),
+                  color: const Color(0xFFFDBA74),
+                  width: 1.4,
                 ),
               ),
               child: Text(
@@ -1817,7 +1846,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 style: const TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFFFDBA74),
+                  color: AppColors.brandDark,
                 ),
               ),
             ),
@@ -1837,7 +1866,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                       style: const TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w800,
-                        color: Colors.white,
+                        color: AppColors.ink,
                       ),
                     ),
                     Text(
@@ -1848,7 +1877,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 10.5,
-                        color: Color(0xFF94A3B8),
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.muted,
                       ),
                     ),
                   ],
