@@ -763,7 +763,7 @@
                 <input type="hidden" name="genre" value="" />
                 <small class="field-hint">Chọn thể loại để AI tự điền thế giới và phong cách vẽ phù hợp.</small>
               </div>
-              <div data-novel-import="story"></div>
+              <div data-novel-import="story" class="is-hidden"></div>
               <label class="field">
                 <span class="field-label-group"><span>Nội dung tập 1 (có thể để trống, thêm sau)</span><small id="comicStoryCount" class="field-hint">0 ký tự</small></span>
                 <textarea name="text" rows="9" placeholder="Đêm hôm đó, Minh bước vào khu rừng…"></textarea>
@@ -866,7 +866,7 @@
                 <label class="field"><span>Tên tập</span><input name="title" maxlength="200" placeholder="Để trống: Tập N" /></label>
                 <label class="field"><span>Tiêu đề video YouTube</span><input name="youtube_title" maxlength="100" placeholder="Để trống để AI đề xuất" /></label>
               </div>
-              <div data-novel-import="episode"></div>
+              <div data-novel-import="episode" class="is-hidden"></div>
               <label class="field">
                 <span class="field-label-group"><span>Nội dung tập</span><small id="comicEpisodeCount" class="field-hint">0 ký tự</small></span>
                 <textarea name="text" rows="8" placeholder="Ba ngày sau, Minh trở lại khu rừng…"></textarea>
@@ -2861,6 +2861,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261104-plan"></script>
+    <script type="module" src="/js/app.js?v=20261104-plan-hide"></script>
   </body>
 </html>

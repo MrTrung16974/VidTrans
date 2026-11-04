@@ -37,6 +37,7 @@ from domain.plan_entitlements import (
     PlanEntitlementError,
     annotate_providers,
     ensure_comic_settings_allowed,
+    feature_allowed,
     provider_allowed,
 )
 from infrastructure.comic_project import ComicProject
@@ -475,6 +476,12 @@ def create_comic_router(deps: ComicRouteDependencies) -> APIRouter:
             "shot_types": list(SHOT_TYPES), "shot_movements": list(SHOT_MOVEMENTS), "shot_angles": list(SHOT_ANGLES),
             "max_story_chars": MAX_STORY_CHARS,
             "genres": [{"key": key, **preset} for key, preset in GENRE_PRESETS.items()],
+            # Clients show the chapter importer only when the plan has it (admin access matrix)
+            # and the role may write; the import API enforces the same rule.
+            "novel_import": (
+                str(account.get("role") or "") in {"owner", "admin", "editor"}
+                and feature_allowed(account, "comic_video") and feature_allowed(account, "novel_import")
+            ),
         })
 
     @router.post("/bible/suggest")

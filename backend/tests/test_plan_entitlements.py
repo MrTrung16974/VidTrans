@@ -128,6 +128,42 @@ class ComicPlanEntitlementTests(unittest.TestCase):
         self.assertFalse(gemini_image["allowed"])
 
 
+class NovelImportOptionTests(unittest.TestCase):
+    """The comic options tell clients whether to show the chapter importer."""
+
+    def setUp(self) -> None:
+        from fastapi.testclient import TestClient
+
+        self.user = on_plan("creator")
+        active = patch.object(main, "current_account", lambda request: self.user)
+        active.start()
+        self.addCleanup(active.stop)
+        self.client = TestClient(main.app)
+
+    def flag(self) -> bool:
+        return self.client.get("/api/v1/comic/options").json()["novel_import"]
+
+    def test_follows_the_plan_and_role(self) -> None:
+        self.assertTrue(self.flag())
+        self.user = on_plan("free")
+        self.assertFalse(self.flag())
+        self.user = on_plan("creator", role="viewer")
+        self.assertFalse(self.flag())
+
+    def test_unticking_the_feature_hides_it_and_blocks_the_api(self) -> None:
+        class Source:
+            def features_for(self, plan_key):
+                return frozenset({"comic_video"})  # novel_import switched off for every plan
+
+        from domain.plan_entitlements import configure_entitlement_source
+        configure_entitlement_source(Source())
+        self.addCleanup(configure_entitlement_source, main.PLAN_STORE)
+        self.assertFalse(self.flag())
+        blocked = self.client.get("/api/v1/comic/sources/catalog", params={"url": "https://www.jjwxc.net/onebook.php?novelid=1"})
+        self.assertEqual(blocked.status_code, 403)
+        self.assertIn("Nhập chương truyện từ link", blocked.json()["detail"])
+
+
 class SocialPlanEntitlementTests(unittest.TestCase):
     def setUp(self) -> None:
         from fastapi.testclient import TestClient

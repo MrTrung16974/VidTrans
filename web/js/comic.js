@@ -1,7 +1,7 @@
 // Story -> comic / animated video workspace: a story (series) holds many episode videos that share its
 // settings and character bible; each episode is a project whose storyboard can be edited and re-rendered.
 import { renderAnimatedScenes, renderReferenceGallery, shotPatchFromForm } from "./animation-editor.js?v=20261023-smooth";
-import { createNovelImporter } from "./novel-import.js?v=20261104-plan";
+import { createNovelImporter } from "./novel-import.js?v=20261104-plan-hide";
 
 const ACTIVE = new Set(["queued", "scheduled", "processing", "cancelling"]);
 const STEP_LABELS = {
@@ -127,9 +127,19 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     }).join("");
   }
 
+  function syncNovelImport(available) {
+    storyImporter.setAvailable(available);
+    episodeImporter.setAvailable(available);
+  }
+
   async function loadOptions() {
-    if (options) return;
+    if (options) {
+      // The plan can change while the page stays open: re-read the importer flag on every visit.
+      api("/options", { silent: true }).then(fresh => syncNovelImport(fresh.novel_import === true)).catch(() => {});
+      return;
+    }
     options = await api("/options");
+    syncNovelImport(options.novel_import === true);
     fillSelect(form.elements.style, options.styles, "manhua");
     fillSelect(form.elements.language, options.languages, "vi");
     fillSelect(form.elements.llm_provider, options.llm_providers, "auto");
