@@ -30,6 +30,13 @@ PLATFORM_CONFIG = {
         "domains": ("facebook.com",),
         "required_cookie_groups": (("c_user",), ("xs",)),
     },
+    "xiaohongshu": {
+        "label": "Xiaohongshu",
+        "start_url": "https://www.xiaohongshu.com/explore",
+        "domains": ("xiaohongshu.com",),
+        # web_session is set only after a login; guests get a1/webId alone.
+        "required_cookie_groups": (("web_session",),),
+    },
 }
 
 

@@ -14,6 +14,7 @@ from infrastructure.social_video_downloader import (
     normalize_social_video_url,
     social_platform,
     social_video_download_issue,
+    xiaohongshu_note_url,
 )
 
 
@@ -907,6 +908,90 @@ class GoogleDriveTests(unittest.TestCase):
                     cancel_requested=lambda: True,
                 )
             self.assertEqual(list(Path(directory).iterdir()), [])
+
+
+# What xhslink.com redirects to without a login (the user's real share link, 2026-11-04).
+XHS_LOGIN_REDIRECT = (
+    "https://www.xiaohongshu.com/login?redirectPath=http%3A%2F%2Fwww.xiaohongshu.com%2Fdiscovery%2Fitem%2F"
+    "69554df60000000021032ccd%3Fapp_platform%3Dios%26share_from_user_hidden%3Dtrue%26xsec_source%3Dapp_share"
+    "%26type%3Dnormal%26xsec_token%3DCBtquDr1Z0YgswsLLtWcGSMs4RojEm-1qfpPhwR36XnH4%3D%26xhsshare%3DCopyLink"
+)
+XHS_NOTE = (
+    "https://www.xiaohongshu.com/explore/69554df60000000021032ccd"
+    "?xsec_token=CBtquDr1Z0YgswsLLtWcGSMs4RojEm-1qfpPhwR36XnH4%3D&xsec_source=app_share"
+)
+
+
+class XiaohongshuTests(unittest.TestCase):
+    def test_short_links_and_note_pages_are_accepted(self) -> None:
+        text = "看看这个 http://xhslink.com/o/jxVcmTNr5R 复制后打开【小红书】查看笔记！"
+        self.assertEqual(extract_social_video_urls(text), ["http://xhslink.com/o/jxVcmTNr5R"])
+        self.assertEqual(social_platform("http://xhslink.com/o/jxVcmTNr5R"), "Xiaohongshu")
+        for url in (
+            "https://www.xiaohongshu.com/explore/69554df60000000021032ccd?xsec_token=abc",
+            "https://www.xiaohongshu.com/discovery/item/69554df60000000021032ccd",
+        ):
+            self.assertIsNone(social_video_download_issue(url), url)
+
+    def test_profile_and_home_pages_are_rejected(self) -> None:
+        for url in ("https://www.xiaohongshu.com/explore", "https://www.xiaohongshu.com/user/profile/5f0c1d"):
+            self.assertIsNotNone(social_video_download_issue(url), url)
+        self.assertIsNotNone(social_video_download_issue("http://xhslink.com/"))
+
+    def test_login_redirect_yields_the_note_and_its_type(self) -> None:
+        self.assertEqual(xiaohongshu_note_url(XHS_LOGIN_REDIRECT), (XHS_NOTE, "normal"))
+
+    def test_short_link_is_resolved_before_yt_dlp_with_browser_cookies(self) -> None:
+        with TemporaryDirectory() as directory:
+            instances = []
+
+            def factory(options):
+                instances.append(FakeYoutubeDL(options))
+                return instances[-1]
+
+            def provider(path: Path) -> Path:
+                path.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+                return path
+
+            seen_urls = []
+            original = FakeYoutubeDL.extract_info
+
+            def extract(self, url, *, download):
+                seen_urls.append(url)
+                return original(self, url, download=download)
+
+            downloader = SocialVideoDownloader(
+                ydl_factory=factory,
+                redirect_resolver=lambda url: XHS_LOGIN_REDIRECT,
+                platform_cookie_providers={"Xiaohongshu": provider},
+            )
+            with patch.object(FakeYoutubeDL, "extract_info", extract):
+                downloader.download("http://xhslink.com/o/jxVcmTNr5R", Path(directory) / "video")
+
+            self.assertEqual(seen_urls, [XHS_NOTE])
+            self.assertEqual(instances[0].options["allowed_extractors"], ["xiaohongshu"])
+            self.assertIn("cookiefile", instances[0].options)
+
+    def test_failures_explain_login_and_image_posts(self) -> None:
+        class NoFormats(FakeYoutubeDL):
+            def extract_info(self, url, *, download):
+                raise RuntimeError("ERROR: [XiaoHongShu] 69554df6: No video formats found!")
+
+        with TemporaryDirectory() as directory:
+            guest = SocialVideoDownloader(ydl_factory=NoFormats, redirect_resolver=lambda url: XHS_LOGIN_REDIRECT)
+            with self.assertRaisesRegex(SocialVideoDownloadError, "đăng nhập"):
+                guest.download("http://xhslink.com/o/jxVcmTNr5R", Path(directory) / "video")
+
+            def provider(path: Path) -> Path:
+                path.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+                return path
+
+            logged_in = SocialVideoDownloader(
+                ydl_factory=NoFormats, redirect_resolver=lambda url: XHS_LOGIN_REDIRECT,
+                platform_cookie_providers={"Xiaohongshu": provider},
+            )
+            with self.assertRaisesRegex(SocialVideoDownloadError, "bài đăng ảnh"):
+                logged_in.download("http://xhslink.com/o/jxVcmTNr5R", Path(directory) / "video")
 
 
 if __name__ == "__main__":

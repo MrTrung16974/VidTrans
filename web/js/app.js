@@ -1,5 +1,5 @@
 import { createTikTokWorkspace } from "./tiktok.js?v=20261025-youtube-title-vi";
-import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
+import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261104-xiaohongshu";
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261104-resume";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261031-apply-logo";
@@ -597,7 +597,7 @@ function renderDouyinBrowserStatus(status) {
   }
 }
 
-const sourceBrowserLabels = { youtube: "YouTube", facebook: "Facebook" };
+const sourceBrowserLabels = { youtube: "YouTube", facebook: "Facebook", xiaohongshu: "Xiaohongshu" };
 
 function renderSourceBrowserStatus(platform, status) {
   state.sourceBrowsers[platform] = status;
@@ -4105,7 +4105,7 @@ $("#douyinBrowserFrame").addEventListener("load", () => {
   $("#douyinBrowserLoading").classList.add("is-hidden");
 });
 $$('[data-source-browser-tab]').forEach(button => button.addEventListener("click", () => selectSourceBrowserTab(button.dataset.sourceBrowserTab)));
-for (const platform of ["youtube", "facebook"]) {
+for (const platform of ["youtube", "facebook", "xiaohongshu"]) {
   $(`#${platform}BrowserSync`).addEventListener("click", () => syncSourceBrowser(platform));
   $(`#${platform}BrowserReload`).addEventListener("click", () => reloadSourceBrowser(platform));
   $(`#${platform}BrowserLogout`).addEventListener("click", () => logoutSourceBrowser(platform));

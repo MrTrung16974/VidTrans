@@ -465,6 +465,12 @@ YOUTUBE_BROWSER_AUTH = SocialBrowserAuthManager(
 FACEBOOK_BROWSER_AUTH = SocialBrowserAuthManager(
     "facebook", WORK_DIR / "facebook-browser-auth" / "facebook.cookies.txt"
 )
+# Same shared source-login Chromium as YouTube and Facebook unless configured otherwise.
+XIAOHONGSHU_BROWSER_AUTH = SocialBrowserAuthManager(
+    "xiaohongshu", WORK_DIR / "xiaohongshu-browser-auth" / "xiaohongshu.cookies.txt",
+    cdp_url=os.environ.get("VIDTRANS_XIAOHONGSHU_BROWSER_CDP_URL") or YOUTUBE_BROWSER_AUTH.cdp_url,
+    public_url=os.environ.get("VIDTRANS_XIAOHONGSHU_BROWSER_PUBLIC_URL") or YOUTUBE_BROWSER_AUTH.public_url,
+)
 SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     ffmpeg_location=FFMPEG,
     ffprobe_location=FFPROBE,
@@ -473,10 +479,12 @@ SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     platform_cookie_providers={
         "YouTube": YOUTUBE_BROWSER_AUTH.export_download_cookies,
         "Facebook": FACEBOOK_BROWSER_AUTH.export_download_cookies,
+        "Xiaohongshu": XIAOHONGSHU_BROWSER_AUTH.export_download_cookies,
     },
     platform_user_agent_providers={
         "YouTube": YOUTUBE_BROWSER_AUTH.browser_user_agent,
         "Facebook": FACEBOOK_BROWSER_AUTH.browser_user_agent,
+        "Xiaohongshu": XIAOHONGSHU_BROWSER_AUTH.browser_user_agent,
     },
     douyin_resolver=DOUYIN_BROWSER_AUTH.resolve_video,
     facebook_resolver=FACEBOOK_BROWSER_AUTH.resolve_facebook_video,
@@ -6570,6 +6578,7 @@ SOURCE_BROWSER_MANAGERS = {
     "douyin": DOUYIN_BROWSER_AUTH,
     "youtube": YOUTUBE_BROWSER_AUTH,
     "facebook": FACEBOOK_BROWSER_AUTH,
+    "xiaohongshu": XIAOHONGSHU_BROWSER_AUTH,
 }
 
 
@@ -6720,7 +6729,7 @@ def tts_voice_preview_endpoint(provider: str, voice_key: str) -> Response:
     return Response(audio, media_type=content_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
-SOCIAL_SOURCE_PLATFORMS = ("TikTok", "Douyin", "YouTube", "Facebook")
+SOCIAL_SOURCE_PLATFORMS = ("TikTok", "Douyin", "YouTube", "Facebook", "Xiaohongshu")
 
 
 def client_download_platforms() -> set[str]:

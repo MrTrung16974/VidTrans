@@ -41,6 +41,8 @@ const _platformDomains = {
   'TikTok': ['tiktok.com'],
   'YouTube': ['youtube.com', 'youtu.be', 'youtube-nocookie.com'],
   'Facebook': ['facebook.com', 'fb.com', 'fb.watch'],
+  // Needs the login cookies of the server's source browser.
+  'Xiaohongshu': ['xiaohongshu.com', 'xhslink.com'],
   // Always downloaded by the server (it fetches the original file, not a preview).
   'Google Drive': [
     'drive.google.com',

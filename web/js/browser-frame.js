@@ -8,7 +8,7 @@ export function resolveDouyinFrameUrl(raw, pageHref) {
 }
 
 export function resolveSourceBrowserFrameUrl(raw, pageHref, platform) {
-  if (!['douyin', 'youtube', 'facebook'].includes(platform)) return null;
+  if (!['douyin', 'youtube', 'facebook', 'xiaohongshu'].includes(platform)) return null;
   return resolveBrowserFrameUrl(raw, pageHref, platform);
 }
 

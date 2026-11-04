@@ -32,6 +32,8 @@ SUPPORTED_SOCIAL_DOMAINS = {
     "fb.watch",
     "iesdouyin.com",
     "tiktok.com",
+    "xhslink.com",
+    "xiaohongshu.com",
     "youtu.be",
     "youtube.com",
     "youtube-nocookie.com",
@@ -109,6 +111,26 @@ def _download_failure_message(platform: str, error: Exception, *, used_cookies: 
     )
 
 
+def _xiaohongshu_failure_message(error: Exception, *, used_cookies: bool, note_type: str | None) -> str:
+    message = " ".join(str(error).split()).lower()
+    if not used_cookies:
+        return (
+            "Xiaohongshu chỉ cho xem bài khi đã đăng nhập. Vào trang Nguồn → tab Xiaohongshu, "
+            "đăng nhập rồi bấm “Đã đăng nhập — Đồng bộ”, sau đó chạy lại."
+        )
+    if "no video formats" in message:
+        if note_type == "normal":
+            return "Link Xiaohongshu này là bài đăng ảnh (图文), không có video. Hãy dùng link một bài video."
+        return (
+            "Xiaohongshu không trả về video cho bài này: thường là bài đăng ảnh (图文), "
+            "hoặc phiên đăng nhập cần xác minh lại. Mở Xiaohongshu ở trang Nguồn, kiểm tra rồi Đồng bộ."
+        )
+    return (
+        "Không tải được video Xiaohongshu dù đã gửi cookie đăng nhập: phiên có thể đã hết hạn "
+        "hoặc Xiaohongshu yêu cầu xác minh. Mở Xiaohongshu ở trang Nguồn, xác minh rồi bấm Đồng bộ."
+    )
+
+
 @dataclass(frozen=True)
 class SocialVideoDownloadResult:
     path: Path
@@ -153,9 +175,47 @@ SUPPORTED_LINK_FORMS_HINT = (
     "Hỗ trợ link một video: TikTok (/@user/video/…, /@user/photo/…, vm/vt.tiktok.com), "
     "Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be, live, embed), "
     "Facebook (reel, videos, watch?v=…, share, posts, fb.watch), "
+    "Xiaohongshu (xhslink.com, /explore/…, /discovery/item/…), "
     "Google Drive (drive.google.com/file/d/…, open?id=…, uc?id=…; file chia sẻ \"Bất kỳ ai có đường liên kết\")"
 )
-_SHORT_LINK_HOSTS = {"vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch"}
+_SHORT_LINK_HOSTS = {"vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch", "xhslink.com"}
+XIAOHONGSHU_PLATFORM = "Xiaohongshu"
+_XIAOHONGSHU_NOTE_PATH = re.compile(
+    r"^/(?:explore|discovery/item|user/profile/[0-9a-zA-Z]+)/([0-9a-f]{24})/?$"
+)
+_XIAOHONGSHU_LOGIN_PATHS = ("/login", "/website-login")
+# The note page refuses a request without the share token; tracking parameters are dropped.
+_XIAOHONGSHU_KEPT_QUERY = ("xsec_token", "xsec_source")
+
+
+def xiaohongshu_note_url(url: str, *, depth: int = 0) -> tuple[str | None, str | None]:
+    """(canonical /explore/<id> URL, note type from the share link) for any note link form.
+
+    Without a login, xhslink.com short links land on the login page; the note itself
+    is then in its ``redirectPath`` parameter. The share link's ``type`` is ``normal``
+    for an image post and ``video`` for a video.
+    """
+    parsed = urlsplit(url)
+    hostname = (parsed.hostname or "").lower()
+    query = parse_qs(parsed.query)
+    if not (hostname == "xiaohongshu.com" or hostname.endswith(".xiaohongshu.com")):
+        return None, None
+    path = re.sub(r"/{2,}", "/", parsed.path or "/")
+    if path.rstrip("/") in _XIAOHONGSHU_LOGIN_PATHS:
+        target = (query.get("redirectPath") or query.get("redirect_path") or [""])[0]
+        if not target or depth > 2:
+            return None, None
+        # parse_qs already decoded it once; only a doubly encoded target still hides its "?".
+        if "?" not in target and "%3f" in target.lower():
+            target = unquote(target)
+        return xiaohongshu_note_url(target, depth=depth + 1)
+    match = _XIAOHONGSHU_NOTE_PATH.match(path)
+    if not match:
+        return None, None
+    kept = [(key, query[key][0]) for key in _XIAOHONGSHU_KEPT_QUERY if (query.get(key) or [""])[0]]
+    suffix = f"?{urlencode(kept)}" if kept else ""
+    note_type = (query.get("type") or [""])[0].strip().lower() or None
+    return f"https://www.xiaohongshu.com/explore/{match.group(1)}{suffix}", note_type
 _TIKTOK_VIDEO_PATH = re.compile(
     r"^/(?:@[^/]+/(?:video|photo)/\d+|t/[\w-]+|v/\d+(?:\.html)?|embed(?:/v2)?/\d+|player/v1/\d+|share/video/\d+)/?$"
 )
@@ -255,6 +315,10 @@ def social_video_download_issue(url: str) -> str | None:
         if query.get("list"):
             return "link playlist YouTube chưa được hỗ trợ, hãy dán link từng video"
         return "đây không phải link một video YouTube (kênh, trang chủ hoặc trang tìm kiếm)"
+    if platform == XIAOHONGSHU_PLATFORM:
+        if xiaohongshu_note_url(url)[0]:
+            return None
+        return "đây không phải link một bài Xiaohongshu (cần xhslink.com/…, /explore/<id> hoặc /discovery/item/<id>)"
     if platform == "Facebook":
         if not _FACEBOOK_VIDEO_PATH.match(path):
             return "đây không phải link một video/bài đăng Facebook (trang cá nhân, fanpage hoặc trang chủ)"
@@ -320,6 +384,7 @@ def social_platform(url: str) -> str:
         ("TikTok", ("tiktok.com",)),
         ("YouTube", ("youtube.com", "youtu.be", "youtube-nocookie.com")),
         ("Facebook", ("facebook.com", "fb.com", "fb.watch")),
+        (XIAOHONGSHU_PLATFORM, ("xiaohongshu.com", "xhslink.com")),
         (GOOGLE_DRIVE_PLATFORM, ("drive.google.com", "docs.google.com", "drive.usercontent.google.com")),
     )
     for platform, domains in platform_domains:
@@ -468,6 +533,24 @@ class SocialVideoDownloader:
         self._redirect_resolver = redirect_resolver or (
             lambda url: _follow_redirects(url, timeout=self.socket_timeout, proxy=self.douyin_proxy)
         )
+
+    def canonical_xiaohongshu_url(self, url: str) -> tuple[str, str | None]:
+        """Resolve xhslink.com short links and keep only what the note page needs."""
+        note_url, note_type = xiaohongshu_note_url(url)
+        if note_url:
+            return note_url, note_type
+        try:
+            resolved = self._redirect_resolver(url)
+        except Exception as exc:
+            raise SocialVideoDownloadError(
+                "Không mở được link rút gọn Xiaohongshu; hãy sao chép lại link chia sẻ (link có thể đã hết hạn)"
+            ) from exc
+        note_url, note_type = xiaohongshu_note_url(resolved)
+        if not note_url:
+            raise SocialVideoDownloadError(
+                "Link Xiaohongshu không dẫn tới một bài đăng; hãy sao chép lại link chia sẻ của bài video"
+            )
+        return note_url, note_type
 
     def canonical_douyin_url(self, url: str) -> str:
         """Map share/modal/short links to the /video/<id> page yt-dlp's Douyin extractor supports.
@@ -777,6 +860,9 @@ class SocialVideoDownloader:
             )
         if social_platform(normalized_url) == "Douyin":
             normalized_url = self.canonical_douyin_url(normalized_url)
+        xiaohongshu_note_type: str | None = None
+        if social_platform(normalized_url) == XIAOHONGSHU_PLATFORM:
+            normalized_url, xiaohongshu_note_type = self.canonical_xiaohongshu_url(normalized_url)
         destination_stem = Path(destination_stem).resolve()
         destination_stem.parent.mkdir(parents=True, exist_ok=True)
 
@@ -855,6 +941,8 @@ class SocialVideoDownloader:
             # Never let the generic extractor pick an unrelated video from the page;
             # unsupported forms go to the browser resolver, which matches the aweme id.
             options["allowed_extractors"] = ["douyin"]
+        if platform == XIAOHONGSHU_PLATFORM:
+            options["allowed_extractors"] = ["xiaohongshu"]
         if platform == "Douyin" and self.douyin_proxy:
             options["proxy"] = self.douyin_proxy
         elif platform == "TikTok" and self.tiktok_proxy:
@@ -957,6 +1045,10 @@ class SocialVideoDownloader:
             browser_fallback_platforms = {"TikTok", "Douyin"}
             if self._facebook_resolver is not None:
                 browser_fallback_platforms.add("Facebook")
+            if platform == XIAOHONGSHU_PLATFORM:
+                raise SocialVideoDownloadError(_xiaohongshu_failure_message(
+                    exc, used_cookies=bool(effective_cookie_file), note_type=xiaohongshu_note_type,
+                )) from exc
             if platform not in browser_fallback_platforms:
                 raise SocialVideoDownloadError(
                     _download_failure_message(platform, exc, used_cookies=bool(effective_cookie_file))

@@ -114,6 +114,7 @@ void main() {
     expect(policy.onPhone(_youtube), isFalse);
     expect(policy.onPhone('https://www.facebook.com/watch?v=1'), isFalse);
     expect(socialPlatformOf('https://www.iesdouyin.com/share/video/1'), 'Douyin');
+    expect(socialPlatformOf('http://xhslink.com/o/jxVcmTNr5R'), 'Xiaohongshu');
     expect(socialPlatformOf('not a url'), isNull);
     expect(DownloadPolicy.serverOnly.onPhone(_tiktok), isFalse);
   });
