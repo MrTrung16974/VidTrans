@@ -221,13 +221,15 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     }
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     FocusScope.of(context).unfocus();
     _update((c) => c.copyWith(batchName: _batchName.text));
-    final count = ref.read(translateFormProvider).sourceCount;
-    if (_form.submit() == null) {
-      final err = ref.read(translateFormProvider).error;
-      if (err != null && mounted) {
+    final formState = ref.read(translateFormProvider);
+    final count = formState.sourceCount;
+
+    final err = _form.validate();
+    if (err != null) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(err), behavior: SnackBarBehavior.floating),
         );
@@ -237,15 +239,362 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       }
       return;
     }
+
+    final confirmed = await _showConfirmJobSheet(formState);
+    if (confirmed != true || !mounted) return;
+
+    if (_form.submit() == null) {
+      final submitErr = ref.read(translateFormProvider).error;
+      if (submitErr != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(submitErr),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
     _links.clear();
     _batchName.text = ref.read(translateFormProvider).config.batchName;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Đã đưa $count video vào tiến trình, đang tải dưới nền'),
-        behavior: SnackBarBehavior.floating,
-      ),
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Đã đưa $count video vào tiến trình, đang tải dưới nền'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      context.go('/jobs');
+    }
+  }
+
+  Future<bool?> _showConfirmJobSheet(TranslateFormState state) {
+    final config = state.config;
+    final modeLabel = switch (config.mode) {
+      1 => 'Phụ đề',
+      2 => 'Phụ đề + Voice',
+      4 => 'Chỉ tải video',
+      _ => 'Voice + Nhạc',
+    };
+    final langLabel = config.downloadOnly
+        ? 'Chỉ tải video gốc'
+        : '${_langName(config.sourceLanguage)} → ${_langName(config.targetLanguage)}';
+
+    String? voiceName;
+    if (config.hasVoice) {
+      final providers = ref.read(ttsProvidersProvider).valueOrNull;
+      final provider =
+          providers?.where((p) => p.key == config.ttsProvider).firstOrNull;
+      final voice = provider?.voiceChoices
+          .where((v) => v.key == config.voiceKey)
+          .firstOrNull;
+      voiceName = voice?.label ?? config.voiceKey;
+    }
+
+    final batchName = _batchName.text.trim().isNotEmpty
+        ? _batchName.text.trim()
+        : (config.batchName.isNotEmpty ? config.batchName : 'Batch video mới');
+
+    final allSources = <({bool isFile, String text})>[
+      for (final f in state.files) (isFile: true, text: f.name),
+      for (final l in state.links) (isFile: false, text: l),
+    ];
+
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: AppColors.brandBorder),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x2E0F172A),
+                blurRadius: 34,
+                offset: Offset(0, 14),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 38,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFCBD5E1),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          gradient: AppColors.brandGradient,
+                          shape: BoxShape.circle,
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x4DEA580C),
+                              blurRadius: 10,
+                              offset: Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.rocket_launch_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Xác nhận tạo tiến trình',
+                              style: TextStyle(
+                                fontSize: 16.5,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.ink,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Sẵn sàng xử lý ${state.sourceCount} video theo cấu hình sau',
+                              style: const TextStyle(
+                                fontSize: 12.5,
+                                color: AppColors.muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceSubtle,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _SummaryItem(
+                                label: 'Số lượng nguồn',
+                                value: '${state.sourceCount} video',
+                              ),
+                            ),
+                            Container(width: 1, height: 26, color: AppColors.line),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _SummaryItem(
+                                label: 'Chế độ',
+                                value: modeLabel,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Container(height: 1, color: AppColors.line),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _SummaryItem(
+                                label: 'Ngôn ngữ',
+                                value: langLabel,
+                              ),
+                            ),
+                            if (voiceName != null) ...[
+                              Container(width: 1, height: 26, color: AppColors.line),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _SummaryItem(
+                                  label: 'Giọng đọc',
+                                  value: voiceName,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (batchName.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Container(height: 1, color: AppColors.line),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              const Text(
+                                'Tên batch: ',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: AppColors.muted,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  batchName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.ink,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Sources preview
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 110),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: allSources.length > 3 ? 4 : allSources.length,
+                      separatorBuilder: (_, __) => const Divider(height: 8, thickness: 0.5),
+                      itemBuilder: (context, index) {
+                        if (index == 3 && allSources.length > 3) {
+                          return Text(
+                            '+ ${allSources.length - 3} nguồn khác...',
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.brand,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          );
+                        }
+                        final item = allSources[index];
+                        return Row(
+                          children: [
+                            Icon(
+                              item.isFile ? Icons.movie_outlined : Icons.link_rounded,
+                              size: 15,
+                              color: AppColors.muted,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                item.text,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.ink,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Assurance box
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFBBF7D0)),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.check_circle_rounded,
+                          size: 16,
+                          color: Color(0xFF16A34A),
+                        ),
+                        SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            'Video sẽ chạy ngầm tự động trên máy chủ. Bạn có thể theo dõi trong tab Tiến trình bất cứ lúc nào.',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: Color(0xFF15803D),
+                              fontWeight: FontWeight.w500,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(sheetContext, false),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            side: const BorderSide(color: AppColors.line),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Kiểm tra lại',
+                            style: TextStyle(
+                              color: AppColors.inkSoft,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: StudioGradientButton(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          onPressed: () => Navigator.pop(sheetContext, true),
+                          icon: Icons.rocket_launch_rounded,
+                          label: 'Bắt đầu ngay',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
-    context.go('/jobs');
   }
 
   /// Moves remembered choices that the server no longer allows to a usable
@@ -334,10 +683,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final tts = ref.watch(ttsProvidersProvider).valueOrNull;
     _reconcile(config, translation, tts);
 
-    // Keep the start bar visible like the web UI, including the empty 0/50
-    // state. Pressing it without a source shows validation and jumps back to
-    // the source step; hide it only when the full submit card is in view.
-    final showQuickBar = !_atBottomSubmit;
+    // The quick start bar mirrors the web UI: it only appears when the user
+    // has pasted valid links or added files (state.sourceCount > 0), and hides
+    // when scrolled down to the full submit card.
+    final showQuickBar = !_atBottomSubmit && state.sourceCount > 0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -1950,35 +2299,33 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Mirrors web `.button.primary.mobile-quick-cta` (styles.css). The button owns its
-                  // Material: an `Ink` paints on the nearest Material ancestor, which here sits
-                  // under the bar's frosted white fill and washed the orange out to near-white.
-                  Material(
-                    type: MaterialType.transparency,
-                    child: Ink(
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          // linear-gradient(135deg, #f97316 0%, #ea580c 100%)
-                          colors: [Color(0xFFF97316), Color(0xFFEA580C)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(999),
-                        // border: 1px solid rgba(255, 255, 255, 0.3)
-                        border: Border.all(
-                          color: const Color(0x4DFFFFFF),
-                          width: 1,
-                        ),
-                        boxShadow: const [
-                          // 0 6px 16px -3px rgba(234, 88, 12, 0.42)
-                          BoxShadow(
-                            color: Color(0x6BEA580C),
-                            blurRadius: 16,
-                            spreadRadius: -3,
-                            offset: Offset(0, 6),
-                          ),
-                        ],
+                  // Mirrors web `.button.primary.mobile-quick-cta` (styles.css).
+                  // Uses DecoratedBox so the vibrant orange gradient paints on top of the
+                  // frosted bar instead of being lost behind ancestor Material.
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        // linear-gradient(135deg, #f97316 0%, #ea580c 100%)
+                        colors: [Color(0xFFF97316), Color(0xFFEA580C)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
                       ),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: const Color(0x4DFFFFFF),
+                        width: 1,
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x6BEA580C),
+                          blurRadius: 16,
+                          spreadRadius: -3,
+                          offset: Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
                       child: InkWell(
                         onTap: _submit,
                         customBorder: const StadiumBorder(),

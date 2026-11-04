@@ -1312,6 +1312,211 @@ input[type="file"]::-webkit-file-upload-button:active {
 .password-reset-actions { display: flex; gap: 8px; }
 .password-reset-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
+/* Confirm Job Dialog */
+.confirm-job-dialog {
+  width: min(500px, calc(100vw - 32px));
+  border: 0;
+  border-radius: 22px;
+  padding: 0;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 25px 60px -12px rgba(15, 23, 42, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+.confirm-job-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.confirm-dialog-card {
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.confirm-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  position: relative;
+}
+.confirm-dialog-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  border: 1.5px solid #fdba74;
+  color: #ea580c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.15);
+}
+.confirm-dialog-heading {
+  flex: 1;
+  min-width: 0;
+}
+.confirm-dialog-heading h2 {
+  margin: 0;
+  font-size: 1.22rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+}
+.confirm-dialog-subtitle {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+.confirm-dialog-close {
+  background: transparent;
+  border: 0;
+  font-size: 1.1rem;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  line-height: 1;
+}
+.confirm-dialog-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.confirm-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.confirm-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+}
+.confirm-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.confirm-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+.confirm-value {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.confirm-batch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #fffaf5;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  font-size: 0.82rem;
+}
+.confirm-batch-value {
+  font-weight: 700;
+  color: #9a3412;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.confirm-sources-box {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.confirm-sources-head {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+.confirm-sources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 96px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.confirm-sources-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #334155;
+  overflow: hidden;
+}
+.confirm-sources-list li .source-icon {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #475569;
+}
+.confirm-sources-list li .source-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.confirm-sources-list .source-more {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #ea580c;
+  padding-top: 2px;
+}
+.confirm-assurance-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #15803d;
+}
+.confirm-assurance-icon {
+  font-weight: 800;
+  color: #16a34a;
+  flex-shrink: 0;
+}
+.confirm-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+.confirm-proceed-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
 
 /* ========================================================
    DOUYIN CLOUD BROWSER (#douyinView) Modern SaaS Redesign

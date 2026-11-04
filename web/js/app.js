@@ -2434,48 +2434,92 @@ function uploadBatch(formData, { onProgress, onRequest } = {}) {
   });
 }
 
-async function submitBatch(event) {
-  event.preventDefault();
-  renderSourceLinks();
-  const sourceText = $("#sourceLinks").value.trim();
-  if (!state.files.length && !state.links.length) {
-    $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    const dropZone = $("#dropZone");
-    if (dropZone) {
-      dropZone.classList.add("source-highlight-pulse");
-      setTimeout(() => dropZone.classList.remove("source-highlight-pulse"), 1600);
+let pendingBatchSubmission = null;
+
+function showConfirmJobModal(formData) {
+  pendingBatchSubmission = formData;
+  const count = state.files.length + state.links.length;
+  const mode = $("#mode")?.value || "1";
+  const modeText = $("#modeSummary")?.textContent || (mode === "4" ? "Chỉ tải video" : "Phụ đề");
+  const langText = mode === "4"
+    ? "Chỉ tải video gốc"
+    : ($("#languageSummary")?.textContent || `${$("#sourceLanguage option:checked")?.textContent || "Tự động"} → ${$("#targetLanguage option:checked")?.textContent || "Việt"}`);
+
+  if ($("#confirmSourceCount")) $("#confirmSourceCount").textContent = `${count} video (${state.links.length} link, ${state.files.length} file)`;
+  if ($("#confirmMode")) $("#confirmMode").textContent = modeText;
+  if ($("#confirmLang")) $("#confirmLang").textContent = langText;
+
+  const voiceWrapper = $("#confirmVoiceWrapper");
+  if (voiceWrapper) {
+    if (mode === "1" || mode === "4") {
+      voiceWrapper.style.display = "none";
+    } else {
+      voiceWrapper.style.display = "";
+      const voiceSelect = $("#ttsVoice");
+      const voiceOption = voiceSelect?.selectedOptions?.[0];
+      if ($("#confirmVoice")) $("#confirmVoice").textContent = voiceOption?.textContent || "Tự động theo giọng";
     }
-    return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
-  }
-  if (state.invalidLinks?.length) {
-    $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    return toast(invalidSourceLinksMessage(state.invalidLinks), true);
-  }
-  if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
-  if ($("#mode").value !== "4" && $("#sourceLanguage").value !== "auto" && $("#sourceLanguage").value === $("#targetLanguage").value) {
-    return toast("Ngôn ngữ nguồn và đầu ra phải khác nhau", true);
-  }
-  updateFormSummary();
-  const form = event.currentTarget;
-  const formData = new FormData(form);
-  // An empty multiple-file input is otherwise serialized as a zero-byte file
-  // by some browsers. Link-only batches must not be mistaken for bad uploads.
-  if (!state.files.length) formData.delete("files");
-  const keepOriginal = $('[name="keep_original_audio"]', form).checked;
-  formData.set("keep_original_audio", String(keepOriginal));
-  const music = formData.get("background_music");
-  if (music instanceof File && !music.name) formData.delete("background_music");
-  const sourceCookies = formData.get("source_cookies");
-  if (sourceCookies instanceof File && !sourceCookies.name) formData.delete("source_cookies");
-  if ($("#mode").value === "3") {
-    // An uploaded file wins over the library pick; send only one of them.
-    if (formData.has("background_music")) formData.delete("background_music_id");
-    else if (!formData.get("background_music_id")) return toast("Chế độ nhạc nền: hãy chọn nhạc trong thư viện hoặc tải file nhạc lên", true);
-  } else {
-    formData.delete("background_music");
-    formData.delete("background_music_id");
   }
 
+  const batchName = String(formData.get("batch_name") || "").trim() || "Batch video mới";
+  if ($("#confirmBatchName")) $("#confirmBatchName").textContent = batchName;
+  if ($("#confirmSourcesCount")) $("#confirmSourcesCount").textContent = String(count);
+
+  const sourcesList = $("#confirmSourcesList");
+  if (sourcesList) {
+    const items = [
+      ...state.files.map(f => ({ isFile: true, text: f.name })),
+      ...state.links.map(l => ({ isFile: false, text: l })),
+    ];
+    const preview = items.slice(0, 3);
+    const hasMore = items.length > 3;
+    sourcesList.innerHTML = preview.map(item => `
+      <li>
+        <span class="source-icon">${item.isFile ? "FILE" : "LINK"}</span>
+        <span class="source-text" title="${escapeHtml(item.text)}">${escapeHtml(item.text)}</span>
+      </li>
+    `).join("") + (hasMore ? `<li class="source-more">+ ${items.length - 3} video khác...</li>` : "");
+  }
+
+  const dialog = $("#confirmJobDialog");
+  if (dialog) {
+    if (typeof dialog.showModal === "function") {
+      dialog.showModal();
+    } else {
+      dialog.setAttribute("open", "");
+    }
+  }
+}
+
+function closeConfirmJobDialog() {
+  pendingBatchSubmission = null;
+  const dialog = $("#confirmJobDialog");
+  if (dialog) {
+    if (typeof dialog.close === "function") {
+      dialog.close();
+    } else {
+      dialog.removeAttribute("open");
+    }
+  }
+}
+
+async function onConfirmJobProceed() {
+  if (!pendingBatchSubmission) return;
+  const formData = pendingBatchSubmission;
+  const proceedBtn = $("#confirmJobProceed");
+  const proceedText = $("#confirmJobProceedText");
+  const prevText = proceedText ? proceedText.textContent : "Xác nhận tạo job";
+  if (proceedBtn) proceedBtn.disabled = true;
+  if (proceedText) proceedText.textContent = "Đang khởi tạo…";
+
+  closeConfirmJobDialog();
+  if (proceedBtn) proceedBtn.disabled = false;
+  if (proceedText) proceedText.textContent = prevText;
+
+  await executeSubmitBatch(formData);
+}
+
+async function executeSubmitBatch(formData) {
   const pendingUpload = {
     id: crypto.randomUUID?.() || `upload-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     batchName: String(formData.get("batch_name") || "Batch video mới"),
@@ -2526,6 +2570,51 @@ async function submitBatch(event) {
     $("#uploadProgress").classList.add("is-hidden");
     $("#uploadFill").style.width = "0";
   }
+}
+
+async function submitBatch(event) {
+  event.preventDefault();
+  renderSourceLinks();
+  const sourceText = $("#sourceLinks").value.trim();
+  if (!state.files.length && !state.links.length) {
+    $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const dropZone = $("#dropZone");
+    if (dropZone) {
+      dropZone.classList.add("source-highlight-pulse");
+      setTimeout(() => dropZone.classList.remove("source-highlight-pulse"), 1600);
+    }
+    return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
+  }
+  if (state.invalidLinks?.length) {
+    $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return toast(invalidSourceLinksMessage(state.invalidLinks), true);
+  }
+  if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
+  if ($("#mode").value !== "4" && $("#sourceLanguage").value !== "auto" && $("#sourceLanguage").value === $("#targetLanguage").value) {
+    return toast("Ngôn ngữ nguồn và đầu ra phải khác nhau", true);
+  }
+  updateFormSummary();
+  const form = event.currentTarget || $("#batchForm");
+  const formData = new FormData(form);
+  // An empty multiple-file input is otherwise serialized as a zero-byte file
+  // by some browsers. Link-only batches must not be mistaken for bad uploads.
+  if (!state.files.length) formData.delete("files");
+  const keepOriginal = $('[name="keep_original_audio"]', form).checked;
+  formData.set("keep_original_audio", String(keepOriginal));
+  const music = formData.get("background_music");
+  if (music instanceof File && !music.name) formData.delete("background_music");
+  const sourceCookies = formData.get("source_cookies");
+  if (sourceCookies instanceof File && !sourceCookies.name) formData.delete("source_cookies");
+  if ($("#mode").value === "3") {
+    // An uploaded file wins over the library pick; send only one of them.
+    if (formData.has("background_music")) formData.delete("background_music_id");
+    else if (!formData.get("background_music_id")) return toast("Chế độ nhạc nền: hãy chọn nhạc trong thư viện hoặc tải file nhạc lên", true);
+  } else {
+    formData.delete("background_music");
+    formData.delete("background_music_id");
+  }
+
+  showConfirmJobModal(formData);
 }
 
 function jobActions(job) {
@@ -3429,6 +3518,12 @@ $("#adminAccountsList").addEventListener("click", event => {
 });
 $("#passwordResetForm").addEventListener("submit", submitPasswordReset);
 $("#passwordResetCancel").addEventListener("click", () => $("#passwordResetDialog").close());
+$("#confirmJobClose")?.addEventListener("click", closeConfirmJobDialog);
+$("#confirmJobCancel")?.addEventListener("click", closeConfirmJobDialog);
+$("#confirmJobProceed")?.addEventListener("click", onConfirmJobProceed);
+$("#confirmJobDialog")?.addEventListener("click", event => {
+  if (event.target === $("#confirmJobDialog")) closeConfirmJobDialog();
+});
 $("#passwordResetGenerate").addEventListener("click", () => {
   $("#passwordResetValue").value = generatePassword();
   setPasswordVisible($("[data-password-toggle=passwordResetValue]"), true);
