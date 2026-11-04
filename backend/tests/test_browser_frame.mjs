@@ -55,3 +55,15 @@ test('detects conflicting framing headers', () => {
   assert.match(frameResponseProblem(response(200, {'x-frame-options':'DENY'})), /chặn nhúng/);
   assert.equal(frameResponseProblem(response(200, {'x-frame-options':'SAMEORIGIN', 'content-security-policy':"frame-ancestors 'self'"})), null);
 });
+test('tabs without their own Nginx route use the shared source browser', () => {
+  for (const platform of ['xiaohongshu', 'qidian']) {
+    for (const raw of [
+      'http://localhost:5201/vnc_lite.html?autoconnect=true&path=websockify',
+      '/source-browser/vnc_lite.html?autoconnect=true&path=source-browser/websockify',
+    ]) {
+      const url = new URL(resolveSourceBrowserFrameUrl(raw, page, platform));
+      assert.equal(url.pathname, '/source-browser/vnc_lite.html', `${platform} ${raw}`);
+      assert.equal(url.searchParams.get('path'), 'source-browser/websockify');
+    }
+  }
+});

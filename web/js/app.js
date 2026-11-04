@@ -1,5 +1,5 @@
 import { createTikTokWorkspace } from "./tiktok.js?v=20261025-youtube-title-vi";
-import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261104-qidian";
+import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261104-shared-source";
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261104-resume";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261104-novel-import";

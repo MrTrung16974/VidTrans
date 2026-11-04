@@ -469,15 +469,21 @@ FACEBOOK_BROWSER_AUTH = SocialBrowserAuthManager(
     "facebook", WORK_DIR / "facebook-browser-auth" / "facebook.cookies.txt"
 )
 # Same shared source-login Chromium as YouTube and Facebook unless configured otherwise.
+# Newer source tabs have no Nginx route of their own (/youtube-browser/, /facebook-browser/);
+# they show the shared Chromium through /source-browser/.
+_SHARED_SOURCE_BROWSER_PUBLIC_URL = (
+    os.environ.get("VIDTRANS_SOURCE_BROWSER_PUBLIC_URL")
+    or "/source-browser/vnc_lite.html?autoconnect=true&resize=scale&reconnect=true&path=source-browser/websockify"
+)
 QIDIAN_BROWSER_AUTH = SocialBrowserAuthManager(
     "qidian", WORK_DIR / "qidian-browser-auth" / "qidian.cookies.txt",
     cdp_url=os.environ.get("VIDTRANS_QIDIAN_BROWSER_CDP_URL") or YOUTUBE_BROWSER_AUTH.cdp_url,
-    public_url=os.environ.get("VIDTRANS_QIDIAN_BROWSER_PUBLIC_URL") or YOUTUBE_BROWSER_AUTH.public_url,
+    public_url=os.environ.get("VIDTRANS_QIDIAN_BROWSER_PUBLIC_URL") or _SHARED_SOURCE_BROWSER_PUBLIC_URL,
 )
 XIAOHONGSHU_BROWSER_AUTH = SocialBrowserAuthManager(
     "xiaohongshu", WORK_DIR / "xiaohongshu-browser-auth" / "xiaohongshu.cookies.txt",
     cdp_url=os.environ.get("VIDTRANS_XIAOHONGSHU_BROWSER_CDP_URL") or YOUTUBE_BROWSER_AUTH.cdp_url,
-    public_url=os.environ.get("VIDTRANS_XIAOHONGSHU_BROWSER_PUBLIC_URL") or YOUTUBE_BROWSER_AUTH.public_url,
+    public_url=os.environ.get("VIDTRANS_XIAOHONGSHU_BROWSER_PUBLIC_URL") or _SHARED_SOURCE_BROWSER_PUBLIC_URL,
 )
 SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     ffmpeg_location=FFMPEG,

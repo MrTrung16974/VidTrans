@@ -21,7 +21,9 @@ function resolveBrowserFrameUrl(raw, pageHref, platform) {
   const loopback = host => ['localhost', '127.0.0.1', '[::1]'].includes(host);
   // Old .env files can retain the development noVNC URL on a deployed VPS.
   if (!loopback(page.hostname) && loopback(target.hostname)) {
-    target = new URL(`/${platform}-browser/vnc_lite.html`, page);
+    // Only these tabs have their own Nginx route; the others share /source-browser/.
+    const ownRoute = ['douyin', 'youtube', 'facebook', 'tiktok'].includes(platform);
+    target = new URL(ownRoute ? `/${platform}-browser/vnc_lite.html` : '/source-browser/vnc_lite.html', page);
   }
   const proxiedPlatform = target.pathname === `/${platform}-browser/vnc_lite.html`;
   const proxiedShared = target.pathname === '/source-browser/vnc_lite.html';
