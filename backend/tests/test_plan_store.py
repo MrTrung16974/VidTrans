@@ -62,6 +62,17 @@ class PlanStoreTests(unittest.TestCase):
         reopened = PlanStore(self.path, cache_seconds=0)  # re-seeding must not reset the change
         self.assertIn("social_publishing", reopened.features_for("free"))
 
+    def test_monthly_minutes_change_survives_a_restart(self) -> None:
+        self.assertEqual(self.store.set_monthly_minutes("free", 45)["monthly_minutes"], 45)
+        reopened = PlanStore(self.path, cache_seconds=0)  # re-seeding must not reset the change
+        self.assertEqual(reopened.plan("free")["monthly_minutes"], 45)
+        self.assertIsNone(reopened.set_monthly_minutes("pro", None)["monthly_minutes"])
+        from infrastructure.plan_store import PlanStoreError
+        with self.assertRaises(PlanStoreError):
+            reopened.set_monthly_minutes("gold", 10)
+        with self.assertRaises(PlanStoreError):
+            reopened.set_monthly_minutes("free", -5)
+
     def test_feature_labels_follow_the_code_after_a_restart(self) -> None:
         import sqlite3
         with sqlite3.connect(self.path) as db:

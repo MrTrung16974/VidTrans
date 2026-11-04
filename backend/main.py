@@ -5661,6 +5661,11 @@ class EntitlementUpdate(BaseModel):
     enabled: bool
 
 
+class PlanQuotaUpdate(BaseModel):
+    # Minutes of video per month; null = unlimited.
+    monthly_minutes: int | None = Field(default=None, ge=0, le=1_000_000)
+
+
 class MenuUpdate(BaseModel):
     label: str = Field(max_length=60)
     short_label: str = Field(default="", max_length=24)
@@ -5707,6 +5712,27 @@ def update_plan_entitlement(request: Request, plan_key: str, feature_key: str, b
         {"plan_key": plan_key, "feature_key": feature_key, "enabled": body.enabled},
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.put("/api/v1/admin/plans/{plan_key}")
+def update_plan_quota(request: Request, plan_key: str, body: PlanQuotaUpdate) -> JSONResponse:
+    """Change how many minutes of video a plan may process each month (null = unlimited)."""
+    actor = require_roles(request, "owner", "admin")
+    previous = PLAN_STORE.plan(plan_key)
+    try:
+        plan = PLAN_STORE.set_monthly_minutes(plan_key, body.monthly_minutes)
+    except PlanStoreError as exc:
+        status_code = 404 if previous is None else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    TENANT_GOVERNANCE.audit(
+        actor_user_id=actor["user_id"],
+        action="plan.quota_update",
+        resource_type="plan",
+        resource_id=plan_key,
+        metadata={"monthly_minutes": body.monthly_minutes,
+                  "previous_monthly_minutes": (previous or {}).get("monthly_minutes")},
+    )
+    return JSONResponse(plan, headers={"Cache-Control": "no-store"})
 
 
 @app.put("/api/v1/admin/menus/{platform}/{menu_key}")

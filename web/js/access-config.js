@@ -36,6 +36,57 @@ export function createAccessConfig({ requestJson, toast, escapeHtml, onMenusChan
     </table>`;
   }
 
+  const formatVnd = value => value == null ? "Báo giá riêng" : `${Number(value).toLocaleString("vi-VN")} đ`;
+
+  function renderPlans() {
+    const root = document.querySelector("#accessPlans");
+    if (!root) return;
+    const rows = config.plans.map(plan => {
+      const unlimited = plan.monthly_minutes == null;
+      return `<tr data-plan-row="${escapeHtml(plan.key)}">
+        <th scope="row"><strong>${escapeHtml(plan.name)}</strong><small>${escapeHtml(plan.key)}</small></th>
+        <td data-label="Giá">${escapeHtml(formatVnd(plan.price_vnd))}</td>
+        <td data-label="Phút mỗi tháng"><input name="monthly_minutes" type="number" min="0" max="1000000" step="1"
+          value="${unlimited ? "" : escapeHtml(String(plan.monthly_minutes))}" ${unlimited ? "disabled" : ""}
+          aria-label="Số phút mỗi tháng của gói ${escapeHtml(plan.name)}" /></td>
+        <td data-label="Không giới hạn"><label class="access-check"><input name="unlimited" type="checkbox" ${unlimited ? "checked" : ""} /><span class="sr-only">Không giới hạn</span></label></td>
+        <td data-label=""><button class="button primary small-btn" type="button" data-save-plan="${escapeHtml(plan.key)}">Lưu</button></td>
+      </tr>`;
+    }).join("");
+    root.innerHTML = `<table class="access-table">
+      <thead><tr><th scope="col">Gói</th><th scope="col">Giá</th><th scope="col">Phút mỗi tháng</th><th scope="col">Không giới hạn</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  async function savePlan(button) {
+    const planKey = button.dataset.savePlan;
+    const row = document.querySelector(`[data-plan-row="${CSS.escape(planKey)}"]`);
+    if (!row) return;
+    const unlimited = row.querySelector('[name="unlimited"]').checked;
+    const raw = row.querySelector('[name="monthly_minutes"]').value.trim();
+    const minutes = unlimited || raw === "" ? null : Number(raw);
+    if (minutes !== null && (!Number.isInteger(minutes) || minutes < 0 || minutes > 1000000)) {
+      toast("Số phút mỗi tháng phải là số nguyên từ 0 đến 1.000.000", true);
+      return;
+    }
+    button.disabled = true;
+    try {
+      const saved = await requestJson(`/api/v1/admin/plans/${encodeURIComponent(planKey)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ monthly_minutes: minutes }),
+      });
+      config.plans = config.plans.map(plan => plan.key === planKey ? { ...plan, ...saved, features: plan.features } : plan);
+      renderPlans();
+      toast(`Gói ${saved.name || planKey}: ${saved.monthly_minutes == null ? "không giới hạn" : `${saved.monthly_minutes.toLocaleString("vi-VN")} phút/tháng`}`);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function featureOptions(selected) {
     const options = [`<option value="">Không yêu cầu</option>`].concat(config.features.map(feature =>
       `<option value="${escapeHtml(feature.key)}" ${feature.key === selected ? "selected" : ""}>${escapeHtml(feature.name)}</option>`));
@@ -106,6 +157,7 @@ export function createAccessConfig({ requestJson, toast, escapeHtml, onMenusChan
     const root = document.querySelector("#accessMatrix");
     try {
       config = await requestJson("/api/v1/admin/access-config");
+      renderPlans();
       renderMatrix();
       renderMenus();
     } catch (error) {
@@ -171,11 +223,22 @@ export function createAccessConfig({ requestJson, toast, escapeHtml, onMenusChan
   document.addEventListener("change", event => {
     const input = event.target.closest?.("[data-entitlement]");
     if (input && config) saveEntitlement(input);
+    const unlimited = event.target.closest?.('[data-plan-row] [name="unlimited"]');
+    if (unlimited) {
+      const minutes = unlimited.closest("[data-plan-row]").querySelector('[name="monthly_minutes"]');
+      minutes.disabled = unlimited.checked;
+      if (!unlimited.checked && !minutes.value) minutes.focus();
+    }
   });
   document.addEventListener("click", event => {
     const save = event.target.closest?.("[data-save-menu]");
     if (save && config) {
       saveMenu(save);
+      return;
+    }
+    const savePlanButton = event.target.closest?.("[data-save-plan]");
+    if (savePlanButton && config) {
+      savePlan(savePlanButton);
       return;
     }
     const tab = event.target.closest?.("[data-access-platform]");

@@ -31,6 +31,7 @@ from infrastructure.database import DatabaseTarget, connect, prepare_target
 # Several API workers and the job worker each hold a cache; a change made in
 # the database reaches all of them within this many seconds.
 CACHE_SECONDS = 30.0
+MAX_MONTHLY_MINUTES = 1_000_000
 
 
 class PlanStoreError(ValueError):
@@ -208,6 +209,20 @@ class PlanStore:
             }
             for row in rows
         ]
+
+    def set_monthly_minutes(self, plan_key: str, minutes: int | None) -> dict[str, Any]:
+        """Change a plan's monthly video minutes (None = unlimited); returns the updated plan."""
+        if plan_key not in self.plan_keys():
+            raise PlanStoreError("Gói dịch vụ không hợp lệ")
+        if minutes is not None and not 0 <= int(minutes) <= MAX_MONTHLY_MINUTES:
+            raise PlanStoreError(f"Số phút mỗi tháng phải từ 0 đến {MAX_MONTHLY_MINUTES:,}".replace(",", "."))
+        with self._db() as db:
+            db.execute(
+                "UPDATE plans SET monthly_minutes=?, updated_at=? WHERE plan_key=?",
+                (None if minutes is None else int(minutes), utc_now(), plan_key),
+            )
+        self.invalidate()
+        return self.plan(plan_key) or {}
 
     def set_entitlement(self, plan_key: str, feature_key: str, enabled: bool) -> None:
         if plan_key not in self.plan_keys():

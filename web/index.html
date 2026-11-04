@@ -2196,6 +2196,13 @@
           <div id="adminSubtabAccess" class="admin-subtab-pane is-hidden">
             <section class="card access-panel">
               <div class="admin-list-title">
+                <strong>Thời gian sử dụng theo gói</strong>
+                <small>Số phút video mỗi người dùng của gói được xử lý trong một tháng. Để trống hoặc tick “Không giới hạn” để bỏ giới hạn. Áp dụng ngay cho lượt tạo video tiếp theo; phút đã dùng trong tháng không bị trả lại.</small>
+              </div>
+              <div id="accessPlans" class="access-scroll"></div>
+            </section>
+            <section class="card access-panel">
+              <div class="admin-list-title">
                 <strong>Quyền theo gói dịch vụ</strong>
                 <small>Tick để cấp quyền, bỏ tick để thu hồi. Lưu ngay vào cơ sở dữ liệu, áp dụng cho mọi người dùng của gói trong vòng 30 giây. Chủ sở hữu và quản trị viên luôn có đủ quyền.</small>
               </div>
@@ -2861,6 +2868,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261104-platform-access"></script>
+    <script type="module" src="/js/app.js?v=20261104-plan-minutes"></script>
   </body>
 </html>

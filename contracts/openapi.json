@@ -3164,6 +3164,25 @@
         "title": "NovelImportRequest",
         "type": "object"
       },
+      "PlanQuotaUpdate": {
+        "properties": {
+          "monthly_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Minutes"
+          }
+        },
+        "title": "PlanQuotaUpdate",
+        "type": "object"
+      },
       "RegisteredDevice": {
         "additionalProperties": true,
         "properties": {
@@ -5040,6 +5059,64 @@
           }
         ],
         "summary": "Update Plan Entitlement"
+      }
+    },
+    "/api/v1/admin/plans/{plan_key}": {
+      "put": {
+        "description": "Change how many minutes of video a plan may process each month (null = unlimited).",
+        "operationId": "update_plan_quota_api_v1_admin_plans__plan_key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_key",
+            "required": true,
+            "schema": {
+              "title": "Plan Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanQuotaUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update Plan Quota"
       }
     },
     "/api/v1/admin/system-metrics": {

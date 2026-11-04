@@ -81,6 +81,31 @@ class AccessConfigApiTests(unittest.TestCase):
         bad = self.client.put("/api/v1/admin/plan-entitlements/gold/comic_video", json={"enabled": True})
         self.assertEqual(bad.status_code, 422)
 
+    def test_admin_changes_a_plans_monthly_minutes_and_the_quota_follows(self) -> None:
+        self.user = user("editor", "free")
+        self.assertEqual(self.client.put("/api/v1/admin/plans/free", json={"monthly_minutes": 60}).status_code, 403)
+        self.assertEqual(main.account_plan_limit(self.user), 30)
+
+        self.user = user("admin")
+        changed = self.client.put("/api/v1/admin/plans/free", json={"monthly_minutes": 60})
+        self.assertEqual(changed.status_code, 200, changed.text)
+        self.assertEqual(changed.json()["monthly_minutes"], 60)
+        self.assertEqual(main.account_plan_limit(user("editor", "free")), 60)
+        self.assertEqual(self.audit.call_args.kwargs["action"], "plan.quota_update")
+        self.assertEqual(self.audit.call_args.kwargs["metadata"]["previous_monthly_minutes"], 30)
+
+        unlimited = self.client.put("/api/v1/admin/plans/free", json={"monthly_minutes": None})
+        self.assertIsNone(unlimited.json()["monthly_minutes"])
+        self.assertIsNone(main.account_plan_limit(user("editor", "free")))
+        config = self.client.get("/api/v1/admin/access-config").json()
+        self.assertIsNone(next(plan for plan in config["plans"] if plan["key"] == "free")["monthly_minutes"])
+
+    def test_invalid_plan_minutes_are_rejected(self) -> None:
+        self.user = user("admin")
+        self.assertEqual(self.client.put("/api/v1/admin/plans/gold", json={"monthly_minutes": 10}).status_code, 404)
+        self.assertEqual(self.client.put("/api/v1/admin/plans/free", json={"monthly_minutes": -1}).status_code, 422)
+        self.assertEqual(self.client.put("/api/v1/admin/plans/free", json={"monthly_minutes": 10**7}).status_code, 422)
+
     def test_admin_renames_reorders_and_hides_menus(self) -> None:
         self.user = user("admin")
         renamed = self.client.put("/api/v1/admin/menus/mobile/jobs", json={

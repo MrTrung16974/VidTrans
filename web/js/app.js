@@ -4,7 +4,7 @@ import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261104-plan-hide";
 import { createBrandingWorkspace } from "./branding.js?v=20261031-apply-logo";
-import { createAccessConfig } from "./access-config.js?v=20261102-access";
+import { createAccessConfig } from "./access-config.js?v=20261104-plan-minutes";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
