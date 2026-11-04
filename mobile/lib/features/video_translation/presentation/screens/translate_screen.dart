@@ -2324,11 +2324,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                   ),
                   const SizedBox(width: 8),
                   // Mirrors web `.button.primary.mobile-quick-cta` (styles.css).
-                  // Uses DecoratedBox so the vibrant orange gradient paints on top of the
-                  // frosted bar instead of being lost behind ancestor Material.
-                  DecoratedBox(
+                  // Uses a dedicated gradient container with vibrant orange gradient
+                  // so the CTA stands out crisp and bold on top of the floating bar.
+                  Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFFEA580C),
                       gradient: const LinearGradient(
                         // linear-gradient(135deg, #f97316 0%, #ea580c 100%)
                         colors: [Color(0xFFF97316), Color(0xFFEA580C)],
@@ -2353,7 +2352,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                       color: Colors.transparent,
                       child: InkWell(
                         onTap: _submit,
-                        customBorder: const StadiumBorder(),
+                        borderRadius: BorderRadius.circular(999),
                         splashColor: const Color(0x33FFFFFF),
                         highlightColor: const Color(0x1AFFFFFF),
                         child: ConstrainedBox(
