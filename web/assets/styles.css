@@ -7939,3 +7939,19 @@ body.modal-open {
 .browser-power-bar[data-state="down"] .browser-power-dot { background: var(--red); }
 .browser-power-text { flex: 1 1 200px; min-width: 0; }
 .browser-power-toggle { margin-left: auto; }
+
+/* Novel chapter import inside the comic story forms. */
+.novel-import {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.novel-import > summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+.novel-import-body { display: grid; gap: 10px; margin-top: 10px; }
+.novel-import-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.novel-import-row input[type="url"] { flex: 1 1 260px; min-width: 0; }
+.novel-import-row input[type="number"] { width: 90px; }
+.novel-import-book { margin: 0; color: var(--ink); }
+.novel-import-episodes { margin: 4px 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; }

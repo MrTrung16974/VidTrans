@@ -37,6 +37,14 @@ PLATFORM_CONFIG = {
         # web_session is set only after a login; guests get a1/webId alone.
         "required_cookie_groups": (("web_session",),),
     },
+    "qidian": {
+        "label": "Qidian",
+        "start_url": "https://www.qidian.com/",
+        "domains": ("qidian.com", "yuewen.com"),
+        # Yuewen account cookies, absent for guests (guest cookies seen 2026-11-04:
+        # _csrfToken, newstatisticUUID, fu, w_tsfp …). To confirm on the first real login.
+        "required_cookie_groups": (("ywguid",), ("ywkey",)),
+    },
 }
 
 

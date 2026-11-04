@@ -41,6 +41,9 @@ from application.api_models import (
 )
 from application.idempotency import IdempotentRequest, idempotency_guard
 from application.comic_routes import ComicRouteDependencies, create_comic_router, requeue_comic_job
+from application.novel_import_routes import create_novel_import_router
+from infrastructure.novel_sources import CdpPageRunner, NovelImportService, QidianSource
+from domain.comic import MAX_STORY_CHARS
 from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
 from application.branding_routes import BrandingRouteDependencies, create_branding_router
 from application.branding_service import BRANDING_JOB_ACTION, STAGES as BRANDING_STAGES, BrandingJobRunner
@@ -466,6 +469,11 @@ FACEBOOK_BROWSER_AUTH = SocialBrowserAuthManager(
     "facebook", WORK_DIR / "facebook-browser-auth" / "facebook.cookies.txt"
 )
 # Same shared source-login Chromium as YouTube and Facebook unless configured otherwise.
+QIDIAN_BROWSER_AUTH = SocialBrowserAuthManager(
+    "qidian", WORK_DIR / "qidian-browser-auth" / "qidian.cookies.txt",
+    cdp_url=os.environ.get("VIDTRANS_QIDIAN_BROWSER_CDP_URL") or YOUTUBE_BROWSER_AUTH.cdp_url,
+    public_url=os.environ.get("VIDTRANS_QIDIAN_BROWSER_PUBLIC_URL") or YOUTUBE_BROWSER_AUTH.public_url,
+)
 XIAOHONGSHU_BROWSER_AUTH = SocialBrowserAuthManager(
     "xiaohongshu", WORK_DIR / "xiaohongshu-browser-auth" / "xiaohongshu.cookies.txt",
     cdp_url=os.environ.get("VIDTRANS_XIAOHONGSHU_BROWSER_CDP_URL") or YOUTUBE_BROWSER_AUTH.cdp_url,
@@ -6575,6 +6583,7 @@ SOURCE_BROWSER_MANAGERS = {
     "youtube": YOUTUBE_BROWSER_AUTH,
     "facebook": FACEBOOK_BROWSER_AUTH,
     "xiaohongshu": XIAOHONGSHU_BROWSER_AUTH,
+    "qidian": QIDIAN_BROWSER_AUTH,
 }
 
 
@@ -8121,6 +8130,15 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     has_logo=lambda user_id: BRANDING_STORE.logo_path(user_id) is not None,
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS), dependencies=require_paid_feature("comic_video"))
+# Chapters are read in the shared source-login Chromium (Qidian answers plain HTTP with
+# an anti-bot shell). Episodes stay under the story limit with room for normalisation.
+NOVEL_IMPORTS = NovelImportService(
+    [QidianSource(CdpPageRunner(os.environ.get("VIDTRANS_NOVEL_BROWSER_CDP_URL") or YOUTUBE_BROWSER_AUTH.cdp_url))],
+    WORK_DIR / "novel-cache",
+    episode_chars=MAX_STORY_CHARS - 1000,
+)
+app.include_router(create_novel_import_router(NOVEL_IMPORTS, require_roles),
+                   dependencies=require_paid_feature("comic_video"))
 DEVICE_ROUTE_DEPS = DeviceRouteDependencies(
     store=DEVICE_STORE,
     current_account=lambda request: current_account(request),

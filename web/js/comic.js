@@ -1,6 +1,7 @@
 // Story -> comic / animated video workspace: a story (series) holds many episode videos that share its
 // settings and character bible; each episode is a project whose storyboard can be edited and re-rendered.
 import { renderAnimatedScenes, renderReferenceGallery, shotPatchFromForm } from "./animation-editor.js?v=20261023-smooth";
+import { createNovelImporter } from "./novel-import.js?v=20261104-1";
 
 const ACTIVE = new Set(["queued", "scheduled", "processing", "cancelling"]);
 const STEP_LABELS = {
@@ -60,6 +61,52 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     return `${path}${sep}scene_page=${scenePage}&scene_limit=${scenePageSize}`;
   };
   const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+
+  // Chapters imported from a novel link: the first episode fills the form, the rest are
+  // added to the story as further episodes once it exists.
+  let pendingStoryEpisodes = [];
+  let pendingSeriesEpisodes = [];
+  const storyImporter = createNovelImporter({
+    container: $('[data-novel-import="story"]'), requestJson, toast, escapeHtml,
+    onEpisodes(episodes, book) {
+      form.elements.text.value = episodes[0].text;
+      form.elements.text.dispatchEvent(new Event("input"));
+      form.elements.file.value = "";
+      if (!form.elements.title.value.trim() || form.elements.title.value === "Truyện mới") form.elements.title.value = book.title.slice(0, 200);
+      form.elements.episode_title.value = episodes[0].title;
+      pendingStoryEpisodes = episodes.slice(1);
+    },
+  });
+  const episodeImporter = createNovelImporter({
+    container: $('[data-novel-import="episode"]'), requestJson, toast, escapeHtml,
+    onEpisodes(episodes) {
+      episodeForm.elements.text.value = episodes[0].text;
+      episodeForm.elements.text.dispatchEvent(new Event("input"));
+      episodeForm.elements.file.value = "";
+      episodeForm.elements.title.value = episodes[0].title;
+      pendingSeriesEpisodes = episodes.slice(1);
+    },
+  });
+
+  // Queue the remaining imported episodes in order; the series' own settings apply.
+  async function queueImportedEpisodes(seriesId, episodes, autoRender) {
+    let queued = 0;
+    for (const episode of episodes) {
+      const data = new FormData();
+      data.set("series_id", seriesId);
+      data.set("title", episode.title);
+      data.set("text", episode.text);
+      data.set("auto_render", autoRender ? "true" : "false");
+      try {
+        await api("/projects", { method: "POST", body: data });
+        queued += 1;
+      } catch (error) {
+        toast(`Không thêm được tập "${episode.title}": ${error.message}`, true);
+        break;
+      }
+    }
+    if (queued) toast(`Đã thêm ${queued} tập từ các chương đã tải`);
+  }
   const isActive = job => ACTIVE.has(job?.status);
   const statusClass = job => isActive(job) ? "processing" : job?.status === "completed" ? "completed" : job?.status === "failed" ? "failed" : "queued";
 
@@ -955,6 +1002,10 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     try {
       const created = await api("/series", { method: "POST", body: data });
       toast(created.job_id ? "Đã tạo truyện và tập 1, hệ thống đang chia cảnh…" : "Đã tạo truyện — hãy thêm tập 1");
+      const imported = pendingStoryEpisodes;
+      pendingStoryEpisodes = [];
+      storyImporter.reset();
+      if (imported.length) await queueImportedEpisodes(created.series_id, imported, form.elements.auto_render.checked);
       form.elements.text.value = "";
       form.elements.file.value = "";
       form.elements.episode_title.value = "";
@@ -1042,6 +1093,10 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     try {
       const created = await api("/projects", { method: "POST", body: data });
       toast(`Đã tạo tập ${created.episode_number}, hệ thống đang chia cảnh…`);
+      const imported = pendingSeriesEpisodes;
+      pendingSeriesEpisodes = [];
+      episodeImporter.reset();
+      if (imported.length) await queueImportedEpisodes(currentSeries.series_id, imported, episodeForm.elements.auto_render.checked);
       episodeForm.reset();
       $("#comicEpisodeCount").textContent = "0 ký tự";
       $("#comicEpisodeReview").classList.add("is-hidden");

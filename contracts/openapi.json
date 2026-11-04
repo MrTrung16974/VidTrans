@@ -3134,6 +3134,36 @@
         "title": "MenuUpdate",
         "type": "object"
       },
+      "NovelImportRequest": {
+        "properties": {
+          "chapter_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Chapter Ids",
+            "type": "array"
+          },
+          "rights_confirmed": {
+            "title": "Rights Confirmed",
+            "type": "boolean"
+          },
+          "url": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "chapter_ids",
+          "rights_confirmed"
+        ],
+        "title": "NovelImportRequest",
+        "type": "object"
+      },
       "RegisteredDevice": {
         "additionalProperties": true,
         "properties": {
@@ -8864,6 +8894,276 @@
         "summary": "Series Media",
         "tags": [
           "Comic Video"
+        ]
+      }
+    },
+    "/api/v1/comic/sources": {
+      "get": {
+        "operationId": "list_sources_api_v1_comic_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Sources Api V1 Comic Sources Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Sources",
+        "tags": [
+          "Comic novel import"
+        ]
+      }
+    },
+    "/api/v1/comic/sources/catalog": {
+      "get": {
+        "description": "Book title, author and chapters, with each chapter's access and cache state.",
+        "operationId": "get_catalog_api_v1_comic_sources_catalog_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "url",
+            "required": true,
+            "schema": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Url",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Refresh",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Catalog Api V1 Comic Sources Catalog Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Catalog",
+        "tags": [
+          "Comic novel import"
+        ]
+      }
+    },
+    "/api/v1/comic/sources/imports": {
+      "post": {
+        "operationId": "start_import_api_v1_comic_sources_imports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NovelImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Import Api V1 Comic Sources Imports Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Start Import",
+        "tags": [
+          "Comic novel import"
+        ]
+      }
+    },
+    "/api/v1/comic/sources/imports/{import_id}": {
+      "delete": {
+        "operationId": "cancel_import_api_v1_comic_sources_imports__import_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "title": "Import Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Import Api V1 Comic Sources Imports  Import Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Cancel Import",
+        "tags": [
+          "Comic novel import"
+        ]
+      },
+      "get": {
+        "description": "Progress per chapter; ``include_text`` adds each episode's text once it is done.",
+        "operationId": "get_import_api_v1_comic_sources_imports__import_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "title": "Import Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_text",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Text",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Import Api V1 Comic Sources Imports  Import Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Import",
+        "tags": [
+          "Comic novel import"
         ]
       }
     },

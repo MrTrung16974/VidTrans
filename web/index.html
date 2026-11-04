@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261104-source-always-on" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261104-novel-import" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261103-glass-dock" />
   </head>
   <body>
@@ -763,6 +763,7 @@
                 <input type="hidden" name="genre" value="" />
                 <small class="field-hint">Chọn thể loại để AI tự điền thế giới và phong cách vẽ phù hợp.</small>
               </div>
+              <div data-novel-import="story"></div>
               <label class="field">
                 <span class="field-label-group"><span>Nội dung tập 1 (có thể để trống, thêm sau)</span><small id="comicStoryCount" class="field-hint">0 ký tự</small></span>
                 <textarea name="text" rows="9" placeholder="Đêm hôm đó, Minh bước vào khu rừng…"></textarea>
@@ -865,6 +866,7 @@
                 <label class="field"><span>Tên tập</span><input name="title" maxlength="200" placeholder="Để trống: Tập N" /></label>
                 <label class="field"><span>Tiêu đề video YouTube</span><input name="youtube_title" maxlength="100" placeholder="Để trống để AI đề xuất" /></label>
               </div>
+              <div data-novel-import="episode"></div>
               <label class="field">
                 <span class="field-label-group"><span>Nội dung tập</span><small id="comicEpisodeCount" class="field-hint">0 ký tự</small></span>
                 <textarea name="text" rows="8" placeholder="Ba ngày sau, Minh trở lại khu rừng…"></textarea>
@@ -1630,7 +1632,7 @@
                 <span>INTERACTIVE CLOUD BROWSER · PHIÊN CHROMIUM TRỰC TIẾP</span>
               </div>
               <h1>Đăng nhập nguồn trong trình duyệt riêng</h1>
-              <p>Đăng nhập Douyin, YouTube, Facebook hoặc Xiaohongshu trực tiếp trong một Chromium dùng chung; cookie được lọc riêng cho từng bộ tải video.</p>
+              <p>Đăng nhập Douyin, YouTube, Facebook, Xiaohongshu hoặc Qidian trực tiếp trong một Chromium dùng chung; cookie được lọc riêng cho từng bộ tải video.</p>
             </div>
             <div class="douyin-header-actions">
               <a class="button secondary back-to-create-btn" href="#create">
@@ -1645,6 +1647,7 @@
             <button class="source-browser-tab" type="button" role="tab" aria-selected="false" data-source-browser-tab="youtube">YouTube</button>
             <button class="source-browser-tab" type="button" role="tab" aria-selected="false" data-source-browser-tab="facebook">Facebook</button>
             <button class="source-browser-tab" type="button" role="tab" aria-selected="false" data-source-browser-tab="xiaohongshu">Xiaohongshu</button>
+            <button class="source-browser-tab" type="button" role="tab" aria-selected="false" data-source-browser-tab="qidian">Qidian</button>
           </div>
 
           <section class="card douyin-browser-card" data-source-browser-panel="douyin">
@@ -1743,6 +1746,19 @@
             </div>
             <div class="douyin-window-mock"><div class="douyin-window-bar"><div class="traffic-lights"><span class="light red"></span><span class="light yellow"></span><span class="light green"></span></div><div class="browser-address-bar"><span class="lock-icon">🔒</span><span class="address-text">https://www.xiaohongshu.com</span></div><div class="browser-status-chip"><span class="chip-dot">●</span><span>Isolated Sandbox</span></div></div><div class="douyin-browser-stage"><div id="xiaohongshuBrowserLoading" class="douyin-browser-loading"><span class="browser-spinner"></span><strong>Đang mở trình duyệt Xiaohongshu…</strong><small>Đang kết nối luồng VNC thời gian thực</small></div><iframe id="xiaohongshuBrowserFrame" title="Trình duyệt đăng nhập Xiaohongshu trực tiếp" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe></div></div>
             <div class="douyin-browser-footer"><span class="footer-tip-icon" aria-hidden="true">💡</span><p>Đăng nhập Xiaohongshu (quét QR bằng app hoặc số điện thoại), hoàn tất xác minh nếu có rồi bấm <strong>Đã đăng nhập — Đồng bộ</strong>. Nên dùng tài khoản phụ dành cho tải nguồn.</p></div>
+          </section>
+
+          <section class="card douyin-browser-card is-hidden" data-source-browser-panel="qidian">
+            <div class="douyin-browser-topbar">
+              <div class="douyin-browser-state"><span id="qidianBrowserIndicator" class="browser-state-dot"></span><div><strong id="qidianBrowserStatus">Đang kết nối Chromium…</strong><small id="qidianBrowserHelp">Phiên nằm trong Chromium dùng chung và được giữ lại khi container restart.</small></div></div>
+              <div class="douyin-browser-actions">
+                <button id="qidianBrowserSync" class="button primary sync-btn" type="button"><span class="btn-icon">⟳</span><span>Đã đăng nhập — Đồng bộ</span></button>
+                <button id="qidianBrowserReload" class="button secondary reload-btn" type="button"><span>↻</span><span>Tải lại</span></button>
+                <button id="qidianBrowserLogout" class="button secondary logout-btn" type="button"><span>✕</span><span>Đăng xuất</span></button>
+              </div>
+            </div>
+            <div class="douyin-window-mock"><div class="douyin-window-bar"><div class="traffic-lights"><span class="light red"></span><span class="light yellow"></span><span class="light green"></span></div><div class="browser-address-bar"><span class="lock-icon">🔒</span><span class="address-text">https://www.qidian.com</span></div><div class="browser-status-chip"><span class="chip-dot">●</span><span>Isolated Sandbox</span></div></div><div class="douyin-browser-stage"><div id="qidianBrowserLoading" class="douyin-browser-loading"><span class="browser-spinner"></span><strong>Đang mở trình duyệt Qidian…</strong><small>Đang kết nối luồng VNC thời gian thực</small></div><iframe id="qidianBrowserFrame" title="Trình duyệt đăng nhập Qidian trực tiếp" allow="clipboard-read; clipboard-write" referrerpolicy="same-origin"></iframe></div></div>
+            <div class="douyin-browser-footer"><span class="footer-tip-icon" aria-hidden="true">💡</span><p>Chỉ cần khi muốn lấy chương VIP tài khoản đã mua: đăng nhập Qidian bằng tài khoản phụ (QR hoặc số điện thoại) rồi bấm <strong>Đã đăng nhập — Đồng bộ</strong>. Nên dùng tài khoản phụ dành cho tải nguồn.</p></div>
           </section>
         </section>
 
@@ -2845,6 +2861,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261104-source-always-on"></script>
+    <script type="module" src="/js/app.js?v=20261104-novel-import"></script>
   </body>
 </html>
