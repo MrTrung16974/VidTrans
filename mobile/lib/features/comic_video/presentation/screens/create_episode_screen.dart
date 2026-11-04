@@ -14,6 +14,7 @@ import '../../domain/story_bible.dart';
 import '../providers/comic_providers.dart';
 import '../widgets/bible_editor.dart';
 import '../widgets/form_fields.dart';
+import '../widgets/novel_import_card.dart';
 
 /// "Thêm tập N": the chapter is compared with the series' bible; only new
 /// characters and places need review.
@@ -55,12 +56,28 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
 
   late final EpisodeForm form = EpisodeForm(seriesId: widget.series.id);
   late final int number = widget.series.nextEpisodeNumber;
+  late final TextEditingController _titleController;
+  late final TextEditingController _textController;
   LocalFile? _file;
   LocalFile? _music;
   BibleDraft? _bible;
   bool _busy = false;
   double? _upload;
   String? _idempotencyKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: form.title);
+    _textController = TextEditingController(text: form.text);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _textController.dispose();
+    super.dispose();
+  }
 
   void _snack(String message) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -162,12 +179,17 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
                               style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
                             ),
                             const SizedBox(height: 14),
-                            ComicTextField(
-                              label: 'Tên tập',
-                              hint: 'Để trống: Tập $number',
-                              initial: form.title,
-                              maxLength: 200,
-                              onChanged: (v) => form.title = v,
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: TextFormField(
+                                controller: _titleController,
+                                maxLength: 200,
+                                decoration: InputDecoration(
+                                  labelText: 'Tên tập',
+                                  hintText: 'Để trống: Tập $number',
+                                ),
+                                onChanged: (v) => form.title = v,
+                              ),
                             ),
                             ComicTextField(
                               label: 'Tiêu đề video YouTube',
@@ -176,12 +198,29 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
                               maxLength: 100,
                               onChanged: (v) => form.youtubeTitle = v,
                             ),
-                            ComicTextField(
-                              label: 'Nội dung tập',
-                              hint: 'Ba ngày sau, Minh trở lại khu rừng…',
-                              initial: form.text,
-                              lines: 12,
-                              onChanged: (v) => form.text = v,
+                            NovelImportCard(
+                              onImported: (bookTitle, episode1Text, episodes) {
+                                setState(() {
+                                  form.text = episode1Text;
+                                  _textController.text = episode1Text;
+                                });
+                                _snack('Đã điền nội dung tập từ Qidian thành công!');
+                              },
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: TextFormField(
+                                controller: _textController,
+                                minLines: 6,
+                                maxLines: 14,
+                                decoration: InputDecoration(
+                                  labelText: 'Nội dung tập',
+                                  hintText: 'Ba ngày sau, Minh trở lại khu rừng…',
+                                  helperText: '${_textController.text.length} ký tự',
+                                  alignLabelWithHint: true,
+                                ),
+                                onChanged: (v) => setState(() => form.text = v),
+                              ),
                             ),
                             ComicFileField(
                               label: 'Hoặc tải file truyện',
@@ -253,26 +292,30 @@ class _CreateEpisodeState extends ConsumerState<_CreateEpisode> {
               border: Border(top: BorderSide(color: AppColors.border)),
             ),
             child: bible == null
-                ? SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: _busy ? null : _submit,
-                      child: Text(_busy ? 'AI đang tìm nhân vật & bối cảnh mới…' : 'Tạo tập $number'),
-                    ),
+                ? StudioGradientButton(
+                    onPressed: _busy ? null : _submit,
+                    icon: Icons.rocket_launch_rounded,
+                    label: _busy ? 'AI đang tìm nhân vật & bối cảnh mới…' : 'Tạo tập $number ngay',
                   )
                 : Row(children: [
                     Expanded(
                       child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
                         onPressed: _busy ? null : () => _create(null),
-                        child: const Text('Bỏ qua'),
+                        child: const Text('Bỏ qua', style: TextStyle(fontWeight: FontWeight.w700)),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       flex: 2,
-                      child: FilledButton(
+                      child: StudioGradientButton(
+                        expanded: true,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         onPressed: _busy ? null : () => _create(bible),
-                        child: Text('Tạo tập $number'),
+                        label: 'Tạo tập $number',
                       ),
                     ),
                   ]),

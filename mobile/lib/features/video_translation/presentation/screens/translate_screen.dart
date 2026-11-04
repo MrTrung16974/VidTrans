@@ -2328,6 +2328,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                   // frosted bar instead of being lost behind ancestor Material.
                   DecoratedBox(
                     decoration: BoxDecoration(
+                      color: const Color(0xFFEA580C),
                       gradient: const LinearGradient(
                         // linear-gradient(135deg, #f97316 0%, #ea580c 100%)
                         colors: [Color(0xFFF97316), Color(0xFFEA580C)],
@@ -2336,15 +2337,15 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                       ),
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: const Color(0x4DFFFFFF),
-                        width: 1,
+                        color: const Color(0x66FFFFFF),
+                        width: 1.2,
                       ),
                       boxShadow: const [
                         BoxShadow(
                           color: Color(0x6BEA580C),
                           blurRadius: 16,
-                          spreadRadius: -3,
-                          offset: Offset(0, 6),
+                          spreadRadius: -2,
+                          offset: Offset(0, 5),
                         ),
                       ],
                     ),

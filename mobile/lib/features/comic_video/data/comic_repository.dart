@@ -243,6 +243,36 @@ class ComicRepository {
 
   Future<void> cancel(String jobId) => _api.post<dynamic>('/api/v1/jobs/$jobId/cancel');
 
+  // ---------------------------------------------------------------- novel chapter import (Qidian)
+  Future<Map<String, dynamic>> novelCatalog(String url, {bool refresh = false}) =>
+      _api.get<Map<String, dynamic>>(
+        '$_base/sources/catalog',
+        query: {'url': url, if (refresh) 'refresh': 'true'},
+      );
+
+  Future<Map<String, dynamic>> startNovelImport(
+    String url,
+    List<String> chapterIds, {
+    bool rightsConfirmed = true,
+  }) =>
+      _api.post<Map<String, dynamic>>(
+        '$_base/sources/imports',
+        data: {
+          'url': url,
+          'chapter_ids': chapterIds,
+          'rights_confirmed': rightsConfirmed,
+        },
+      );
+
+  Future<Map<String, dynamic>> novelImportStatus(String importId, {bool includeText = false}) =>
+      _api.get<Map<String, dynamic>>(
+        '$_base/sources/imports/$importId',
+        query: {if (includeText) 'include_text': 'true'},
+      );
+
+  Future<void> cancelNovelImport(String importId) =>
+      _api.post<dynamic>('$_base/sources/imports/$importId/cancel');
+
   // ---------------------------------------------------------------- media
   Uri mediaUri(String path) => _api.resolve(path);
 

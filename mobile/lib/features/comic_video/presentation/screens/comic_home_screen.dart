@@ -38,8 +38,15 @@ class ComicHomeScreen extends ConsumerWidget {
                 padding: EdgeInsets.only(bottom: studioDockClearance(context)),
                 child: FloatingActionButton.extended(
                   onPressed: () => context.push('/comic/new'),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Tạo truyện mới'),
+                  backgroundColor: const Color(0xFFEA580C),
+                  foregroundColor: Colors.white,
+                  elevation: 6,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                  icon: const Icon(Icons.add_rounded, size: 20),
+                  label: const Text(
+                    'Tạo truyện mới',
+                    style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: -0.1),
+                  ),
                 ),
               ),
         body: const TabBarView(children: [_SeriesTab(), _VideosTab()]),

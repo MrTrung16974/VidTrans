@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
@@ -16,6 +17,7 @@ import '../providers/comic_providers.dart';
 import '../widgets/bible_editor.dart';
 import '../widgets/comic_media.dart';
 import '../widgets/form_fields.dart';
+import '../widgets/novel_import_card.dart';
 
 /// "Tạo truyện mới": step 1 the story and settings, step 2 review the
 /// characters and places the AI proposes, then `POST /comic/series`.
@@ -54,6 +56,8 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
   bool get _hasLogoNow => ref.read(brandingSettingsProvider).valueOrNull?.logo != null;
 
   late final StoryForm form = StoryForm.withOptions(widget.options);
+  late final TextEditingController _titleController;
+  late final TextEditingController _textController;
   LocalFile? _file;
   LocalFile? _music;
   BibleDraft? _bible;
@@ -64,6 +68,20 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
   String? _idempotencyKey;
 
   ComicOptions get options => widget.options;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: form.title);
+    _textController = TextEditingController(text: form.text);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _textController.dispose();
+    super.dispose();
+  }
 
   Future<void> _review() async {
     if (form.text.trim().isEmpty && _file == null && form.storyBrief.trim().isEmpty) {
@@ -83,10 +101,226 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
         '${errorMessage(error)}\n\nTạo truyện luôn và để AI tự nhận ra nhân vật khi chia cảnh?',
         action: 'Tạo luôn',
       );
-      if (skip) await _create(null);
+      if (skip) await _createWithConfirmation(null);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _createWithConfirmation(BibleDraft? bible) async {
+    final confirmed = await _showConfirmStorySheet(bible);
+    if (confirmed != true || !mounted) return;
+    await _create(bible);
+  }
+
+  Future<bool?> _showConfirmStorySheet(BibleDraft? bible) {
+    final genreLabel = options.genres
+        .where((g) => g.key == form.genre)
+        .firstOrNull
+        ?.label ?? (form.genre.isEmpty ? 'Mặc định' : form.genre);
+    final modeLabel = form.videoMode == 'animated' ? 'Hoạt hình AI' : 'Truyện tranh';
+    final storyName = form.title.trim().isNotEmpty ? form.title.trim() : 'Truyện mới';
+
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: AppColors.brandBorder),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x2E0F172A),
+                blurRadius: 34,
+                offset: Offset(0, 14),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 38,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE2E8F0),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFEDD5),
+                          borderRadius: BorderRadius.circular(11),
+                          border: Border.all(color: const Color(0xFFFDBA74)),
+                        ),
+                        alignment: Alignment.center,
+                        child: const Icon(
+                          Icons.auto_stories_rounded,
+                          color: Color(0xFFEA580C),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Xác nhận tạo truyện mới',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.ink,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            Text(
+                              'Kiểm tra lại cấu hình trước khi khởi tạo dự án',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: AppColors.muted,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: _SummaryItem(label: 'Tên truyện', value: storyName)),
+                            Container(width: 1, height: 26, color: AppColors.line),
+                            const SizedBox(width: 10),
+                            Expanded(child: _SummaryItem(label: 'Thể loại', value: genreLabel)),
+                          ],
+                        ),
+                        const Divider(height: 16, thickness: 0.5, color: Color(0xFFE2E8F0)),
+                        Row(
+                          children: [
+                            Expanded(child: _SummaryItem(label: 'Kiểu video', value: modeLabel)),
+                            Container(width: 1, height: 26, color: AppColors.line),
+                            const SizedBox(width: 10),
+                            Expanded(child: _SummaryItem(label: 'Khung hình', value: form.aspectRatio)),
+                          ],
+                        ),
+                        if (bible != null) ...[
+                          const Divider(height: 16, thickness: 0.5, color: Color(0xFFE2E8F0)),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _SummaryItem(
+                                  label: 'Nhân vật',
+                                  value: '${bible.characters.length} nhân vật',
+                                ),
+                              ),
+                              Container(width: 1, height: 26, color: AppColors.line),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _SummaryItem(
+                                  label: 'Bối cảnh',
+                                  value: '${bible.locations.length} bối cảnh',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFBBF7D0)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.shield_outlined, size: 16, color: Color(0xFF16A34A)),
+                        SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            'Bạn có thể chỉnh sửa kịch bản, đổi ảnh minh họa và lồng tiếng từng cảnh trước khi xuất video.',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF15803D),
+                              fontWeight: FontWeight.w600,
+                              height: 1.3,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            side: const BorderSide(color: AppColors.line),
+                          ),
+                          onPressed: () => Navigator.pop(sheetContext, false),
+                          child: const Text(
+                            'Kiểm tra lại',
+                            style: TextStyle(
+                              color: AppColors.inkSoft,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: StudioGradientButton(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          onPressed: () => Navigator.pop(sheetContext, true),
+                          icon: Icons.rocket_launch_rounded,
+                          label: 'Bắt đầu ngay',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _create(BibleDraft? bible) async {
@@ -157,32 +391,44 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
                 ? Row(children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: _busy ? null : () => _create(null),
-                        child: const Text('Tạo luôn'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: _busy ? null : () => _createWithConfirmation(null),
+                        child: const Text('Tạo luôn', style: TextStyle(fontWeight: FontWeight.w700)),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       flex: 2,
-                      child: FilledButton(
+                      child: StudioGradientButton(
+                        expanded: true,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         onPressed: _busy ? null : _review,
-                        child: Text(_busy ? 'AI đang đọc truyện…' : 'AI đề xuất nhân vật'),
+                        label: _busy ? 'AI đang đọc truyện…' : 'AI đề xuất nhân vật →',
                       ),
                     ),
                   ])
                 : Row(children: [
                     Expanded(
                       child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
                         onPressed: _busy ? null : () => setState(() => _bible = null),
-                        child: const Text('Quay lại'),
+                        child: const Text('Quay lại', style: TextStyle(fontWeight: FontWeight.w700)),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       flex: 2,
-                      child: FilledButton(
-                        onPressed: _busy ? null : () => _create(bible),
-                        child: const Text('Xác nhận & tạo truyện'),
+                      child: StudioGradientButton(
+                        expanded: true,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        onPressed: _busy ? null : () => _createWithConfirmation(bible),
+                        label: 'Xác nhận & tạo truyện',
                       ),
                     ),
                   ]),
@@ -224,49 +470,67 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
             children: [
               const StudioStepHeader(
                 step: 1,
+                darkBadge: false,
                 title: 'Kịch bản & Thể loại',
                 subtitle: 'Nhập tên truyện, nội dung tập 1 và chọn thể loại để AI thiết lập thế giới.',
               ),
               const SizedBox(height: 16),
-              ComicTextField(
-                label: 'Tên truyện',
-                initial: form.title,
-                maxLength: 200,
-                onChanged: (v) => form.title = v,
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: TextFormField(
+                  controller: _titleController,
+                  maxLength: 200,
+                  decoration: const InputDecoration(
+                    labelText: 'Tên truyện',
+                    hintText: 'Ví dụ: Ta Chính Là Thần, Đấu La Đại Lục…',
+                  ),
+                  onChanged: (v) => form.title = v,
+                ),
               ),
               if (options.genres.isNotEmpty) ...[
                 const ComicSection('Thể loại'),
                 Wrap(
                   spacing: 8,
-                  runSpacing: 6,
+                  runSpacing: 8,
                   children: [
                     for (final genre in options.genres)
-                      ChoiceChip(
-                        label: Text(genre.label),
+                      _GenrePill(
+                        label: genre.label,
                         tooltip: genre.worldVi,
                         selected: form.genre == genre.key,
-                        onSelected: (_) => setState(() => form.selectGenre(genre, options)),
+                        onTap: () => setState(() => form.selectGenre(genre, options)),
                       ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
               ],
-              StatefulBuilder(
-                builder: (context, setLocal) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: TextFormField(
-                    initialValue: form.text,
-                    minLines: 5,
-                    maxLines: 12,
-                    decoration: InputDecoration(
-                      labelText: 'Nội dung tập 1 (có thể để trống, thêm sau)',
-                      hintText: 'Đêm hôm đó, Minh bước vào khu rừng…',
-                      helperText: '${form.text.length} ký tự'
-                          '${options.maxStoryChars > 0 ? ' · tối đa ${options.maxStoryChars} ký tự mỗi dự án' : ''}',
-                      alignLabelWithHint: true,
-                    ),
-                    onChanged: (v) => setLocal(() => form.text = v),
+              NovelImportCard(
+                onImported: (bookTitle, episode1Text, episodes) {
+                  setState(() {
+                    if (form.title.isEmpty || form.title == 'Truyện mới') {
+                      form.title = bookTitle;
+                      _titleController.text = bookTitle;
+                    }
+                    form.text = episode1Text;
+                    _textController.text = episode1Text;
+                  });
+                  _snack('Đã điền nội dung truyện từ Qidian thành công!');
+                },
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: TextFormField(
+                  controller: _textController,
+                  minLines: 5,
+                  maxLines: 12,
+                  decoration: InputDecoration(
+                    labelText: 'Nội dung tập 1 (có thể để trống, thêm sau)',
+                    hintText: 'Đêm hôm đó, Minh bước vào khu rừng…',
+                    helperText: '${_textController.text.length} ký tự'
+                        '${options.maxStoryChars > 0 ? ' · tối đa ${options.maxStoryChars} ký tự mỗi dự án' : ''}',
+                    alignLabelWithHint: true,
                   ),
+                  onChanged: (v) => setState(() => form.text = v),
                 ),
               ),
               ComicFileField(
@@ -285,6 +549,7 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
             children: [
               const StudioStepHeader(
                 step: 2,
+                darkBadge: false,
                 title: 'Định dạng & Thông tin tập 1',
                 subtitle: 'Chọn kiểu Truyện tranh hoặc Hoạt hình AI và tỷ lệ khung hình.',
               ),
@@ -354,6 +619,7 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
             children: [
               const StudioStepHeader(
                 step: 3,
+                darkBadge: false,
                 title: 'AI Engine, Hình ảnh & Giọng đọc',
                 subtitle: 'Cấu hình model sinh ảnh, chuyển động, giọng đọc TTS và phụ đề.',
               ),
@@ -544,6 +810,125 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
                 onChanged: _hasLogo ? (v) => setState(() => form.applyLogo = v) : null,
               ),
             ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GenrePill extends StatelessWidget {
+  const _GenrePill({
+    required this.label,
+    required this.tooltip,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final String? tooltip;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip ?? '',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () {
+            HapticFeedback.selectionClick();
+            onTap();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7.5),
+            decoration: BoxDecoration(
+              gradient: selected
+                  ? const LinearGradient(
+                      colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    )
+                  : null,
+              color: selected ? null : Colors.white,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: selected ? const Color(0xFFEA580C) : const Color(0xFFE2E8F0),
+                width: selected ? 1.5 : 1.2,
+              ),
+              boxShadow: selected
+                  ? const [
+                      BoxShadow(
+                        color: Color(0x26EA580C),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ]
+                  : const [
+                      BoxShadow(
+                        color: Color(0x080F172A),
+                        blurRadius: 3,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selected) ...[
+                  const Icon(Icons.check_rounded, size: 14, color: Color(0xFFC2410C)),
+                  const SizedBox(width: 5),
+                ],
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: selected ? const Color(0xFFC2410C) : const Color(0xFF334155),
+                    letterSpacing: -0.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryItem extends StatelessWidget {
+  const _SummaryItem({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w600,
+            color: AppColors.muted,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w800,
+            color: AppColors.ink,
           ),
         ),
       ],
