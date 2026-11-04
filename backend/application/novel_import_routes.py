@@ -64,7 +64,7 @@ def create_novel_import_router(
     def start_import(request: Request, body: NovelImportRequest) -> dict[str, Any]:
         user = account(request)
         if not body.rights_confirmed:
-            raise HTTPException(status_code=422, detail="Hãy xác nhận bạn có quyền sử dụng nội dung truyện này")
+            raise HTTPException(status_code=422, detail="Hãy xác nhận bạn là tác giả hoặc đã được phép chuyển thể truyện này")
         return call(lambda: service.start_import(str(user["user_id"]), body.url, body.chapter_ids))
 
     @router.get("/imports/{import_id}")

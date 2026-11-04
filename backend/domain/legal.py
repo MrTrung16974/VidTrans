@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 
-TERMS_VERSION = "2026-11-02"
+TERMS_VERSION = "2026-11-04"
 
 SUPPORT_EMAIL_DEFAULT = "mr.trung16974@gmail.com"
 SUPPORT_PHONE = "0965 510 400"

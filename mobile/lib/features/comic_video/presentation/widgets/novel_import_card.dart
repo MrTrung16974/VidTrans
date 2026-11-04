@@ -117,7 +117,7 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
 
   Future<void> _startImport() async {
     if (!_rightsConfirmed) {
-      setState(() => _error = 'Hãy tích chọn xác nhận quyền sử dụng truyện');
+      setState(() => _error = 'Hãy xác nhận bạn là tác giả hoặc đã được phép chuyển thể truyện này');
       return;
     }
     final selected = _selectedChapters();
@@ -578,7 +578,9 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                               const SizedBox(width: 8),
                               const Expanded(
                                 child: Text(
-                                  'Tôi có quyền sử dụng & chuyển thể truyện này',
+                                  'Tôi là tác giả, hoặc đã được tác giả/đơn vị giữ bản quyền (ví dụ Yuewen/Qidian, Jinjiang) '
+                                  'cho phép chuyển thể truyện này thành video, và tự chịu trách nhiệm về bản quyền '
+                                  '(Điều khoản mục 4).',
                                   style: TextStyle(fontSize: 11.5, color: Color(0xFF475569), fontWeight: FontWeight.w600),
                                 ),
                               ),

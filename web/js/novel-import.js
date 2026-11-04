@@ -24,7 +24,7 @@ export function createNovelImporter({ container, requestJson, toast, escapeHtml,
             <label class="comic-check"><input type="checkbox" data-novel="skip-locked" checked /> Bỏ qua chương bị khóa (VIP chưa mua)</label>
           </div>
           <p data-novel="range" class="field-hint"></p>
-          <label class="comic-check"><input type="checkbox" data-novel="rights" /> Tôi có quyền sử dụng và chuyển thể nội dung truyện này</label>
+          <label class="comic-check"><input type="checkbox" data-novel="rights" /> Tôi là tác giả, hoặc đã được tác giả/đơn vị giữ bản quyền (ví dụ Yuewen/Qidian, Jinjiang) cho phép chuyển thể truyện này thành video, và tự chịu trách nhiệm về bản quyền theo <a href="/terms#content" target="_blank" rel="noopener">Điều khoản mục 4</a>.</label>
           <div class="novel-import-row">
             <button type="button" class="button primary" data-novel="start">Tải chương</button>
             <button type="button" class="button secondary is-hidden" data-novel="cancel">Hủy</button>
@@ -167,7 +167,7 @@ export function createNovelImporter({ container, requestJson, toast, escapeHtml,
   async function start() {
     const chosen = selection();
     if (!$("rights").checked) {
-      toast("Hãy xác nhận bạn có quyền sử dụng nội dung truyện này", true);
+      toast("Hãy xác nhận bạn là tác giả hoặc đã được phép chuyển thể truyện này", true);
       return;
     }
     $("start").disabled = true;
