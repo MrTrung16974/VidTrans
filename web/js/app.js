@@ -140,7 +140,7 @@ function beginApiActionLoading(silent = false) {
 }
 
 const state = {
-  files: [], links: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
+  files: [], links: [], invalidLinks: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
   jobsPage: 1, jobsPageSize: parseInt(localStorage.getItem("vidtrans_jobs_page_size") || "10", 10),
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false, sessionRefreshTimer: null,
@@ -822,40 +822,107 @@ function renderFiles() {
     </div>`).join("");
 }
 
-function extractSourceLinks(value) {
-  const domains = [
-    "tiktok.com", "douyin.com", "iesdouyin.com",
-    "youtube.com", "youtu.be", "youtube-nocookie.com",
-    "facebook.com", "fb.com", "fb.watch",
-  ];
+// Mirrors social_video_download_issue() in backend/infrastructure/social_video_downloader.py:
+// a link is accepted only when a downloader can fetch it, not merely when its domain is known.
+const SOCIAL_PLATFORM_DOMAINS = {
+  Douyin: ["douyin.com", "iesdouyin.com"],
+  TikTok: ["tiktok.com"],
+  YouTube: ["youtube.com", "youtu.be", "youtube-nocookie.com"],
+  Facebook: ["facebook.com", "fb.com", "fb.watch"],
+};
+const SHORT_LINK_HOSTS = new Set(["vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch", "youtu.be"]);
+const TIKTOK_VIDEO_PATH = /^\/(?:@[^/]+\/(?:video|photo)\/\d+|t\/[\w-]+|v\/\d+(?:\.html)?|embed(?:\/v2)?\/\d+|player\/v1\/\d+|share\/video\/\d+)\/?$/;
+const YOUTUBE_ID_PATH = /^\/(?:shorts|embed|live|v)\/[\w-]{3,}\/?$/;
+const FACEBOOK_VIDEO_PATH = /^\/(?:reels?\/[\w-]+|watch\/?|video\.php|story\.php|permalink\.php|share\/(?:v\/|r\/|p\/)?[\w-]+|(?:[^/]+\/)?videos\/(?:[^/]+\/)?\d+|[^/]+\/posts\/[\w-]+|groups\/[^/]+\/(?:posts|permalink)\/\d+)\/?$/;
+const FACEBOOK_QUERY_KEYS = { "/watch": "v", "/watch/": "v", "/video.php": "v", "/story.php": "story_fbid", "/permalink.php": "story_fbid" };
+const DOUYIN_PATH_ID = /\/(?:share\/)?(video|note|slides)\/(\d+)/;
+const SUPPORTED_LINK_FORMS_HINT = "Chỉ nhận link một video: TikTok (/@user/video/…, vm.tiktok.com), Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be), Facebook (reel, videos, watch?v=…, share, posts, fb.watch).";
+
+function socialPlatformOf(hostname) {
+  for (const [platform, domains] of Object.entries(SOCIAL_PLATFORM_DOMAINS)) {
+    if (domains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`))) return platform;
+  }
+  return null;
+}
+
+function sourceLinkDownloadIssue(url) {
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  const platform = socialPlatformOf(hostname);
+  if (!["http:", "https:"].includes(url.protocol)) return "link phải bắt đầu bằng http:// hoặc https://";
+  if (!platform) return `chưa có phương thức tải video từ tên miền ${hostname}`;
+  if (url.username || url.password || (url.port && !["80", "443"].includes(url.port))) {
+    return "link chứa thông tin kết nối không được hỗ trợ";
+  }
+  const path = url.pathname.replace(/\/{2,}/g, "/") || "/";
+  const param = key => (url.searchParams.get(key) || "").trim();
+  if (SHORT_LINK_HOSTS.has(hostname)) return path.replace(/\//g, "") ? null : "link rút gọn thiếu mã video";
+  if (platform === "TikTok") {
+    return TIKTOK_VIDEO_PATH.test(path) ? null : "không phải link một video TikTok (trang cá nhân, trang chủ…)";
+  }
+  if (platform === "Douyin") {
+    const match = path.match(DOUYIN_PATH_ID);
+    if (match && match[1] !== "video") return "bài đăng ảnh (图文) Douyin, không phải video";
+    if (match || ["modal_id", "vid", "aweme_id"].some(key => /^\d+$/.test(param(key)))) return null;
+    return "không tìm thấy mã video Douyin (cần /video/<id> hoặc modal_id=<id>)";
+  }
+  if (platform === "YouTube") {
+    if (path.replace(/\/$/, "") === "/watch" && param("v")) return null;
+    if (YOUTUBE_ID_PATH.test(path)) return null;
+    if (param("list")) return "playlist YouTube chưa được hỗ trợ, hãy dán link từng video";
+    return "không phải link một video YouTube (kênh, trang chủ, tìm kiếm…)";
+  }
+  if (!FACEBOOK_VIDEO_PATH.test(path)) return "không phải link một video/bài đăng Facebook (trang cá nhân, fanpage…)";
+  const requiredKey = FACEBOOK_QUERY_KEYS[path];
+  return requiredKey && !param(requiredKey) ? `link Facebook thiếu tham số ${requiredKey}=` : null;
+}
+
+/** Split pasted text into downloadable links and rejected ones (with the reason). */
+function classifySourceLinks(value) {
   const matches = String(value || "").match(/https?:\/\/[^\s<>\[\]"']+/gi) || [];
-  const unique = new Set();
+  const valid = new Set();
+  const invalid = new Map();
   for (const raw of matches) {
     const candidate = raw.replace(/[.,;:!?\)\]\}，。；：！？）】》、]+$/u, "");
+    let url;
     try {
-      const url = new URL(candidate);
-      const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
-      if (domains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`))) {
-        url.hash = "";
-        unique.add(url.toString());
-      }
+      url = new URL(candidate);
     } catch (_) {
-      // Backend returns the detailed validation error when the form is submitted.
+      invalid.set(candidate, "link không hợp lệ");
+      continue;
     }
+    url.hash = "";
+    const issue = sourceLinkDownloadIssue(url);
+    if (issue) invalid.set(url.toString(), issue);
+    else valid.add(url.toString());
   }
-  return [...unique];
+  return { links: [...valid], invalid: [...invalid].map(([link, reason]) => ({ link, reason })) };
+}
+
+function extractSourceLinks(value) {
+  return classifySourceLinks(value).links;
+}
+
+function invalidSourceLinksMessage(invalid) {
+  const first = invalid[0];
+  const more = invalid.length > 1 ? ` (và ${invalid.length - 1} link khác)` : "";
+  return `Link chưa có phương thức tải: ${first.link} — ${first.reason}${more}. Hãy xóa hoặc sửa link trước khi tiếp tục.`;
 }
 
 function renderSourceLinks() {
   const rawValue = $("#sourceLinks").value;
-  state.links = extractSourceLinks(rawValue);
+  const { links, invalid } = classifySourceLinks(rawValue);
+  state.links = links;
+  state.invalidLinks = invalid;
   $("#clearLinksBtn")?.classList.toggle("is-hidden", !rawValue.trim());
+  const invalidHtml = invalid.length
+    ? `<div class="link-warning-note" role="alert">⛔ ${invalid.length} link không thể tải và sẽ chặn việc tạo batch:<ul>${invalid.map(item => `<li><strong>${escapeHtml(item.link)}</strong> — ${escapeHtml(item.reason)} <button class="button secondary mini-btn" type="button" data-link-remove="${escapeHtml(item.link)}" data-link-invalid="true" aria-label="Xóa liên kết ${escapeHtml(item.link)}">Xóa</button></li>`).join("")}</ul><small>${escapeHtml(SUPPORTED_LINK_FORMS_HINT)}</small></div>`
+    : "";
   if (rawValue.trim() && state.links.length === 0) {
-    $("#linkList").innerHTML = `<div class="link-warning-note">⚠️ Chưa nhận diện được liên kết hợp lệ (hỗ trợ TikTok, Douyin, YouTube, Facebook).</div>`;
+    $("#linkList").innerHTML = invalidHtml || `<div class="link-warning-note">⚠️ Chưa nhận diện được liên kết hợp lệ (hỗ trợ TikTok, Douyin, YouTube, Facebook).</div>`;
     renderFiles();
     return;
   }
-  $("#linkList").innerHTML = state.links.map(link => {
+  $("#linkList").innerHTML = invalidHtml + state.links.map(link => {
     const hostname = new URL(link).hostname.toLowerCase();
     const platform = hostname.includes("douyin") ? "DY"
       : (hostname.includes("youtube") || hostname === "youtu.be") ? "YT"
@@ -2380,6 +2447,10 @@ async function submitBatch(event) {
     }
     return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
+  if (state.invalidLinks?.length) {
+    $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return toast(invalidSourceLinksMessage(state.invalidLinks), true);
+  }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
   if ($("#mode").value !== "4" && $("#sourceLanguage").value !== "auto" && $("#sourceLanguage").value === $("#targetLanguage").value) {
     return toast("Ngôn ngữ nguồn và đầu ra phải khác nhau", true);
@@ -3256,8 +3327,9 @@ $("#quickPasteLinksBtn")?.addEventListener("click", async () => {
     const input = $("#sourceLinks");
     input.value = input.value.trim() ? `${input.value.trim()}\n${text}` : text;
     renderSourceLinks();
-    const found = extractSourceLinks(text).length;
-    toast(found ? `Đã dán ${found} liên kết video` : "Đã dán nội dung từ bộ nhớ tạm");
+    const { links: found, invalid } = classifySourceLinks(text);
+    if (invalid.length) toast(invalidSourceLinksMessage(invalid), true);
+    else toast(found.length ? `Đã dán ${found.length} liên kết video` : "Đã dán nội dung từ bộ nhớ tạm");
   } catch (_) {
     $("#sourceLinks").focus();
     toast("Hãy nhấn Ctrl+V (hoặc Cmd+V) để dán liên kết vào ô", true);
@@ -3271,7 +3343,8 @@ $("#linkList")?.addEventListener("click", event => {
   const removeBtn = event.target.closest("[data-link-remove]");
   if (!removeBtn) return;
   const targetUrl = removeBtn.dataset.linkRemove;
-  const remaining = state.links.filter(url => url !== targetUrl);
+  const remaining = [...state.links, ...(state.invalidLinks || []).map(item => item.link)]
+    .filter(url => url !== targetUrl);
   $("#sourceLinks").value = remaining.join("\n");
   renderSourceLinks();
 });

@@ -64,7 +64,8 @@ void main() {
           isNull,
           reason: 'before choosing download-only',
         );
-        expect(find.text('Bắt đầu xử lý'), findsOneWidget);
+        // Quick-bar label matches the web: "Bắt đầu" until a source is added.
+        expect(find.text('Bắt đầu'), findsOneWidget);
 
         final element = tester.element(find.byType(TranslateScreen));
         final container = ProviderScope.containerOf(element);

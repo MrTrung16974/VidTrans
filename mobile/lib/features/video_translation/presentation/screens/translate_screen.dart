@@ -1950,64 +1950,99 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  InkWell(
-                    onTap: _submit,
-                    borderRadius: BorderRadius.circular(999),
+                  // Mirrors web `.button.primary.mobile-quick-cta` (styles.css). The button owns its
+                  // Material: an `Ink` paints on the nearest Material ancestor, which here sits
+                  // under the bar's frosted white fill and washed the orange out to near-white.
+                  Material(
+                    type: MaterialType.transparency,
                     child: Ink(
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(
+                          // linear-gradient(135deg, #f97316 0%, #ea580c 100%)
                           colors: [Color(0xFFF97316), Color(0xFFEA580C)],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
                         borderRadius: BorderRadius.circular(999),
+                        // border: 1px solid rgba(255, 255, 255, 0.3)
                         border: Border.all(
                           color: const Color(0x4DFFFFFF),
                           width: 1,
                         ),
                         boxShadow: const [
+                          // 0 6px 16px -3px rgba(234, 88, 12, 0.42)
                           BoxShadow(
-                            color: Color(0x59EA580C),
-                            blurRadius: 14,
-                            spreadRadius: -2,
-                            offset: Offset(0, 4),
+                            color: Color(0x6BEA580C),
+                            blurRadius: 16,
+                            spreadRadius: -3,
+                            offset: Offset(0, 6),
                           ),
                         ],
                       ),
-                      padding: const EdgeInsets.fromLTRB(13, 7, 7, 7),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            config.downloadOnly
-                                ? (state.sourceCount > 0
-                                      ? 'Tải ngay (${state.sourceCount})'
-                                      : 'Bắt đầu tải')
-                                : (state.sourceCount > 0
-                                      ? 'Bắt đầu (${state.sourceCount})'
-                                      : 'Bắt đầu xử lý'),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.2,
+                      child: InkWell(
+                        onTap: _submit,
+                        customBorder: const StadiumBorder(),
+                        splashColor: const Color(0x33FFFFFF),
+                        highlightColor: const Color(0x1AFFFFFF),
+                        child: ConstrainedBox(
+                          // min-height: 40px
+                          constraints: const BoxConstraints(minHeight: 40),
+                          child: Padding(
+                            // padding: 6px 12px 6px 14px
+                            padding: const EdgeInsets.fromLTRB(14, 6, 12, 6),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  // Same labels as syncMobileQuickBar() in web/js/app.js.
+                                  config.downloadOnly
+                                      ? (state.sourceCount > 0
+                                            ? 'Tải ngay (${state.sourceCount})'
+                                            : 'Tải ngay')
+                                      : (state.sourceCount > 0
+                                            ? 'Bắt đầu (${state.sourceCount})'
+                                            : 'Bắt đầu'),
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.8, // 0.8rem
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.13, // -0.01em
+                                    shadows: [
+                                      // text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15)
+                                      Shadow(
+                                        color: Color(0x26000000),
+                                        offset: Offset(0, 1),
+                                        blurRadius: 2,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 6), // gap: 6px
+                                Container(
+                                  width: 22,
+                                  height: 22,
+                                  alignment: Alignment.center,
+                                  decoration: const BoxDecoration(
+                                    color: Color(
+                                      0x3DFFFFFF,
+                                    ), // rgba(255, 255, 255, 0.24)
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Text(
+                                    '→',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13.1, // 0.82rem
+                                      fontWeight: FontWeight.w800,
+                                      height: 1,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          Container(
-                            width: 22,
-                            height: 22,
-                            decoration: const BoxDecoration(
-                              color: Color(0x38FFFFFF),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.arrow_forward_rounded,
-                              size: 13,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),

@@ -143,22 +143,118 @@ def normalize_social_video_url(raw_url: str) -> str:
     return urlunsplit((scheme, netloc, parsed.path or "/", parsed.query, ""))
 
 
+SUPPORTED_LINK_FORMS_HINT = (
+    "Hỗ trợ link một video: TikTok (/@user/video/…, /@user/photo/…, vm/vt.tiktok.com), "
+    "Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be, live, embed), "
+    "Facebook (reel, videos, watch?v=…, share, posts, fb.watch)"
+)
+_SHORT_LINK_HOSTS = {"vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch"}
+_TIKTOK_VIDEO_PATH = re.compile(
+    r"^/(?:@[^/]+/(?:video|photo)/\d+|t/[\w-]+|v/\d+(?:\.html)?|embed(?:/v2)?/\d+|player/v1/\d+|share/video/\d+)/?$"
+)
+_YOUTUBE_ID_PATH = re.compile(r"^/(?:shorts|embed|live|v)/[\w-]{3,}/?$")
+_FACEBOOK_VIDEO_PATH = re.compile(
+    r"^/(?:"
+    r"reels?/[\w-]+"
+    r"|watch/?|video\.php|story\.php|permalink\.php"
+    r"|share/(?:v/|r/|p/)?[\w-]+"
+    r"|(?:[^/]+/)?videos/(?:[^/]+/)?\d+"
+    r"|[^/]+/posts/[\w-]+"
+    r"|groups/[^/]+/(?:posts|permalink)/\d+"
+    r")/?$"
+)
+_FACEBOOK_QUERY_KEYS = {
+    "/watch": "v", "/watch/": "v", "/video.php": "v", "/story.php": "story_fbid", "/permalink.php": "story_fbid",
+}
+
+
+def social_video_download_issue(url: str) -> str | None:
+    """Why an allow-listed link has no download method, or None when the downloader can fetch it.
+
+    Domain allow-listing alone accepts profile pages, home pages and playlists, which then
+    fail minutes later in the queue. Only the single-post shapes each downloader resolves pass.
+    """
+    parsed = urlsplit(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    path = re.sub(r"/{2,}", "/", parsed.path or "/")
+    query = parse_qs(parsed.query)
+    platform = social_platform(url)
+    if hostname in _SHORT_LINK_HOSTS or hostname == "youtu.be":
+        if path.strip("/"):
+            return None
+        return "link rút gọn thiếu mã video"
+    if platform == "TikTok":
+        if _TIKTOK_VIDEO_PATH.match(path):
+            return None
+        return "đây không phải link một video TikTok (trang cá nhân, trang chủ hoặc trang khác)"
+    if platform == "Douyin":
+        video_id, kind = douyin_video_id(url)
+        if kind in {"note", "slides"}:
+            return "đây là bài đăng ảnh (图文) Douyin, không phải video"
+        if video_id:
+            return None
+        return "không tìm thấy mã video Douyin trong link (cần /video/<id> hoặc modal_id=<id>)"
+    if platform == "YouTube":
+        if path.rstrip("/") == "/watch" and (query.get("v") or [""])[0].strip():
+            return None
+        if _YOUTUBE_ID_PATH.match(path):
+            return None
+        if query.get("list"):
+            return "link playlist YouTube chưa được hỗ trợ, hãy dán link từng video"
+        return "đây không phải link một video YouTube (kênh, trang chủ hoặc trang tìm kiếm)"
+    if platform == "Facebook":
+        if not _FACEBOOK_VIDEO_PATH.match(path):
+            return "đây không phải link một video/bài đăng Facebook (trang cá nhân, fanpage hoặc trang chủ)"
+        required_key = _FACEBOOK_QUERY_KEYS.get(path)
+        if required_key and not (query.get(required_key) or [""])[0].strip():
+            return f"link Facebook thiếu tham số {required_key}="
+        return None
+    return "nền tảng chưa có phương thức tải"
+
+
+def ensure_downloadable_social_url(raw_url: str) -> str:
+    """Normalize a link and reject it unless a download method exists for it."""
+    url = normalize_social_video_url(raw_url)
+    issue = social_video_download_issue(url)
+    if issue:
+        raise ValueError(f"Link chưa có phương thức tải: {url} — {issue}")
+    return url
+
+
 def extract_social_video_urls(share_text: str, *, limit: int = 50) -> list[str]:
-    """Extract unique allow-listed social video links from URLs or copied share messages."""
+    """Extract unique downloadable social video links from URLs or copied share messages.
+
+    Every link that cannot be downloaded is reported together, so the user fixes the
+    batch in one pass instead of one rejection per submit.
+    """
 
     candidates = URL_PATTERN.findall(share_text or "")
     if not candidates:
         return []
     urls: list[str] = []
     seen: set[str] = set()
+    problems: list[str] = []
     for candidate in candidates:
-        normalized = normalize_social_video_url(candidate)
+        try:
+            normalized = ensure_downloadable_social_url(candidate)
+        except ValueError as exc:
+            message = str(exc)
+            if message not in problems:
+                problems.append(message)
+            continue
         if normalized in seen:
             continue
         seen.add(normalized)
         urls.append(normalized)
         if len(urls) > limit:
             raise ValueError(f"Chỉ được nhập tối đa {limit} link trong một batch")
+    if problems:
+        shown = problems[:5]
+        more = f"; và {len(problems) - len(shown)} link khác" if len(problems) > len(shown) else ""
+        raise ValueError(
+            f"Có {len(problems)} link không thể tải: " + "; ".join(shown) + more
+            + f". {SUPPORTED_LINK_FORMS_HINT}."
+        )
     return urls
 
 

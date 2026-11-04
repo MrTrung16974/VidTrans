@@ -12,6 +12,7 @@ from infrastructure.social_video_downloader import (
     extract_social_video_urls,
     normalize_social_video_url,
     social_platform,
+    social_video_download_issue,
 )
 
 
@@ -80,6 +81,53 @@ class SocialVideoDownloaderTests(unittest.TestCase):
                 "https://fb.watch/example/",
             ],
         )
+    def test_accepts_only_links_with_a_download_method(self) -> None:
+        downloadable = [
+            "https://www.tiktok.com/@a/video/1",
+            "https://www.tiktok.com/@a/photo/88",
+            "https://vm.tiktok.com/ZM123/",
+            "https://www.douyin.com/video/7661982102736473384",
+            "https://www.douyin.com/jingxuan?modal_id=7661982102736473384",
+            "https://www.iesdouyin.com/share/video/123",
+            "https://v.douyin.com/abc/",
+            "https://www.youtube.com/watch?v=abcdefghijk",
+            "https://www.youtube.com/shorts/short123",
+            "https://youtu.be/abc123",
+            "https://www.facebook.com/reel/987654",
+            "https://www.facebook.com/cnn/videos/10155529876156509/",
+            "https://www.facebook.com/watch/?v=274175099429670",
+            "https://www.facebook.com/share/v/1AbC/",
+            "https://fb.watch/abc/",
+        ]
+        for url in downloadable:
+            with self.subTest(url=url):
+                self.assertIsNone(social_video_download_issue(normalize_social_video_url(url)))
+        not_downloadable = [
+            "https://www.tiktok.com/",
+            "https://www.tiktok.com/@creator",
+            "https://www.douyin.com/",
+            "https://www.iesdouyin.com/share/note/7661982102736473384/",
+            "https://www.youtube.com/",
+            "https://www.youtube.com/@channel",
+            "https://www.youtube.com/playlist?list=PL123",
+            "https://www.facebook.com/",
+            "https://www.facebook.com/cnn",
+            "https://www.facebook.com/watch/",
+        ]
+        for url in not_downloadable:
+            with self.subTest(url=url):
+                self.assertIsNotNone(social_video_download_issue(normalize_social_video_url(url)))
+
+    def test_batch_reports_every_link_without_a_download_method(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            extract_social_video_urls(
+                "https://www.tiktok.com/@a/video/1 https://www.youtube.com/@channel https://www.facebook.com/cnn"
+            )
+        message = str(caught.exception)
+        self.assertIn("Có 2 link không thể tải", message)
+        self.assertIn("https://www.youtube.com/@channel", message)
+        self.assertIn("https://www.facebook.com/cnn", message)
+
     def test_rejects_unsupported_or_unsafe_urls(self) -> None:
         invalid_urls = [
             "https://example.com/video/1",

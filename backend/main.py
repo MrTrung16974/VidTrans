@@ -206,6 +206,9 @@ from pipeline.audio_scene import (
 from pipeline.caption_alignment import CaptionAlignmentConfig, align_speech_to_burned_captions
 from pipeline.speaker_embedding import SpeakerEmbedder
 from pipeline.vocal_separation import VocalSeparator, voiced_seconds
+from pipeline.multi_branch_asr import BranchTranscript, fuse_branch_transcripts
+from pipeline.speech_branches import RoformerSeparator, SpeechEnhancer, build_branch_audio, cut_clip
+from pipeline.asr_triage import SuspectRegion, TriagePlan, plan_asr_triage
 from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, TikTokPost, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
@@ -948,6 +951,19 @@ SONG_VOCAL_CHECK_ENABLED = _env_flag("VIDTRANS_SONG_VOCAL_CHECK", "on") in {"1",
 SONG_CLIP_MIN_MUTED_SHARE = 0.5
 SONG_MIN_VOICED_SECONDS = 3.0
 SPEAKER_EMBEDDING_ENABLED = _env_flag("VIDTRANS_SPEAKER_EMBEDDING", "on") in {"1", "true", "yes", "on"}
+# Multi-branch ASR: re-recognise doubtful stretches on a BS-RoFormer vocal stem and/or a
+# DeepFilterNet3 copy, then fuse per time cluster and report disagreements.
+# auto: triage (pipeline/asr_triage.py) picks the stretches - speech over music, low Whisper
+# confidence, missed speech, possible hallucination, low SNR - so a clean video costs nothing.
+# always: the whole file through every branch. off: original pass only.
+ASR_BRANCHES_MODE = _env_flag("VIDTRANS_ASR_BRANCHES", "auto")
+# auto: enhance only stretches triage finds noisy; on: every checked stretch; off: never.
+ASR_BRANCHES_ENHANCE = _env_flag("VIDTRANS_ASR_ENHANCE", "auto")
+# CPU budget: seconds of audio the extra branches may re-recognise per video.
+ASR_BRANCHES_MAX_SECONDS = float(os.environ.get("VIDTRANS_ASR_BRANCHES_MAX_SECONDS", "300") or 300)
+ASR_REVIEW_FILENAME = "asr_review.json"
+ROFORMER_SEPARATOR = RoformerSeparator()
+SPEECH_ENHANCER = SpeechEnhancer()
 AUDIO_SCENES = AudioSceneClassifier()
 VOCAL_SEPARATOR = VocalSeparator()
 SPEAKER_EMBEDDER = SpeakerEmbedder()
@@ -2292,7 +2308,13 @@ def extract_original_audio(video_path: Path, output_path: Path) -> Path:
             "-y",
             "-i",
             str(video_path),
+            # Same first audio track that probing and ASR use; never decode video,
+            # subtitle or data streams just to read the soundtrack.
+            "-map",
+            "0:a:0",
             "-vn",
+            "-sn",
+            "-dn",
             "-ac",
             "2",
             "-ar",
@@ -2338,30 +2360,36 @@ def voice_clip_gain(clip_path: Path) -> float:
 VOCALS_FILENAME = "vocals.wav"
 
 
-def extract_voice_analysis_audio(video_path: Path, output_path: Path, *, band_limited: bool = True) -> Path:
+def _voice_analysis_output_args(output_path: Path, *, band_limited: bool) -> list[str]:
+    return [
+        "-map",
+        "0:a:0",
+        # Drop mains hum/bass and hiss outside the voice F0 + low harmonics.
+        *(["-af", "highpass=f=65,lowpass=f=1500"] if band_limited else []),
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        str(output_path),
+    ]
+
+
+def extract_voice_analysis_audio(
+    video_path: Path, output_path: Path, *, band_limited: bool = True, full_band_path: Path | None = None
+) -> Path:
     """Create the compact mono PCM input used by the local pitch router.
 
     Pitch tracking wants the voice band only; speaker embeddings need the full
-    spectrum, so they read an unfiltered copy (``band_limited=False``).
+    spectrum, so they read an unfiltered copy (``band_limited=False``). Passing
+    ``full_band_path`` writes that unfiltered copy in the same ffmpeg run, so the
+    source video is demuxed once instead of twice.
     """
-    run_ffmpeg(
-        [
-            FFMPEG,
-            "-y",
-            "-i",
-            str(video_path),
-            "-vn",
-            # Drop mains hum/bass and hiss outside the voice F0 + low harmonics.
-            *(["-af", "highpass=f=65,lowpass=f=1500"] if band_limited else []),
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "pcm_s16le",
-            str(output_path),
-        ]
-    )
+    outputs = _voice_analysis_output_args(output_path, band_limited=band_limited)
+    if full_band_path is not None:
+        outputs += _voice_analysis_output_args(full_band_path, band_limited=False)
+    run_ffmpeg([FFMPEG, "-y", "-vn", "-sn", "-dn", "-i", str(video_path), *outputs])
     return output_path
 
 
@@ -2962,6 +2990,143 @@ def prepare_speech_audio(
     return speech_media, muted
 
 
+def _shift_branch_segments(
+    segments: list[dict[str, Any]], offset: float, region: SuspectRegion
+) -> list[dict[str, Any]]:
+    """Clip timings back onto the video timeline; keep lines centred inside the region."""
+    shifted = []
+    for segment in segments:
+        start, end = float(segment["start"]) + offset, float(segment["end"]) + offset
+        if not region.start <= (start + end) / 2 <= region.end:
+            continue
+        words = [
+            {**word, "start": float(word["start"]) + offset, "end": float(word["end"]) + offset}
+            for word in segment.get("words") or []
+        ]
+        shifted.append({**segment, "start": start, "end": end, "words": words})
+    return shifted
+
+
+def plan_extra_branches(
+    video_path: Path,
+    video_duration: float | None,
+    scenes: Sequence[SceneWindow],
+    muted: Sequence[tuple[float, float]],
+    primary_segments: list[dict[str, Any]],
+) -> TriagePlan:
+    if ASR_BRANCHES_MODE == "always":
+        end = float(video_duration or max((float(s["end"]) for s in primary_segments), default=0.0))
+        return TriagePlan([SuspectRegion(0.0, end, {"forced"}, 1.0)], whole_file=True)
+    def plan(samples: Any = None) -> TriagePlan:
+        return plan_asr_triage(
+            scenes=scenes, segments=primary_segments, duration=video_duration, muted=muted,
+            samples=samples, max_seconds=ASR_BRANCHES_MAX_SECONDS,
+        )
+
+    first = plan()
+    # Noise only labels stretches that are already doubtful, so a clean video skips the decode.
+    if not first.needed or ASR_BRANCHES_ENHANCE != "auto":
+        return first
+    try:
+        from faster_whisper.audio import decode_audio
+
+        return plan(decode_audio(str(video_path), sampling_rate=16000))
+    except Exception:
+        logger.warning("Cannot decode audio for the SNR estimate; triage without it", exc_info=True)
+        return first
+
+
+def recognize_extra_branches(
+    *,
+    job_id: str,
+    video_path: Path,
+    work_dir: Path,
+    whisper_model: str,
+    language: str,
+    video_duration: float | None,
+    scenes: Sequence[SceneWindow],
+    muted: Sequence[tuple[float, float]],
+    primary_segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Re-recognise the stretches triage doubts on separated/enhanced audio and fuse.
+
+    Any failure keeps the original transcript: the extra branches can only add evidence.
+    """
+    if ASR_BRANCHES_MODE not in {"auto", "always"}:
+        return primary_segments
+    branch_dir = work_dir / "asr_branches"
+    try:
+        update_job(job_id, step_detail="Đang tự động kiểm tra các đoạn nhận dạng chưa chắc chắn")
+        plan = plan_extra_branches(video_path, video_duration, scenes, muted, primary_segments)
+        if not plan.needed:
+            update_job(job_id, asr_review={"triage": plan.summary(), "review_items": 0})
+            return primary_segments
+        branch_segments: dict[str, list[dict[str, Any]]] = {}
+        for index, region in enumerate(plan.regions, start=1):
+            ensure_job_active(job_id)
+            update_job(
+                job_id,
+                step_detail=(
+                    f"Đang nhận dạng lại đoạn {format_asr_duration(region.start)}–{format_asr_duration(region.end)} "
+                    f"({index}/{len(plan.regions)}): {', '.join(sorted(region.reasons))}"
+                ),
+            )
+            separate, enhance = plan.branches_for(region)
+            if ASR_BRANCHES_ENHANCE == "on":
+                enhance = True
+            elif ASR_BRANCHES_ENHANCE == "off":
+                enhance, separate = False, True
+            region_dir = branch_dir / f"region_{index:03d}"
+            region_dir.mkdir(parents=True, exist_ok=True)
+            with measure_job_stage(job_id, "asr_branch_audio", video_duration=region.duration):
+                media = video_path if plan.whole_file else cut_clip(
+                    FFMPEG, video_path, region.start, region.end, region_dir / "clip.wav"
+                )
+                branch_audio = build_branch_audio(
+                    ffmpeg=FFMPEG,
+                    media_path=media,
+                    work_dir=region_dir,
+                    separator=ROFORMER_SEPARATOR,
+                    fallback_separate=VOCAL_SEPARATOR.separate,
+                    enhancer=SPEECH_ENHANCER if enhance else None,
+                    separate=separate,
+                    check_active=lambda: ensure_job_active(job_id),
+                )
+            offset = 0.0 if plan.whole_file else region.start
+            for name, audio_path in branch_audio.items():
+                ensure_job_active(job_id)
+                with measure_job_stage(job_id, "asr_branch", video_duration=region.duration):
+                    segments, _, _ = transcribe_video(whisper_model, audio_path, language, None, region.duration)
+                branch_segments.setdefault(name, []).extend(_shift_branch_segments(segments, offset, region))
+        if not branch_segments:
+            update_job(job_id, asr_review={"triage": plan.summary(), "review_items": 0, "branches": ["original"]})
+            return primary_segments
+        branches = [BranchTranscript("original", primary_segments)] + [
+            BranchTranscript(name, segments) for name, segments in branch_segments.items()
+        ]
+        fusion = fuse_branch_transcripts(
+            branches,
+            music_spans=muted,
+            checked_spans=[(region.start, region.end) for region in plan.regions],
+            hallucination_spans=plan.hallucination_spans,
+        )
+        summary = {**fusion.summary(), "triage": plan.summary()}
+        (work_dir / ASR_REVIEW_FILENAME).write_text(
+            json.dumps({"summary": summary, "review": fusion.review}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        update_job(job_id, asr_review=summary)
+        logger.info("Job %s multi-branch ASR: %s", job_id, summary)
+        return fusion.segments
+    except JobCancelled:
+        raise
+    except Exception:
+        logger.warning("Multi-branch ASR failed for job %s; keeping the original transcript", job_id, exc_info=True)
+        return primary_segments
+    finally:
+        shutil.rmtree(branch_dir, ignore_errors=True)
+
+
 def recognize_video_source(
     *,
     job_id: str,
@@ -3042,10 +3207,17 @@ def recognize_video_source(
         with _whisper_slots:
             ensure_job_active(job_id)
             asr_language = "auto" if subtitle_source == "independent" else source_language
-            return transcribe_video(
+            segments, language, probability = transcribe_video(
                 whisper_model, speech_media, asr_language, job_id, video_duration, progress=progress, muted=muted,
                 no_speech=no_speech_regions(scenes), repeated_sink=repeated_lines,
             )
+            if source_probe.has_audio:
+                segments = recognize_extra_branches(
+                    job_id=job_id, video_path=video_path, work_dir=work_dir, whisper_model=whisper_model,
+                    language=language or asr_language, video_duration=video_duration, scenes=scenes,
+                    muted=muted, primary_segments=segments,
+                )
+            return segments, language, probability
 
     def measured_speech(
         progress: Callable[[float, float | None], None],
@@ -3563,13 +3735,9 @@ def process_video(
                     update_job(job_id, step="routing-voices", progress=0.5)
                     try:
                         # Not the separated vocals: a background song's singer stays in that stem.
-                        analysis_audio = extract_voice_analysis_audio(video_path, work_dir / "voice_analysis.wav")
-                        speaker_audio = (
-                            extract_voice_analysis_audio(
-                                video_path, work_dir / "speaker_audio.wav", band_limited=False
-                            )
-                            if SPEAKER_EMBEDDING_ENABLED
-                            else None
+                        speaker_audio = work_dir / "speaker_audio.wav" if SPEAKER_EMBEDDING_ENABLED else None
+                        analysis_audio = extract_voice_analysis_audio(
+                            video_path, work_dir / "voice_analysis.wav", full_band_path=speaker_audio
                         )
                         content_voice, content_cues = infer_speaker_voice(translated_segments, target_language)
                         if content_voice:

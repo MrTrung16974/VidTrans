@@ -4065,6 +4065,10 @@ input[type="file"]::-webkit-file-upload-button:active {
 .link-source-actions { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .source-list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 2px 6px; font-size: 0.75rem; font-weight: 700; color: var(--muted); }
 .link-warning-note { padding: 10px 12px; border-radius: 11px; background: #fffbeb; border: 1px solid #fde68a; color: #b45309; font-size: 0.76rem; font-weight: 600; line-height: 1.4; }
+.link-warning-note ul { margin: 6px 0; padding-left: 18px; display: grid; gap: 4px; }
+.link-warning-note li { word-break: break-all; }
+.link-warning-note li .mini-btn { margin-left: 6px; padding: 2px 8px; }
+.link-warning-note small { display: block; font-weight: 500; color: #92400e; }
 .link-source-icon { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 12px; display: grid; place-items: center; background: linear-gradient(135deg, var(--teal), #0f766e); color: #ffffff; box-shadow: 0 4px 12px rgba(23, 107, 104, 0.18); }
 .link-source-icon svg { width: 20px; height: 20px; }
 .link-source-copy strong { display: block; font-size: 0.88rem; font-weight: 700; color: var(--ink); }
