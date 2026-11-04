@@ -974,7 +974,7 @@ function formatScheduledTime(value) {
 
 
 function updateFormSummary() {
-  const modes = { "1": "Phụ đề", "2": "Phụ đề + voice", "3": "Voice + nhạc", "4": "Chỉ tải video" };
+  const modes = { "1": "Phụ đề", "2": "Phụ đề + Voice", "3": "Voice + Nhạc", "4": "Chỉ tải video" };
   const languageLabels = { auto: "Tự nhận diện", vi: "Việt", en: "Anh", "zh-CN": "Trung", ja: "Nhật", ko: "Hàn", th: "Thái", id: "Indonesia", es: "Tây Ban Nha" };
   const previewTexts = { vi: "Tôi muốn trở thành phiên bản tốt nhất", en: "I want to become my best self", "zh-CN": "我想成为最好的自己", ja: "最高の自分になりたい", ko: "최고의 내가 되고 싶어요", th: "ฉันอยากเป็นตัวเองในแบบที่ดีที่สุด", id: "Saya ingin menjadi versi terbaik diri saya", es: "Quiero ser mi mejor versión" };
   const placements = { replace_original: "Thay chữ gốc", above_original: "Trên chữ gốc", bottom_safe: "Vùng an toàn" };
@@ -3464,9 +3464,11 @@ const dropZone = $("#dropZone");
 dropZone.addEventListener("drop", event => addFiles(event.dataTransfer.files));
 $("#batchForm").addEventListener("submit", submitBatch);
 $("#mobileQuickSummaryTrigger")?.addEventListener("click", () => {
-  const count = state.files.length + state.links.length;
-  const target = count > 0 ? $("#createView .sticky-card") : $("#workflow-source");
-  target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (typeof $("#batchForm")?.requestSubmit === "function") {
+    $("#batchForm").requestSubmit();
+  } else {
+    $("#submitButton")?.click();
+  }
 });
 if ("IntersectionObserver" in window) {
   const stickyCard = $("#createView .sticky-card");

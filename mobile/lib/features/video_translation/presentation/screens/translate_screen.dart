@@ -2239,29 +2239,33 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               ),
               child: Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _submit,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 5,
                       ),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: const Color(0xFFFDBA74),
-                        width: 1.4,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+                        ),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: const Color(0xFFFDBA74),
+                          width: 1.4,
+                        ),
                       ),
-                    ),
-                    child: Text(
-                      '${state.sourceCount}/50',
-                      style: const TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w900,
-                        color: AppColors.brandDark,
+                      child: Text(
+                        '${state.sourceCount}/50',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w900,
+                          color: AppColors.brandDark,
+                        ),
                       ),
                     ),
                   ),
@@ -2269,7 +2273,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                   Expanded(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onTap: () => _jumpToStep(4, _submitCardKey),
+                      onTap: _submit,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
