@@ -53,7 +53,8 @@ from application.social_account_routes import create_social_account_router
 from application.social_connection_routes import create_social_connection_router
 from application.social_publishing import SocialPublishScheduler, SocialPublishingService
 from application.tiktok_browser_routes import create_tiktok_browser_router
-from infrastructure.tiktok_browser import TikTokBrowserManager
+from infrastructure.tiktok_browser import STUDIO_URL as TIKTOK_STUDIO_URL, TikTokBrowserManager
+from infrastructure.browser_power import BrowserPower, BrowserPowerSweeper, CdpPageDriver
 from domain.models import ProcessingMode, ProcessingRequest
 from domain.languages import language_profile, languages_from_config, normalize_language, voice_preset
 
@@ -191,7 +192,7 @@ from pipeline.checkpoint_payloads import (
     valid_tts_checkpoint,
 )
 from pipeline.parallel import collect_indexed_futures
-from pipeline.stage_metrics import StageMeasurement, measure_stage
+from pipeline.stage_metrics import StageMeasurement, measure_stage, merge_stage_metric
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
 from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, merge_fragment_cues, segment_subtitle_cues
 from pipeline.audio_scene import (
@@ -594,6 +595,22 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
 
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth", config=platform_app_config("TIKTOK"))
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
+# The browser sidecars sleep on about:blank unless someone has their page open.
+_BROWSER_IDLE_SECONDS = 60 * float(os.environ.get("VIDTRANS_BROWSER_IDLE_MINUTES", "10") or 10)
+BROWSER_POWER = {
+    "tiktok": BrowserPower(
+        "tiktok", TIKTOK_STUDIO_URL, WORK_DIR / "browser-power" / "tiktok.json",
+        CdpPageDriver(TIKTOK_BROWSER.cdp_url), idle_seconds=_BROWSER_IDLE_SECONDS,
+        # Never park the page while it uploads or publishes a video.
+        is_busy=lambda: TIKTOK_BROWSER.active_attempt() is not None,
+    ),
+    # One Chromium serves the Douyin, YouTube and Facebook source logins.
+    "social": BrowserPower(
+        "social", "https://www.douyin.com/", WORK_DIR / "browser-power" / "social.json",
+        CdpPageDriver(DOUYIN_BROWSER_AUTH.cdp_url), idle_seconds=_BROWSER_IDLE_SECONDS,
+    ),
+}
+BROWSER_POWER_SWEEPER = BrowserPowerSweeper(list(BROWSER_POWER.values()) if _BROWSER_IDLE_SECONDS > 0 else [])
 app.include_router(create_tiktok_browser_router(
     TIKTOK_BROWSER,
     JOB_SERVICE,
@@ -1664,7 +1681,9 @@ def record_job_stage_measurement(job_id: str, measurement: StageMeasurement) -> 
             return
         stored = current.get("stage_metrics")
         stage_metrics = dict(stored) if isinstance(stored, dict) else {}
-        stage_metrics[measurement.stage] = measurement.as_dict()
+        stage_metrics[measurement.stage] = merge_stage_metric(
+            measurement.stage, stage_metrics.get(measurement.stage), measurement.as_dict()
+        )
         JOB_SERVICE.update(job_id, stage_metrics=stage_metrics)
 
 
@@ -3096,7 +3115,8 @@ def recognize_extra_branches(
             offset = 0.0 if plan.whole_file else region.start
             for name, audio_path in branch_audio.items():
                 ensure_job_active(job_id)
-                with measure_job_stage(job_id, "asr_branch", video_duration=region.duration):
+                with _whisper_slots, measure_job_stage(job_id, "asr_branch", video_duration=region.duration):
+                    ensure_job_active(job_id)
                     segments, _, _ = transcribe_video(whisper_model, audio_path, language, None, region.duration)
                 branch_segments.setdefault(name, []).extend(_shift_branch_segments(segments, offset, region))
         if not branch_segments:
@@ -3165,23 +3185,23 @@ def recognize_video_source(
         time_ranges: Sequence[tuple[float, float]] = (),
     ) -> list[dict[str, Any]]:
         try:
-            with measure_job_stage(job_id, "ocr", video_duration=video_duration):
-                with _ocr_slots:
-                    ensure_job_active(job_id)
-                    return extract_burned_subtitle_segments(
-                        video_path,
-                        work_dir,
-                        ffmpeg=FFMPEG,
-                        config=OCRConfig(
-                            sample_fps=ocr_sample_fps,
-                            roi_top=ocr_roi_top,
-                            roi_bottom=ocr_roi_bottom,
-                            time_ranges=tuple(time_ranges),
-                        ),
-                        reader_backend=SETTINGS.ocr_backend,
-                        reader_model=SETTINGS.ocr_model,
-                        progress_callback=progress,
-                    )
+            # Measured once the slot is held: waiting for another job is not OCR time.
+            with _ocr_slots, measure_job_stage(job_id, "ocr", video_duration=video_duration):
+                ensure_job_active(job_id)
+                return extract_burned_subtitle_segments(
+                    video_path,
+                    work_dir,
+                    ffmpeg=FFMPEG,
+                    config=OCRConfig(
+                        sample_fps=ocr_sample_fps,
+                        roi_top=ocr_roi_top,
+                        roi_bottom=ocr_roi_bottom,
+                        time_ranges=tuple(time_ranges),
+                    ),
+                    reader_backend=SETTINGS.ocr_backend,
+                    reader_model=SETTINGS.ocr_model,
+                    progress_callback=progress,
+                )
         except (JobCancelled, SiblingStageFailed):
             raise
         except Exception:
@@ -3205,26 +3225,24 @@ def recognize_video_source(
     def recognize_speech(
         progress: Callable[[float, float | None], None] | None,
     ) -> tuple[list[dict[str, Any]], str | None, float | None]:
-        with _whisper_slots:
+        asr_language = "auto" if subtitle_source == "independent" else source_language
+        # "asr" is the main Whisper pass only, measured once the slot is held; the
+        # extra branches record their own asr_branch_audio / asr_branch stages.
+        with _whisper_slots, measure_job_stage(job_id, "asr", video_duration=video_duration):
             ensure_job_active(job_id)
-            asr_language = "auto" if subtitle_source == "independent" else source_language
             segments, language, probability = transcribe_video(
                 whisper_model, speech_media, asr_language, job_id, video_duration, progress=progress, muted=muted,
                 no_speech=no_speech_regions(scenes), repeated_sink=repeated_lines,
             )
-            if source_probe.has_audio:
-                segments = recognize_extra_branches(
-                    job_id=job_id, video_path=video_path, work_dir=work_dir, whisper_model=whisper_model,
-                    language=language or asr_language, video_duration=video_duration, scenes=scenes,
-                    muted=muted, primary_segments=segments,
-                )
-            return segments, language, probability
-
-    def measured_speech(
-        progress: Callable[[float, float | None], None],
-    ) -> tuple[list[dict[str, Any]], str | None, float | None]:
-        with measure_job_stage(job_id, "asr", video_duration=video_duration):
-            return recognize_speech(progress)
+        if source_probe.has_audio:
+            # Outside the Whisper slot: separating stems needs no Whisper, so another
+            # job may transcribe meanwhile. Each branch decode takes the slot again.
+            segments = recognize_extra_branches(
+                job_id=job_id, video_path=video_path, work_dir=work_dir, whisper_model=whisper_model,
+                language=language or asr_language, video_duration=video_duration, scenes=scenes,
+                muted=muted, primary_segments=segments,
+            )
+        return segments, language, probability
 
     asr_segments: list[dict[str, Any]] = []
     detected_language: str | None = None
@@ -3239,7 +3257,7 @@ def recognize_video_source(
             job_id,
             tracker,
             lambda: recognize_burned_subtitles(tracker.report_ocr),
-            lambda: measured_speech(tracker.report_asr),
+            lambda: recognize_speech(tracker.report_asr),
         )
     else:
         if run_ocr:
@@ -3253,15 +3271,14 @@ def recognize_video_source(
             step_detail=asr_progress_detail(0, video_duration),
             progress=0.22,
         )
-        with measure_job_stage(job_id, "asr", video_duration=video_duration):
-            if source_probe.has_audio:
-                asr_segments, detected_language, detected_language_probability = recognize_speech(None)
-            elif not ocr_segments:
-                raise RuntimeError(
-                    "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
-                    "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
-                    "nếu không, hãy chọn video có âm thanh."
-                )
+        if source_probe.has_audio:
+            asr_segments, detected_language, detected_language_probability = recognize_speech(None)
+        elif not ocr_segments:
+            raise RuntimeError(
+                "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
+                "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
+                "nếu không, hãy chọn video có âm thanh."
+            )
     # Whisper was chosen: read burned-in captions only where it could not read the
     # video — almost nothing heard overall, or songs / music it heard nothing in —
     # and only in those stretches. A short music intro no longer costs a full OCR pass.
@@ -4993,6 +5010,7 @@ async def start_job_scheduler() -> None:
     await JOB_EVENTS.start()
     await REALTIME.start()
     await SYSTEM_EVENTS.start()
+    BROWSER_POWER_SWEEPER.start()
     apply_retention_policy()
     app.state.retention_task = asyncio.create_task(run_retention_loop())
     app.state.cit_preview_task = asyncio.create_task(prepare_cit_voice_previews())
@@ -5040,6 +5058,7 @@ async def stop_job_scheduler() -> None:
     await REALTIME.stop()
     await JOB_EVENTS.stop()
     PUSH_NOTIFIER.shutdown()
+    BROWSER_POWER_SWEEPER.stop()
     await SYSTEM_EVENTS.stop()
     retention_task = getattr(app.state, "retention_task", None)
     if retention_task is not None:
@@ -6508,6 +6527,43 @@ def logout_douyin(request: Request) -> JSONResponse:
     require_roles(request, "owner", "admin")
     DOUYIN_BROWSER_AUTH.logout()
     return JSONResponse({"authenticated": False, "message": "Đã xóa phiên đăng nhập Douyin"})
+
+
+# Who may keep each browser awake by having its page open.
+BROWSER_POWER_VIEWER_ROLES = {"tiktok": ("owner", "admin", "editor"), "social": ("owner", "admin")}
+
+
+class BrowserPowerUpdate(BaseModel):
+    enabled: bool
+
+
+def _browser_power(request: Request, browser: str) -> BrowserPower:
+    power = BROWSER_POWER.get(browser)
+    if power is None:
+        raise HTTPException(status_code=404, detail="Trình duyệt không tồn tại")
+    require_roles(request, *BROWSER_POWER_VIEWER_ROLES[browser])
+    return power
+
+
+@app.get("/api/v1/browser-power/{browser}")
+def get_browser_power(request: Request, browser: str) -> JSONResponse:
+    power = _browser_power(request, browser)
+    return JSONResponse({**power.status(), "can_toggle": current_account(request)["role"] == "owner"})
+
+
+@app.post("/api/v1/browser-power/{browser}/heartbeat")
+def browser_power_heartbeat(request: Request, browser: str) -> JSONResponse:
+    """The page showing this browser is open: wake it and keep it awake."""
+    power = _browser_power(request, browser)
+    return JSONResponse({**power.heartbeat(), "can_toggle": current_account(request)["role"] == "owner"})
+
+
+@app.put("/api/v1/browser-power/{browser}")
+def set_browser_power(request: Request, browser: str, body: BrowserPowerUpdate) -> JSONResponse:
+    """Owner switch: off keeps the browser parked even while its page is open."""
+    _browser_power(request, browser)
+    require_roles(request, "owner")
+    return JSONResponse({**BROWSER_POWER[browser].set_enabled(body.enabled), "can_toggle": True})
 
 
 SOURCE_BROWSER_MANAGERS = {

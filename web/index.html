@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261104-job-detail-v1" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261104-browser-power" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261103-glass-dock" />
   </head>
   <body>
@@ -1372,6 +1372,11 @@
                       <div class="browser-bar-spacer"></div>
                     </div>
 
+                    <div class="browser-power-bar" data-browser-power="tiktok">
+                      <span class="browser-power-dot" aria-hidden="true"></span>
+                      <span class="browser-power-text" role="status">Đang kiểm tra trình duyệt…</span>
+                      <button type="button" class="button secondary mini-btn browser-power-toggle is-hidden"></button>
+                    </div>
                     <div class="tiktok-browser-stage">
                       <div id="tiktokBrowserPlaceholder" class="tiktok-browser-placeholder">
                         <div class="placeholder-icon-wrap" aria-hidden="true">
@@ -1635,6 +1640,11 @@
             </div>
           </div>
 
+          <div class="browser-power-bar" data-browser-power="social">
+            <span class="browser-power-dot" aria-hidden="true"></span>
+            <span class="browser-power-text" role="status">Đang kiểm tra trình duyệt…</span>
+            <button type="button" class="button secondary mini-btn browser-power-toggle is-hidden"></button>
+          </div>
           <div class="source-browser-tabs" role="tablist" aria-label="Chọn nền tảng đăng nhập">
             <button class="source-browser-tab is-active" type="button" role="tab" aria-selected="true" data-source-browser-tab="douyin">Douyin</button>
             <button class="source-browser-tab" type="button" role="tab" aria-selected="false" data-source-browser-tab="youtube">YouTube</button>
@@ -2826,6 +2836,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261104-job-notify"></script>
+    <script type="module" src="/js/app.js?v=20261104-browser-power"></script>
   </body>
 </html>

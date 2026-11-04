@@ -263,6 +263,9 @@ async function saveDownload(url, suggestedName, trigger) {
 function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", isError = true) {
   tiktokWorkspace.lock();
   jobEvents.stop();
+  clearInterval(browserPowerTimer);
+  browserPowerTimer = null;
+  browserPowerName = null;
   systemEvents.stop();
   clearInterval(state.pollTimer);
   clearInterval(state.douyinBrowserPollTimer);
@@ -1339,6 +1342,7 @@ function showView() {
     }
   }
   if (view === "jobs" && state.appStarted) loadJobs();
+  syncBrowserPower(view);
   if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
   else stopDouyinBrowserPolling();
   if (view === "admin" && state.appStarted) {
@@ -3002,6 +3006,90 @@ const jobEvents = createJobEvents({
 });
 
 const JOBS_REQUEST_TIMEOUT_MS = 30000;
+
+// Browser sidecars sleep on a blank page unless their view is open: the view sends a
+// heartbeat that wakes the browser and keeps it awake. Only the owner may switch one off.
+const BROWSER_POWER_VIEWS = { tiktok: "tiktok", douyin: "social" };
+const BROWSER_HEARTBEAT_MS = 60000;
+let browserPowerTimer = null;
+let browserPowerName = null;
+
+function renderBrowserPower(name, status, { waking = false } = {}) {
+  const bar = document.querySelector(`[data-browser-power="${name}"]`);
+  if (!bar) return;
+  const minutes = Math.round((status?.idle_timeout_seconds || 600) / 60);
+  let stateName = "parked";
+  let text = "Trình duyệt đang nghỉ để nhường CPU cho xử lý video; tự bật khi bạn mở trang này.";
+  if (!status || status.available === false) {
+    stateName = "down";
+    text = "Không kết nối được trình duyệt.";
+  } else if (!status.enabled) {
+    stateName = "off";
+    text = status.can_toggle
+      ? "Trình duyệt đang tắt. Bấm “Bật trình duyệt” để dùng."
+      : "Trình duyệt đang được chủ sở hữu tắt.";
+  } else if (waking) {
+    stateName = "waking";
+    text = "Đang bật trình duyệt…";
+  } else if (status.awake) {
+    stateName = "awake";
+    text = `Trình duyệt đang chạy; tự nghỉ sau ${minutes} phút không mở trang này.`;
+  }
+  bar.dataset.state = stateName;
+  bar.querySelector(".browser-power-text").textContent = text;
+  const toggle = bar.querySelector(".browser-power-toggle");
+  const canToggle = Boolean(status?.can_toggle) && status.available !== false;
+  toggle.classList.toggle("is-hidden", !canToggle);
+  toggle.textContent = status?.enabled ? "Tắt trình duyệt" : "Bật trình duyệt";
+  toggle.dataset.enable = status?.enabled ? "false" : "true";
+}
+
+async function sendBrowserHeartbeat(name) {
+  if (document.hidden) return;
+  try {
+    const status = await requestJson(`/api/v1/browser-power/${name}/heartbeat`, { method: "POST", silent: true });
+    if (browserPowerName === name) renderBrowserPower(name, status);
+  } catch {
+    if (browserPowerName === name) renderBrowserPower(name, null);
+  }
+}
+
+function syncBrowserPower(view) {
+  const name = state.appStarted ? BROWSER_POWER_VIEWS[view] || null : null;
+  if (name === browserPowerName) return;
+  clearInterval(browserPowerTimer);
+  browserPowerTimer = null;
+  browserPowerName = name;
+  if (!name) return;
+  renderBrowserPower(name, { available: true, enabled: true, awake: false }, { waking: true });
+  sendBrowserHeartbeat(name);
+  browserPowerTimer = setInterval(() => sendBrowserHeartbeat(name), BROWSER_HEARTBEAT_MS);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && browserPowerName) sendBrowserHeartbeat(browserPowerName);
+});
+document.querySelectorAll(".browser-power-toggle").forEach(button => {
+  button.addEventListener("click", async () => {
+    const name = button.closest("[data-browser-power]").dataset.browserPower;
+    const enabled = button.dataset.enable === "true";
+    button.disabled = true;
+    if (enabled) renderBrowserPower(name, { available: true, enabled: true, awake: false, can_toggle: true }, { waking: true });
+    try {
+      const status = await requestJson(`/api/v1/browser-power/${name}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      renderBrowserPower(name, status);
+      toast(enabled ? "Đã bật trình duyệt" : "Đã tắt trình duyệt");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+});
 
 // Back on the tab, back from bfcache or back online: timers and the socket may
 // have been frozen, so reconnect and fetch the current statuses once.

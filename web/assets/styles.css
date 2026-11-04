@@ -7913,3 +7913,34 @@ body.modal-open {
 .smart-source-notice li::marker { color: var(--brand); }
 .smart-source-notice li strong { display: block; font-size: .78rem; font-weight: 800; }
 .smart-source-notice li small { display: block; margin-top: 2px; color: var(--muted); font-size: .74rem; line-height: 1.4; }
+
+/* Browser sidecar power: parked on about:blank unless its page is open. */
+.browser-power-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 13px;
+}
+#douyinView > .browser-power-bar {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+.browser-power-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted-light);
+  flex: none;
+}
+.browser-power-bar[data-state="awake"] .browser-power-dot { background: var(--green); }
+.browser-power-bar[data-state="waking"] .browser-power-dot { background: var(--amber); }
+.browser-power-bar[data-state="off"] .browser-power-dot,
+.browser-power-bar[data-state="down"] .browser-power-dot { background: var(--red); }
+.browser-power-text { flex: 1 1 200px; min-width: 0; }
+.browser-power-toggle { margin-left: auto; }

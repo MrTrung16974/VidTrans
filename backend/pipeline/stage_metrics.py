@@ -52,6 +52,38 @@ class StageMeasurement:
 
 MeasurementCallback = Callable[[StageMeasurement], None]
 
+# Stages that run once per suspect region: a job keeps their total, not the last run.
+ACCUMULATED_STAGES = frozenset({"asr_branch_audio", "asr_branch"})
+
+
+def merge_stage_metric(stage: str, previous: object, current: dict[str, str | float]) -> dict[str, str | float]:
+    """Combine a new measurement with the one already stored for ``stage``.
+
+    Single-run stages are replaced. Accumulated stages sum their durations and keep
+    ``runs`` and ``media_seconds`` so the real-time factor covers every run.
+    """
+    if stage not in ACCUMULATED_STAGES:
+        return current
+    duration = float(current["duration_seconds"])
+    rtf = current.get("real_time_factor")
+    media = duration / float(rtf) if rtf else 0.0
+    runs = 1
+    if isinstance(previous, dict) and "duration_seconds" in previous:
+        duration += float(previous["duration_seconds"])
+        media += float(previous.get("media_seconds") or 0.0)
+        runs += int(previous.get("runs") or 1)
+    merged: dict[str, str | float] = {
+        **current,
+        "duration_seconds": round(duration, 6),
+        "runs": runs,
+        "media_seconds": round(media, 6),
+    }
+    if media > 0:
+        merged["real_time_factor"] = round(duration / media, 6)
+    else:
+        merged.pop("real_time_factor", None)
+    return merged
+
 
 def _status_for_error(error: BaseException) -> str:
     return "cancelled" if type(error).__name__ in {"JobCancelled", "CancelledError"} else "failed"
