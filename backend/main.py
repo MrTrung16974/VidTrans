@@ -8148,8 +8148,15 @@ NOVEL_IMPORTS = NovelImportService(
     WORK_DIR / "novel-cache",
     episode_chars=MAX_STORY_CHARS - 1000,
 )
-app.include_router(create_novel_import_router(NOVEL_IMPORTS, require_roles),
-                   dependencies=require_paid_feature("comic_video"))
+def ensure_novel_import_allowed(account: dict[str, Any]) -> None:
+    try:
+        ensure_feature_allowed(account, "comic_video")
+        ensure_feature_allowed(account, "novel_import")
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+app.include_router(create_novel_import_router(NOVEL_IMPORTS, require_roles, ensure_novel_import_allowed))
 DEVICE_ROUTE_DEPS = DeviceRouteDependencies(
     store=DEVICE_STORE,
     current_account=lambda request: current_account(request),

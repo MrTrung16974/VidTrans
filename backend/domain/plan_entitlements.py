@@ -27,6 +27,10 @@ FEATURES: dict[str, tuple[str, str]] = {
         "Nhận diện chữ trong ảnh và thay bằng bản dịch đúng vị trí (OCR trên máy, dịch offline hoặc qua máy chủ)",
     ),
     "comic_video": ("Tạo video truyện", "Tạo, sửa và render truyện thành video"),
+    "novel_import": (
+        "Nhập chương truyện từ link",
+        "Tải chương đọc được (miễn phí hoặc đã mua) từ Qidian, Jinjiang vào truyện và tự chia tập",
+    ),
     "social_publishing": (
         "Đăng bài mạng xã hội",
         "Kết nối tài khoản, đăng và hẹn giờ đăng lên TikTok, YouTube, Facebook, Instagram, Threads",

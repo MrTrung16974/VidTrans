@@ -22,11 +22,15 @@ class NovelImportRequest(BaseModel):
 def create_novel_import_router(
     service: NovelImportService,
     require_roles: Callable[..., dict[str, Any]],
+    ensure_allowed: Callable[[dict[str, Any]], None] = lambda account: None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/comic/sources", tags=["Comic novel import"])
 
     def account(request: Request) -> dict[str, Any]:
-        return require_roles(request, *IMPORT_ROLES)
+        user = require_roles(request, *IMPORT_ROLES)
+        # Every call is gated, reads included: a catalog lookup opens the source site.
+        ensure_allowed(user)
+        return user
 
     def call(operation: Callable[[], Any]) -> Any:
         try:

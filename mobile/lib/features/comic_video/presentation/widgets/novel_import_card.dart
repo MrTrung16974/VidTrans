@@ -6,8 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/auth/account.dart';
+import '../../../../core/auth/session_controller.dart';
 import '../../../../core/errors/api_exception.dart';
-import '../../../../core/widgets/studio_widgets.dart';
 import '../../data/comic_repository.dart';
 
 /// Interactive Qidian novel chapter importer matching web `.novel-import`.
@@ -239,6 +240,11 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
 
   @override
   Widget build(BuildContext context) {
+    // Hidden when the plan does not include chapter import (admin access matrix).
+    final account = ref.watch(sessionProvider).valueOrNull;
+    if (account != null && !account.hasFeature(PlanFeature.novelImport)) {
+      return const SizedBox.shrink();
+    }
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(

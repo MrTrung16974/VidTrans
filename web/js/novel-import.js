@@ -197,6 +197,19 @@ export function createNovelImporter({ container, requestJson, toast, escapeHtml,
     }
   }
 
+  // The plan may not include chapter import (admin "Phân quyền gói & menu"): ask the
+  // server once, when the section is first opened, and lock the form if it refuses.
+  let accessChecked = false;
+  container.querySelector("details.novel-import").addEventListener("toggle", async event => {
+    if (!event.currentTarget.open || accessChecked) return;
+    accessChecked = true;
+    try {
+      await api("", { silent: true });
+    } catch (error) {
+      container.querySelectorAll("input, button").forEach(element => { element.disabled = true; });
+      $("progress").textContent = error.message;
+    }
+  });
   $("catalog").addEventListener("click", loadCatalog);
   $("url").addEventListener("keydown", event => {
     if (event.key === "Enter") {

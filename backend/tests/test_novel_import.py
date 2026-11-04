@@ -21,6 +21,7 @@ from infrastructure.novel_sources.base import (
 from infrastructure.novel_sources.jjwxc import JjwxcSource, parse_chapter
 from infrastructure.novel_sources.qidian import QidianSource
 from infrastructure.novel_sources.service import NovelImportService
+from domain.plan_entitlements import DEFAULT_PLAN_FEATURES, account_features
 
 
 class InlineExecutor:
@@ -195,8 +196,14 @@ class RouteTests(unittest.TestCase):
                 raise HTTPException(403, "forbidden")
             return {"user_id": "u1", "role": self.role}
 
+        self.allowed = True
+
+        def ensure_allowed(account):
+            if not self.allowed:
+                raise HTTPException(403, "Nhập chương truyện từ link chỉ dành cho gói trả phí")
+
         app = FastAPI()
-        app.include_router(create_novel_import_router(service, require_roles))
+        app.include_router(create_novel_import_router(service, require_roles, ensure_allowed))
         self.client = TestClient(app)
 
     def test_editor_imports_after_confirming_rights(self) -> None:
@@ -215,6 +222,15 @@ class RouteTests(unittest.TestCase):
         done = self.client.get(f"/api/v1/comic/sources/imports/{import_id}", params={"include_text": True})
         self.assertEqual(done.json()["status"], "completed")
         self.assertIn("相原", done.json()["episodes"][0]["text"])
+
+    def test_plan_without_novel_import_is_refused_even_for_catalog(self) -> None:
+        self.allowed = False
+        catalog = self.client.get("/api/v1/comic/sources/catalog", params={"url": "https://fake.example/42"})
+        self.assertEqual(catalog.status_code, 403)
+        started = self.client.post("/api/v1/comic/sources/imports",
+                                   json={"url": "https://fake.example/42", "chapter_ids": ["1"],
+                                         "rights_confirmed": True})
+        self.assertEqual(started.status_code, 403)
 
     def test_viewer_is_refused(self) -> None:
         self.role = "viewer"
@@ -275,6 +291,15 @@ class JjwxcTests(unittest.TestCase):
         requested.clear()
         self.assertTrue(source.fetch_chapter(vip).is_preview)
         self.assertEqual(requested, [], "a paid chapter is never requested")
+
+
+class NovelImportEntitlementTests(unittest.TestCase):
+    def test_paid_plans_get_it_by_default_and_free_plans_do_not(self) -> None:
+        for plan in ("creator", "pro", "enterprise"):
+            self.assertIn("novel_import", DEFAULT_PLAN_FEATURES[plan], plan)
+        for plan in ("trial", "free"):
+            self.assertNotIn("novel_import", DEFAULT_PLAN_FEATURES[plan], plan)
+        self.assertIn("novel_import", account_features({"role": "admin", "plan": "free"}))
 
 
 if __name__ == "__main__":

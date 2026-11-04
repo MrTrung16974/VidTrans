@@ -57,6 +57,7 @@ class Account {
 /// Feature keys of backend/domain/plan_entitlements.py `FEATURES`.
 abstract final class PlanFeature {
   static const comicVideo = 'comic_video';
+  static const novelImport = 'novel_import';
   static const socialPublishing = 'social_publishing';
   static const imageTranslation = 'image_translation';
 }

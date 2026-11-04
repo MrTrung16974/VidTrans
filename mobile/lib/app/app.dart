@@ -78,7 +78,7 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
             'Video';
         _showJobOutcome(
           jobId,
-          status,
+          'completed', // `status ==` does not promote String? to String.
           'Xử lý video thành công! 🎉',
           '"$title" đã hoàn tất. Bấm để xem và tải video.',
         );
