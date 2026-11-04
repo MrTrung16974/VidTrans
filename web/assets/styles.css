@@ -7926,11 +7926,6 @@ body.modal-open {
   color: var(--muted);
   font-size: 13px;
 }
-#douyinView > .browser-power-bar {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  margin-bottom: 12px;
-}
 .browser-power-dot {
   width: 8px;
   height: 8px;

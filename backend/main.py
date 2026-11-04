@@ -603,7 +603,8 @@ def tenant_social_registry(owner_user_id: str) -> PublisherRegistry:
 
 TIKTOK_PUBLISHER = TikTokPublisher(WORK_DIR / "tiktok-auth", config=platform_app_config("TIKTOK"))
 TIKTOK_BROWSER = TikTokBrowserManager(WORK_DIR / "tiktok-browser")
-# The browser sidecars sleep on about:blank unless someone has their page open.
+# The TikTok browser sleeps on about:blank unless someone has the Đăng bài page open.
+# The source-login browser stays on: its logins must keep refreshing.
 _BROWSER_IDLE_SECONDS = 60 * float(os.environ.get("VIDTRANS_BROWSER_IDLE_MINUTES", "10") or 10)
 BROWSER_POWER = {
     "tiktok": BrowserPower(
@@ -611,11 +612,6 @@ BROWSER_POWER = {
         CdpPageDriver(TIKTOK_BROWSER.cdp_url), idle_seconds=_BROWSER_IDLE_SECONDS,
         # Never park the page while it uploads or publishes a video.
         is_busy=lambda: TIKTOK_BROWSER.active_attempt() is not None,
-    ),
-    # One Chromium serves the Douyin, YouTube and Facebook source logins.
-    "social": BrowserPower(
-        "social", "https://www.douyin.com/", WORK_DIR / "browser-power" / "social.json",
-        CdpPageDriver(DOUYIN_BROWSER_AUTH.cdp_url), idle_seconds=_BROWSER_IDLE_SECONDS,
     ),
 }
 BROWSER_POWER_SWEEPER = BrowserPowerSweeper(list(BROWSER_POWER.values()) if _BROWSER_IDLE_SECONDS > 0 else [])
@@ -6538,7 +6534,7 @@ def logout_douyin(request: Request) -> JSONResponse:
 
 
 # Who may keep each browser awake by having its page open.
-BROWSER_POWER_VIEWER_ROLES = {"tiktok": ("owner", "admin", "editor"), "social": ("owner", "admin")}
+BROWSER_POWER_VIEWER_ROLES = {"tiktok": ("owner", "admin", "editor")}
 
 
 class BrowserPowerUpdate(BaseModel):

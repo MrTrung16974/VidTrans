@@ -3007,9 +3007,10 @@ const jobEvents = createJobEvents({
 
 const JOBS_REQUEST_TIMEOUT_MS = 30000;
 
-// Browser sidecars sleep on a blank page unless their view is open: the view sends a
-// heartbeat that wakes the browser and keeps it awake. Only the owner may switch one off.
-const BROWSER_POWER_VIEWS = { tiktok: "tiktok", douyin: "social" };
+// The TikTok browser sleeps on a blank page unless the Đăng bài view is open: the view sends
+// a heartbeat that wakes it and keeps it awake. Only the owner may switch it off.
+// The source-login browser (#douyin) is always on.
+const BROWSER_POWER_VIEWS = { tiktok: "tiktok" };
 const BROWSER_HEARTBEAT_MS = 60000;
 let browserPowerTimer = null;
 let browserPowerName = null;
