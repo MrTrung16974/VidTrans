@@ -4863,6 +4863,38 @@ def remove_pruned_storage(removed: dict[str, Any]) -> None:
             shutil.rmtree(path)
 
 
+# Checkpoints that only speed up an identical re-run: the render is a byte copy of the
+# output video and the mix is cheap to redo. Transcript/translation/TTS (the expensive,
+# accuracy-relevant stages) are kept until the job itself expires.
+DISPOSABLE_CHECKPOINT_STAGES = ("render", "audio_mix")
+
+
+def prune_completed_job_checkpoints(now: datetime) -> tuple[int, int]:
+    """Drop disposable checkpoints of jobs completed more than VIDTRANS_CHECKPOINT_RETENTION_HOURS ago.
+
+    Returns (folders removed, bytes freed). A later re-run only misses that cache and
+    recomputes the stage: the checkpoint store treats a missing artifact as no hit.
+    """
+    try:
+        hours = max(1, int(os.environ.get("VIDTRANS_CHECKPOINT_RETENTION_HOURS", "6")))
+    except ValueError:
+        hours = 6
+    cutoff = now.timestamp() - hours * 3600
+    removed = freed = 0
+    for checkpoints in (WORK_DIR / "users").glob("*/*/checkpoints"):
+        stages = [checkpoints / stage for stage in DISPOSABLE_CHECKPOINT_STAGES if (checkpoints / stage).is_dir()]
+        if not stages or any(stage.stat().st_mtime > cutoff for stage in stages):
+            continue
+        job = JOB_SERVICE.get(checkpoints.parent.name) or {}
+        if job.get("status") != "completed":
+            continue
+        for stage in stages:
+            freed += sum(path.stat().st_size for path in stage.rglob("*") if path.is_file())
+            shutil.rmtree(stage, ignore_errors=True)
+            removed += 1
+    return removed, freed
+
+
 def remove_expired_guest_accounts(now: datetime) -> int:
     """Delete guest trial accounts older than VIDTRANS_GUEST_TRIAL_DAYS that never upgraded.
 
@@ -4902,6 +4934,15 @@ def apply_retention_policy() -> None:
         account_removed += len(removed["jobs"])
     if account_removed:
         logger.info("Per-account video retention removed %d jobs", account_removed)
+    try:
+        checkpoint_folders, checkpoint_bytes = prune_completed_job_checkpoints(now)
+        if checkpoint_folders:
+            logger.info(
+                "Removed %d disposable checkpoint folders (%.1f MB) of completed jobs",
+                checkpoint_folders, checkpoint_bytes / (1024 * 1024),
+            )
+    except Exception:
+        logger.exception("Checkpoint cleanup failed")
     if not retention_enabled():
         return
     job_cutoff = (now - timedelta(days=retention_days("VIDTRANS_JOB_RETENTION_DAYS", 30))).isoformat()
