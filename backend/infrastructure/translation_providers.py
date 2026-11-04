@@ -16,11 +16,17 @@ from infrastructure.translation_prompt import (
     TranslationOutputError,
     condense_system_prompt,
     condense_user_prompt,
+    glossary_for_lines,
+    glossary_system_prompt,
+    glossary_user_prompt,
     is_traditional_chinese,
     leaks_source_script,
+    parse_glossary,
     parse_translations,
     proofread_system_prompt,
     proofread_user_prompt,
+    rebalance_system_prompt,
+    rebalance_user_prompt,
     system_prompt,
     user_prompt,
 )
@@ -266,6 +272,7 @@ class GeminiContextTranslator:
         self._sleep = time.sleep
         self.name = f"gemini-{self.model}"
         self.history = TranslationHistory()
+        self.glossary: list[dict] = []
 
     def _available_model_candidates(self, *, exclude: set[str]) -> list[str]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}&pageSize=1000"
@@ -298,7 +305,7 @@ class GeminiContextTranslator:
     def _translate_chunk(self, lines: list[str], durations: list[float | None] | None = None) -> list[str]:
         text = self._generate(
             system_prompt(self.source_language, self.target_language, "".join(lines)),
-            user_prompt(lines, durations, self.history.items()),
+            user_prompt(lines, durations, self.history.items(), glossary_for_lines(self.glossary, lines)),
         )
         translated = parse_translations(text, len(lines), provider="gemini", sources=lines)
         self.history.extend(lines, translated)
@@ -331,6 +338,22 @@ class GeminiContextTranslator:
             return parse_translations(text, len(indexes), provider="gemini", sources=batch)
 
         return translate_halving(chunk, list(range(len(lines))), None, provider="Gemini proofread")
+
+    def prepare_context(self, lines: list[str]) -> list[dict]:
+        """Build the video's glossary (names, brands, misheard spellings) from all its lines."""
+        if not lines:
+            return self.glossary
+        text = self._generate(
+            glossary_system_prompt(self.source_language, self.target_language, "".join(lines)),
+            glossary_user_prompt(lines),
+        )
+        self.glossary = parse_glossary(text)
+        return self.glossary
+
+    def rebalance_lines(self, lines: list[str]) -> list[str]:
+        """The same characters with line breaks moved off mid-word positions (one call)."""
+        text = self._generate(rebalance_system_prompt(self.source_language), rebalance_user_prompt(lines))
+        return parse_translations(text, len(lines), provider="gemini")
 
     def _generate(self, system: str, user: str) -> str:
         body = json.dumps({
@@ -531,6 +554,7 @@ class Qwen3Translator:
         self._open = opener or _direct_open
         self.name = f"qwen3-{self.model}"
         self.history = TranslationHistory()
+        self.glossary: list[dict] = []
         # A CPU-bound local model cannot finish a long batch within the timeout; send small chunks
         # and shrink them further whenever one still times out.
         try:
@@ -543,7 +567,9 @@ class Qwen3Translator:
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt(self.source_language, self.target_language, "".join(lines))},
-                {"role": "user", "content": user_prompt(lines, durations, self.history.items())},
+                {"role": "user", "content": user_prompt(
+                    lines, durations, self.history.items(), glossary_for_lines(self.glossary, lines),
+                )},
             ],
             "stream": False,
             # Qwen3 "thinking" adds minutes of hidden reasoning for no gain here.
@@ -708,6 +734,31 @@ class FallbackTranslator:
         self.fallback_sources: set[str] = set()
         if hasattr(primary, "translate_lines"):
             self.translate_lines = self._translate_lines
+
+    def prepare_context(self, lines: list[str]) -> list[dict]:
+        """Build the glossary with the first translator that can, and share it down the chain."""
+        glossary: list[dict] = []
+        for translator in (self.primary, self.secondary):
+            prepare = getattr(translator, "prepare_context", None)
+            if prepare is None:
+                continue
+            try:
+                glossary = prepare(lines) or []
+            except Exception as exc:
+                logger.warning("%s could not build a glossary (%s)",
+                               getattr(translator, "name", "translator"), type(exc).__name__)
+                continue
+            if glossary:
+                break
+        self.share_glossary(glossary)
+        return glossary
+
+    def share_glossary(self, glossary: list[dict]) -> None:
+        for translator in (self.primary, self.secondary):
+            if hasattr(translator, "share_glossary"):
+                translator.share_glossary(glossary)
+            elif hasattr(translator, "glossary"):
+                translator.glossary = list(glossary)
 
     @property
     def name(self) -> str:

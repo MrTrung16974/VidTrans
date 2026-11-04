@@ -213,3 +213,71 @@ def merge_fragment_cues(
         else:
             pending[index + 1] = _absorb(following, cue, fragment_first=True)
     return output
+
+
+# Traditional/Simplified pairs common in subtitles: 萬一呢 and 万一呢 are one line.
+_TRADITIONAL_CHARS = "萬這個們來時說會對愛為後還過沒樣話點麼現開見覺嗎讓機與從經種實長問無間聽頭錢謝學國歡數東車門裡氣電體發邊動當於"
+_SIMPLIFIED_CHARS = "万这个们来时说会对爱为后还过没样话点么现开见觉吗让机与从经种实长问无间听头钱谢学国欢数东车门里气电体发边动当于"
+_TO_SIMPLIFIED = str.maketrans(_TRADITIONAL_CHARS, _SIMPLIFIED_CHARS)
+
+
+def _comparable_text(cue: dict[str, Any]) -> str:
+    text = str(cue.get("source_text") or cue.get("text") or "").translate(_TO_SIMPLIFIED).casefold()
+    return "".join(character for character in text if character.isalnum())
+
+
+def drop_duplicate_cues(
+    cues: Sequence[dict[str, Any]],
+    *,
+    min_overlap_share: float = 0.5,
+) -> list[dict[str, Any]]:
+    """Drop a cue that repeats the words of a cue it overlaps in time.
+
+    Gap recovery and extra ASR branches re-hear audio around known speech; their copy
+    of a line lands on top of the original, so the line is shown and dubbed twice
+    (job fbb778e6: 我才是保安 at 505.8-507.3 and again at 505.8-510.9). Of the two,
+    the one timed to a burned-in caption, else the tighter one, is kept. Lines a
+    speaker really repeats follow each other and barely overlap, so they stay.
+    """
+
+    ordered = sorted((dict(cue) for cue in cues), key=lambda cue: (float(cue["start"]), float(cue["end"])))
+    kept: list[dict[str, Any]] = []
+    for cue in ordered:
+        text = _comparable_text(cue)
+        duplicate_of = None
+        if text and not cue.get("skip_subtitle"):
+            for index in range(len(kept) - 1, -1, -1):
+                other = kept[index]
+                if float(other["end"]) <= float(cue["start"]):
+                    # Earlier cues may still reach here when one is very long.
+                    if float(cue["start"]) - float(other["end"]) > 30.0:
+                        break
+                    continue
+                other_text = _comparable_text(other)
+                if not other_text or other.get("skip_subtitle"):
+                    continue
+                overlap = min(float(cue["end"]), float(other["end"])) - max(float(cue["start"]), float(other["start"]))
+                shorter = min(float(cue["end"]) - float(cue["start"]), float(other["end"]) - float(other["start"]))
+                if overlap <= 0 or overlap < min_overlap_share * max(shorter, 1e-6):
+                    continue
+                if text == other_text or (
+                    min(len(text), len(other_text)) >= 2 and (text in other_text or other_text in text)
+                    and min(len(text), len(other_text)) / max(len(text), len(other_text)) >= 0.6
+                ):
+                    duplicate_of = index
+                    break
+        if duplicate_of is None:
+            kept.append(cue)
+            continue
+        other = kept[duplicate_of]
+
+        def rank(item: dict[str, Any]) -> tuple[int, int, float]:
+            return (
+                int(item.get("timing_source") == "caption"),
+                len(_comparable_text(item)),
+                -(float(item["end"]) - float(item["start"])),
+            )
+
+        if rank(cue) > rank(other):
+            kept[duplicate_of] = cue
+    return sorted(kept, key=lambda cue: (float(cue["start"]), float(cue["end"])))

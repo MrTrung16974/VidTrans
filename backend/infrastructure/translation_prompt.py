@@ -120,6 +120,13 @@ def system_prompt(source_language: str, target_language: str, sample: str = "") 
         '7. Reply with JSON only: {"translations": [{"id": <id>, "source": "<the item text copied exactly>", '
         '"text": "<translation>"}]}. "source" must be the text of that same id, so each translation stays '
         "on its own line; translate song lyrics and fragments too instead of skipping them.",
+        "8. The items come from speech recognition, which mishears near-homophones (我没吐 heard for 我没赌 in "
+        "a gambling story, 公报自愁 for 公报私仇, 手续 for 手气). When an item makes no sense as written, "
+        "translate what was most plausibly said given the context, never the nonsense reading. "
+        "\"source\" still echoes the item exactly as given.",
+        "9. Say numbers the way a native speaker would (七七 → bảy bảy, 五百万 → năm triệu); "
+        "Sino-Vietnamese readings are for names only.",
+        "10. When a glossary is given, use its renderings for those names and terms every time they occur.",
     ]
     example = _EXAMPLES.get((source_language, target_language))
     if example:
@@ -135,6 +142,7 @@ def user_prompt(
     lines: Sequence[str],
     durations: Sequence[float | None] | None,
     history: Sequence[tuple[str, str]] = (),
+    glossary: Sequence[dict[str, str]] = (),
 ) -> str:
     items: list[dict[str, Any]] = []
     for index, line in enumerate(lines):
@@ -144,6 +152,12 @@ def user_prompt(
             item["seconds"] = round(float(seconds), 1)
         items.append(item)
     parts = []
+    if glossary:
+        parts.append(
+            "Glossary for this video (names and terms with their fixed translation; "
+            "\"heard_as\" lists misheard spellings of the same term): "
+            + json.dumps(list(glossary), ensure_ascii=False)
+        )
     if history:
         context = [{"source": source, "translation": translation} for source, translation in history]
         parts.append(
@@ -152,6 +166,80 @@ def user_prompt(
         )
     parts.append(f"Translate these {len(items)} items: " + json.dumps(items, ensure_ascii=False))
     return "\n".join(parts)
+
+
+GLOSSARY_MAX_TERMS = 40
+GLOSSARY_MAX_TRANSCRIPT_CHARS = 12000
+
+
+def glossary_system_prompt(source_language: str, target_language: str, sample: str = "") -> str:
+    source = language_name(source_language, sample)
+    target = language_name(target_language)
+    vietnamese = (
+        " Chinese person names take their Sino-Vietnamese reading (王小明 → Vương Tiểu Minh)."
+        if target_language == "vi" else ""
+    )
+    return "\n".join([
+        f"You prepare a translation glossary for one video, translated from {source} to {target}.",
+        "The transcript comes from speech recognition: the same name is often spelt differently in "
+        "different lines (桑言 / 桑延, 华为宏 / 华为红 / 华慧红), and a kinship word or a brand can be "
+        "misheard as something else (季妹 for 堂妹, 美帝 for 美的).",
+        "Rules:",
+        "1. List the person names, nicknames, places, brands, product and show titles, and recurring "
+        f"special terms. Give each one {target} rendering to use everywhere.{vietnamese} Keep brands as "
+        "their usual written form.",
+        "2. Put the most plausible correct spelling in \"source\" and every other spelling found in the "
+        "transcript for the same thing in \"heard_as\".",
+        f"3. Only list terms that occur in the transcript; at most {GLOSSARY_MAX_TERMS} entries. "
+        "Ordinary words do not belong in the glossary.",
+        '4. Reply with JSON only: {"terms": [{"source": "<term>", "heard_as": ["<other spelling>"], '
+        '"target": "<translation>"}]}.',
+    ])
+
+
+def glossary_user_prompt(lines: Sequence[str]) -> str:
+    text = "\n".join(lines)[:GLOSSARY_MAX_TRANSCRIPT_CHARS]
+    return "Transcript, one line per subtitle:\n" + text
+
+
+def parse_glossary(text: str) -> list[dict[str, Any]]:
+    """The glossary entries of a model reply; anything malformed is left out."""
+
+    value = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE)
+    try:
+        payload = json.loads(value)
+    except ValueError:
+        return []
+    items = payload.get("terms") if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        return []
+    terms: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").strip()
+        target = str(item.get("target") or "").strip()
+        if not source or not target or len(source) > 40 or len(target) > 60:
+            continue
+        heard = [
+            str(value).strip() for value in item.get("heard_as") or []
+            if isinstance(value, str) and str(value).strip() and str(value).strip() != source
+        ][:5]
+        entry: dict[str, Any] = {"source": source, "target": target}
+        if heard:
+            entry["heard_as"] = heard
+        terms.append(entry)
+    return terms[:GLOSSARY_MAX_TERMS]
+
+
+def glossary_for_lines(glossary: Sequence[dict[str, Any]], lines: Sequence[str]) -> list[dict[str, Any]]:
+    """Entries that occur in these lines, so each batch prompt stays short."""
+
+    joined = "".join(lines)
+    return [
+        entry for entry in glossary
+        if any(spelling and spelling in joined for spelling in [entry["source"], *entry.get("heard_as", [])])
+    ]
 
 
 def condense_system_prompt(source_language: str, target_language: str, sample: str = "") -> str:
@@ -206,6 +294,30 @@ def proofread_system_prompt(language: str, *, sung: bool) -> str:
 def proofread_user_prompt(lines: Sequence[str]) -> str:
     items = [{"id": index + 1, "text": line} for index, line in enumerate(lines)]
     return f"Proofread these {len(items)} consecutive lines: " + json.dumps(items, ensure_ascii=False)
+
+
+def rebalance_system_prompt(language: str) -> str:
+    name = language_name(language)
+    return "\n".join([
+        f"You fix line breaks in {name} subtitles produced by speech recognition.",
+        "The lines are consecutive speech. Their breaks were placed by audio timing, which is often off by "
+        "one to three characters, so a break can fall inside a word or phrase: the last character of a "
+        "sentence starts the next line (像极了他追查多年的通缉 / 犯虽然已经过去了十多年), or the first word of "
+        "a sentence ends the previous line (日夜 / 里深深刻进了她的脑海 → 日夜里 / 深深刻进了她的脑海).",
+        "Rules:",
+        "1. Move at most three characters across each break so that every line ends where a word, phrase "
+        "or sentence naturally ends. Leave a break that is already natural exactly where it is.",
+        "2. Never change, add, remove, correct or reorder any character, even a misheard one, and never "
+        "add punctuation or spaces: joined together, your lines must equal the input lines joined together.",
+        "3. Keep the same number of lines, in the same order; no line may become empty.",
+        '4. Reply with JSON only: {"translations": [{"id": <id>, "text": "<line with fixed breaks>"}]}, '
+        "one entry per id, in order.",
+    ])
+
+
+def rebalance_user_prompt(lines: Sequence[str]) -> str:
+    items = [{"id": index + 1, "text": line} for index, line in enumerate(lines)]
+    return f"Fix the line breaks of these {len(items)} consecutive lines: " + json.dumps(items, ensure_ascii=False)
 
 
 def _comparable(text: str) -> str:

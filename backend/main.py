@@ -199,7 +199,13 @@ from pipeline.checkpoint_payloads import (
 from pipeline.parallel import collect_indexed_futures
 from pipeline.stage_metrics import StageMeasurement, measure_stage, merge_stage_metric
 from pipeline.subtitle_layout import SubtitleLayoutOptions, apply_subtitle_layout
-from pipeline.subtitle_segmentation import SubtitleSegmentationOptions, merge_fragment_cues, segment_subtitle_cues
+from pipeline.cue_boundaries import repair_cue_boundaries
+from pipeline.subtitle_segmentation import (
+    SubtitleSegmentationOptions,
+    drop_duplicate_cues,
+    merge_fragment_cues,
+    segment_subtitle_cues,
+)
 from pipeline.audio_scene import (
     AudioSceneClassifier,
     SceneWindow,
@@ -219,6 +225,7 @@ from pipeline.subtitle_timing import subtitle_render_window
 from pipeline.tiktok import LocalExtractiveTikTokProvider, TikTokPost, write_tiktok_artifacts
 from pipeline.asr import ASRConfig, ASRService, resolve_cpu_threads
 from pipeline.translation import (
+    contains_han,
     ensure_translation_complete,
     filter_meaningful_segments,
     fit_translations_to_voice,
@@ -3398,6 +3405,25 @@ def recognize_video_source(
     return segments, detected_language, detected_language_probability, source_method, skipped_count
 
 
+def repair_line_breaks(job_id: str, segments: list[dict[str, Any]], language: str) -> list[dict[str, Any]]:
+    """Move words across line breaks that cut a word in two, before the lines are translated."""
+    if not any(
+        not segment.get("skip_subtitle") and contains_han(str(segment.get("source_text") or segment.get("text") or ""))
+        for segment in segments
+    ):
+        return segments
+    try:
+        fixer = GeminiContextTranslator(source_language=language, target_language=language, allow_same_language=True)
+    except Exception as exc:
+        logger.info("Line breaks are not repaired: %s", exc)
+        return segments
+    update_job(job_id, step_detail="AI đang chỉnh các chỗ ngắt câu bị cắt giữa từ")
+    repaired, changed = repair_cue_boundaries(segments, fixer, check_active=lambda: ensure_job_active(job_id))
+    if changed:
+        logger.info("Job %s: moved line breaks of %d cue(s) off mid-word positions", job_id, changed)
+    return repaired
+
+
 def proofread_same_language(job_id: str, segments: list[dict[str, Any]], language: str) -> int:
     """AI fix of misheard words when the transcript is used as-is (source == target)."""
     try:
@@ -3565,6 +3591,8 @@ def process_video(
         segments = merge_fragment_cues(
             transcript_payload["segments"], max_gap_seconds=float(subtitle_style["cue_pause_seconds"])
         )
+        # Gap recovery and extra ASR branches can re-hear a line on top of itself.
+        segments = drop_duplicate_cues(segments)
         detected_language = transcript_payload.get("detected_language")
         detected_language_probability = transcript_payload.get("detected_language_probability")
         source_method = str(transcript_payload["source_method"])
@@ -3601,7 +3629,8 @@ def process_video(
                 "source_language": effective_source_language,
                 "target_language": target_language,
                 "translation_provider": translation_provider,
-                "translation_pipeline_version": 5,
+                # 6: line breaks moved off mid-word positions, glossary, homophone-aware prompt.
+                "translation_pipeline_version": 6,
                 "max_batch_chars": 1200,
             }
         )
@@ -3616,6 +3645,7 @@ def process_video(
             translated_segments = list(translation_checkpoint.payload["segments"])
             update_job(job_id, same_language_passthrough=True)
         elif same_language:
+            segments = repair_line_breaks(job_id, segments, target_language)
             translated_segments = passthrough_segments(segments, language=target_language)
             update_job(
                 job_id,
@@ -3630,6 +3660,7 @@ def process_video(
         elif translation_checkpoint is not None:
             translated_segments = list(translation_checkpoint.payload["segments"])
         else:
+            segments = repair_line_breaks(job_id, segments, effective_source_language)
             with measure_job_stage(job_id, "translation", video_duration=video_duration):
                 translation_kwargs = {
                     "target_language": target_language,

@@ -588,6 +588,17 @@ def translate_segments(
     elif hasattr(translator, "translate_lines"):
         # One request per batch instead of per cue keeps long videos under provider rate limits.
         unique = list(dict.fromkeys(sources[i] for i in active_to_translate))
+        # One look at the whole video first: names and brands keep a single rendering
+        # across batches, even when recognition spelt them differently.
+        prepare = getattr(translator, "prepare_context", None)
+        if prepare is not None and len(unique) >= 2:
+            try:
+                glossary = prepare(unique)
+                if glossary:
+                    logger.info("Translation glossary: %d term(s)", len(glossary))
+            except Exception as exc:
+                check_active()
+                logger.warning("Translation glossary skipped (%s)", type(exc).__name__)
         # LLM translators fit each line to the time the speaker takes to say it.
         seconds: dict[str, float] = {}
         for i in active_to_translate:
