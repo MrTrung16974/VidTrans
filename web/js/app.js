@@ -2440,10 +2440,10 @@ function showConfirmJobModal(formData) {
   pendingBatchSubmission = formData;
   const count = state.files.length + state.links.length;
   const mode = $("#mode")?.value || "1";
-  const modeText = $("#modeSummary")?.textContent || (mode === "4" ? "Chỉ tải video" : "Phụ đề");
+  const modeText = $("#modeSummary")?.textContent?.trim() || (mode === "4" ? "Chỉ tải video" : (mode === "2" ? "Phụ đề + Voice" : (mode === "3" ? "Voice + Nhạc" : "Phụ đề")));
   const langText = mode === "4"
     ? "Chỉ tải video gốc"
-    : ($("#languageSummary")?.textContent || `${$("#sourceLanguage option:checked")?.textContent || "Tự động"} → ${$("#targetLanguage option:checked")?.textContent || "Việt"}`);
+    : ($("#languageSummary")?.textContent?.trim() || `${$("#sourceLanguage option:checked")?.textContent || "Tự động"} → ${$("#targetLanguage option:checked")?.textContent || "Việt"}`);
 
   if ($("#confirmSourceCount")) $("#confirmSourceCount").textContent = `${count} video (${state.links.length} link, ${state.files.length} file)`;
   if ($("#confirmMode")) $("#confirmMode").textContent = modeText;
@@ -2483,9 +2483,17 @@ function showConfirmJobModal(formData) {
 
   const dialog = $("#confirmJobDialog");
   if (dialog) {
-    if (typeof dialog.showModal === "function") {
-      dialog.showModal();
-    } else {
+    document.body.classList.add("modal-open");
+    try {
+      if (dialog.open && typeof dialog.close === "function") {
+        dialog.close();
+      }
+      if (typeof dialog.showModal === "function") {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute("open", "");
+      }
+    } catch (err) {
       dialog.setAttribute("open", "");
     }
   }
@@ -2493,13 +2501,15 @@ function showConfirmJobModal(formData) {
 
 function closeConfirmJobDialog() {
   pendingBatchSubmission = null;
+  document.body.classList.remove("modal-open");
   const dialog = $("#confirmJobDialog");
   if (dialog) {
-    if (typeof dialog.close === "function") {
-      dialog.close();
-    } else {
-      dialog.removeAttribute("open");
-    }
+    try {
+      if (dialog.open && typeof dialog.close === "function") {
+        dialog.close();
+      }
+    } catch (err) {}
+    dialog.removeAttribute("open");
   }
 }
 
@@ -2573,9 +2583,9 @@ async function executeSubmitBatch(formData) {
 }
 
 async function submitBatch(event) {
-  event.preventDefault();
+  event?.preventDefault?.();
   renderSourceLinks();
-  const sourceText = $("#sourceLinks").value.trim();
+  const sourceText = $("#sourceLinks")?.value?.trim() || "";
   if (!state.files.length && !state.links.length) {
     $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
     const dropZone = $("#dropZone");
@@ -2590,22 +2600,23 @@ async function submitBatch(event) {
     return toast(invalidSourceLinksMessage(state.invalidLinks), true);
   }
   if (state.files.length + state.links.length > 50) return toast("Mỗi batch chỉ nhận tối đa 50 video", true);
-  if ($("#mode").value !== "4" && $("#sourceLanguage").value !== "auto" && $("#sourceLanguage").value === $("#targetLanguage").value) {
+  if ($("#mode")?.value !== "4" && $("#sourceLanguage")?.value !== "auto" && $("#sourceLanguage")?.value === $("#targetLanguage")?.value) {
     return toast("Ngôn ngữ nguồn và đầu ra phải khác nhau", true);
   }
   updateFormSummary();
-  const form = event.currentTarget || $("#batchForm");
+  const form = $("#batchForm");
+  if (!form) return toast("Không tìm thấy form tạo batch", true);
   const formData = new FormData(form);
   // An empty multiple-file input is otherwise serialized as a zero-byte file
   // by some browsers. Link-only batches must not be mistaken for bad uploads.
   if (!state.files.length) formData.delete("files");
-  const keepOriginal = $('[name="keep_original_audio"]', form).checked;
+  const keepOriginal = Boolean($('[name="keep_original_audio"]', form)?.checked);
   formData.set("keep_original_audio", String(keepOriginal));
   const music = formData.get("background_music");
   if (music instanceof File && !music.name) formData.delete("background_music");
   const sourceCookies = formData.get("source_cookies");
   if (sourceCookies instanceof File && !sourceCookies.name) formData.delete("source_cookies");
-  if ($("#mode").value === "3") {
+  if ($("#mode")?.value === "3") {
     // An uploaded file wins over the library pick; send only one of them.
     if (formData.has("background_music")) formData.delete("background_music_id");
     else if (!formData.get("background_music_id")) return toast("Chế độ nhạc nền: hãy chọn nhạc trong thư viện hoặc tải file nhạc lên", true);
@@ -2619,6 +2630,7 @@ async function submitBatch(event) {
 
 function jobActions(job) {
   const terminal = ["completed", "failed", "cancelled"].includes(job.status);
+  const detail = `<button type="button" class="btn-job-action btn-detail" data-action="detail" data-job="${escapeHtml(job.job_id)}" title="Xem chi tiết tiến trình" aria-label="Xem chi tiết tiến trình"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg><span>Chi tiết</span></button>`;
   let downloads = "";
   if (job.video_url) {
     const videoName = job.output_video || `${job.job_id}.mp4`;
@@ -2644,7 +2656,7 @@ function jobActions(job) {
     && (state.auth.role === "owner" || !state.auth.user_id || job.owner_user_id === state.auth.user_id)
     ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Mở trang chuẩn bị và đăng bài" aria-label="Mở trang chuẩn bị và đăng bài"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4Z"></path></svg><span>Đăng bài</span></button>`
     : "";
-  return downloads + refreshTikTok + cancel + retry + remove + review;
+  return detail + downloads + refreshTikTok + cancel + retry + remove + review;
 }
 
 function eligibleJobs(action) {
@@ -2946,6 +2958,10 @@ const jobEvents = createJobEvents({
     scheduleJobRender();
     if (reload) scheduleJobsReload();
     comicWorkspace.onJobChanges(message);
+    if (activeDetailJobId) {
+      const activeJob = state.jobs.find(j => j.job_id === activeDetailJobId);
+      if (activeJob) renderJobDetailModal(activeJob, { preserveMedia: true });
+    }
   },
 });
 
@@ -3013,6 +3029,400 @@ async function jobAction(action, jobId) {
     toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "cancel" ? (data.status === "cancelling" ? "Đang dừng job an toàn…" : "Đã hủy job") : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
     await loadJobs();
   } catch (error) { toast(error.message, true); }
+}
+
+const jobModeNames = {
+  1: "Phụ đề",
+  2: "Phụ đề + Voice",
+  3: "Voice + Nhạc",
+  4: "Chỉ tải video",
+};
+
+const jobActionNames = {
+  translation: "Dịch video",
+  logo_branding: "Đóng dấu logo",
+  comic_video: "Video truyện tranh",
+  publish_tiktok: "Đăng bài TikTok",
+};
+
+const langNameMap = {
+  auto: "Tự nhận diện",
+  "zh-CN": "Tiếng Trung",
+  zh: "Tiếng Trung",
+  vi: "Tiếng Việt",
+  en: "Tiếng Anh",
+  ja: "Tiếng Nhật",
+  ko: "Tiếng Hàn",
+  th: "Tiếng Thái",
+  id: "Tiếng Indonesia",
+  es: "Tiếng Tây Ban Nha",
+};
+
+const ttsProviderNames = {
+  edge: "Edge TTS",
+  cit: "CIT Voice Studio",
+  azure: "Azure Speech",
+  elevenlabs: "ElevenLabs",
+};
+
+const translationProviderNames = {
+  google: "Google Translate",
+  translategemma: "TranslateGemma",
+  qwen3: "Qwen3",
+  gemini: "Gemini",
+};
+
+let activeDetailJobId = null;
+
+function formatDurationSeconds(seconds) {
+  if (seconds == null || isNaN(seconds) || seconds < 0) return "—";
+  const s = Math.round(seconds);
+  const hours = Math.floor(s / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  const remainderSeconds = s % 60;
+  if (hours > 0) return `${hours} giờ ${minutes} phút`;
+  if (minutes > 0) return `${minutes} phút ${remainderSeconds} giây`;
+  return `${remainderSeconds} giây`;
+}
+
+function formatJobTime(isoString) {
+  if (!isoString) return "—";
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "—";
+  const time = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  const date = d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return `${time} · ${date}`;
+}
+
+function getElapsedSeconds(job) {
+  const start = job.started_at ? new Date(job.started_at).getTime() : null;
+  if (!start) return null;
+  const finish = (job.finished_at || job.completed_at) ? new Date(job.finished_at || job.completed_at).getTime() : null;
+  const end = finish || (["queued", "scheduled", "processing", "cancelling"].includes(job.status) ? Date.now() : null);
+  if (!end || end < start) return null;
+  return (end - start) / 1000;
+}
+
+function renderJobDetailModal(job, { preserveMedia = false } = {}) {
+  if (!job) return;
+  activeDetailJobId = job.job_id;
+
+  const title = job.filename || job.source_url || `Tiến trình #${job.job_id.slice(0, 8)}`;
+  if ($("#jobDetailTitle")) $("#jobDetailTitle").textContent = title;
+  if ($("#jobDetailCode")) $("#jobDetailCode").textContent = `Job #${job.job_id.slice(0, 8).toUpperCase()}`;
+
+  const statusPill = $("#jobDetailStatusPill");
+  if (statusPill) {
+    statusPill.className = `status-pill status-${job.status}`;
+    const statusText = $("#jobDetailStatusText");
+    if (statusText) statusText.textContent = statusLabels[job.status] || job.status;
+  }
+
+  const queueBadge = $("#jobDetailQueueBadge");
+  if (queueBadge) {
+    if (job.queue_position != null) {
+      queueBadge.textContent = `Hàng đợi #${job.queue_position}`;
+      queueBadge.classList.remove("is-hidden");
+    } else {
+      queueBadge.classList.add("is-hidden");
+    }
+  }
+
+  // Progress Card
+  const progressCard = $("#jobDetailProgressCard");
+  const percent = Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100)));
+  const isActive = ["queued", "scheduled", "processing", "cancelling"].includes(job.status);
+  if (progressCard) {
+    if (isActive) {
+      progressCard.classList.remove("is-hidden");
+      if ($("#jobDetailStepLabel")) $("#jobDetailStepLabel").textContent = stepLabels[job.step] || job.step || "Đang xử lý";
+      if ($("#jobDetailProgressPercent")) $("#jobDetailProgressPercent").textContent = `${percent}%`;
+      if ($("#jobDetailProgressBar")) $("#jobDetailProgressBar").style.width = `${percent}%`;
+      const detail = job.status === "scheduled" && job.tiktok_publish_at
+        ? `Sẽ đăng TikTok lúc ${formatScheduledTime(job.tiktok_publish_at)}`
+        : (job.step_detail || "Đang xử lý trong hàng đợi...");
+      if ($("#jobDetailStepDetail")) $("#jobDetailStepDetail").textContent = detail;
+    } else {
+      progressCard.classList.add("is-hidden");
+    }
+  }
+
+  // Error Card
+  const errorCard = $("#jobDetailErrorCard");
+  if (errorCard) {
+    if (job.error || (job.status === "failed" && job.step_detail)) {
+      errorCard.classList.remove("is-hidden");
+      if ($("#jobDetailErrorMsg")) $("#jobDetailErrorMsg").textContent = job.error || job.step_detail || "Lỗi không xác định";
+    } else {
+      errorCard.classList.add("is-hidden");
+    }
+  }
+
+  // Video Preview Card
+  const videoCard = $("#jobDetailVideoCard");
+  const videoPlayer = $("#jobDetailVideoPlayer");
+  if (videoCard && videoPlayer) {
+    if (job.video_url) {
+      videoCard.classList.remove("is-hidden");
+      if (!preserveMedia || videoPlayer.getAttribute("src") !== job.video_url) {
+        videoPlayer.src = job.video_url;
+      }
+      const downloadBtn = $("#jobDetailVideoDownloadBtn");
+      if (downloadBtn) {
+        downloadBtn.href = job.video_url;
+        downloadBtn.setAttribute("download", job.output_video || `${job.job_id}.mp4`);
+      }
+      const publishBtn = $("#jobDetailPublishTikTokBtn");
+      if (publishBtn) {
+        publishBtn.onclick = () => {
+          closeJobDetailModal();
+          location.hash = "tiktok";
+          tiktokWorkspace.openDraft(job.job_id);
+        };
+      }
+    } else {
+      videoCard.classList.add("is-hidden");
+      if (!preserveMedia) {
+        videoPlayer.pause();
+        videoPlayer.removeAttribute("src");
+        videoPlayer.load();
+      }
+    }
+  }
+
+  // Artifacts list
+  const artifactsCard = $("#jobDetailArtifactsCard");
+  const artifactsList = $("#jobDetailArtifactsList");
+  if (artifactsCard && artifactsList) {
+    const items = [];
+    if (job.video_url) {
+      items.push({
+        label: "Video thành phẩm (MP4)",
+        url: job.video_url,
+        name: job.output_video || `${job.job_id}.mp4`,
+        icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>`
+      });
+    }
+    if (job.subtitle_url) {
+      items.push({
+        label: "Phụ đề song ngữ (SRT/ASS)",
+        url: job.subtitle_url,
+        name: job.subtitle_file || `${job.job_id}.srt`,
+        icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><path d="M7 15h3"></path><path d="M14 15h3"></path><path d="M7 11h10"></path></svg>`
+      });
+    }
+    if (job.translation_url) {
+      items.push({
+        label: "Dữ liệu bản dịch (JSON)",
+        url: job.translation_url,
+        name: job.translation_file || `${job.job_id}.json`,
+        icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>`
+      });
+    }
+    if (job.download_all_url) {
+      items.push({
+        label: "Toàn bộ tài nguyên (ZIP)",
+        url: job.download_all_url,
+        name: `${job.job_id}.artifacts.zip`,
+        icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>`
+      });
+    }
+
+    if (items.length > 0) {
+      artifactsCard.classList.remove("is-hidden");
+      artifactsList.innerHTML = items.map(it => `
+        <a class="artifact-download-item" href="${escapeHtml(it.url)}" download="${escapeHtml(it.name)}" data-download-url="${escapeHtml(it.url)}" data-download-name="${escapeHtml(it.name)}">
+          <span>${it.icon} <span>${escapeHtml(it.label)}</span></span>
+          <strong>↓</strong>
+        </a>
+      `).join("");
+    } else {
+      artifactsCard.classList.add("is-hidden");
+    }
+  }
+
+  // Info items
+  const actionLabel = jobActionNames[job.action || job.job_action] || (job.action === "comic_video" ? "Video truyện tranh" : "Dịch video");
+  if ($("#jobDetailAction")) $("#jobDetailAction").textContent = actionLabel;
+  if ($("#jobDetailBatch")) $("#jobDetailBatch").textContent = job.batch_id || "Video đơn";
+
+  const sourceVal = job.source_url || job.filename || "—";
+  if ($("#jobDetailSourceText")) {
+    $("#jobDetailSourceText").textContent = sourceVal;
+    $("#jobDetailSourceText").title = sourceVal;
+  }
+  const copySourceBtn = $("#jobDetailCopySource");
+  if (copySourceBtn) {
+    if (job.source_url) {
+      copySourceBtn.style.display = "";
+      copySourceBtn.onclick = () => {
+        navigator.clipboard.writeText(job.source_url).then(() => toast("Đã sao chép link nguồn"));
+      };
+    } else {
+      copySourceBtn.style.display = "none";
+    }
+  }
+
+  const mode = job.mode != null ? (jobModeNames[job.mode] || `Chế độ ${job.mode}`) : "Phụ đề";
+  if ($("#jobDetailMode")) $("#jobDetailMode").textContent = mode;
+
+  const srcLang = langNameMap[job.source_language] || job.source_language || "Tự động";
+  const tgtLang = langNameMap[job.target_language] || job.target_language || "Tiếng Việt";
+  if ($("#jobDetailLangs")) $("#jobDetailLangs").textContent = job.mode === 4 ? "Chỉ tải video gốc" : `${srcLang} → ${tgtLang}`;
+
+  const aiTransWrap = $("#jobDetailAiTranslationWrap");
+  if (aiTransWrap) {
+    if (job.translation_provider) {
+      aiTransWrap.style.display = "";
+      if ($("#jobDetailAiTranslation")) $("#jobDetailAiTranslation").textContent = translationProviderNames[job.translation_provider] || job.translation_provider;
+    } else {
+      aiTransWrap.style.display = "none";
+    }
+  }
+
+  const voiceWrap = $("#jobDetailVoiceWrap");
+  if (voiceWrap) {
+    if (job.mode === 1 || job.mode === 4) {
+      voiceWrap.style.display = "none";
+    } else {
+      voiceWrap.style.display = "";
+      const tts = job.tts_provider ? (ttsProviderNames[job.tts_provider] || job.tts_provider) : null;
+      const voice = job.voice_routing?.voice_key || job.voice_key || job.tts_voice || "";
+      if ($("#jobDetailVoice")) $("#jobDetailVoice").textContent = tts ? (voice ? `${tts} (${voice})` : tts) : (voice || "Mặc định hệ thống");
+    }
+  }
+
+  const owner = job.owner_display_name || job.owner_email || "Chưa xác định";
+  if ($("#jobDetailOwner")) $("#jobDetailOwner").textContent = owner;
+
+  const tiktokRow = $("#jobDetailTikTokRow");
+  if (tiktokRow) {
+    if (job.tiktok_publish_status || job.tiktok_publish_error || job.tiktok_publish_at) {
+      tiktokRow.classList.remove("is-hidden");
+      const tiktokText = job.tiktok_publish_error
+        ? `Lỗi: ${job.tiktok_publish_error}`
+        : job.status === "scheduled" && job.tiktok_publish_at
+        ? `Hẹn đăng: ${formatJobTime(job.tiktok_publish_at)}`
+        : (job.tiktok_publish_status || "Đã liên kết");
+      if ($("#jobDetailTikTokStatus")) $("#jobDetailTikTokStatus").textContent = tiktokText;
+    } else {
+      tiktokRow.classList.add("is-hidden");
+    }
+  }
+
+  // Timeline
+  if ($("#jobDetailCreatedAt")) $("#jobDetailCreatedAt").textContent = formatJobTime(job.created_at);
+  if ($("#jobDetailStartedAt")) $("#jobDetailStartedAt").textContent = formatJobTime(job.started_at);
+
+  const finishedLabel = job.status === "failed" ? "Lỗi lúc" : job.status === "cancelled" ? "Hủy lúc" : "Hoàn tất lúc";
+  if ($("#jobDetailFinishedLabel")) $("#jobDetailFinishedLabel").textContent = finishedLabel;
+  if ($("#jobDetailFinishedAt")) $("#jobDetailFinishedAt").textContent = formatJobTime(job.finished_at || job.completed_at);
+
+  const elapsedSec = getElapsedSeconds(job);
+  if ($("#jobDetailDuration")) $("#jobDetailDuration").textContent = formatDurationSeconds(elapsedSec);
+
+  // Footer action buttons
+  const cancelBtn = $("#jobDetailCancelBtn");
+  if (cancelBtn) {
+    if (isActive) {
+      cancelBtn.classList.remove("is-hidden");
+      cancelBtn.onclick = async () => {
+        await jobAction("cancel", job.job_id);
+        openJobDetailModal(job.job_id, { refresh: true });
+      };
+    } else {
+      cancelBtn.classList.add("is-hidden");
+    }
+  }
+
+  const retryBtn = $("#jobDetailRetryBtn");
+  if (retryBtn) {
+    if (["failed", "cancelled"].includes(job.status)) {
+      retryBtn.classList.remove("is-hidden");
+      retryBtn.onclick = async () => {
+        await jobAction("retry", job.job_id);
+        openJobDetailModal(job.job_id, { refresh: true });
+      };
+    } else {
+      retryBtn.classList.add("is-hidden");
+    }
+  }
+
+  const deleteBtn = $("#jobDetailDeleteBtn");
+  if (deleteBtn) {
+    if (["completed", "failed", "cancelled"].includes(job.status)) {
+      deleteBtn.classList.remove("is-hidden");
+      deleteBtn.onclick = async () => {
+        await jobAction("delete", job.job_id);
+        closeJobDetailModal();
+      };
+    } else {
+      deleteBtn.classList.add("is-hidden");
+    }
+  }
+
+  // Copy ID chip
+  const copyIdBtn = $("#jobDetailCopyId");
+  if (copyIdBtn) {
+    copyIdBtn.onclick = () => {
+      navigator.clipboard.writeText(job.job_id).then(() => toast("Đã sao chép ID tiến trình"));
+    };
+  }
+
+  // Refresh button
+  const refreshBtn = $("#jobDetailRefresh");
+  if (refreshBtn) {
+    refreshBtn.onclick = () => openJobDetailModal(job.job_id, { refresh: true });
+  }
+}
+
+async function openJobDetailModal(jobId, { refresh = false } = {}) {
+  let job = state.jobs.find(j => j.job_id === jobId);
+  if (job) {
+    renderJobDetailModal(job, { preserveMedia: !refresh });
+  }
+
+  const dialog = $("#jobDetailDialog");
+  if (dialog) {
+    document.body.classList.add("modal-open");
+    try {
+      if (dialog.open && typeof dialog.close === "function" && refresh) {
+        // keep open
+      } else if (!dialog.open) {
+        if (typeof dialog.showModal === "function") dialog.showModal();
+        else dialog.setAttribute("open", "");
+      }
+    } catch {
+      dialog.setAttribute("open", "");
+    }
+  }
+
+  // Fetch full job data from API to ensure complete metadata
+  try {
+    const res = await apiFetch(`/api/v1/jobs/${jobId}`);
+    if (res.ok) {
+      const fresh = await res.json();
+      const idx = state.jobs.findIndex(j => j.job_id === jobId);
+      if (idx !== -1) state.jobs[idx] = fresh;
+      renderJobDetailModal(fresh, { preserveMedia: true });
+    }
+  } catch (err) {
+    console.warn("Could not fetch job detail", err);
+  }
+}
+
+function closeJobDetailModal() {
+  activeDetailJobId = null;
+  document.body.classList.remove("modal-open");
+  const dialog = $("#jobDetailDialog");
+  if (dialog) {
+    try {
+      const video = $("#jobDetailVideoPlayer");
+      if (video) video.pause();
+      if (dialog.open && typeof dialog.close === "function") dialog.close();
+    } catch {}
+    dialog.removeAttribute("open");
+  }
 }
 
 async function bulkJobAction(action) {
@@ -3462,13 +3872,18 @@ const dropZone = $("#dropZone");
 ["dragenter", "dragover"].forEach(type => dropZone.addEventListener(type, event => { event.preventDefault(); dropZone.classList.add("dragging"); }));
 ["dragleave", "drop"].forEach(type => dropZone.addEventListener(type, event => { event.preventDefault(); dropZone.classList.remove("dragging"); }));
 dropZone.addEventListener("drop", event => addFiles(event.dataTransfer.files));
-$("#batchForm").addEventListener("submit", submitBatch);
-$("#mobileQuickSummaryTrigger")?.addEventListener("click", () => {
-  if (typeof $("#batchForm")?.requestSubmit === "function") {
-    $("#batchForm").requestSubmit();
-  } else {
-    $("#submitButton")?.click();
-  }
+$("#batchForm")?.addEventListener("submit", submitBatch);
+$("#submitButton")?.addEventListener("click", event => {
+  event.preventDefault();
+  submitBatch(event);
+});
+$("#mobileQuickSubmitButton")?.addEventListener("click", event => {
+  event.preventDefault();
+  submitBatch(event);
+});
+$("#mobileQuickSummaryTrigger")?.addEventListener("click", event => {
+  event.preventDefault();
+  submitBatch(event);
 });
 if ("IntersectionObserver" in window) {
   const stickyCard = $("#createView .sticky-card");
@@ -3523,8 +3938,21 @@ $("#passwordResetCancel").addEventListener("click", () => $("#passwordResetDialo
 $("#confirmJobClose")?.addEventListener("click", closeConfirmJobDialog);
 $("#confirmJobCancel")?.addEventListener("click", closeConfirmJobDialog);
 $("#confirmJobProceed")?.addEventListener("click", onConfirmJobProceed);
+$("#confirmJobDialog")?.addEventListener("cancel", event => {
+  event.preventDefault();
+  closeConfirmJobDialog();
+});
 $("#confirmJobDialog")?.addEventListener("click", event => {
   if (event.target === $("#confirmJobDialog")) closeConfirmJobDialog();
+});
+$("#jobDetailClose")?.addEventListener("click", closeJobDetailModal);
+$("#jobDetailCloseBtn")?.addEventListener("click", closeJobDetailModal);
+$("#jobDetailDialog")?.addEventListener("cancel", event => {
+  event.preventDefault();
+  closeJobDetailModal();
+});
+$("#jobDetailDialog")?.addEventListener("click", event => {
+  if (event.target === $("#jobDetailDialog")) closeJobDetailModal();
 });
 $("#passwordResetGenerate").addEventListener("click", () => {
   $("#passwordResetValue").value = generatePassword();
@@ -3708,7 +4136,19 @@ $("#jobsList").addEventListener("click", event => {
     return;
   }
   const target = event.target.closest("[data-action]");
-  if (target) jobAction(target.dataset.action, target.dataset.job);
+  if (target) {
+    if (target.dataset.action === "detail") {
+      openJobDetailModal(target.dataset.job);
+      return;
+    }
+    jobAction(target.dataset.action, target.dataset.job);
+    return;
+  }
+  const jobRow = event.target.closest(".job-row");
+  if (jobRow && !event.target.closest("button, a, input, label")) {
+    const jobId = jobRow.dataset.jobRow;
+    if (jobId) openJobDetailModal(jobId);
+  }
 });
 $("#jobsList").addEventListener("change", event => {
   const checkbox = event.target.closest("[data-job-select]");
