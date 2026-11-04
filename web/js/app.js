@@ -1,6 +1,6 @@
 import { createTikTokWorkspace } from "./tiktok.js?v=20261025-youtube-title-vi";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261015-1";
-import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261024-system-ws";
+import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261104-resume";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261031-apply-logo";
 import { createBrandingWorkspace } from "./branding.js?v=20261031-apply-logo";
@@ -276,6 +276,7 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   // Never leave the previous account's data rendered behind the login gate.
   // This also prevents a brief stale-data flash when another user signs in.
   state.jobs = [];
+  seenJobStatuses.clear();
   state.pendingUploads = [];
   state.selectedJobIds.clear();
   state.files = [];
@@ -524,6 +525,11 @@ async function startProtectedApplication() {
   if (state.appStarted) return;
   state.appStarted = true;
   ensureTermsConsent();
+  // Open the live socket right away: waiting for the other start-up requests
+  // left job statuses frozen whenever one of them was slow.
+  clearInterval(state.pollTimer);
+  state.pollTimer = null;
+  jobEvents.start();
   const canManageSources = ["owner", "admin"].includes(state.auth.role);
   await Promise.all([
     loadJobs(),
@@ -532,9 +538,6 @@ async function startProtectedApplication() {
     refreshUserBrandingAvatar(),
     loadMusicLibrary(),
   ]);
-  clearInterval(state.pollTimer);
-  state.pollTimer = null;
-  jobEvents.start();
   // The first showView ran before the role was known, so role-gated views such as
   // #admin fell back to another view while the hash stayed put; clicking the same
   // link then fires no hashchange. Re-render now that the role is known.
@@ -2615,6 +2618,7 @@ async function executeSubmitBatch(formData) {
 
 async function submitBatch(event) {
   event?.preventDefault?.();
+  requestJobNotificationPermission();
   renderSourceLinks();
   const sourceText = $("#sourceLinks")?.value?.trim() || "";
   if (!state.files.length && !state.links.length) {
@@ -2986,6 +2990,7 @@ const jobEvents = createJobEvents({
   onChanges(message) {
     const { jobs, reload } = applyJobChanges(state.jobs, message, { statusFilter: $("#statusFilter").value });
     state.jobs = jobs;
+    trackJobOutcomes(message.items || []);
     scheduleJobRender();
     if (reload) scheduleJobsReload();
     comicWorkspace.onJobChanges(message);
@@ -2995,6 +3000,71 @@ const jobEvents = createJobEvents({
     }
   },
 });
+
+const JOBS_REQUEST_TIMEOUT_MS = 30000;
+
+// Back on the tab, back from bfcache or back online: timers and the socket may
+// have been frozen, so reconnect and fetch the current statuses once.
+function resumeLiveJobs() {
+  if (!state.appStarted) return;
+  jobEvents.resume();
+  loadJobs();
+  comicWorkspace.refreshLive();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") resumeLiveJobs();
+});
+window.addEventListener("pageshow", event => { if (event.persisted) resumeLiveJobs(); });
+window.addEventListener("online", resumeLiveJobs);
+
+// Job outcome notifications: a toast on the page, plus a system notification
+// while the tab is in the background. Only a change this page saw happen is
+// announced (last known status not final -> completed/failed), so opening the
+// app never replays old results.
+const FINAL_JOB_STATUSES = new Set(["completed", "failed"]);
+const seenJobStatuses = new Map();
+
+function trackJobOutcomes(items) {
+  for (const job of items) {
+    if (!job?.job_id) continue;
+    const previous = seenJobStatuses.get(job.job_id);
+    seenJobStatuses.set(job.job_id, job.status);
+    if (!previous || previous === job.status || FINAL_JOB_STATUSES.has(previous)) continue;
+    if (!FINAL_JOB_STATUSES.has(job.status)) continue;
+    // Admins receive every account's jobs; announce only their own.
+    if (job.owner_user_id && state.auth.user_id && job.owner_user_id !== state.auth.user_id) continue;
+    announceJobOutcome(job);
+  }
+}
+
+function announceJobOutcome(job) {
+  const name = job.filename || job.title || job.source_url || "Video của bạn";
+  const succeeded = job.status === "completed";
+  const title = succeeded ? "Đã xử lý xong" : "Xử lý thất bại";
+  const body = succeeded ? `${name} đã sẵn sàng.` : `${name} gặp lỗi. Mở job để xem chi tiết hoặc chạy lại.`;
+  toast(`${title}: ${body}`, !succeeded);
+  if (!document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  try {
+    const notification = new Notification(title, { body, tag: `${job.job_id}:${job.status}`, icon: "/assets/vidtrans-mark.svg" });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+      openJobDetailModal(job.job_id);
+    };
+  } catch {
+    // Some browsers only allow notifications from a service worker.
+  }
+}
+
+// Ask once, from the click that submits work, so the browser shows the prompt.
+function requestJobNotificationPermission() {
+  if (typeof Notification === "undefined" || Notification.permission !== "default") return;
+  try {
+    Notification.requestPermission().catch(() => {});
+  } catch {
+    // Older Safari: callback-only API.
+  }
+}
 
 async function loadJobs() {
   if (!state.appStarted) return;
@@ -3017,12 +3087,17 @@ async function loadJobs() {
   const search = $("#jobSearch").value.trim();
   if (status) params.set("status", status);
   if (search) params.set("search", search);
+  // A stalled request (phone asleep, network switch) would otherwise keep
+  // jobsLoading set for up to the proxy timeout and swallow every later reload.
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), JOBS_REQUEST_TIMEOUT_MS);
   try {
-    const response = await apiFetch(`/api/v1/jobs?${params}`);
+    const response = await apiFetch(`/api/v1/jobs?${params}`, { signal: controller.signal });
     if (response.status === 401) lockApplication();
     if (!response.ok) throw new Error("Không tải được danh sách job");
     const data = await response.json();
     state.jobs = data.items || [];
+    trackJobOutcomes(state.jobs);
     state.jobsTotal = Number(data.total ?? state.jobs.length);
     if (data.page) state.jobsPage = Number(data.page);
     if (data.counts) state.jobStatusCounts = data.counts;
@@ -3030,8 +3105,14 @@ async function loadJobs() {
     state.selectedJobIds = new Set([...state.selectedJobIds].filter(jobId => visibleIds.has(jobId)));
     renderJobDashboard();
   } catch (error) {
-    toast(error.message, true);
+    if (error.name === "AbortError") {
+      toast("Máy chủ phản hồi chậm, đang thử tải lại danh sách job…", true);
+      state.jobsReloadQueued = true;
+    } else {
+      toast(error.message, true);
+    }
   } finally {
+    clearTimeout(abortTimer);
     state.jobsLoading = false;
     if (refreshButton) {
       setTimeout(() => refreshButton.classList.remove("is-refreshing"), 400);

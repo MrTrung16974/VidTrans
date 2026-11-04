@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 const test = (name, run) => { run(); console.log(`PASS ${name}`); };
 const source = readFileSync(new URL('../../web/js/job-events.js', import.meta.url), 'utf8');
-const { applyJobChanges, jobEventsUrl } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { applyJobChanges, jobEventsUrl, createLiveEvents } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const jobs = [
   { job_id: 'a', status: 'processing', progress: 0.1 },
   { job_id: 'b', status: 'queued', queue_position: 2 },
@@ -30,4 +30,46 @@ test('deleted jobs disappear; new jobs, filter changes and resync reload', () =>
   const filtered = applyJobChanges(jobs, { items: [{ job_id: 'a', status: 'completed' }] }, { statusFilter: 'processing' });
   assert.equal(filtered.reload, true);
   assert.equal(applyJobChanges(jobs, { resync: true }).reload, true);
+});
+
+// A fake browser: sockets never close on their own, like a half-open TCP connection.
+const sockets = [];
+globalThis.location = { protocol: 'https:', host: 'example.test' };
+globalThis.WebSocket = class { constructor(url) { this.url = url; this.closed = false; sockets.push(this); } close() { this.closed = true; } };
+function liveEvents() {
+  const calls = { polls: 0, reconnected: 0 };
+  let clock = 0;
+  const events = createLiveEvents({
+    path: '/api/v1/jobs/events', messageType: 'jobs', onMessage() {},
+    onReconnected: () => { calls.reconnected += 1; }, poll: () => { calls.polls += 1; },
+    isActive: () => true, staleSocketMs: 60000, now: () => clock,
+  });
+  return { events, calls, advance: ms => { clock += ms; } };
+}
+test('resume keeps a live socket and replaces a silent one', () => {
+  sockets.length = 0;
+  const { events, calls, advance } = liveEvents();
+  events.start();
+  assert.equal(sockets.length, 1);
+  sockets[0].onmessage({ data: JSON.stringify({ type: 'ready' }) });
+  assert.equal(calls.reconnected, 1);
+  advance(30000);
+  events.resume();
+  assert.equal(sockets.length, 1, 'a socket that pinged recently is kept');
+  advance(40000);
+  events.resume();
+  assert.equal(sockets.length, 2, 'no message for over a minute: reconnect');
+  assert.equal(sockets[0].closed, true);
+  assert.equal(sockets[0].onmessage, null, 'the dead socket can no longer deliver stale messages');
+  events.stop();
+});
+test('resume reconnects at once when the socket is gone', () => {
+  sockets.length = 0;
+  const { events } = liveEvents();
+  events.start();
+  sockets[0].onclose();
+  assert.equal(sockets.length, 1, 'reconnect waits for the backoff timer');
+  events.resume();
+  assert.equal(sockets.length, 2);
+  events.stop();
 });

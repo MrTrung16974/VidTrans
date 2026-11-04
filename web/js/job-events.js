@@ -4,6 +4,11 @@
 
 const FALLBACK_POLL_MS = 15000;
 const MAX_RECONNECT_MS = 30000;
+// The server sends at least a ping every 25 s. A socket that stays silent for
+// longer is dead without a close event (sleeping phone, network switch, tab
+// frozen in the background), so it is dropped and opened again.
+const STALE_SOCKET_MS = 60000;
+const WATCHDOG_MS = 10000;
 
 export function eventsUrl(path, locationLike = location) {
   const scheme = locationLike.protocol === "https:" ? "wss:" : "ws:";
@@ -53,12 +58,39 @@ export function createJobEvents({ onChanges, ...options }) {
 // over HTTP every `fallbackPollMs` only while the socket is down.
 export function createLiveEvents({
   path, messageType, onMessage, onReconnected = () => {}, poll, isActive, fallbackPollMs = FALLBACK_POLL_MS,
+  staleSocketMs = STALE_SOCKET_MS, now = () => Date.now(),
 }) {
   let socket = null;
   let attempts = 0;
   let reconnectTimer = null;
   let pollTimer = null;
+  let watchdogTimer = null;
+  let lastMessageAt = 0;
   let stopped = true;
+
+  function socketIsStale() {
+    return Boolean(socket) && now() - lastMessageAt > staleSocketMs;
+  }
+
+  // Forget a socket that may never fire onclose, then fall back to polling.
+  function dropSocket() {
+    const current = socket;
+    socket = null;
+    if (!current) return;
+    current.onmessage = null;
+    current.onclose = null;
+    try { current.close(); } catch { /* already closed */ }
+  }
+
+  function checkSocket() {
+    if (stopped || !socketIsStale()) return;
+    dropSocket();
+    poll();
+    startPolling();
+    attempts = 0;
+    clearTimeout(reconnectTimer);
+    connect();
+  }
 
   function startPolling() {
     if (!pollTimer) pollTimer = setInterval(poll, fallbackPollMs);
@@ -91,7 +123,9 @@ export function createLiveEvents({
       return;
     }
     socket = current;
+    lastMessageAt = now();
     current.onmessage = event => {
+      lastMessageAt = now();
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === "ready") {
@@ -117,11 +151,24 @@ export function createLiveEvents({
     start() {
       stopped = false;
       attempts = 0;
+      if (!watchdogTimer) watchdogTimer = setInterval(checkSocket, WATCHDOG_MS);
+      connect();
+    },
+    // The page became visible or the network came back: timers were frozen,
+    // so reconnect now instead of waiting for the backoff or a dead socket.
+    resume() {
+      if (stopped) return;
+      if (socket && !socketIsStale()) return;
+      dropSocket();
+      attempts = 0;
+      clearTimeout(reconnectTimer);
       connect();
     },
     stop() {
       stopped = true;
       clearTimeout(reconnectTimer);
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
       stopPolling();
       const current = socket;
       socket = null;
