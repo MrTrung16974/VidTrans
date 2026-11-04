@@ -10,6 +10,7 @@ from infrastructure.social_video_downloader import (
     SocialVideoDownloadError,
     SocialVideoDownloader,
     extract_social_video_urls,
+    google_drive_file_id,
     normalize_social_video_url,
     social_platform,
     social_video_download_issue,
@@ -752,6 +753,160 @@ class SlideshowCommandTests(unittest.TestCase):
 
         command = build_slideshow_command("ffmpeg", [Path("a.jpg")], None, Path("o.mp4"))
         self.assertIn("anullsrc=r=44100:cl=stereo", command)
+
+
+DRIVE_ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+
+
+class FakeDriveResponse:
+    def __init__(self, body: bytes, headers: dict[str, str], url: str = "https://drive.usercontent.google.com/download") -> None:
+        self._body = body
+        self._offset = 0
+        self.headers = headers
+        self._url = url
+
+    def __enter__(self) -> "FakeDriveResponse":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        end = len(self._body) if size < 0 else self._offset + size
+        chunk = self._body[self._offset:end]
+        self._offset += len(chunk)
+        return chunk
+
+    def geturl(self) -> str:
+        return self._url
+
+
+class FakeDriveOpener:
+    def __init__(self, responses: list[FakeDriveResponse]) -> None:
+        self.responses = list(responses)
+        self.urls: list[str] = []
+
+    def open(self, request, timeout: int):  # noqa: ANN001
+        self.urls.append(request.full_url)
+        return self.responses.pop(0)
+
+
+def drive_downloader(opener: FakeDriveOpener) -> SocialVideoDownloader:
+    return SocialVideoDownloader(ffprobe_location="/nonexistent/ffprobe", http_opener_factory=lambda jar: opener)
+
+
+VIDEO_HEADERS = {
+    "Content-Type": "video/mp4",
+    "Content-Disposition": "attachment; filename=\"clip.mp4\"; filename*=UTF-8''Phim%20hay.mp4",
+    "Content-Length": "11",
+}
+
+
+class GoogleDriveTests(unittest.TestCase):
+    def test_accepts_drive_file_links_and_rejects_folders_and_docs(self) -> None:
+        for url in [
+            f"https://drive.google.com/file/d/{DRIVE_ID}/view?usp=sharing",
+            f"https://drive.google.com/file/u/0/d/{DRIVE_ID}/view",
+            f"https://drive.google.com/open?id={DRIVE_ID}",
+            f"https://drive.google.com/uc?id={DRIVE_ID}&export=download",
+            f"https://docs.google.com/file/d/{DRIVE_ID}/edit",
+            f"https://drive.usercontent.google.com/download?id={DRIVE_ID}&export=download",
+        ]:
+            with self.subTest(url=url):
+                normalized = normalize_social_video_url(url)
+                self.assertEqual(social_platform(normalized), "Google Drive")
+                self.assertIsNone(social_video_download_issue(normalized))
+                self.assertEqual(google_drive_file_id(normalized), DRIVE_ID)
+        for url, reason in [
+            ("https://drive.google.com/drive/folders/1xyzxyzxyzxyz", "thư mục"),
+            ("https://drive.google.com/drive/u/0/folders/1xyzxyzxyzxyz", "thư mục"),
+            ("https://docs.google.com/document/d/1xyzxyzxyzxyz/edit", "Google Docs"),
+            ("https://drive.google.com/drive/my-drive", "mã file"),
+        ]:
+            with self.subTest(url=url):
+                self.assertIn(reason, social_video_download_issue(normalize_social_video_url(url)))
+
+    def test_batch_dedupes_drive_links_to_one_canonical_form(self) -> None:
+        urls = extract_social_video_urls(
+            f"https://drive.google.com/file/d/{DRIVE_ID}/view?usp=sharing "
+            f"https://drive.google.com/open?id={DRIVE_ID} "
+            f"https://drive.google.com/file/d/{DRIVE_ID}/view?resourcekey=0-key"
+        )
+        self.assertEqual(urls, [
+            f"https://drive.google.com/file/d/{DRIVE_ID}/view",
+            f"https://drive.google.com/file/d/{DRIVE_ID}/view?resourcekey=0-key",
+        ])
+
+    def test_downloads_the_original_file_with_progress(self) -> None:
+        opener = FakeDriveOpener([FakeDriveResponse(b"video-bytes", VIDEO_HEADERS)])
+        progress: list[tuple[int, int | None]] = []
+        with TemporaryDirectory() as directory:
+            result = drive_downloader(opener).download(
+                f"https://drive.google.com/file/d/{DRIVE_ID}/view?resourcekey=0-key",
+                Path(directory) / "source",
+                progress_callback=lambda done, total: progress.append((done, total)),
+            )
+            self.assertEqual(result.path.read_bytes(), b"video-bytes")
+            self.assertEqual(result.path.name, "source.mp4")
+            self.assertEqual(result.platform, "Google Drive")
+            self.assertEqual(result.title, "Phim hay")
+            self.assertEqual(result.video_id, DRIVE_ID)
+            self.assertEqual([path.name for path in Path(directory).iterdir()], ["source.mp4"])
+        self.assertIn(f"id={DRIVE_ID}", opener.urls[0])
+        self.assertIn("resourcekey=0-key", opener.urls[0])
+        self.assertEqual(progress[-1], (11, 11))
+
+    def test_follows_the_virus_scan_confirmation_form(self) -> None:
+        confirm_page = (
+            '<html><form id="download-form" action="https://drive.usercontent.google.com/download" method="get">'
+            f'<input type="hidden" name="id" value="{DRIVE_ID}"><input type="hidden" name="export" value="download">'
+            '<input type="hidden" name="confirm" value="t"><input type="hidden" name="uuid" value="u-123"></form></html>'
+        ).encode()
+        opener = FakeDriveOpener([
+            FakeDriveResponse(confirm_page, {"Content-Type": "text/html; charset=utf-8"}),
+            FakeDriveResponse(b"video-bytes", VIDEO_HEADERS),
+        ])
+        with TemporaryDirectory() as directory:
+            result = drive_downloader(opener).download(
+                f"https://drive.google.com/file/d/{DRIVE_ID}/view", Path(directory) / "source"
+            )
+            self.assertEqual(result.path.read_bytes(), b"video-bytes")
+        self.assertIn("uuid=u-123", opener.urls[1])
+
+    def test_private_quota_and_non_video_files_fail_with_a_clear_message(self) -> None:
+        cases = [
+            (FakeDriveResponse(b"<html>ServiceLogin</html>", {"Content-Type": "text/html"},
+                               url="https://accounts.google.com/ServiceLogin"), "chưa chia sẻ công khai"),
+            (FakeDriveResponse(b"<html>Download quota exceeded</html>", {"Content-Type": "text/html"}), "hạn mức"),
+            (FakeDriveResponse(b"%PDF", {"Content-Type": "application/pdf",
+                                         "Content-Disposition": 'attachment; filename="bai.pdf"'}), "không phải video"),
+        ]
+        for response, message in cases:
+            with self.subTest(message=message), TemporaryDirectory() as directory:
+                with self.assertRaises(SocialVideoDownloadError) as caught:
+                    drive_downloader(FakeDriveOpener([response])).download(
+                        f"https://drive.google.com/file/d/{DRIVE_ID}/view", Path(directory) / "source"
+                    )
+                self.assertIn(message, str(caught.exception))
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_cancel_and_size_limit_remove_the_partial_file(self) -> None:
+        with TemporaryDirectory() as directory:
+            downloader = SocialVideoDownloader(
+                max_bytes=4, ffprobe_location="/nonexistent/ffprobe",
+                http_opener_factory=lambda jar: FakeDriveOpener(
+                    [FakeDriveResponse(b"video-bytes", {**VIDEO_HEADERS, "Content-Length": ""})]
+                ),
+            )
+            with self.assertRaises(SocialVideoDownloadError):
+                downloader.download(f"https://drive.google.com/file/d/{DRIVE_ID}/view", Path(directory) / "source")
+            opener = FakeDriveOpener([FakeDriveResponse(b"video-bytes", VIDEO_HEADERS)])
+            with self.assertRaises(SocialVideoDownloadCancelled):
+                drive_downloader(opener).download(
+                    f"https://drive.google.com/file/d/{DRIVE_ID}/view", Path(directory) / "source",
+                    cancel_requested=lambda: True,
+                )
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
 
 if __name__ == "__main__":

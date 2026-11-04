@@ -10,7 +10,9 @@ enum DownloadMode {
   server;
 
   static DownloadMode parse(Object? value) =>
-      value == 'client_then_server' || value == 'client' ? clientThenServer : server;
+      value == 'client_then_server' || value == 'client'
+      ? clientThenServer
+      : server;
 }
 
 class DownloadPolicy {
@@ -21,14 +23,17 @@ class DownloadPolicy {
 
   final Map<String, DownloadMode> platforms;
 
-  DownloadMode modeFor(String? platform) => platforms[platform] ?? DownloadMode.server;
+  DownloadMode modeFor(String? platform) =>
+      platforms[platform] ?? DownloadMode.server;
 
-  bool onPhone(String url) => modeFor(socialPlatformOf(url)) != DownloadMode.server;
+  bool onPhone(String url) =>
+      modeFor(socialPlatformOf(url)) != DownloadMode.server;
 
   factory DownloadPolicy.fromJson(Map<String, dynamic> json) => DownloadPolicy({
-        for (final entry in (json['platforms'] as Map? ?? const {}).entries)
-          if (entry.value is Map) entry.key.toString(): DownloadMode.parse((entry.value as Map)['mode']),
-      });
+    for (final entry in (json['platforms'] as Map? ?? const {}).entries)
+      if (entry.value is Map)
+        entry.key.toString(): DownloadMode.parse((entry.value as Map)['mode']),
+  });
 }
 
 const _platformDomains = {
@@ -36,6 +41,12 @@ const _platformDomains = {
   'TikTok': ['tiktok.com'],
   'YouTube': ['youtube.com', 'youtu.be', 'youtube-nocookie.com'],
   'Facebook': ['facebook.com', 'fb.com', 'fb.watch'],
+  // Always downloaded by the server (it fetches the original file, not a preview).
+  'Google Drive': [
+    'drive.google.com',
+    'docs.google.com',
+    'drive.usercontent.google.com',
+  ],
 };
 
 /// Platform name as the server spells it (`social_platform()` in the backend), or null.
@@ -43,7 +54,10 @@ String? socialPlatformOf(String url) {
   final host = (Uri.tryParse(url.trim())?.host ?? '').toLowerCase();
   if (host.isEmpty) return null;
   for (final entry in _platformDomains.entries) {
-    if (entry.value.any((domain) => host == domain || host.endsWith('.$domain'))) return entry.key;
+    if (entry.value.any(
+      (domain) => host == domain || host.endsWith('.$domain'),
+    ))
+      return entry.key;
   }
   return null;
 }

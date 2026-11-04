@@ -829,14 +829,38 @@ const SOCIAL_PLATFORM_DOMAINS = {
   TikTok: ["tiktok.com"],
   YouTube: ["youtube.com", "youtu.be", "youtube-nocookie.com"],
   Facebook: ["facebook.com", "fb.com", "fb.watch"],
+  "Google Drive": ["drive.google.com", "docs.google.com", "drive.usercontent.google.com"],
 };
+const DRIVE_ID = "[\\w-]{10,}";
+const DRIVE_FILE_PATH = new RegExp(`^/(?:a/[^/]+/)?file/(?:u/\\d+/)?d/(${DRIVE_ID})(?:/[\\w-]*)?/?$`);
+const DRIVE_QUERY_PATHS = new Set(["/open", "/uc", "/download", "/u/0/uc", "/u/1/uc", "/u/0/open", "/u/1/open"]);
+const DRIVE_FOLDER_PATH = /\/(?:drive\/)?(?:u\/\d+\/)?folders\//;
+const GOOGLE_EDITOR_PATH = /^\/(?:document|spreadsheets|presentation|forms|drawings)\//;
+
+/** Drive file id from any share/open/download form (google_drive_file_id() in the backend). */
+function googleDriveFileId(url) {
+  const path = url.pathname.replace(/\/{2,}/g, "/") || "/";
+  const match = path.match(DRIVE_FILE_PATH);
+  if (match) return match[1];
+  const id = (url.searchParams.get("id") || "").trim();
+  return DRIVE_QUERY_PATHS.has(path.replace(/\/$/, "")) && new RegExp(`^${DRIVE_ID}$`).test(id) ? id : null;
+}
+
+/** Same canonical link as canonical_google_drive_url(), so duplicates collapse before submit. */
+function canonicalGoogleDriveUrl(url) {
+  const id = googleDriveFileId(url);
+  if (!id) return url.toString();
+  const key = (url.searchParams.get("resourcekey") || "").trim();
+  return `https://drive.google.com/file/d/${id}/view${key ? `?resourcekey=${encodeURIComponent(key)}` : ""}`;
+}
+
 const SHORT_LINK_HOSTS = new Set(["vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch", "youtu.be"]);
 const TIKTOK_VIDEO_PATH = /^\/(?:@[^/]+\/(?:video|photo)\/\d+|t\/[\w-]+|v\/\d+(?:\.html)?|embed(?:\/v2)?\/\d+|player\/v1\/\d+|share\/video\/\d+)\/?$/;
 const YOUTUBE_ID_PATH = /^\/(?:shorts|embed|live|v)\/[\w-]{3,}\/?$/;
 const FACEBOOK_VIDEO_PATH = /^\/(?:reels?\/[\w-]+|watch\/?|video\.php|story\.php|permalink\.php|share\/(?:v\/|r\/|p\/)?[\w-]+|(?:[^/]+\/)?videos\/(?:[^/]+\/)?\d+|[^/]+\/posts\/[\w-]+|groups\/[^/]+\/(?:posts|permalink)\/\d+)\/?$/;
 const FACEBOOK_QUERY_KEYS = { "/watch": "v", "/watch/": "v", "/video.php": "v", "/story.php": "story_fbid", "/permalink.php": "story_fbid" };
 const DOUYIN_PATH_ID = /\/(?:share\/)?(video|note|slides)\/(\d+)/;
-const SUPPORTED_LINK_FORMS_HINT = "Chỉ nhận link một video: TikTok (/@user/video/…, vm.tiktok.com), Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be), Facebook (reel, videos, watch?v=…, share, posts, fb.watch).";
+const SUPPORTED_LINK_FORMS_HINT = "Chỉ nhận link một video: TikTok (/@user/video/…, vm.tiktok.com), Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be), Facebook (reel, videos, watch?v=…, share, posts, fb.watch), Google Drive (drive.google.com/file/d/…, open?id=…; file chia sẻ “Bất kỳ ai có đường liên kết”).";
 
 function socialPlatformOf(hostname) {
   for (const [platform, domains] of Object.entries(SOCIAL_PLATFORM_DOMAINS)) {
@@ -855,6 +879,12 @@ function sourceLinkDownloadIssue(url) {
   }
   const path = url.pathname.replace(/\/{2,}/g, "/") || "/";
   const param = key => (url.searchParams.get(key) || "").trim();
+  if (platform === "Google Drive") {
+    if (googleDriveFileId(url)) return null;
+    if (DRIVE_FOLDER_PATH.test(path)) return "link thư mục Google Drive chưa được hỗ trợ, hãy dán link chia sẻ của từng file video";
+    if (GOOGLE_EDITOR_PATH.test(path)) return "đây là tài liệu Google Docs/Sheets/Slides, không phải file video";
+    return "không tìm thấy mã file Google Drive (cần /file/d/<id> hoặc open?id=<id>)";
+  }
   if (SHORT_LINK_HOSTS.has(hostname)) return path.replace(/\//g, "") ? null : "link rút gọn thiếu mã video";
   if (platform === "TikTok") {
     return TIKTOK_VIDEO_PATH.test(path) ? null : "không phải link một video TikTok (trang cá nhân, trang chủ…)";
@@ -893,7 +923,7 @@ function classifySourceLinks(value) {
     url.hash = "";
     const issue = sourceLinkDownloadIssue(url);
     if (issue) invalid.set(url.toString(), issue);
-    else valid.add(url.toString());
+    else valid.add(socialPlatformOf(url.hostname.toLowerCase()) === "Google Drive" ? canonicalGoogleDriveUrl(url) : url.toString());
   }
   return { links: [...valid], invalid: [...invalid].map(([link, reason]) => ({ link, reason })) };
 }
@@ -918,13 +948,14 @@ function renderSourceLinks() {
     ? `<div class="link-warning-note" role="alert">⛔ ${invalid.length} link không thể tải và sẽ chặn việc tạo batch:<ul>${invalid.map(item => `<li><strong>${escapeHtml(item.link)}</strong> — ${escapeHtml(item.reason)} <button class="button secondary mini-btn" type="button" data-link-remove="${escapeHtml(item.link)}" data-link-invalid="true" aria-label="Xóa liên kết ${escapeHtml(item.link)}">Xóa</button></li>`).join("")}</ul><small>${escapeHtml(SUPPORTED_LINK_FORMS_HINT)}</small></div>`
     : "";
   if (rawValue.trim() && state.links.length === 0) {
-    $("#linkList").innerHTML = invalidHtml || `<div class="link-warning-note">⚠️ Chưa nhận diện được liên kết hợp lệ (hỗ trợ TikTok, Douyin, YouTube, Facebook).</div>`;
+    $("#linkList").innerHTML = invalidHtml || `<div class="link-warning-note">⚠️ Chưa nhận diện được liên kết hợp lệ (hỗ trợ TikTok, Douyin, YouTube, Facebook, Google Drive).</div>`;
     renderFiles();
     return;
   }
   $("#linkList").innerHTML = invalidHtml + state.links.map(link => {
     const hostname = new URL(link).hostname.toLowerCase();
-    const platform = hostname.includes("douyin") ? "DY"
+    const platform = socialPlatformOf(hostname) === "Google Drive" ? "GD"
+      : hostname.includes("douyin") ? "DY"
       : (hostname.includes("youtube") || hostname === "youtu.be") ? "YT"
       : (hostname.includes("facebook") || hostname === "fb.com" || hostname === "fb.watch") ? "FB"
       : "TT";
@@ -2593,7 +2624,7 @@ async function submitBatch(event) {
       dropZone.classList.add("source-highlight-pulse");
       setTimeout(() => dropZone.classList.remove("source-highlight-pulse"), 1600);
     }
-    return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
+    return toast(sourceText ? "Không tìm thấy link TikTok, Douyin, YouTube, Facebook hoặc Google Drive hợp lệ" : "Hãy chọn file hoặc dán ít nhất một link video", true);
   }
   if (state.invalidLinks?.length) {
     $("#workflow-source")?.scrollIntoView({ behavior: "smooth", block: "start" });

@@ -99,7 +99,7 @@ const voicePreviewProviders = {'edge', 'elevenlabs', 'cit'};
 
 /// Pulls social video links from pasted text, matching `extractSourceLinks` in
 /// `web/js/app.js`: strips trailing punctuation/fragments and keeps only
-/// supported TikTok, Douyin, YouTube, and Facebook URLs.
+/// supported TikTok, Douyin, YouTube, Facebook, and Google Drive URLs.
 List<String> extractLinks(String text) {
   final pattern = RegExp(r'https?://[^\s<>\[\]"\x27]+', caseSensitive: false);
   final trailingPunct = RegExp(r'[.,;:!?\)\]\}，。；：！？）】》、]+$');
@@ -123,6 +123,7 @@ String shortSocialPlatformCode(String url) {
     'Douyin' => 'DY',
     'YouTube' => 'YT',
     'Facebook' => 'FB',
+    'Google Drive' => 'GD',
     _ => 'TT',
   };
 }

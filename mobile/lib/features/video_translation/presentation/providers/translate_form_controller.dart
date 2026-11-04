@@ -155,7 +155,7 @@ class TranslateFormController extends Notifier<TranslateFormState> {
   String? validate() {
     if (state.sourceCount == 0) {
       return state.linksText.trim().isNotEmpty
-          ? 'Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ'
+          ? 'Không tìm thấy link TikTok, Douyin, YouTube, Facebook hoặc Google Drive hợp lệ'
           : 'Hãy chọn file hoặc dán ít nhất một link video';
     }
     if (state.sourceCount > 50) return 'Mỗi batch chỉ nhận tối đa 50 video';

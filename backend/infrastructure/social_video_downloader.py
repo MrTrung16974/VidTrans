@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.cookiejar
 import importlib
 import json
 import math
@@ -7,11 +8,13 @@ import logging
 import re
 import shutil
 import subprocess
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ContextManager
-from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit, urlunsplit
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlsplit, urlunsplit
 
 from infrastructure.tiktok_slideshow import MAX_IMAGES, render_slideshow, slideshow_duration
 
@@ -20,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 SUPPORTED_SOCIAL_DOMAINS = {
+    "docs.google.com",
     "douyin.com",
+    "drive.google.com",
+    "drive.usercontent.google.com",
     "facebook.com",
     "fb.com",
     "fb.watch",
@@ -146,7 +152,8 @@ def normalize_social_video_url(raw_url: str) -> str:
 SUPPORTED_LINK_FORMS_HINT = (
     "Hỗ trợ link một video: TikTok (/@user/video/…, /@user/photo/…, vm/vt.tiktok.com), "
     "Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be, live, embed), "
-    "Facebook (reel, videos, watch?v=…, share, posts, fb.watch)"
+    "Facebook (reel, videos, watch?v=…, share, posts, fb.watch), "
+    "Google Drive (drive.google.com/file/d/…, open?id=…, uc?id=…; file chia sẻ \"Bất kỳ ai có đường liên kết\")"
 )
 _SHORT_LINK_HOSTS = {"vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch"}
 _TIKTOK_VIDEO_PATH = re.compile(
@@ -168,6 +175,50 @@ _FACEBOOK_QUERY_KEYS = {
 }
 
 
+GOOGLE_DRIVE_PLATFORM = "Google Drive"
+_DRIVE_ID = r"[\w-]{10,}"
+_DRIVE_FILE_PATH = re.compile(rf"^/(?:a/[^/]+/)?file/(?:u/\d+/)?d/({_DRIVE_ID})(?:/[\w-]*)?/?$")
+_DRIVE_QUERY_PATHS = {"/open", "/uc", "/download", "/u/0/uc", "/u/1/uc", "/u/0/open", "/u/1/open"}
+_DRIVE_FOLDER_PATH = re.compile(r"/(?:drive/)?(?:u/\d+/)?folders/")
+_GOOGLE_EDITOR_PATH = re.compile(r"^/(?:document|spreadsheets|presentation|forms|drawings)/")
+
+
+def google_drive_file_id(url: str) -> str | None:
+    """File id from any Drive share/open/download link form, or None."""
+    parsed = urlsplit(url)
+    path = re.sub(r"/{2,}", "/", parsed.path or "/")
+    match = _DRIVE_FILE_PATH.match(path)
+    if match:
+        return match.group(1)
+    if path.rstrip("/") in _DRIVE_QUERY_PATHS:
+        value = (parse_qs(parsed.query).get("id") or [""])[0].strip()
+        if re.fullmatch(_DRIVE_ID, value):
+            return value
+    return None
+
+
+def canonical_google_drive_url(url: str) -> str:
+    """One canonical form per file (dedupes batches), keeping the resourcekey old shares need."""
+    file_id = google_drive_file_id(url)
+    if file_id is None:
+        return url
+    resource_key = (parse_qs(urlsplit(url).query).get("resourcekey") or [""])[0].strip()
+    suffix = f"?resourcekey={quote(resource_key, safe='')}" if resource_key else ""
+    return f"https://drive.google.com/file/d/{file_id}/view{suffix}"
+
+
+def _google_drive_issue(url: str) -> str | None:
+    parsed = urlsplit(url)
+    path = re.sub(r"/{2,}", "/", parsed.path or "/")
+    if google_drive_file_id(url):
+        return None
+    if _DRIVE_FOLDER_PATH.search(path):
+        return "link thư mục Google Drive chưa được hỗ trợ, hãy dán link chia sẻ của từng file video"
+    if _GOOGLE_EDITOR_PATH.match(path):
+        return "đây là tài liệu Google Docs/Sheets/Slides, không phải file video"
+    return "không tìm thấy mã file Google Drive trong link (cần /file/d/<id> hoặc open?id=<id>)"
+
+
 def social_video_download_issue(url: str) -> str | None:
     """Why an allow-listed link has no download method, or None when the downloader can fetch it.
 
@@ -179,6 +230,8 @@ def social_video_download_issue(url: str) -> str | None:
     path = re.sub(r"/{2,}", "/", parsed.path or "/")
     query = parse_qs(parsed.query)
     platform = social_platform(url)
+    if platform == GOOGLE_DRIVE_PLATFORM:
+        return _google_drive_issue(url)
     if hostname in _SHORT_LINK_HOSTS or hostname == "youtu.be":
         if path.strip("/"):
             return None
@@ -218,6 +271,8 @@ def ensure_downloadable_social_url(raw_url: str) -> str:
     issue = social_video_download_issue(url)
     if issue:
         raise ValueError(f"Link chưa có phương thức tải: {url} — {issue}")
+    if social_platform(url) == GOOGLE_DRIVE_PLATFORM:
+        return canonical_google_drive_url(url)
     return url
 
 
@@ -265,6 +320,7 @@ def social_platform(url: str) -> str:
         ("TikTok", ("tiktok.com",)),
         ("YouTube", ("youtube.com", "youtu.be", "youtube-nocookie.com")),
         ("Facebook", ("facebook.com", "fb.com", "fb.watch")),
+        (GOOGLE_DRIVE_PLATFORM, ("drive.google.com", "docs.google.com", "drive.usercontent.google.com")),
     )
     for platform, domains in platform_domains:
         if any(hostname == domain or hostname.endswith("." + domain) for domain in domains):
@@ -298,6 +354,70 @@ def _follow_redirects(url: str, *, timeout: int, proxy: str | None) -> str:
         return response.geturl()
 
 
+# Google Drive serves the uploaded file itself, so any common container is accepted;
+# ffprobe validates the stream afterwards.
+DRIVE_VIDEO_EXTENSIONS = SUPPORTED_VIDEO_EXTENSIONS | {
+    ".3gp", ".flv", ".m2ts", ".mpeg", ".mpg", ".mts", ".ts", ".wmv",
+}
+_DRIVE_DOWNLOAD_URL = "https://drive.usercontent.google.com/download"
+_DRIVE_CHUNK_BYTES = 1024 * 1024
+_DRIVE_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+)
+
+
+class _DriveConfirmForm(HTMLParser):
+    """The "can't scan this file for viruses" page: a GET form whose inputs unlock the file."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.action: str | None = None
+        self.fields: dict[str, str] = {}
+        self._inside = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {key: value or "" for key, value in attrs}
+        if tag == "form" and (values.get("id") == "download-form" or "download" in values.get("action", "")):
+            self._inside = True
+            self.action = values.get("action") or _DRIVE_DOWNLOAD_URL
+        elif tag == "input" and self._inside and values.get("name"):
+            self.fields[values["name"]] = values.get("value", "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "form":
+            self._inside = False
+
+
+def _content_disposition_filename(header: str | None) -> str:
+    if not header:
+        return ""
+    encoded = re.search(r"filename\*\s*=\s*[^']*'[^']*'([^;]+)", header, re.IGNORECASE)
+    if encoded:
+        return unquote(encoded.group(1).strip().strip('"'))
+    plain = re.search(r'filename\s*=\s*"([^"]*)"|filename\s*=\s*([^;]+)', header, re.IGNORECASE)
+    if plain:
+        return (plain.group(1) or plain.group(2) or "").strip()
+    return ""
+
+
+def _drive_html_failure(html: str, final_url: str) -> str:
+    lowered = html.lower()
+    if "accounts.google.com" in final_url or "servicelogin" in lowered or "accounts.google.com" in lowered[:4000]:
+        return (
+            "File Google Drive chưa chia sẻ công khai. Hãy đặt quyền chia sẻ thành "
+            "\"Bất kỳ ai có đường liên kết\" hoặc gửi cookies.txt của tài khoản có quyền xem"
+        )
+    if "quota" in lowered or "too many users" in lowered or "quá nhiều người" in lowered:
+        return (
+            "Google Drive tạm khóa lượt tải file này vì vượt hạn mức tải trong 24 giờ. "
+            "Hãy tạo bản sao file trong Drive của bạn, chia sẻ bản sao rồi thử lại"
+        )
+    if "not found" in lowered or "không tìm thấy" in lowered or "does not exist" in lowered:
+        return "File Google Drive không tồn tại hoặc đã bị xóa"
+    return "Google Drive không trả về file video (file có thể bị giới hạn quyền tải xuống)"
+
+
 ProgressCallback = Callable[[int, int | None], None]
 CancelCallback = Callable[[], bool]
 YoutubeDLFactory = Callable[[dict[str, Any]], ContextManager[Any]]
@@ -324,8 +444,14 @@ class SocialVideoDownloader:
         douyin_proxy: str | None = None,
         youtube_proxy: str | None = None,
         redirect_resolver: Callable[[str], str] | None = None,
+        ffprobe_location: str | None = None,
+        http_opener_factory: Callable[[http.cookiejar.CookieJar], Any] | None = None,
     ) -> None:
         self.ffmpeg_location = ffmpeg_location
+        self.ffprobe_location = ffprobe_location
+        self._http_opener_factory = http_opener_factory or (
+            lambda jar: urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        )
         self.max_bytes = max_bytes
         self.max_duration_seconds = max_duration_seconds
         self.socket_timeout = socket_timeout
@@ -483,6 +609,150 @@ class SocialVideoDownloader:
         return {"id": "video", "title": "Video TikTok", "duration": None, "ext": "mp4",
                 "url": match.group(1).replace("&amp;", "&"), "http_headers": {"Referer": "https://ssstik.io/"}}
 
+    def _probe_duration(self, path: Path) -> float | None:
+        ffprobe = self.ffprobe_location or shutil.which("ffprobe")
+        if not ffprobe:
+            return None
+        try:
+            completed = subprocess.run(
+                [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                check=True, capture_output=True, text=True, timeout=60,
+            )
+            return float(completed.stdout.strip())
+        except Exception:
+            return None
+
+    def _download_google_drive(
+        self,
+        url: str,
+        destination_stem: Path,
+        *,
+        progress_callback: ProgressCallback | None,
+        cancel_requested: CancelCallback | None,
+        cookie_file: Path | None,
+    ) -> SocialVideoDownloadResult:
+        """Fetch the original uploaded file (not a re-encoded preview stream) from Drive."""
+        file_id = google_drive_file_id(url)
+        if file_id is None:
+            raise SocialVideoDownloadError("Không tìm thấy mã file Google Drive trong link")
+        jar: http.cookiejar.CookieJar = http.cookiejar.MozillaCookieJar()
+        effective_cookie_file = cookie_file or self.cookie_file
+        if effective_cookie_file and effective_cookie_file.is_file():
+            try:
+                jar.load(str(effective_cookie_file), ignore_discard=True, ignore_expires=True)  # type: ignore[attr-defined]
+            except Exception as cookie_error:
+                logger.warning("Cannot read cookies for Google Drive: %s", type(cookie_error).__name__)
+        opener = self._http_opener_factory(jar)
+        params = {"id": file_id, "export": "download", "confirm": "t"}
+        resource_key = (parse_qs(urlsplit(url).query).get("resourcekey") or [""])[0].strip()
+        if resource_key:
+            params["resourcekey"] = resource_key
+        request_url = f"{_DRIVE_DOWNLOAD_URL}?{urlencode(params)}"
+        headers = {"User-Agent": _DRIVE_USER_AGENT, "Accept": "*/*"}
+
+        def cancelled() -> bool:
+            return bool(cancel_requested and cancel_requested())
+
+        partial = destination_stem.with_name(destination_stem.name + ".drive.part")
+        try:
+            for attempt in range(2):
+                if cancelled():
+                    raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
+                request = urllib.request.Request(request_url, headers=headers)
+                try:
+                    response = opener.open(request, timeout=self.socket_timeout)
+                except urllib.error.HTTPError as http_error:
+                    if http_error.code in {401, 403}:
+                        raise SocialVideoDownloadError(_drive_html_failure("servicelogin", "")) from http_error
+                    if http_error.code == 404:
+                        raise SocialVideoDownloadError("File Google Drive không tồn tại hoặc đã bị xóa") from http_error
+                    if http_error.code == 429:
+                        raise SocialVideoDownloadError(_drive_html_failure("quota", "")) from http_error
+                    raise SocialVideoDownloadError(
+                        f"Google Drive trả lỗi HTTP {http_error.code} khi tải file"
+                    ) from http_error
+                with response:
+                    content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                    disposition = response.headers.get("Content-Disposition")
+                    if content_type.startswith("text/html") and not disposition:
+                        html = response.read(2 * 1024 * 1024).decode("utf-8", errors="ignore")
+                        form = _DriveConfirmForm()
+                        form.feed(html)
+                        if attempt == 0 and form.fields.get("id"):
+                            # Large files: Drive asks to confirm skipping the virus scan.
+                            request_url = f"{urljoin(_DRIVE_DOWNLOAD_URL, form.action or '')}?{urlencode(form.fields)}"
+                            continue
+                        raise SocialVideoDownloadError(_drive_html_failure(html, response.geturl()))
+                    filename = _content_disposition_filename(disposition)
+                    extension = Path(filename).suffix.lower()
+                    if extension not in DRIVE_VIDEO_EXTENSIONS:
+                        if not content_type.startswith("video/"):
+                            shown = filename or content_type or "không rõ loại"
+                            raise SocialVideoDownloadError(
+                                f"File Google Drive không phải video ({shown}). "
+                                f"Hỗ trợ: {', '.join(sorted(ext.lstrip('.') for ext in DRIVE_VIDEO_EXTENSIONS))}"
+                            )
+                        extension = ".mp4"
+                    total_header = response.headers.get("Content-Length")
+                    total = int(total_header) if total_header and total_header.isdigit() else None
+                    if total is not None and total > self.max_bytes:
+                        raise SocialVideoDownloadError(
+                            f"Video lớn quá giới hạn {self.max_bytes // (1024 * 1024)} MB"
+                        )
+                    downloaded = 0
+                    with partial.open("wb") as output:
+                        while True:
+                            if cancelled():
+                                raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
+                            chunk = response.read(_DRIVE_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            downloaded += len(chunk)
+                            if downloaded > self.max_bytes:
+                                raise SocialVideoDownloadError(
+                                    f"Video lớn quá giới hạn {self.max_bytes // (1024 * 1024)} MB"
+                                )
+                            output.write(chunk)
+                            if progress_callback:
+                                progress_callback(downloaded, total)
+                    if downloaded == 0:
+                        raise SocialVideoDownloadError("File video tải về bị rỗng")
+                    if total is not None and downloaded < total:
+                        raise SocialVideoDownloadError(
+                            "Tải Google Drive bị ngắt giữa chừng, hãy thử lại"
+                        )
+                    break
+            else:  # pragma: no cover - the loop always breaks or raises
+                raise SocialVideoDownloadError("Google Drive không trả về file video")
+            output_path = destination_stem.with_name(destination_stem.name + extension)
+            partial.replace(output_path)
+        except SocialVideoDownloadError:
+            partial.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            partial.unlink(missing_ok=True)
+            if cancelled():
+                raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from exc
+            raise SocialVideoDownloadError(
+                f"Không tải được file Google Drive: {' '.join(str(exc).split()) or type(exc).__name__}"
+            ) from exc
+
+        duration = self._probe_duration(output_path)
+        if duration is not None and duration > self.max_duration_seconds:
+            output_path.unlink(missing_ok=True)
+            raise SocialVideoDownloadError(
+                f"Video dài {math.ceil(duration / 60)} phút, "
+                f"quá giới hạn {self.max_duration_seconds // 60} phút"
+            )
+        return SocialVideoDownloadResult(
+            path=output_path,
+            source_url=canonical_google_drive_url(url),
+            platform=GOOGLE_DRIVE_PLATFORM,
+            title=Path(filename).stem if filename else "",
+            video_id=file_id,
+            duration=duration,
+        )
+
     def download(
         self,
         url: str,
@@ -493,6 +763,18 @@ class SocialVideoDownloader:
         cookie_file: Path | None = None,
     ) -> SocialVideoDownloadResult:
         normalized_url = normalize_social_video_url(url)
+        if social_platform(normalized_url) == GOOGLE_DRIVE_PLATFORM:
+            destination_stem = Path(destination_stem).resolve()
+            destination_stem.parent.mkdir(parents=True, exist_ok=True)
+            for stale in destination_stem.parent.glob(f"{destination_stem.name}.*"):
+                if stale.is_file() and stale.suffix.lower() in DRIVE_VIDEO_EXTENSIONS | {".part"}:
+                    stale.unlink(missing_ok=True)
+            if cookie_file and not cookie_file.is_file():
+                raise SocialVideoDownloadError(f"Không tìm thấy file cookies.txt đã cấu hình: {cookie_file}")
+            return self._download_google_drive(
+                normalized_url, destination_stem, progress_callback=progress_callback,
+                cancel_requested=cancel_requested, cookie_file=cookie_file,
+            )
         if social_platform(normalized_url) == "Douyin":
             normalized_url = self.canonical_douyin_url(normalized_url)
         destination_stem = Path(destination_stem).resolve()

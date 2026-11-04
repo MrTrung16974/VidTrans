@@ -159,7 +159,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                'Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook trong bộ nhớ tạm',
+                'Không tìm thấy link TikTok, Douyin, YouTube, Facebook hoặc Google Drive trong bộ nhớ tạm',
               ),
             ),
           );
@@ -260,7 +260,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Đã đưa $count video vào tiến trình, đang tải dưới nền'),
+          content: Text(
+            'Đã đưa $count video vào tiến trình, đang tải dưới nền',
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -283,8 +285,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     String? voiceName;
     if (config.hasVoice) {
       final providers = ref.read(ttsProvidersProvider).valueOrNull;
-      final provider =
-          providers?.where((p) => p.key == config.ttsProvider).firstOrNull;
+      final provider = providers
+          ?.where((p) => p.key == config.ttsProvider)
+          .firstOrNull;
       final voice = provider?.voiceChoices
           .where((v) => v.key == config.voiceKey)
           .firstOrNull;
@@ -405,7 +408,11 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                                 value: '${state.sourceCount} video',
                               ),
                             ),
-                            Container(width: 1, height: 26, color: AppColors.line),
+                            Container(
+                              width: 1,
+                              height: 26,
+                              color: AppColors.line,
+                            ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: _SummaryItem(
@@ -427,7 +434,11 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                               ),
                             ),
                             if (voiceName != null) ...[
-                              Container(width: 1, height: 26, color: AppColors.line),
+                              Container(
+                                width: 1,
+                                height: 26,
+                                color: AppColors.line,
+                              ),
                               const SizedBox(width: 10),
                               Expanded(
                                 child: _SummaryItem(
@@ -475,7 +486,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                   // Sources preview
                   Container(
                     constraints: const BoxConstraints(maxHeight: 110),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF8FAFC),
                       borderRadius: BorderRadius.circular(12),
@@ -484,7 +498,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     child: ListView.separated(
                       shrinkWrap: true,
                       itemCount: allSources.length > 3 ? 4 : allSources.length,
-                      separatorBuilder: (_, __) => const Divider(height: 8, thickness: 0.5),
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 8, thickness: 0.5),
                       itemBuilder: (context, index) {
                         if (index == 3 && allSources.length > 3) {
                           return Text(
@@ -500,7 +515,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                         return Row(
                           children: [
                             Icon(
-                              item.isFile ? Icons.movie_outlined : Icons.link_rounded,
+                              item.isFile
+                                  ? Icons.movie_outlined
+                                  : Icons.link_rounded,
                               size: 15,
                               color: AppColors.muted,
                             ),
@@ -525,7 +542,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                   const SizedBox(height: 12),
                   // Assurance box
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF0FDF4),
                       borderRadius: BorderRadius.circular(10),
@@ -970,7 +990,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       stepNumber: 1,
       title: 'Thêm video nguồn',
       subtitle:
-          'Tải file từ thiết bị hoặc dán liên kết TikTok, Douyin, YouTube hoặc Facebook — tối đa 50 video mỗi batch.',
+          'Tải file từ thiết bị hoặc dán liên kết TikTok, Douyin, YouTube, Facebook hoặc Google Drive — tối đa 50 video mỗi batch.',
       trailing: StudioEyebrow(label: '${state.sourceCount}/50 nguồn'),
       children: [
         if (_clipboardLinks.isNotEmpty)
@@ -1325,7 +1345,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 keyboardType: TextInputType.multiline,
                 decoration: const InputDecoration(
                   hintText:
-                      'Dán link hoặc đoạn chia sẻ TikTok, Douyin, YouTube, Facebook…',
+                      'Dán link hoặc đoạn chia sẻ TikTok, Douyin, YouTube, Facebook, Google Drive…',
                   counterText: '',
                   prefixIcon: Icon(Icons.link_rounded, color: AppColors.teal),
                 ),

@@ -466,6 +466,7 @@ FACEBOOK_BROWSER_AUTH = SocialBrowserAuthManager(
 )
 SOCIAL_VIDEO_DOWNLOADER = SocialVideoDownloader(
     ffmpeg_location=FFMPEG,
+    ffprobe_location=FFPROBE,
     cookie_file=Path(_social_cookie_value) if _social_cookie_value else None,
     douyin_cookie_provider=DOUYIN_BROWSER_AUTH.export_download_cookies,
     platform_cookie_providers={
@@ -7067,7 +7068,7 @@ async def create_batch_endpoint(
     if source_links.strip() and not source_urls:
         raise HTTPException(
             status_code=400,
-            detail="Không tìm thấy link TikTok, Douyin, YouTube hoặc Facebook hợp lệ",
+            detail="Không tìm thấy link TikTok, Douyin, YouTube, Facebook hoặc Google Drive hợp lệ",
         )
     cookie_payload: bytes | None = None
     if source_cookies is not None and source_cookies.filename:
