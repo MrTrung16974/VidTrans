@@ -102,7 +102,7 @@ from application.device_routes import DeviceRouteDependencies, create_device_rou
 from application.contact_routes import ContactRouteDependencies, create_contact_router
 from application.music_routes import MusicRouteDependencies, create_music_router
 from infrastructure.music_library import MusicLibraryStore, MusicTrackNotFound, probe_audio_duration
-from domain.legal import SUPPORT_PHONE, TERMS_VERSION, support_email
+from domain.legal import SUPPORT_PHONE, TERMS_VERSION, support_email, terms_outdated
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
 from infrastructure.signed_media import SignedMediaUrlService
 from infrastructure.social_publish_store import SocialPublishStore
@@ -5113,8 +5113,8 @@ def public_admin_account(account: dict[str, Any]) -> dict[str, Any]:
         "terms_version", "terms_accepted_at",
     }
     public = {key: account.get(key) for key in allowed}
-    # The web client asks for consent again whenever /terms or /privacy has a newer revision.
-    public["terms_outdated"] = account.get("terms_version") != TERMS_VERSION
+    # The clients ask for consent again only when the accepted revision is below the minimum.
+    public["terms_outdated"] = terms_outdated(account.get("terms_version"))
     # What this account may use, from plan_entitlements; clients hide the rest.
     public["features"] = sorted(account_features(account))
     return public

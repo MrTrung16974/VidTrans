@@ -92,6 +92,12 @@ class TermsConsentApiTests(unittest.TestCase):
         self.accounts.accept_terms(self.viewer["user_id"], "2000-01-01")
         self.assertTrue(main.public_admin_account(self.accounts.get(self.viewer["user_id"]))["terms_outdated"])
 
+    def test_new_revision_is_not_forced_on_accounts_that_accepted_the_minimum(self) -> None:
+        from domain.legal import TERMS_MIN_ACCEPTED_VERSION
+        self.accounts.accept_terms(self.viewer["user_id"], TERMS_MIN_ACCEPTED_VERSION)
+        self.assertFalse(main.public_admin_account(self.accounts.get(self.viewer["user_id"]))["terms_outdated"])
+        self.assertGreaterEqual(TERMS_VERSION, TERMS_MIN_ACCEPTED_VERSION)
+
     def test_accept_requires_sign_in(self) -> None:
         self.assertEqual(self.client.post("/api/v1/me/terms/accept", headers=CSRF).status_code, 401)
 
