@@ -140,7 +140,7 @@ function beginApiActionLoading(silent = false) {
 }
 
 const state = {
-  files: [], links: [], invalidLinks: [], jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
+  files: [], links: [], invalidLinks: [], blockedPlatforms: new Set(), jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
   jobsPage: 1, jobsPageSize: parseInt(localStorage.getItem("vidtrans_jobs_page_size") || "10", 10),
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false, sessionRefreshTimer: null,
@@ -284,6 +284,7 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   state.selectedJobIds.clear();
   state.files = [];
   state.links = [];
+  state.blockedPlatforms = new Set();
   state.userLogoUrl = null;
   applyPermissions();
   const jobsBody = $("#jobsBody");
@@ -535,6 +536,7 @@ async function startProtectedApplication() {
   jobEvents.start();
   const canManageSources = ["owner", "admin"].includes(state.auth.role);
   await Promise.all([
+    loadDownloadPolicy(),
     loadJobs(),
     canManageSources ? refreshDouyinAuthStatus() : Promise.resolve(),
     tiktokWorkspace.refresh(),
@@ -545,6 +547,19 @@ async function startProtectedApplication() {
   // #admin fell back to another view while the hash stayed put; clicking the same
   // link then fires no hashchange. Re-render now that the role is known.
   showView();
+}
+
+// Which source platforms the plan allows; links from the others are flagged as they are pasted.
+async function loadDownloadPolicy() {
+  try {
+    const policy = await requestJson("/api/v1/download/policy", { silent: true });
+    state.blockedPlatforms = new Set(Object.entries(policy.platforms || {})
+      .filter(([, rule]) => rule && rule.allowed === false)
+      .map(([platform]) => platform));
+  } catch (_) {
+    state.blockedPlatforms = new Set();  // The server still refuses blocked links.
+  }
+  if ($("#sourceLinks")?.value.trim()) renderSourceLinks();
 }
 
 async function bootstrapApplication() {
@@ -835,6 +850,7 @@ const SOCIAL_PLATFORM_DOMAINS = {
   TikTok: ["tiktok.com"],
   YouTube: ["youtube.com", "youtu.be", "youtube-nocookie.com"],
   Facebook: ["facebook.com", "fb.com", "fb.watch"],
+  Xiaohongshu: ["xiaohongshu.com", "xhslink.com"],
   "Google Drive": ["drive.google.com", "docs.google.com", "drive.usercontent.google.com"],
 };
 const DRIVE_ID = "[\\w-]{10,}";
@@ -860,13 +876,15 @@ function canonicalGoogleDriveUrl(url) {
   return `https://drive.google.com/file/d/${id}/view${key ? `?resourcekey=${encodeURIComponent(key)}` : ""}`;
 }
 
-const SHORT_LINK_HOSTS = new Set(["vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch", "youtu.be"]);
+const SHORT_LINK_HOSTS = new Set(["vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch", "youtu.be", "xhslink.com"]);
+// xiaohongshu_note_url() in the backend: a note id is 24 hex characters.
+const XIAOHONGSHU_NOTE_PATH = /^\/(?:explore|discovery\/item|user\/profile\/[0-9a-zA-Z]+)\/[0-9a-f]{24}\/?$/;
 const TIKTOK_VIDEO_PATH = /^\/(?:@[^/]+\/(?:video|photo)\/\d+|t\/[\w-]+|v\/\d+(?:\.html)?|embed(?:\/v2)?\/\d+|player\/v1\/\d+|share\/video\/\d+)\/?$/;
 const YOUTUBE_ID_PATH = /^\/(?:shorts|embed|live|v)\/[\w-]{3,}\/?$/;
 const FACEBOOK_VIDEO_PATH = /^\/(?:reels?\/[\w-]+|watch\/?|video\.php|story\.php|permalink\.php|share\/(?:v\/|r\/|p\/)?[\w-]+|(?:[^/]+\/)?videos\/(?:[^/]+\/)?\d+|[^/]+\/posts\/[\w-]+|groups\/[^/]+\/(?:posts|permalink)\/\d+)\/?$/;
 const FACEBOOK_QUERY_KEYS = { "/watch": "v", "/watch/": "v", "/video.php": "v", "/story.php": "story_fbid", "/permalink.php": "story_fbid" };
 const DOUYIN_PATH_ID = /\/(?:share\/)?(video|note|slides)\/(\d+)/;
-const SUPPORTED_LINK_FORMS_HINT = "Chỉ nhận link một video: TikTok (/@user/video/…, vm.tiktok.com), Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be), Facebook (reel, videos, watch?v=…, share, posts, fb.watch), Google Drive (drive.google.com/file/d/…, open?id=…; file chia sẻ “Bất kỳ ai có đường liên kết”).";
+const SUPPORTED_LINK_FORMS_HINT = "Chỉ nhận link một video: TikTok (/@user/video/…, vm.tiktok.com), Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be), Facebook (reel, videos, watch?v=…, share, posts, fb.watch), Xiaohongshu (xhslink.com, /explore/…, /discovery/item/…), Google Drive (drive.google.com/file/d/…, open?id=…; file chia sẻ “Bất kỳ ai có đường liên kết”).";
 
 function socialPlatformOf(hostname) {
   for (const [platform, domains] of Object.entries(SOCIAL_PLATFORM_DOMAINS)) {
@@ -880,6 +898,8 @@ function sourceLinkDownloadIssue(url) {
   const platform = socialPlatformOf(hostname);
   if (!["http:", "https:"].includes(url.protocol)) return "link phải bắt đầu bằng http:// hoặc https://";
   if (!platform) return `chưa có phương thức tải video từ tên miền ${hostname}`;
+  // "Tải video …" rows in "Phân quyền gói & menu" (GET /api/v1/download/policy).
+  if (state.blockedPlatforms.has(platform)) return `gói của bạn không cho tải video từ ${platform}`;
   if (url.username || url.password || (url.port && !["80", "443"].includes(url.port))) {
     return "link chứa thông tin kết nối không được hỗ trợ";
   }
@@ -900,6 +920,9 @@ function sourceLinkDownloadIssue(url) {
     if (match && match[1] !== "video") return "bài đăng ảnh (图文) Douyin, không phải video";
     if (match || ["modal_id", "vid", "aweme_id"].some(key => /^\d+$/.test(param(key)))) return null;
     return "không tìm thấy mã video Douyin (cần /video/<id> hoặc modal_id=<id>)";
+  }
+  if (platform === "Xiaohongshu") {
+    return XIAOHONGSHU_NOTE_PATH.test(path) ? null : "không phải link một bài Xiaohongshu (cần xhslink.com/…, /explore/<id> hoặc /discovery/item/<id>)";
   }
   if (platform === "YouTube") {
     if (path.replace(/\/$/, "") === "/watch" && param("v")) return null;
@@ -954,13 +977,15 @@ function renderSourceLinks() {
     ? `<div class="link-warning-note" role="alert">⛔ ${invalid.length} link không thể tải và sẽ chặn việc tạo batch:<ul>${invalid.map(item => `<li><strong>${escapeHtml(item.link)}</strong> — ${escapeHtml(item.reason)} <button class="button secondary mini-btn" type="button" data-link-remove="${escapeHtml(item.link)}" data-link-invalid="true" aria-label="Xóa liên kết ${escapeHtml(item.link)}">Xóa</button></li>`).join("")}</ul><small>${escapeHtml(SUPPORTED_LINK_FORMS_HINT)}</small></div>`
     : "";
   if (rawValue.trim() && state.links.length === 0) {
-    $("#linkList").innerHTML = invalidHtml || `<div class="link-warning-note">⚠️ Chưa nhận diện được liên kết hợp lệ (hỗ trợ TikTok, Douyin, YouTube, Facebook, Google Drive).</div>`;
+    $("#linkList").innerHTML = invalidHtml || `<div class="link-warning-note">⚠️ Chưa nhận diện được liên kết hợp lệ (hỗ trợ TikTok, Douyin, YouTube, Facebook, Xiaohongshu, Google Drive).</div>`;
     renderFiles();
     return;
   }
   $("#linkList").innerHTML = invalidHtml + state.links.map(link => {
     const hostname = new URL(link).hostname.toLowerCase();
-    const platform = socialPlatformOf(hostname) === "Google Drive" ? "GD"
+    const detected = socialPlatformOf(hostname);
+    const platform = detected === "Google Drive" ? "GD"
+      : detected === "Xiaohongshu" ? "XHS"
       : hostname.includes("douyin") ? "DY"
       : (hostname.includes("youtube") || hostname === "youtu.be") ? "YT"
       : (hostname.includes("facebook") || hostname === "fb.com" || hostname === "fb.watch") ? "FB"
@@ -1342,6 +1367,7 @@ function showView() {
     }
   }
   if (view === "jobs" && state.appStarted) loadJobs();
+  if (view === "create" && state.appStarted) loadDownloadPolicy();
   syncBrowserPower(view);
   if (view === "douyin" && state.appStarted) startDouyinBrowserPolling();
   else stopDouyinBrowserPolling();
