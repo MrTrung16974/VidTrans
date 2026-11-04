@@ -93,7 +93,7 @@ Làm ở giai đoạn sau (P3), dùng chung API.
 | P1 Backend | `novel_sources/`, tab đăng nhập, cache, tác vụ nền, API, contract | Unit test (nguồn giả) + chạy adapter với trang thật trên VPS | Xong |
 | P2 Web | UI ở §5, tab Qidian ở trang Nguồn | Chạy thật trên VPS với 3 chương miễn phí | Code xong; chờ deploy để thử trên trình duyệt |
 | P3 | Tách tập tự động vào series; mobile | Test tách tập | Tách tập xong; mobile chưa làm |
-| P4 | Adapter Fanqie và Jinjiang | Test bằng HTML mẫu; thử thật 3 chương miễn phí mỗi trang | Chưa làm |
+| P4 | Adapter Fanqie và Jinjiang | Test bằng HTML mẫu; thử thật chương miễn phí | Jinjiang xong (HTTP thường). Fanqie **không làm**: font mã hóa khoảng 51% ký tự (xem `ANALYSIS.md`) |
 | HANDOFF | `HANDOFF.md`, deploy | Đối chiếu AC §7 | Chưa làm |
 
 ## 7. Tiêu chí nghiệm thu

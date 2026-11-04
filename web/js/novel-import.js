@@ -1,4 +1,4 @@
-// Import chapters of a web novel (Qidian…) into a comic story form.
+// Import chapters of a web novel (Qidian, Jinjiang) into a comic story form.
 // The server reads the chapters in its source browser, paced like a reader, and splits
 // them into episodes that each fit one comic project; this widget drives that and hands
 // the episodes to the form.
@@ -10,10 +10,10 @@ export function createNovelImporter({ container, requestJson, toast, escapeHtml,
   const api = (path, init = {}) => requestJson(`/api/v1/comic/sources${path}`, init);
   container.innerHTML = `
     <details class="novel-import">
-      <summary>Nhập chương từ link truyện (Qidian)</summary>
+      <summary><span class="novel-import-badge">📖 Qidian · Jinjiang</span> Nhập chương từ link truyện (tự động chia tập)</summary>
       <div class="novel-import-body">
         <div class="novel-import-row">
-          <input type="url" data-novel="url" placeholder="https://www.qidian.com/book/1045928363/" aria-label="Link truyện" />
+          <input type="url" data-novel="url" placeholder="https://www.qidian.com/book/… hoặc https://www.jjwxc.net/onebook.php?novelid=…" aria-label="Link truyện" />
           <button type="button" class="button secondary" data-novel="catalog">Tải mục lục</button>
         </div>
         <div data-novel="catalog-view" class="is-hidden">

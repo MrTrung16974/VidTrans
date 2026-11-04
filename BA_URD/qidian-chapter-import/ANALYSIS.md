@@ -29,3 +29,14 @@
 - Chất lượng chia cảnh khi đưa text tiếng Trung với lời kể tiếng Việt.
 - Thử giao diện web trên trình duyệt thật.
 - Trang voz `page-2`, `page-3`: bị Cloudflare chặn khi đọc tự động.
+
+## P4 — Jinjiang và Fanqie (04/11/2026)
+
+| Kiểm tra | Jinjiang (`novelid=10841540`) | Fanqie (`reader/7323161662402331198`) |
+|---|---|---|
+| HTTP thường từ máy local và VPS | HTTP 200, trang thật (GB18030); không có thử thách chống bot | HTTP 200 |
+| Mục lục | 69 dòng `tr[itemprop=chapter]`; 68 chương có link: 14 miễn phí (`onebook.php`), 54 VIP (`my.jjwxc.net/onebook_vip.php` + `[VIP]`); có `wordCount` | Không kiểm tra (chương không đọc được) |
+| Chương miễn phí | `#paragraph_comment_content`, 71 đoạn, 4.380 ký tự = `wordCount`, 0 ký tự Private Use Area | 2.114 ký tự, **1.086 ký tự Private Use Area (51%)**: font mã hóa |
+| Quyết định | Làm adapter `jjwxc.py` dùng HTTP thường; chương VIP không request, đánh dấu xem trước | **Không làm**: lấy được text là phải giải mã font, trái §2 |
+
+Thử end-to-end từ máy local qua `NovelImportService`: chương 1–2 lấy được (tập 9.031 ký tự), chương 16 VIP được đánh dấu xem trước và không gửi request.

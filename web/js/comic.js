@@ -1,7 +1,7 @@
 // Story -> comic / animated video workspace: a story (series) holds many episode videos that share its
 // settings and character bible; each episode is a project whose storyboard can be edited and re-rendered.
 import { renderAnimatedScenes, renderReferenceGallery, shotPatchFromForm } from "./animation-editor.js?v=20261023-smooth";
-import { createNovelImporter } from "./novel-import.js?v=20261104-1";
+import { createNovelImporter } from "./novel-import.js?v=20261104-jjwxc";
 
 const ACTIVE = new Set(["queued", "scheduled", "processing", "cancelling"]);
 const STEP_LABELS = {

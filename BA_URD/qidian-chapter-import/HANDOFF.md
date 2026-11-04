@@ -2,7 +2,8 @@
 
 - Ngày: 04/11/2026
 - Phạm vi đã làm: P0, P1 (backend), P2 (web), phần tách tập tự động của P3.
-- Chưa làm: mobile (P3), Fanqie và Jinjiang (P4), dịch trước khi không có LLM.
+- Đã thêm (P4): adapter Jinjiang `novel_sources/jjwxc.py` (HTTP thường). Fanqie không làm vì font mã hóa.
+- Chưa làm: mobile (P3), dịch trước khi không có LLM.
 
 ## Thay đổi
 

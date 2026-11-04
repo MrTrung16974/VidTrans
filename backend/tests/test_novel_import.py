@@ -18,6 +18,7 @@ from infrastructure.novel_sources.base import (
     is_protected_text,
     split_into_episodes,
 )
+from infrastructure.novel_sources.jjwxc import JjwxcSource, parse_chapter
 from infrastructure.novel_sources.qidian import QidianSource
 from infrastructure.novel_sources.service import NovelImportService
 
@@ -224,6 +225,56 @@ class RouteTests(unittest.TestCase):
         response = self.client.get("/api/v1/comic/sources/catalog", params={"url": "https://other.example/1"})
         self.assertEqual(response.status_code, 422)
         self.assertIn("chưa được hỗ trợ", response.json()["detail"])
+
+
+# Trimmed from https://www.jjwxc.net/onebook.php?novelid=10841540 (2026-11-04).
+JJWXC_BOOK = """<title>《滂沱雨[娱乐圈]》江好桃_晋江文学城_【原创小说|言情小说】</title>
+<h1 itemprop="name"><span itemprop="articleSection">滂沱雨[娱乐圈]</span> </h1>
+<tr itemprop="chapter" itemscope itemtype="http://schema.org/Chapter"> <td align="center"> 1 </td> <td>
+<span itemprop="headline"> <div style="float:left"> <a itemprop="url"
+href="http://www.jjwxc.net/onebook.php?novelid=10841540&chapterid=1">Chapter 1</a> </div> </span> </td>
+<td> 似我者死 </td> <td align="center" itemprop="wordCount">4380</td> </tr>
+<tr itemprop="chapter" itemscope itemtype="http://schema.org/Chapter"> <td align="center"> 16 </td> <td>
+<span itemprop="headline"> <div style="float:left"> <a itemprop="url" style="cursor:pointer" onclick="vip_buy('vip_16')"
+rel="http://my.jjwxc.net/onebook_vip.php?novelid=10841540&chapterid=16" id="vip_16" >Chapter 16</a><a
+style="cursor:pointer"><font color="red">[VIP]</font></a> </div> </span> </td>
+<td> 只争朝夕 </td> <td colspan="2" align="center" itemprop="wordCount">3195</td> </tr>"""
+JJWXC_CHAPTER = """<div id="paragraph_comment_content">
+\u3000\u3000“春姐，你的航班还没起飞吗？”<br><br>\u3000\u3000夏日的傍晚，本还应该明亮的上海却陷进滂沱大雨里。<br><br>
+\u3000\u3000“抱、抱歉，贺老师……”</div>"""
+
+
+class JjwxcTests(unittest.TestCase):
+    def test_links_and_ids(self) -> None:
+        source = JjwxcSource(fetch=lambda url: "")
+        for url in ("https://www.jjwxc.net/onebook.php?novelid=10841540&chapterid=1",
+                    "http://www.jjwxc.net/onebook.php?novelid=10841540",
+                    "https://m.jjwxc.net/book2/10841540"):
+            self.assertEqual(source.book_id(url), "10841540", url)
+        self.assertIsNone(source.book_id("https://www.jjwxc.net/"))
+        self.assertIsNone(source.book_id("https://evil.example/onebook.php?novelid=1"))
+
+    def test_catalog_marks_vip_chapters(self) -> None:
+        requested = []
+        source = JjwxcSource(fetch=lambda url: requested.append(url) or JJWXC_BOOK)
+        catalog = source.fetch_catalog("10841540")
+        self.assertEqual((catalog.title, catalog.author), ("滂沱雨[娱乐圈]", "江好桃"))
+        self.assertEqual([(c.id, c.title, c.access, c.word_count) for c in catalog.chapters], [
+            ("1", "Chapter 1 似我者死", "accessible", 4380),
+            ("16", "Chapter 16 只争朝夕", "purchase_required", 3195),
+        ])
+        self.assertEqual(requested, ["https://www.jjwxc.net/onebook.php?novelid=10841540"])
+
+    def test_chapter_paragraphs_and_vip_without_request(self) -> None:
+        self.assertEqual(parse_chapter(JJWXC_CHAPTER), [
+            "“春姐，你的航班还没起飞吗？”", "夏日的傍晚，本还应该明亮的上海却陷进滂沱大雨里。", "“抱、抱歉，贺老师……”",
+        ])
+        requested = []
+        source = JjwxcSource(fetch=lambda url: requested.append(url) or JJWXC_BOOK)
+        vip = source.fetch_catalog("10841540").chapters[1]
+        requested.clear()
+        self.assertTrue(source.fetch_chapter(vip).is_preview)
+        self.assertEqual(requested, [], "a paid chapter is never requested")
 
 
 if __name__ == "__main__":

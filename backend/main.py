@@ -42,7 +42,7 @@ from application.api_models import (
 from application.idempotency import IdempotentRequest, idempotency_guard
 from application.comic_routes import ComicRouteDependencies, create_comic_router, requeue_comic_job
 from application.novel_import_routes import create_novel_import_router
-from infrastructure.novel_sources import CdpPageRunner, NovelImportService, QidianSource
+from infrastructure.novel_sources import CdpPageRunner, JjwxcSource, NovelImportService, QidianSource
 from domain.comic import MAX_STORY_CHARS
 from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
 from application.branding_routes import BrandingRouteDependencies, create_branding_router
@@ -8139,7 +8139,12 @@ app.include_router(create_comic_router(COMIC_ROUTE_DEPS), dependencies=require_p
 # Chapters are read in the shared source-login Chromium (Qidian answers plain HTTP with
 # an anti-bot shell). Episodes stay under the story limit with room for normalisation.
 NOVEL_IMPORTS = NovelImportService(
-    [QidianSource(CdpPageRunner(os.environ.get("VIDTRANS_NOVEL_BROWSER_CDP_URL") or YOUTUBE_BROWSER_AUTH.cdp_url))],
+    [
+        QidianSource(CdpPageRunner(os.environ.get("VIDTRANS_NOVEL_BROWSER_CDP_URL") or YOUTUBE_BROWSER_AUTH.cdp_url)),
+        # Plain HTTP works for Jinjiang. Fanqie is not offered: its web reader obfuscates
+        # about half of every chapter's characters with a custom font (checked 2026-11-04).
+        JjwxcSource(),
+    ],
     WORK_DIR / "novel-cache",
     episode_chars=MAX_STORY_CHARS - 1000,
 )

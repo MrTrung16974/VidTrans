@@ -219,6 +219,11 @@ class NovelImportService:
             for index, chapter in enumerate(chapters):
                 if import_id in self._cancelled:
                     break
+                if chapter.access != ACCESSIBLE:
+                    # Locked for this session in the catalog: its page holds only the preview.
+                    self._set_chapter(import_id, index, CHAPTER_PREVIEW,
+                                      "Chương VIP chưa mua: chỉ có phần xem trước, không đưa vào truyện")
+                    continue
                 cache_path = folder / f"{_safe(chapter.id)}.json"
                 cached = self._read_json(cache_path)
                 if cached and cached.get("word_count") == chapter.word_count and cached.get("paragraphs"):
@@ -235,7 +240,7 @@ class NovelImportService:
                     except NovelSourceError as exc:
                         self._set_chapter(import_id, index, CHAPTER_FAILED, str(exc))
                         continue
-                if text.is_preview or (chapter.access != ACCESSIBLE and not text.paragraphs):
+                if text.is_preview:
                     self._set_chapter(import_id, index, CHAPTER_PREVIEW,
                                       "Chương VIP chưa mua: chỉ có phần xem trước, không đưa vào truyện")
                     continue
