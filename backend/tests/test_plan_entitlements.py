@@ -128,6 +128,38 @@ class ComicPlanEntitlementTests(unittest.TestCase):
         self.assertFalse(gemini_image["allowed"])
 
 
+class SourcePlatformEntitlementTests(unittest.TestCase):
+    def test_every_plan_keeps_every_platform_by_default(self) -> None:
+        from domain.plan_entitlements import SOURCE_PLATFORM_FEATURES, source_platform_allowed
+        for plan in ("trial", "free", "creator"):
+            for platform in SOURCE_PLATFORM_FEATURES:
+                self.assertTrue(source_platform_allowed(on_plan(plan), platform), (plan, platform))
+
+    def test_switching_a_platform_off_blocks_only_its_links(self) -> None:
+        from fastapi.testclient import TestClient
+        from domain.plan_entitlements import (
+            DEFAULT_PLAN_FEATURES,
+            configure_entitlement_source,
+            ensure_source_platforms_allowed,
+        )
+
+        class NoDouyin:
+            def features_for(self, plan_key):
+                return DEFAULT_PLAN_FEATURES[plan_key] - {"source_douyin"}
+
+        configure_entitlement_source(NoDouyin())
+        self.addCleanup(configure_entitlement_source, main.PLAN_STORE)
+        free = on_plan("free")
+        ensure_source_platforms_allowed(free, ["TikTok", "YouTube"])
+        with self.assertRaisesRegex(PlanEntitlementError, "Douyin"):
+            ensure_source_platforms_allowed(free, ["TikTok", "Douyin"])
+        with patch.object(main, "current_account", lambda request: free):
+            policy = TestClient(main.app).get("/api/v1/download/policy").json()["platforms"]
+        self.assertFalse(policy["Douyin"]["allowed"])
+        self.assertTrue(policy["TikTok"]["allowed"])
+        self.assertTrue(policy["Google Drive"]["allowed"])
+
+
 class NovelImportOptionTests(unittest.TestCase):
     """The comic options tell clients whether to show the chapter importer."""
 
@@ -161,7 +193,7 @@ class NovelImportOptionTests(unittest.TestCase):
         self.assertFalse(self.flag())
         blocked = self.client.get("/api/v1/comic/sources/catalog", params={"url": "https://www.jjwxc.net/onebook.php?novelid=1"})
         self.assertEqual(blocked.status_code, 403)
-        self.assertIn("Nhập chương truyện từ link", blocked.json()["detail"])
+        self.assertIn("Tải truyện từ trang Trung Quốc", blocked.json()["detail"])
 
 
 class SocialPlanEntitlementTests(unittest.TestCase):

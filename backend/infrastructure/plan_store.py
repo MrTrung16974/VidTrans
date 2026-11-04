@@ -119,6 +119,11 @@ class PlanStore:
                     "INSERT OR IGNORE INTO plan_features(feature_key,name,description,created_at) VALUES(?,?,?,?)",
                     (key, name, description, now),
                 )
+                # Labels are defined in code (admins only tick the matrix): keep renames in sync.
+                db.execute(
+                    "UPDATE plan_features SET name=?, description=? WHERE feature_key=?",
+                    (name, description, key),
+                )
             for plan_key in DEFAULT_PLANS:
                 enabled = DEFAULT_PLAN_FEATURES.get(plan_key, frozenset())
                 for feature_key in FEATURES:

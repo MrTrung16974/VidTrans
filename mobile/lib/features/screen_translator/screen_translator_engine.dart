@@ -99,9 +99,9 @@ class ScreenTranslatorEngine {
       ),
       offline: CachedBlockTranslator(OfflineBlockTranslator()),
       online: CachedBlockTranslator(
-        OnlineBlockTranslator(api, provider: fastOnlineProvider),
+        OnlineBlockTranslator(api, provider: fastOnlineProvider, origin: 'floating'),
       ),
-      onlineQuality: CachedBlockTranslator(OnlineBlockTranslator(api)),
+      onlineQuality: CachedBlockTranslator(OnlineBlockTranslator(api, origin: 'floating')),
     );
   }
 

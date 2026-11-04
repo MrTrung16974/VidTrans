@@ -60,4 +60,5 @@ abstract final class PlanFeature {
   static const novelImport = 'novel_import';
   static const socialPublishing = 'social_publishing';
   static const imageTranslation = 'image_translation';
+  static const screenTranslator = 'screen_translator';
 }

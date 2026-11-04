@@ -16,24 +16,39 @@ enum DownloadMode {
 }
 
 class DownloadPolicy {
-  const DownloadPolicy(this.platforms);
+  const DownloadPolicy(this.platforms, {this.blocked = const {}});
 
   /// Used when the policy cannot be loaded: everything goes to the server, as before.
   static const serverOnly = DownloadPolicy({});
 
   final Map<String, DownloadMode> platforms;
 
+  /// Platforms whose "Tải video …" plan feature is off. Their links are not
+  /// downloaded on the phone; the server refuses them with a clear message.
+  final Set<String> blocked;
+
+  bool allows(String url) => !blocked.contains(socialPlatformOf(url));
+
   DownloadMode modeFor(String? platform) =>
       platforms[platform] ?? DownloadMode.server;
 
   bool onPhone(String url) =>
-      modeFor(socialPlatformOf(url)) != DownloadMode.server;
+      allows(url) && modeFor(socialPlatformOf(url)) != DownloadMode.server;
 
-  factory DownloadPolicy.fromJson(Map<String, dynamic> json) => DownloadPolicy({
-    for (final entry in (json['platforms'] as Map? ?? const {}).entries)
-      if (entry.value is Map)
-        entry.key.toString(): DownloadMode.parse((entry.value as Map)['mode']),
-  });
+  factory DownloadPolicy.fromJson(Map<String, dynamic> json) {
+    final entries = (json['platforms'] as Map? ?? const {}).entries
+        .where((entry) => entry.value is Map);
+    return DownloadPolicy(
+      {
+        for (final entry in entries)
+          entry.key.toString(): DownloadMode.parse((entry.value as Map)['mode']),
+      },
+      blocked: {
+        for (final entry in entries)
+          if ((entry.value as Map)['allowed'] == false) entry.key.toString(),
+      },
+    );
+  }
 }
 
 const _platformDomains = {

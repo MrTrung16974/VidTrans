@@ -671,6 +671,8 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                 activePill: activeStudioPill!,
                 canTranslateImages:
                     account?.hasFeature(PlanFeature.imageTranslation) ?? true,
+                canUseFloating:
+                    account?.hasFeature(PlanFeature.screenTranslator) ?? true,
                 onSelectPill: (pill) => _handleSelectPill(context, pill),
                 onOpenAllTools: () {
                   HapticFeedback.lightImpact();
@@ -706,6 +708,8 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
     final account = ref.read(sessionProvider).valueOrNull;
     final canTranslateImages =
         account?.hasFeature(PlanFeature.imageTranslation) ?? true;
+    final canUseFloating =
+        account?.hasFeature(PlanFeature.screenTranslator) ?? true;
     final canUseComics = account?.canUseComics ?? true;
     final canPublishSocial = account?.canPublishSocial ?? true;
 
@@ -802,7 +806,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                       _handleSelectPill(context, StudioCategoryPill.video);
                     },
                   ),
-                  if (canTranslateImages) ...[
+                  if (canTranslateImages)
                     _UserMenuTile(
                       icon: Icons.image_search_rounded,
                       title: 'Dịch Ảnh Chụp Màn Hình',
@@ -815,6 +819,7 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                         _handleSelectPill(context, StudioCategoryPill.image);
                       },
                     ),
+                  if (canUseFloating)
                     _UserMenuTile(
                       icon: Icons.touch_app_rounded,
                       title: 'Nút Dịch Nổi Trực Tiếp (Live Overlay)',
@@ -827,7 +832,6 @@ class StudioTopBar extends ConsumerWidget implements PreferredSizeWidget {
                         _handleSelectPill(context, StudioCategoryPill.live);
                       },
                     ),
-                  ],
                   if (canUseComics)
                     _UserMenuTile(
                       icon: Icons.auto_stories_rounded,
@@ -1014,12 +1018,14 @@ class _StudioNetflixPillBar extends StatefulWidget {
   const _StudioNetflixPillBar({
     required this.activePill,
     required this.canTranslateImages,
+    required this.canUseFloating,
     required this.onSelectPill,
     required this.onOpenAllTools,
   });
 
   final StudioCategoryPill activePill;
   final bool canTranslateImages;
+  final bool canUseFloating;
   final ValueChanged<StudioCategoryPill> onSelectPill;
   final VoidCallback onOpenAllTools;
 
@@ -1101,6 +1107,8 @@ class _StudioNetflixPillBarState extends State<_StudioNetflixPillBar> {
                   onTap: () => widget.onSelectPill(StudioCategoryPill.image),
                 ),
               ),
+            ],
+            if (widget.canUseFloating) ...[
               SizedBox(width: gap),
               KeyedSubtree(
                 key: _liveKey,

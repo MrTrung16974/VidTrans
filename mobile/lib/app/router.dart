@@ -43,9 +43,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (!account.canPublishSocial && _under(location, '/social')) {
         return '/translate';
       }
-      if (!account.hasFeature(PlanFeature.imageTranslation) &&
-          _under(location, '/translate/image')) {
-        return '/translate';
+      if (_under(location, '/translate/image')) {
+        // "Dịch nổi" (?mode=live) and "Dịch ảnh" are separate plan features.
+        final live = state.uri.queryParameters['mode'] == 'live';
+        final feature = live ? PlanFeature.screenTranslator : PlanFeature.imageTranslation;
+        if (!account.hasFeature(feature)) return '/translate';
       }
       return null;
     },

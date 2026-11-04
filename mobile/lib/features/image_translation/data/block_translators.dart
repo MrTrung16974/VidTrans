@@ -104,10 +104,13 @@ const fastOnlineProvider = 'google';
 /// `POST /api/v1/text-translations` — sends the recognised text only.
 class OnlineBlockTranslator implements BlockTranslator {
   /// An empty [provider] lets the server choose (its AI default).
-  OnlineBlockTranslator(this._api, {this.provider = ''});
+  OnlineBlockTranslator(this._api, {this.provider = '', this.origin = 'image'});
 
   final ApiClient _api;
   final String provider;
+
+  /// `floating` for the screen translator (Dịch nổi): the server checks its own plan feature.
+  final String origin;
 
   @override
   Future<List<String>> translate(
@@ -122,6 +125,7 @@ class OnlineBlockTranslator implements BlockTranslator {
         'source_language': source,
         'target_language': target,
         if (provider.isNotEmpty) 'provider': provider,
+        if (origin != 'image') 'origin': origin,
       },
     );
     final values = (result['translations'] as List? ?? const [])

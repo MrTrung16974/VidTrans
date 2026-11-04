@@ -526,7 +526,10 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   @override
   Widget build(BuildContext context) {
     final account = ref.watch(sessionProvider).valueOrNull;
-    final allowed = account?.hasFeature(PlanFeature.imageTranslation) ?? false;
+    final allowed = account?.hasFeature(
+          _liveTab ? PlanFeature.screenTranslator : PlanFeature.imageTranslation,
+        ) ??
+        false;
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: StudioTopBar(

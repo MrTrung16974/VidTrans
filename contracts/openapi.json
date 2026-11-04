@@ -3745,6 +3745,15 @@
       },
       "TextTranslationRequest": {
         "properties": {
+          "origin": {
+            "default": "image",
+            "enum": [
+              "image",
+              "floating"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
           "provider": {
             "default": "",
             "maxLength": 32,

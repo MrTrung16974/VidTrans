@@ -17,7 +17,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Any, Callable, NamedTuple, Optional, Sequence
+from typing import Annotated, Any, Callable, Literal, NamedTuple, Optional, Sequence
 from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -161,8 +161,10 @@ from domain.plan_entitlements import (
     ensure_comic_settings_allowed,
     ensure_feature_allowed,
     ensure_provider_allowed,
+    ensure_source_platforms_allowed,
     ensure_video_providers_allowed,
     provider_allowed,
+    source_platform_allowed,
 )
 from infrastructure.translation_providers import (
     GeminiContextTranslator,
@@ -6754,12 +6756,16 @@ def client_download_platforms() -> set[str]:
 def download_policy_endpoint(request: Request) -> JSONResponse:
     """Where each platform's links are downloaded: on the phone (residential IP, the user's own
     session) with the server as fallback, or on the server only."""
-    current_account(request)
+    account = current_account(request)
     client = client_download_platforms()
     return JSONResponse({
         "platforms": {
-            platform: {"mode": "client_then_server" if platform in client else "server"}
-            for platform in SOCIAL_SOURCE_PLATFORMS
+            platform: {
+                "mode": "client_then_server" if platform in client else "server",
+                # False when the plan's "Tải video …" feature is switched off.
+                "allowed": source_platform_allowed(account, platform),
+            }
+            for platform in (*SOCIAL_SOURCE_PLATFORMS, "Google Drive")
         },
     })
 
@@ -6809,6 +6815,8 @@ class TextTranslationRequest(BaseModel):
     target_language: str = Field(default="vi", max_length=16)
     # Empty: the server default, or Google when the plan cannot use the default.
     provider: str = Field(default="", max_length=32)
+    # "floating": the screen translator (Dịch nổi), gated by its own plan feature.
+    origin: Literal["image", "floating"] = "image"
 
 
 @app.post("/api/v1/text-translations")
@@ -6820,7 +6828,7 @@ def translate_texts_endpoint(request: Request, body: TextTranslationRequest) -> 
 
     account = current_account(request)
     try:
-        ensure_feature_allowed(account, "image_translation")
+        ensure_feature_allowed(account, "screen_translator" if body.origin == "floating" else "image_translation")
     except PlanEntitlementError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     try:
@@ -7182,6 +7190,13 @@ async def create_batch_endpoint(
         upload_source_urls = parse_file_source_urls(file_source_urls, len(uploads))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        # A video the phone downloaded still comes from that platform.
+        ensure_source_platforms_allowed(account, [
+            social_platform(url) for url in [*source_urls, *(url for url in upload_source_urls if url)]
+        ])
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     if source_links.strip() and not source_urls:
         raise HTTPException(
             status_code=400,

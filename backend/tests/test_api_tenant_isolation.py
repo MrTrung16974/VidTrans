@@ -222,6 +222,20 @@ class ApiTenantIsolationTests(unittest.TestCase):
                 patch.object(main, "notify_scheduler"), patch.object(main, "validate_video_file"):
             return asyncio.run(main.create_batch_endpoint(**values))
 
+    def test_a_platform_switched_off_in_the_plan_is_refused_for_phone_downloads_too(self) -> None:
+        from domain.plan_entitlements import DEFAULT_PLAN_FEATURES, configure_entitlement_source
+
+        class NoTikTok:
+            def features_for(self, plan_key):
+                return DEFAULT_PLAN_FEATURES.get(plan_key, frozenset()) - {"source_tiktok"}
+
+        configure_entitlement_source(NoTikTok())
+        self.addCleanup(configure_entitlement_source, main.PLAN_STORE)
+        with self.assertRaises(HTTPException) as refused:
+            self.create_upload_batch(json.dumps(["https://www.tiktok.com/@a/video/1", None]))
+        self.assertEqual(refused.exception.status_code, 403)
+        self.assertIn("TikTok", refused.exception.detail)
+
     def test_phone_downloaded_file_keeps_its_link_without_server_redownload(self) -> None:
         response = self.create_upload_batch(json.dumps(["https://www.tiktok.com/@a/video/1", None]))
 

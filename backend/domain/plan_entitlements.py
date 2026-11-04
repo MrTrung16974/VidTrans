@@ -15,7 +15,7 @@ run the service and test every provider.
 """
 from __future__ import annotations
 
-from typing import Any, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 
 UNRESTRICTED_ROLES = frozenset({"owner", "admin"})
 DEFAULT_PLAN = "free"
@@ -26,9 +26,19 @@ FEATURES: dict[str, tuple[str, str]] = {
         "Dịch ảnh chụp màn hình",
         "Nhận diện chữ trong ảnh và thay bằng bản dịch đúng vị trí (OCR trên máy, dịch offline hoặc qua máy chủ)",
     ),
+    "screen_translator": (
+        "Dịch nổi màn hình",
+        "Nút nổi dịch chữ trên mọi ứng dụng (app Android); chế độ offline dịch ngay trên máy",
+    ),
+    "source_douyin": ("Tải video Douyin", "Dán link Douyin để tải video nguồn"),
+    "source_tiktok": ("Tải video TikTok", "Dán link TikTok để tải video nguồn"),
+    "source_youtube": ("Tải video YouTube", "Dán link YouTube để tải video nguồn"),
+    "source_facebook": ("Tải video Facebook", "Dán link Facebook để tải video nguồn"),
+    "source_xiaohongshu": ("Tải video Xiaohongshu", "Dán link Xiaohongshu (小红书) để tải video nguồn"),
+    "source_google_drive": ("Tải video Google Drive", "Dán link file Google Drive để tải video nguồn"),
     "comic_video": ("Tạo video truyện", "Tạo, sửa và render truyện thành video"),
     "novel_import": (
-        "Nhập chương truyện từ link",
+        "Tải truyện từ trang Trung Quốc",
         "Tải chương đọc được (miễn phí hoặc đã mua) từ Qidian, Jinjiang vào truyện và tự chia tập",
     ),
     "social_publishing": (
@@ -54,9 +64,19 @@ DEFAULT_PLANS: dict[str, dict[str, Any]] = {
                    "sort_order": 4},
 }
 
+# Source platform name (social_platform() in the downloader) -> feature that allows its links.
+SOURCE_PLATFORM_FEATURES: dict[str, str] = {
+    "Douyin": "source_douyin",
+    "TikTok": "source_tiktok",
+    "YouTube": "source_youtube",
+    "Facebook": "source_facebook",
+    "Xiaohongshu": "source_xiaohongshu",
+    "Google Drive": "source_google_drive",
+}
+
 _PAID_FEATURES = frozenset(FEATURES)
 # Features every plan gets out of the box; admins may still switch them off per plan.
-_BASIC_FEATURES = frozenset({"image_translation"})
+_BASIC_FEATURES = frozenset({"image_translation", "screen_translator", *SOURCE_PLATFORM_FEATURES.values()})
 # plan_key -> enabled features; every feature not listed is an explicit deny row.
 DEFAULT_PLAN_FEATURES: dict[str, frozenset[str]] = {
     "trial": _BASIC_FEATURES,
@@ -131,6 +151,21 @@ def ensure_feature_allowed(account: Mapping[str, Any], feature: str) -> None:
     if not feature_allowed(account, feature):
         raise PlanEntitlementError(
             f"{FEATURES[feature][0]} chỉ dành cho {UPGRADE_HINT}. Hãy nâng cấp gói để sử dụng."
+        )
+
+
+def source_platform_allowed(account: Mapping[str, Any], platform: str) -> bool:
+    feature = SOURCE_PLATFORM_FEATURES.get(platform)
+    return feature is None or feature_allowed(account, feature)
+
+
+def ensure_source_platforms_allowed(account: Mapping[str, Any], platforms: Iterable[str]) -> None:
+    """Refuse a batch whose links come from a platform the plan does not allow."""
+    blocked = sorted({platform for platform in platforms if not source_platform_allowed(account, platform)})
+    if blocked:
+        raise PlanEntitlementError(
+            f"Gói của bạn không cho tải video từ {', '.join(blocked)}. "
+            "Hãy bỏ các link đó, liên hệ quản trị viên hoặc nâng cấp gói."
         )
 
 

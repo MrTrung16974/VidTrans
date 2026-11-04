@@ -80,6 +80,17 @@ class TextTranslationApiTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 403)
         self.assertIn("Dịch ảnh chụp màn hình", denied.json()["detail"])
 
+    def test_floating_translator_has_its_own_switch(self) -> None:
+        self.user = user("trial")
+        configure_entitlement_source(OverrideSource({"trial": frozenset({"image_translation"})}))
+        self.assertEqual(self.post(texts=["你好"]).status_code, 200, "Dịch ảnh still works")
+        denied = self.post(texts=["你好"], origin="floating")
+        self.assertEqual(denied.status_code, 403)
+        self.assertIn("Dịch nổi màn hình", denied.json()["detail"])
+        configure_entitlement_source(OverrideSource({"trial": frozenset({"screen_translator"})}))
+        self.assertEqual(self.post(texts=["你好"], origin="floating").status_code, 200)
+        self.assertEqual(self.post(texts=["你好"]).status_code, 403)
+
     def test_bad_requests_are_rejected(self) -> None:
         self.assertEqual(self.post(texts=[]).status_code, 422)
         self.assertEqual(self.post(texts=["x"], source_language="auto").status_code, 422)

@@ -119,6 +119,18 @@ void main() {
     expect(DownloadPolicy.serverOnly.onPhone(_tiktok), isFalse);
   });
 
+  test('a platform the plan does not allow is never downloaded on the phone', () {
+    final policy = DownloadPolicy.fromJson({
+      'platforms': {
+        'TikTok': {'mode': 'client_then_server', 'allowed': false},
+        'Douyin': {'mode': 'client_then_server', 'allowed': true},
+      },
+    });
+    expect(policy.allows(_tiktok), isFalse);
+    expect(policy.onPhone(_tiktok), isFalse);
+    expect(policy.onPhone('https://www.douyin.com/video/1'), isTrue);
+  });
+
   test('TikTok and Douyin are uploaded from the phone, YouTube stays a server link', () async {
     final downloader = _FakeDownloader(dir);
     final container = containerWith(downloader);
