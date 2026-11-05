@@ -106,7 +106,7 @@ class MusicOnlyFailureMessageTests(unittest.TestCase):
             stack.enter_context(patch.object(main, "SETTINGS", SimpleNamespace(ocr_backend="off", ocr_model="m")))
             stack.enter_context(patch.object(main, "prepare_speech_audio", prepare))
             stack.enter_context(patch.object(main, "transcribe_video", lambda *args, **kwargs: ([], "en", 0.5)))
-            with self.assertRaisesRegex(RuntimeError, "chủ yếu là nhạc/tiếng hát"):
+            with self.assertRaisesRegex(main.NoSpeechError, "chủ yếu là nhạc/tiếng hát"):
                 main.recognize_video_source(
                     job_id="job-song",
                     video_path=VIDEO,

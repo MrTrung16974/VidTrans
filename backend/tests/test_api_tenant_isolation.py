@@ -260,6 +260,48 @@ class ApiTenantIsolationTests(unittest.TestCase):
         self.assertEqual(policy["TikTok"]["mode"], "server")
         self.assertEqual(policy["Facebook"]["mode"], "server")
 
+    def no_speech_job(self, error_code: str | None = "no_speech") -> Path:
+        source = self.upload_dir / "song.mp4"
+        source.write_bytes(b"song-video")
+        self.service.create(
+            "job-s",
+            {
+                "status": "failed", "mode": 2, "error": "Video chỉ có nhạc", "error_code": error_code,
+                "tiktok": {"enabled": True, "auto_publish": True},
+                "resume_request": {
+                    "mode": 2, "video_path": str(source), "translation_provider": "gemini", "tts_provider": "cit",
+                    "generate_tiktok_post": True, "auto_publish_tiktok": True,
+                },
+            },
+            owner_user_id="user-a",
+        )
+        return source
+
+    def test_voiceless_job_can_be_turned_into_a_download_only_job(self) -> None:
+        source = self.no_speech_job()
+        with patch.object(main, "reserve_job_quota"), patch.object(main, "notify_scheduler"), \
+                patch.object(main, "ensure_video_providers_allowed") as providers:
+            job = response_json(main.download_only_job_endpoint(request_for(self.user_a, "POST"), "job-s"))
+        providers.assert_not_called()  # No AI runs, so a plan without dubbing may still download.
+        self.assertEqual(job["status"], "queued")
+        self.assertIsNone(job["error_code"])
+        stored = self.service.get("job-s")
+        self.assertEqual(stored["mode"], 4)
+        self.assertEqual(stored["resume_request"]["mode"], 4)
+        self.assertEqual(stored["resume_request"]["video_path"], str(source))
+        self.assertFalse(stored["resume_request"]["auto_publish_tiktok"])
+        self.assertFalse(stored["resume_request"]["generate_tiktok_post"])
+        self.assertFalse(stored["tiktok"]["enabled"])
+
+    def test_download_only_is_refused_for_other_failures_and_other_users(self) -> None:
+        self.no_speech_job(error_code=None)
+        with self.assertRaises(HTTPException) as refused:
+            main.download_only_job_endpoint(request_for(self.user_a, "POST"), "job-s")
+        self.assertEqual(refused.exception.status_code, 409)
+        with self.assertRaises(HTTPException) as hidden:
+            main.download_only_job_endpoint(request_for(self.user_b, "POST"), "job-a")
+        self.assertEqual(hidden.exception.status_code, 404)
+
     def test_download_only_job_hands_back_the_source(self) -> None:
         source = self.upload_dir / "source.mp4"
         source.write_bytes(b"source-video")

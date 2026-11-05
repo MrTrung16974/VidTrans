@@ -1012,6 +1012,14 @@ VOCAL_SEPARATION_MIN_MUSIC_SHARE = 0.5
 SONG_VOCAL_CHECK_ENABLED = _env_flag("VIDTRANS_SONG_VOCAL_CHECK", "on") in {"1", "true", "yes", "on"}
 SONG_CLIP_MIN_MUTED_SHARE = 0.5
 SONG_MIN_VOICED_SECONDS = 3.0
+
+
+class NoSpeechError(RuntimeError):
+    """Nothing to subtitle: the job fails with ``error_code`` so the app can offer download-only."""
+
+    error_code = "no_speech"
+
+
 SPEAKER_EMBEDDING_ENABLED = _env_flag("VIDTRANS_SPEAKER_EMBEDDING", "on") in {"1", "true", "yes", "on"}
 # Multi-branch ASR: re-recognise doubtful stretches on a BS-RoFormer vocal stem and/or a
 # DeepFilterNet3 copy, then fuse per time cluster and report disagreements.
@@ -3318,7 +3326,7 @@ def recognize_video_source(
         if source_probe.has_audio:
             asr_segments, detected_language, detected_language_probability = recognize_speech(None)
         elif not ocr_segments:
-            raise RuntimeError(
+            raise NoSpeechError(
                 "Video có hình ảnh nhưng không có âm thanh để nhận diện giọng nói. "
                 "Nếu video có phụ đề sẵn, hãy chọn OCR và bật OCR trên máy chủ; "
                 "nếu không, hãy chọn video có âm thanh."
@@ -3395,12 +3403,13 @@ def recognize_video_source(
     if not segments:
         music_seconds = sum(end - start for start, end in music_only_regions(scenes)) if scenes else 0.0
         if video_duration and music_seconds >= SONG_CLIP_MIN_MUTED_SHARE * video_duration:
-            raise RuntimeError(
+            raise NoSpeechError(
                 "Video chủ yếu là nhạc/tiếng hát và không nhận diện được lời nào để dịch "
                 "(kể cả sau khi tách giọng khỏi nhạc). Video kiểu hát nhép hoặc chỉ có nhạc "
                 "không có lời rõ thì không tạo được phụ đề."
             )
-        raise RuntimeError(
+        error = NoSpeechError if subtitle_source == "speech" else RuntimeError
+        raise error(
             "Không nhận diện được phụ đề hoặc lời thoại nguồn. "
             "Kiểm tra vùng OCR, ngôn ngữ nguồn hoặc thử Whisper model lớn hơn."
         )
@@ -4294,6 +4303,7 @@ def process_video(
             status="failed",
             step="failed",
             error=public_error_message(exc),
+            error_code=getattr(exc, "error_code", None),
             finished_at=utc_now(),
         )
         TENANT_GOVERNANCE.release(job_id)
@@ -8058,6 +8068,21 @@ def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
 
 @app.post("/api/v1/jobs/{job_id}/retry", response_model=Job)
 def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
+    return requeue_video_job(request, job_id)
+
+
+@app.post("/api/v1/jobs/{job_id}/download-only", response_model=Job)
+def download_only_job_endpoint(request: Request, job_id: str) -> JSONResponse:
+    """Hand back the source of a job that failed for lack of speech (mode 4), no subtitles or dubbing."""
+    source = job_for_request(request, job_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if source.get("status") != "failed" or source.get("error_code") != NoSpeechError.error_code:
+        raise HTTPException(status_code=409, detail="Chỉ chuyển sang tải video gốc được với video không có lời")
+    return requeue_video_job(request, job_id, download_only=True)
+
+
+def requeue_video_job(request: Request, job_id: str, *, download_only: bool = False) -> JSONResponse:
     account = current_account(request)
     source = job_for_request(request, job_id)
     if source is None:
@@ -8088,13 +8113,22 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     source_url = resume_request.get("source_url")
     if not video_path.is_file() and not source_url:
         raise HTTPException(status_code=409, detail="file video nguồn không còn tồn tại")
+    if download_only:
+        # Mode 4 runs no recognition, translation, dubbing or TikTok caption.
+        resume_request = {
+            **resume_request,
+            "mode": int(ProcessingMode.DOWNLOAD_ONLY),
+            "generate_tiktok_post": False,
+            "auto_publish_tiktok": False,
+        }
     try:
-        ensure_video_providers_allowed(
-            entitlement_account,
-            translation_provider=str(resume_request.get("translation_provider") or "google"),
-            tts_provider=str(resume_request.get("tts_provider") or "edge"),
-            dubbing=int(resume_request.get("mode") or 1) != 1,
-        )
+        if not download_only:  # Download-only uses no AI provider.
+            ensure_video_providers_allowed(
+                entitlement_account,
+                translation_provider=str(resume_request.get("translation_provider") or "google"),
+                tts_provider=str(resume_request.get("tts_provider") or "edge"),
+                dubbing=int(resume_request.get("mode") or 1) != 1,
+            )
         if resume_request.get("auto_publish_tiktok"):
             ensure_feature_allowed(entitlement_account, "social_publishing")
     except PlanEntitlementError as exc:
@@ -8109,6 +8143,7 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         "progress": 0.0,
         "error": None,
         "error_message": None,
+        "error_code": None,
         "step_detail": None,
         "cancel_requested": 0,
         "worker_id": None,
@@ -8121,6 +8156,9 @@ def retry_job_endpoint(request: Request, job_id: str) -> JSONResponse:
         "tts_fallback": None,
         "translation_backup_cues": None,
     }
+    if download_only:
+        update_payload.update(mode=int(ProcessingMode.DOWNLOAD_ONLY), resume_request=resume_request,
+                              tiktok={**(source.get("tiktok") or {}), "enabled": False, "auto_publish": False})
     artifact_keys = ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file")
     for key in artifact_keys:
         update_payload[key] = None

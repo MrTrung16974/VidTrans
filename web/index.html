@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261105-job-reports" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261105-no-speech" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261104-saas-legal-v1" />
   </head>
   <body>
@@ -2673,6 +2673,21 @@
       </form>
     </dialog>
 
+    <dialog id="noSpeechDialog" class="password-reset-dialog no-speech-dialog" aria-labelledby="noSpeechTitle">
+      <form id="noSpeechForm" class="auth-form" method="dialog">
+        <div>
+          <h2 id="noSpeechTitle">Video không có lời để dịch</h2>
+          <p id="noSpeechMessage" class="password-reset-target"></p>
+          <ul id="noSpeechJobs" class="no-speech-jobs"></ul>
+          <p>Bạn có muốn chỉ tải video gốc về không? Video sẽ được giữ nguyên hình và tiếng, không thêm phụ đề và không lồng tiếng.</p>
+        </div>
+        <div class="password-reset-footer">
+          <button id="noSpeechSkip" class="button secondary" type="button">Không, bỏ qua</button>
+          <button id="noSpeechDownload" class="button primary" type="submit">Chỉ tải video</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="confirmJobDialog" class="confirm-job-dialog" aria-labelledby="confirmJobTitle">
       <div class="confirm-dialog-card">
         <div class="confirm-sheet-handle" aria-hidden="true"></div>
@@ -2918,6 +2933,7 @@
           <div class="footer-left">
             <button id="jobDetailCancelBtn" class="button secondary danger-text is-hidden" type="button">Hủy tiến trình</button>
             <button id="jobDetailRetryBtn" class="button secondary is-hidden" type="button">Chạy lại</button>
+            <button id="jobDetailDownloadOnlyBtn" class="button secondary is-hidden" type="button">Chỉ tải video</button>
             <button id="jobDetailDeleteBtn" class="button secondary danger-text is-hidden" type="button">Xóa tiến trình</button>
           </div>
           <button id="jobDetailCloseBtn" class="button secondary" type="button">Đóng</button>
@@ -2926,6 +2942,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261105-job-reports"></script>
+    <script type="module" src="/js/app.js?v=20261105-no-speech"></script>
   </body>
 </html>

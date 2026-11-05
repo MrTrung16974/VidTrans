@@ -3256,7 +3256,89 @@ function trackJobOutcomes(items) {
   }
 }
 
+// A video with no speech cannot be subtitled or dubbed: instead of only reporting
+// the failure, ask whether to just download the source (mode 4). Jobs of a batch
+// that fail together share one prompt.
+const NO_SPEECH_ERROR = "no_speech";
+const pendingNoSpeechJobs = new Map();
+let noSpeechTimer = null;
+
+function isNoSpeechJob(job) {
+  return job?.status === "failed" && job.error_code === NO_SPEECH_ERROR;
+}
+
+function jobDisplayName(job) {
+  return job.filename || job.title || job.source_url || `Job #${String(job.job_id).slice(0, 8).toUpperCase()}`;
+}
+
+function queueNoSpeechPrompt(job) {
+  pendingNoSpeechJobs.set(job.job_id, job);
+  clearTimeout(noSpeechTimer);
+  noSpeechTimer = setTimeout(openNoSpeechDialog, 1200);
+}
+
+function openNoSpeechDialog() {
+  const dialog = $("#noSpeechDialog");
+  if (!dialog || !pendingNoSpeechJobs.size) return;
+  const jobs = [...pendingNoSpeechJobs.values()];
+  $("#noSpeechMessage").textContent = jobs.length === 1
+    ? "Video này chỉ có nhạc hoặc tiếng hát không rõ lời, nên không tạo được phụ đề hay lồng tiếng."
+    : `${jobs.length} video chỉ có nhạc hoặc tiếng hát không rõ lời, nên không tạo được phụ đề hay lồng tiếng.`;
+  $("#noSpeechJobs").innerHTML = jobs.map(job => `<li>${escapeHtml(jobDisplayName(job))}</li>`).join("");
+  $("#noSpeechDownload").textContent = jobs.length === 1 ? "Chỉ tải video" : `Chỉ tải ${jobs.length} video`;
+  $("#noSpeechDownload").disabled = false;
+  if (dialog.open) return;
+  try {
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  } catch {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function closeNoSpeechDialog() {
+  pendingNoSpeechJobs.clear();
+  const dialog = $("#noSpeechDialog");
+  if (!dialog) return;
+  try { if (dialog.open && typeof dialog.close === "function") dialog.close(); } catch {}
+  dialog.removeAttribute("open");
+}
+
+async function requestDownloadOnly(jobIds) {
+  let started = 0;
+  const failures = [];
+  for (const jobId of jobIds) {
+    try {
+      const response = await apiFetch(`/api/v1/jobs/${jobId}/download-only`, { method: "POST" });
+      if (response.status === 401) lockApplication();
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(errorDetail(data.detail) || "Không thể chuyển sang chỉ tải video");
+      started += 1;
+    } catch (error) {
+      failures.push(error.message);
+    }
+  }
+  if (started) toast(started === 1 ? "Đang chuẩn bị video gốc để tải về" : `Đang chuẩn bị ${started} video gốc để tải về`);
+  if (failures.length) toast(failures[0], true);
+  await loadJobs();
+  return started;
+}
+
+$("#noSpeechSkip")?.addEventListener("click", closeNoSpeechDialog);
+$("#noSpeechDialog")?.addEventListener("cancel", () => pendingNoSpeechJobs.clear());
+$("#noSpeechForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const jobIds = [...pendingNoSpeechJobs.keys()];
+  $("#noSpeechDownload").disabled = true;
+  closeNoSpeechDialog();
+  await requestDownloadOnly(jobIds);
+});
+
 function announceJobOutcome(job) {
+  if (isNoSpeechJob(job)) {
+    queueNoSpeechPrompt(job);
+    if (!document.hidden) return;
+  }
   const name = job.filename || job.title || job.source_url || "Video của bạn";
   const succeeded = job.status === "completed";
   const title = succeeded ? "Đã xử lý xong" : "Xử lý thất bại";
@@ -3737,6 +3819,20 @@ function renderJobDetailModal(job, { preserveMedia = false } = {}) {
     } else {
       retryBtn.classList.add("is-hidden");
     }
+  }
+
+  const downloadOnlyBtn = $("#jobDetailDownloadOnlyBtn");
+  if (downloadOnlyBtn) {
+    downloadOnlyBtn.classList.toggle("is-hidden", !isNoSpeechJob(job));
+    downloadOnlyBtn.onclick = async () => {
+      downloadOnlyBtn.disabled = true;
+      try {
+        await requestDownloadOnly([job.job_id]);
+      } finally {
+        downloadOnlyBtn.disabled = false;
+      }
+      openJobDetailModal(job.job_id, { refresh: true });
+    };
   }
 
   const deleteBtn = $("#jobDetailDeleteBtn");

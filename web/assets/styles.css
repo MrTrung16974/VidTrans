@@ -1425,6 +1425,8 @@ input[type="file"]::-webkit-file-upload-button:active {
 .password-reset-dialog::backdrop { background: rgba(15,23,42,.55); }
 .password-reset-dialog h2 { margin: 0 0 4px; font-size: 1.25rem; }
 .password-reset-target { margin: 0; color: var(--muted); font-size: .82rem; word-break: break-all; }
+.no-speech-jobs { margin: .5rem 0; padding-left: 1.1rem; max-height: 9rem; overflow-y: auto; font-size: .85rem; word-break: break-word; }
+.no-speech-dialog p:last-child { margin-bottom: 0; }
 .password-reset-actions { display: flex; gap: 8px; }
 .password-reset-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
