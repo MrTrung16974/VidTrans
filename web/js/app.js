@@ -3465,6 +3465,53 @@ async function photoMusicOptions(hasOriginalMusic) {
 // Library tracks picked for the slideshow, in play order.
 const PHOTO_MAX_MUSIC_TRACKS = 10;
 let photoChosenTracks = [];
+let photoMusicPreview = null;
+let photoMusicPreviewTrackId = null;
+
+function syncPhotoMusicPreviewButtons() {
+  $("#photoChoiceMusicList")?.querySelectorAll('[data-action="preview"]').forEach(button => {
+    const isPlaying = button.dataset.trackId === photoMusicPreviewTrackId;
+    button.classList.toggle("is-playing", isPlaying);
+    button.setAttribute("aria-pressed", String(isPlaying));
+    button.setAttribute("aria-label", isPlaying ? "Dừng nghe thử bài này" : "Nghe thử bài này");
+    button.innerHTML = isPlaying ? "⏸ <span>Dừng</span>" : "▶ <span>Nghe thử</span>";
+  });
+}
+
+function stopPhotoMusicPreview() {
+  if (photoMusicPreview) {
+    photoMusicPreview.pause();
+    photoMusicPreview.removeAttribute("src");
+    photoMusicPreview.load();
+  }
+  photoMusicPreview = null;
+  photoMusicPreviewTrackId = null;
+  syncPhotoMusicPreviewButtons();
+}
+
+function togglePhotoMusicPreview(trackId) {
+  if (photoMusicPreviewTrackId === trackId) {
+    stopPhotoMusicPreview();
+    return;
+  }
+
+  stopPhotoMusicPreview();
+  const audio = new Audio(`/api/v1/music-tracks/${encodeURIComponent(trackId)}/audio`);
+  photoMusicPreview = audio;
+  photoMusicPreviewTrackId = trackId;
+  audio.addEventListener("ended", stopPhotoMusicPreview, { once: true });
+  audio.addEventListener("error", () => {
+    if (photoMusicPreview !== audio) return;
+    stopPhotoMusicPreview();
+    toast("Không phát được bản nhạc", true);
+  }, { once: true });
+  syncPhotoMusicPreviewButtons();
+  audio.play().catch(() => {
+    if (photoMusicPreview !== audio) return;
+    stopPhotoMusicPreview();
+    toast("Không phát được bản nhạc", true);
+  });
+}
 
 function renderPhotoChosenTracks(hasOriginalMusic) {
   const list = $("#photoChoiceMusicList");
@@ -3472,14 +3519,23 @@ function renderPhotoChosenTracks(hasOriginalMusic) {
   list.innerHTML = photoChosenTracks.map((trackId, index) => {
     const track = byId.get(trackId);
     const label = track ? `${track.title} (${formatTrackLength(track.duration_seconds)})` : trackId;
-    return `<li><span>${escapeHtml(label)}</span><button type="button" data-index="${index}" aria-label="Bỏ bài này">✕</button></li>`;
+    return `<li>
+      <span class="photo-music-track-title">${escapeHtml(label)}</span>
+      <button class="photo-music-preview-btn" type="button" data-action="preview" data-index="${index}" data-track-id="${escapeHtml(trackId)}" aria-label="Nghe thử bài này" aria-pressed="false">▶ <span>Nghe thử</span></button>
+      <button class="photo-music-remove-btn" type="button" data-action="remove" data-index="${index}" aria-label="Bỏ bài này">✕</button>
+    </li>`;
   }).join("");
-  list.querySelectorAll("button").forEach(button => {
+  list.querySelectorAll('[data-action="preview"]').forEach(button => {
+    button.onclick = () => togglePhotoMusicPreview(photoChosenTracks[Number(button.dataset.index)]);
+  });
+  list.querySelectorAll('[data-action="remove"]').forEach(button => {
     button.onclick = () => {
-      photoChosenTracks.splice(Number(button.dataset.index), 1);
+      const removedTrackId = photoChosenTracks.splice(Number(button.dataset.index), 1)[0];
+      if (removedTrackId === photoMusicPreviewTrackId) stopPhotoMusicPreview();
       renderPhotoChosenTracks(hasOriginalMusic);
     };
   });
+  syncPhotoMusicPreviewButtons();
   $("#photoChoiceMusicHint").textContent = photoChosenTracks.length > 1
     ? "Các bài phát nối tiếp theo thứ tự trên; video dài hơn thì lặp lại từ bài đầu."
     : photoChosenTracks.length
@@ -3494,12 +3550,16 @@ function renderPhotoChoiceCard(job) {
   if (!card) return;
   const waiting = job.status === "awaiting_input";
   card.classList.toggle("is-hidden", !waiting);
-  if (!waiting) return;
+  if (!waiting) {
+    stopPhotoMusicPreview();
+    return;
+  }
   const count = job.photo_post?.image_count || 0;
   $("#jobDetailPhotoSummary").textContent = `Link này là bài đăng ${count} ảnh, không phải video. Chọn cách xử lý:`;
   const select = $("#photoChoiceMusic");
   const hasOriginalMusic = Boolean(job.photo_post?.has_music);
   if (select.dataset.jobId !== job.job_id) {
+    stopPhotoMusicPreview();
     select.dataset.jobId = job.job_id;
     photoChosenTracks = [];
     renderPhotoChosenTracks(hasOriginalMusic);
@@ -4149,6 +4209,7 @@ async function openJobDetailModal(jobId, { refresh = false } = {}) {
 }
 
 function closeJobDetailModal() {
+  stopPhotoMusicPreview();
   activeDetailJobId = null;
   document.body.classList.remove("modal-open");
   const dialog = $("#jobDetailDialog");

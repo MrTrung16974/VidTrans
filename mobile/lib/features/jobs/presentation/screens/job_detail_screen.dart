@@ -482,24 +482,25 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
     final full = _musicTrackIds.length >= _maxMusicTracks;
     return Container(
       margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.fromLTRB(12, 10, 4, 6),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
       decoration: BoxDecoration(
-        color: AppColors.amber.withValues(alpha: 0.08),
+        color: AppColors.amberTint,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.amberBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              const Icon(Icons.auto_awesome, size: 16, color: AppColors.amber),
+              const Icon(Icons.auto_awesome, size: 16, color: AppColors.amberDark),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   suggestions.byAi
                       ? 'AI gợi ý${suggestions.mood.isEmpty ? '' : ' · ${suggestions.mood}'}'
                       : 'Gợi ý theo từ khoá caption (AI đang không khả dụng)',
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.amberDark),
                 ),
               ),
               if (pending.length > 1)
@@ -521,11 +522,11 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
               trailing: _musicTrackIds.contains(item.trackId)
                   ? const Padding(
                       padding: EdgeInsets.all(12),
-                      child: Icon(Icons.check_rounded, size: 20, color: AppColors.muted),
+                      child: Icon(Icons.check_rounded, size: 20, color: AppColors.green),
                     )
                   : IconButton(
                       tooltip: 'Thêm bài này',
-                      icon: const Icon(Icons.add_circle_outline_rounded),
+                      icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.amberDark),
                       onPressed: _sending || full ? null : () => _addTracks([item.trackId]),
                     ),
             ),
@@ -562,103 +563,416 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
     return Padding(
       padding: const EdgeInsets.only(top: 14),
       child: StudioCard(
-        topAccentColor: AppColors.amber,
+        topAccentColor: AppColors.brand,
+        borderColor: AppColors.brandBorder,
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Bài đăng ảnh', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
-            Text('Link này là bài đăng ${job.photoImageCount} ảnh, không phải video. Chọn cách xử lý:'),
-            const SizedBox(height: 14),
-            OutlinedButton.icon(
-              onPressed: _sending ? null : () => _choose('images'),
-              icon: const Icon(Icons.photo_library_outlined),
-              label: const Text('Chỉ tải ảnh về (ZIP)'),
-            ),
-            const Divider(height: 28),
-            const Text('Tạo video ghép ảnh có nhạc', style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<double>(
-              initialValue: _minutes,
-              decoration: const InputDecoration(labelText: 'Độ dài video'),
-              items: [
-                for (final minutes in _slideshowMinutes)
-                  DropdownMenuItem(value: minutes, child: Text(_minutesLabel(minutes))),
-              ],
-              onChanged: _sending ? null : (value) => setState(() => _minutes = value ?? _minutes),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              // Rebuilt after each pick so the field goes back to its prompt.
-              key: ValueKey(_musicTrackIds.length),
-              initialValue: null,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Nhạc nền (chọn 1 hoặc nhiều bài)'),
-              hint: const Text('+ Thêm bài nhạc từ thư viện'),
-              items: [
-                for (final track in tracks)
-                  DropdownMenuItem(
-                    value: track.id,
-                    child: Text('${track.title} (${track.durationLabel})', overflow: TextOverflow.ellipsis),
+            // Header: icon, title & badge
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: AppColors.brandTint,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.brandBorder, width: 1.5),
                   ),
+                  child: const Icon(
+                    Icons.photo_library_rounded,
+                    color: AppColors.brand,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'Bài đăng ảnh',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.ink,
+                                  letterSpacing: -0.2,
+                                ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: AppColors.brandTint,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: AppColors.brandBorder),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.brand,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                const Text(
+                                  'Chờ bạn chọn',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.brandDark,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Link này là bài đăng ${job.photoImageCount} ảnh, không phải video. Chọn cách xử lý:',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppColors.muted,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
-              onChanged: _sending || _musicTrackIds.length >= _maxMusicTracks
-                  ? null
-                  : (value) {
-                      if (value != null) setState(() => _musicTrackIds.add(value));
-                    },
             ),
-            if (tracks.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _sending || _suggesting ? null : _suggestMusic,
-                  icon: _suggesting
-                      ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.auto_awesome, size: 18),
-                  label: Text(_suggesting
-                      ? 'AI đang xem bài đăng…'
-                      : _suggestions == null
-                          ? 'AI gợi ý nhạc hợp bài đăng'
-                          : 'Gợi ý lại'),
-                ),
+            const SizedBox(height: 16),
+
+            // Option 1: Chỉ tải ảnh về (ZIP)
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.surfaceSoft,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.line),
               ),
-            ],
-            if (_suggestions != null && _suggestions!.items.isNotEmpty) _suggestionList(_suggestions!),
-            for (final (index, trackId) in _musicTrackIds.indexed)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(radius: 12, child: Text('${index + 1}', style: const TextStyle(fontSize: 12))),
-                title: Text(_trackLabel(tracks, trackId), overflow: TextOverflow.ellipsis),
-                trailing: IconButton(
-                  tooltip: 'Bỏ bài này',
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  onPressed: _sending ? null : () => setState(() => _musicTrackIds.removeAt(index)),
-                ),
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceMuted,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppColors.line),
+                        ),
+                        child: const Icon(
+                          Icons.folder_zip_outlined,
+                          size: 20,
+                          color: AppColors.inkSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Text(
+                                  'Chỉ tải ảnh về',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.ink,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.surfaceMuted,
+                                    borderRadius: BorderRadius.circular(5),
+                                    border: Border.all(color: AppColors.line),
+                                  ),
+                                  child: const Text(
+                                    'Tệp ZIP',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.muted,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            const Text(
+                              'Nhận toàn bộ ảnh gốc chất lượng cao trong một file ZIP.',
+                              style: TextStyle(fontSize: 12, color: AppColors.muted),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _sending ? null : () => _choose('images'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      side: const BorderSide(color: AppColors.lineStrong),
+                    ),
+                    icon: const Icon(Icons.download_rounded, size: 18),
+                    label: const Text('Tải ảnh về (ZIP)', style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                ],
               ),
-            const SizedBox(height: 4),
-            Text(
-              _musicTrackIds.length > 1
-                  ? 'Các bài phát nối tiếp theo thứ tự trên; video dài hơn thì lặp lại từ bài đầu.'
-                  : _musicTrackIds.isNotEmpty
-                      ? 'Bài nhạc lặp lại cho đủ độ dài video.'
-                      : job.photoHasMusic
-                          ? 'Chưa chọn bài nào: dùng nhạc gốc của bài đăng.'
-                          : 'Chưa chọn bài nào: bài đăng không có nhạc gốc nên video sẽ im lặng.',
-              style: const TextStyle(fontSize: 12, color: AppColors.muted),
             ),
-            const SizedBox(height: 6),
-            const Text(
-              'Mỗi ảnh hiện tối đa 8 giây, có zoom nhẹ; video dài thì bộ ảnh được lặp lại cho đủ thời lượng.',
-              style: TextStyle(fontSize: 12, color: AppColors.muted),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _sending ? null : () => _choose('video'),
-              icon: const Icon(Icons.movie_creation_outlined),
-              label: const Text('Tạo video'),
+            const SizedBox(height: 14),
+
+            // Option 2: Tạo video ghép ảnh có nhạc (Featured)
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.brandBorder, width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.brand.withValues(alpha: 0.06),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: AppColors.brandTint,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppColors.brandBorder),
+                        ),
+                        child: const Icon(
+                          Icons.movie_creation_outlined,
+                          size: 20,
+                          color: AppColors.brand,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Flexible(
+                                  child: Text(
+                                    'Tạo video ghép ảnh',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 14.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.ink,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.brandTint,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: AppColors.brandBorder),
+                                  ),
+                                  child: const Text(
+                                    '✨ Khuyên dùng',
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.brandDark,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            const Text(
+                              'Mỗi ảnh hiện tối đa 8 giây, có zoom nhẹ (Ken Burns); video dài thì bộ ảnh được lặp lại cho đủ thời lượng.',
+                              style: TextStyle(fontSize: 12, color: AppColors.muted, height: 1.35),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<double>(
+                    initialValue: _minutes,
+                    decoration: InputDecoration(
+                      labelText: 'Độ dài video',
+                      prefixIcon: const Icon(Icons.schedule_rounded, size: 20, color: AppColors.brand),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.brand, width: 1.5)),
+                    ),
+                    items: [
+                      for (final minutes in _slideshowMinutes)
+                        DropdownMenuItem(value: minutes, child: Text(_minutesLabel(minutes), style: const TextStyle(fontWeight: FontWeight.w600))),
+                    ],
+                    onChanged: _sending ? null : (value) => setState(() => _minutes = value ?? _minutes),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    // Rebuilt after each pick so the field goes back to its prompt.
+                    key: ValueKey(_musicTrackIds.length),
+                    initialValue: null,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: 'Nhạc nền (chọn 1 hoặc nhiều bài)',
+                      prefixIcon: const Icon(Icons.music_note_rounded, size: 20, color: AppColors.brand),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.brand, width: 1.5)),
+                    ),
+                    hint: const Text('+ Thêm bài nhạc từ thư viện', style: TextStyle(fontSize: 13)),
+                    items: [
+                      for (final track in tracks)
+                        DropdownMenuItem(
+                          value: track.id,
+                          child: Text('${track.title} (${track.durationLabel})', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                        ),
+                    ],
+                    onChanged: _sending || _musicTrackIds.length >= _maxMusicTracks
+                        ? null
+                        : (value) {
+                            if (value != null) setState(() => _musicTrackIds.add(value));
+                          },
+                  ),
+                  if (tracks.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _sending || _suggesting ? null : _suggestMusic,
+                        icon: _suggesting
+                            ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.auto_awesome, size: 17, color: AppColors.amberDark),
+                        label: Text(
+                          _suggesting
+                              ? 'AI đang xem bài đăng…'
+                              : _suggestions == null
+                                  ? 'AI gợi ý nhạc hợp bài đăng'
+                                  : 'Gợi ý lại',
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.amberDark),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (_suggestions != null && _suggestions!.items.isNotEmpty) _suggestionList(_suggestions!),
+                  if (_musicTrackIds.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    for (final (index, trackId) in _musicTrackIds.indexed)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceSoft,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.line),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 22,
+                                height: 22,
+                                decoration: BoxDecoration(
+                                  color: AppColors.brandTint,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: AppColors.brandBorder),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${index + 1}',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.brandDark),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _trackLabel(tracks, trackId),
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.ink),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Bỏ bài này',
+                                icon: const Icon(Icons.close_rounded, size: 16, color: AppColors.muted),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                onPressed: _sending ? null : () => setState(() => _musicTrackIds.removeAt(index)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceSoft,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.brand),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _musicTrackIds.length > 1
+                                ? 'Các bài phát nối tiếp theo thứ tự trên; video dài hơn thì lặp lại từ bài đầu.'
+                                : _musicTrackIds.isNotEmpty
+                                    ? 'Bài nhạc lặp lại cho đủ độ dài video.'
+                                    : job.photoHasMusic
+                                        ? 'Chưa chọn bài nào: dùng nhạc gốc của bài đăng.'
+                                        : 'Chưa chọn bài nào: bài đăng không có nhạc gốc nên video sẽ im lặng.',
+                            style: const TextStyle(fontSize: 12, color: AppColors.muted, height: 1.35),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  StudioGradientButton(
+                    onPressed: _sending ? null : () => _choose('video'),
+                    isLoading: _sending,
+                    icon: Icons.movie_creation_outlined,
+                    label: 'Tạo video',
+                  ),
+                ],
+              ),
             ),
           ],
         ),
