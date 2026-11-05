@@ -131,6 +131,92 @@ def _xiaohongshu_failure_message(error: Exception, *, used_cookies: bool, note_t
     )
 
 
+_XHS_INITIAL_STATE = re.compile(r"window\.__INITIAL_STATE__\s*=\s*")
+_JS_UNDEFINED = re.compile(r"(?<=[:\[,])\s*undefined\s*(?=[,}\]])")
+
+
+def xiaohongshu_photo_post_info(note_id: str, html: str) -> dict[str, Any] | None:
+    """yt-dlp-like slideshow info for an image note (图文) read from its page, or None."""
+    match = _XHS_INITIAL_STATE.search(html)
+    if not match:
+        return None
+    try:
+        state, _ = json.JSONDecoder().raw_decode(_JS_UNDEFINED.sub("null", html[match.end():]))
+    except ValueError:
+        return None
+    note_map = ((state.get("note") or {}).get("noteDetailMap") or {}) if isinstance(state, dict) else {}
+    note = ((note_map.get(note_id) or {}).get("note") or {}) if isinstance(note_map, dict) else {}
+    images = []
+    for image in note.get("imageList") or []:
+        if not isinstance(image, dict):
+            continue
+        # urlDefault is the full-size picture; urlPre is a small preview.
+        candidates = [image.get("urlDefault")]
+        candidates += [entry.get("url") for entry in image.get("infoList") or []
+                       if isinstance(entry, dict) and entry.get("imageScene") == "WB_DFT"]
+        candidates.append(image.get("urlPre"))
+        url = next((str(value) for value in candidates if isinstance(value, str) and value.startswith("http")), None)
+        if url:
+            images.append(url.replace("http://", "https://", 1))
+    if not images:
+        return None
+    title = str(note.get("title") or note.get("desc") or "").strip() or "Ảnh Xiaohongshu"
+    return {"id": note_id, "title": title,
+            "duration": slideshow_duration(min(len(images), MAX_IMAGES)), "ext": "mp4",
+            "http_headers": {"Referer": "https://www.xiaohongshu.com/"},
+            SLIDESHOW_KEY: {"images": images[:MAX_IMAGES], "music": None}}
+
+
+_YOUTUBE_INITIAL_DATA = re.compile(r"(?:var\s+ytInitialData|window\[[\"']ytInitialData[\"']\])\s*=\s*")
+
+
+def _walk(value: Any):
+    """Every dict nested in ``value``, in document order."""
+    if isinstance(value, dict):
+        yield value
+        for item in value.values():
+            yield from _walk(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _walk(item)
+
+
+def youtube_post_photo_info(post_id: str, html: str) -> dict[str, Any] | None:
+    """Slideshow info for a YouTube community post with images, read from its page, or None."""
+    match = _YOUTUBE_INITIAL_DATA.search(html)
+    if not match:
+        return None
+    try:
+        data, _ = json.JSONDecoder().raw_decode(html[match.end():])
+    except ValueError:
+        return None
+    posts = [node.get("backstagePostRenderer") or node.get("postRenderer") for node in _walk(data)
+             if isinstance(node.get("backstagePostRenderer") or node.get("postRenderer"), dict)]
+    post = next((item for item in posts if item.get("postId") == post_id), posts[0] if posts else None)
+    if post is None:
+        return None
+    images = []
+    for node in _walk(post.get("backstageAttachment") or {}):
+        renderer = node.get("backstageImageRenderer")
+        if not isinstance(renderer, dict):
+            continue
+        thumbnails = [item for item in (renderer.get("image") or {}).get("thumbnails") or []
+                      if isinstance(item, dict) and str(item.get("url") or "").startswith(("http", "//"))]
+        if thumbnails:
+            best = max(thumbnails, key=lambda item: int(item.get("width") or 0) * int(item.get("height") or 0))
+            url = str(best["url"])
+            images.append("https:" + url if url.startswith("//") else url)
+    if not images:
+        return None
+    runs = ((post.get("contentText") or {}).get("runs")) or []
+    title = "".join(str(run.get("text") or "") for run in runs if isinstance(run, dict))
+    title = " ".join(title.split())[:140] or "Ảnh YouTube"
+    return {"id": post_id, "title": title,
+            "duration": slideshow_duration(min(len(images), MAX_IMAGES)), "ext": "mp4",
+            "http_headers": {"Referer": "https://www.youtube.com/"},
+            SLIDESHOW_KEY: {"images": images[:MAX_IMAGES], "music": None}}
+
+
 @dataclass(frozen=True)
 class SocialVideoDownloadResult:
     path: Path
@@ -175,11 +261,13 @@ def normalize_social_video_url(raw_url: str) -> str:
 
 
 SUPPORTED_LINK_FORMS_HINT = (
-    "Hỗ trợ link một video: TikTok (/@user/video/…, /@user/photo/…, vm/vt.tiktok.com), "
-    "Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be, live, embed), "
-    "Facebook (reel, videos, watch?v=…, share, posts, fb.watch), "
+    "Hỗ trợ link một video hoặc bài đăng ảnh: TikTok (/@user/video/…, /@user/photo/…, vm/vt.tiktok.com), "
+    "Douyin (/video/…, /note/…, modal_id=…, v.douyin.com), "
+    "YouTube (watch?v=…, shorts, youtu.be, live, embed, bài đăng /post/…), "
+    "Facebook (reel, videos, watch?v=…, share, posts, photo, fb.watch), "
     "Xiaohongshu (xhslink.com, /explore/…, /discovery/item/…), "
-    "Google Drive (drive.google.com/file/d/…, open?id=…, uc?id=…; file chia sẻ \"Bất kỳ ai có đường liên kết\")"
+    "Google Drive (drive.google.com/file/d/…, open?id=…, uc?id=…; file video hoặc ảnh chia sẻ "
+    "\"Bất kỳ ai có đường liên kết\")"
 )
 _SHORT_LINK_HOSTS = {"vm.tiktok.com", "vt.tiktok.com", "v.douyin.com", "fb.watch", "xhslink.com"}
 XIAOHONGSHU_PLATFORM = "Xiaohongshu"
@@ -223,10 +311,27 @@ _TIKTOK_VIDEO_PATH = re.compile(
     r"^/(?:@[^/]+/(?:video|photo)/\d+|t/[\w-]+|v/\d+(?:\.html)?|embed(?:/v2)?/\d+|player/v1/\d+|share/video/\d+)/?$"
 )
 _YOUTUBE_ID_PATH = re.compile(r"^/(?:shorts|embed|live|v)/[\w-]{3,}/?$")
+_YOUTUBE_POST_PATH = re.compile(r"^/post/([\w-]{10,})/?$")
+_YOUTUBE_COMMUNITY_PATH = re.compile(r"^/(?:@[^/]+|channel/[\w-]+|c/[^/]+|user/[^/]+)/(?:community|posts)/?$")
+
+
+def youtube_post_id(url: str) -> str | None:
+    """Id of a YouTube community post (/post/<id> or a channel's community?lb=<id>), or None."""
+    parsed = urlsplit(url)
+    path = re.sub(r"/{2,}", "/", parsed.path or "/")
+    match = _YOUTUBE_POST_PATH.match(path)
+    if match:
+        return match.group(1)
+    if _YOUTUBE_COMMUNITY_PATH.match(path):
+        value = (parse_qs(parsed.query).get("lb") or [""])[0].strip()
+        if re.fullmatch(r"[\w-]{10,}", value):
+            return value
+    return None
 _FACEBOOK_VIDEO_PATH = re.compile(
     r"^/(?:"
     r"reels?/[\w-]+"
-    r"|watch/?|video\.php|story\.php|permalink\.php"
+    r"|watch/?|video\.php|story\.php|permalink\.php|photo/?|photo\.php"
+    r"|(?:[^/]+/)?photos/(?:[^/]+/)*\d+"
     r"|share/(?:v/|r/|p/)?[\w-]+"
     r"|(?:[^/]+/)?videos/(?:[^/]+/)?\d+"
     r"|[^/]+/posts/[\w-]+"
@@ -235,6 +340,7 @@ _FACEBOOK_VIDEO_PATH = re.compile(
 )
 _FACEBOOK_QUERY_KEYS = {
     "/watch": "v", "/watch/": "v", "/video.php": "v", "/story.php": "story_fbid", "/permalink.php": "story_fbid",
+    "/photo": "fbid", "/photo/": "fbid", "/photo.php": "fbid",
 }
 
 
@@ -276,7 +382,7 @@ def _google_drive_issue(url: str) -> str | None:
     if google_drive_file_id(url):
         return None
     if _DRIVE_FOLDER_PATH.search(path):
-        return "link thư mục Google Drive chưa được hỗ trợ, hãy dán link chia sẻ của từng file video"
+        return "link thư mục Google Drive chưa được hỗ trợ, hãy dán link chia sẻ của từng file video hoặc ảnh"
     if _GOOGLE_EDITOR_PATH.match(path):
         return "đây là tài liệu Google Docs/Sheets/Slides, không phải file video"
     return "không tìm thấy mã file Google Drive trong link (cần /file/d/<id> hoặc open?id=<id>)"
@@ -305,15 +411,13 @@ def social_video_download_issue(url: str) -> str | None:
         return "đây không phải link một video TikTok (trang cá nhân, trang chủ hoặc trang khác)"
     if platform == "Douyin":
         video_id, kind = douyin_video_id(url)
-        if kind in {"note", "slides"}:
-            return "đây là bài đăng ảnh (图文) Douyin, không phải video"
         if video_id:
             return None
         return "không tìm thấy mã video Douyin trong link (cần /video/<id> hoặc modal_id=<id>)"
     if platform == "YouTube":
         if path.rstrip("/") == "/watch" and (query.get("v") or [""])[0].strip():
             return None
-        if _YOUTUBE_ID_PATH.match(path):
+        if _YOUTUBE_ID_PATH.match(path) or youtube_post_id(url):
             return None
         if query.get("list"):
             return "link playlist YouTube chưa được hỗ trợ, hãy dán link từng video"
@@ -451,6 +555,8 @@ def _follow_redirects(url: str, *, timeout: int, proxy: str | None) -> str:
 DRIVE_VIDEO_EXTENSIONS = SUPPORTED_VIDEO_EXTENSIONS | {
     ".3gp", ".flv", ".m2ts", ".mpeg", ".mpg", ".mts", ".ts", ".wmv",
 }
+# An image file becomes a one-photo post (a slideshow), like a TikTok photo post.
+DRIVE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 _DRIVE_DOWNLOAD_URL = "https://drive.usercontent.google.com/download"
 _DRIVE_CHUNK_BYTES = 1024 * 1024
 _DRIVE_USER_AGENT = (
@@ -611,6 +717,78 @@ class SocialVideoDownloader:
             ) from exc
         return yt_dlp.YoutubeDL(options)
 
+    def _read_page(self, url: str, options: dict[str, Any]) -> str:
+        """A page's HTML, fetched with the same cookies, headers and proxy as yt-dlp."""
+        with self._create_ydl({**options, "quiet": True}) as ydl:
+            jar = getattr(ydl, "cookiejar", None)
+            if jar is not None and (urlsplit(url).hostname or "").endswith("youtube.com") \
+                    and not any(cookie.name == "SOCS" for cookie in jar):
+                # Without it YouTube answers with its cookie-consent page; yt-dlp sets the same.
+                jar.set_cookie(http.cookiejar.Cookie(
+                    0, "SOCS", "CAI", None, False, ".youtube.com", True, True, "/", True,
+                    True, None, False, None, None, {},
+                ))
+            response = ydl.urlopen(url)
+            try:
+                return response.read(16 * 1024 * 1024).decode("utf-8", errors="ignore")
+            finally:
+                response.close()
+
+    def _xiaohongshu_photo_post_info(self, url: str, options: dict[str, Any]) -> dict[str, Any] | None:
+        """Read an image note's pictures from its page."""
+        note_id = urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
+        return xiaohongshu_photo_post_info(note_id, self._read_page(url, options))
+
+    def _download_youtube_post(
+        self,
+        post_id: str,
+        url: str,
+        destination_stem: Path,
+        options: dict[str, Any],
+        *,
+        progress_callback: ProgressCallback | None,
+        cancel_requested: CancelCallback | None,
+        cleanup: Callable[[], None],
+        browser_cookie_path: Path,
+    ) -> SocialVideoDownloadResult:
+        """A community post with images becomes a slideshow, like a TikTok photo post."""
+        page_url = f"https://www.youtube.com/post/{post_id}"
+        try:
+            try:
+                info = youtube_post_photo_info(post_id, self._read_page(page_url, options))
+            except Exception as page_error:
+                logger.warning("Cannot read YouTube post %s: %s", post_id, page_error)
+                raise SocialVideoDownloadError(
+                    "Không mở được bài đăng YouTube; bài có thể đã bị xóa hoặc chỉ thành viên mới xem được"
+                ) from page_error
+            if info is None:
+                raise SocialVideoDownloadError(
+                    "Bài đăng YouTube này không có ảnh. Nếu bài kèm video, hãy dán link của chính video đó"
+                )
+            sanitized = self._download_slideshow(
+                info, destination_stem, progress_callback=progress_callback, cancel_requested=cancel_requested,
+            )
+        except SocialVideoDownloadError:
+            cleanup()
+            raise
+        except Exception as exc:
+            cleanup()
+            if cancel_requested and cancel_requested():
+                raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn") from exc
+            logger.warning("YouTube post %s download failed: %s", post_id, exc)
+            raise SocialVideoDownloadError("Không tải được ảnh của bài đăng YouTube; hãy thử lại sau ít phút") from exc
+        finally:
+            browser_cookie_path.unlink(missing_ok=True)
+        return SocialVideoDownloadResult(
+            path=destination_stem.with_name(destination_stem.name + ".mp4"),
+            source_url=page_url,
+            platform="YouTube",
+            title=str(sanitized.get("title") or "").strip(),
+            video_id=post_id,
+            duration=float(sanitized["duration"]),
+            photo_post=sanitized["photo_post"],
+        )
+
     def _tikwm_info(self, url: str) -> dict[str, Any] | None:
         """yt-dlp info for the HD (falling back to SD) no-watermark file from tikwm.com."""
         request = urllib.request.Request(
@@ -649,7 +827,7 @@ class SocialVideoDownloader:
         choice (download the images, or a slideshow of a chosen length).
         """
         slideshow = info[SLIDESHOW_KEY]
-        image_urls: list[str] = slideshow["images"]
+        image_urls: list[str | Path] = slideshow["images"]
         referer = str((info.get("http_headers") or {}).get("Referer") or "https://www.tiktok.com/")
         scratch = destination_stem.with_name(destination_stem.name + ".slideshow")
         photos_dir = destination_stem.with_name(destination_stem.name + ".photos")
@@ -661,7 +839,10 @@ class SocialVideoDownloader:
             for index, image_url in enumerate(image_urls):
                 if cancel_requested and cancel_requested():
                     raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
-                images.append(self._fetch_to(image_url, scratch / f"image_{index:02d}", referer=referer))
+                if isinstance(image_url, Path):
+                    images.append(Path(shutil.copyfile(image_url, scratch / f"image_{index:02d}")))
+                else:
+                    images.append(self._fetch_to(image_url, scratch / f"image_{index:02d}", referer=referer))
                 if progress_callback:
                     progress_callback(index + 1, len(image_urls) + 1)
             audio = None
@@ -707,7 +888,7 @@ class SocialVideoDownloader:
         with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
             data = response.read(SLIDESHOW_MAX_FILE_BYTES + 1)
         if len(data) > SLIDESHOW_MAX_FILE_BYTES:
-            raise SocialVideoDownloadError("Ảnh trong bài đăng TikTok quá lớn")
+            raise SocialVideoDownloadError("Ảnh trong bài đăng quá lớn")
         if not data:
             raise RuntimeError(f"Empty file from {urlsplit(url).netloc}")
         stem.write_bytes(data)
@@ -814,12 +995,17 @@ class SocialVideoDownloader:
                         raise SocialVideoDownloadError(_drive_html_failure(html, response.geturl()))
                     filename = _content_disposition_filename(disposition)
                     extension = Path(filename).suffix.lower()
-                    if extension not in DRIVE_VIDEO_EXTENSIONS:
+                    is_image = extension in DRIVE_IMAGE_EXTENSIONS or (
+                        extension not in DRIVE_VIDEO_EXTENSIONS and content_type.startswith("image/")
+                    )
+                    if is_image:
+                        extension = extension if extension in DRIVE_IMAGE_EXTENSIONS else ".jpg"
+                    elif extension not in DRIVE_VIDEO_EXTENSIONS:
                         if not content_type.startswith("video/"):
                             shown = filename or content_type or "không rõ loại"
                             raise SocialVideoDownloadError(
-                                f"File Google Drive không phải video ({shown}). "
-                                f"Hỗ trợ: {', '.join(sorted(ext.lstrip('.') for ext in DRIVE_VIDEO_EXTENSIONS))}"
+                                f"File Google Drive không phải video hay ảnh ({shown}). "
+                                f"Hỗ trợ: {', '.join(sorted(ext.lstrip('.') for ext in DRIVE_VIDEO_EXTENSIONS | DRIVE_IMAGE_EXTENSIONS))}"
                             )
                         extension = ".mp4"
                     total_header = response.headers.get("Content-Length")
@@ -853,6 +1039,25 @@ class SocialVideoDownloader:
                     break
             else:  # pragma: no cover - the loop always breaks or raises
                 raise SocialVideoDownloadError("Google Drive không trả về file video")
+            if is_image:
+                image_path = destination_stem.with_name(destination_stem.name + ".drive" + extension)
+                partial.replace(image_path)
+                try:
+                    slideshow = self._download_slideshow(
+                        {"id": file_id, SLIDESHOW_KEY: {"images": [image_path], "music": None}},
+                        destination_stem, progress_callback=None, cancel_requested=cancel_requested,
+                    )
+                finally:
+                    image_path.unlink(missing_ok=True)
+                return SocialVideoDownloadResult(
+                    path=destination_stem.with_name(destination_stem.name + ".mp4"),
+                    source_url=canonical_google_drive_url(url),
+                    platform=GOOGLE_DRIVE_PLATFORM,
+                    title=Path(filename).stem if filename else "",
+                    video_id=file_id,
+                    duration=slideshow["duration"],
+                    photo_post=slideshow["photo_post"],
+                )
             output_path = destination_stem.with_name(destination_stem.name + extension)
             partial.replace(output_path)
         except SocialVideoDownloadError:
@@ -1047,6 +1252,13 @@ class SocialVideoDownloader:
                     "youtube": {"player_client": YOUTUBE_AUTHENTICATED_PLAYER_CLIENTS}
                 }
 
+        post_id = youtube_post_id(normalized_url) if platform == "YouTube" else None
+        if post_id:
+            return self._download_youtube_post(
+                post_id, normalized_url, destination_stem, options,
+                progress_callback=progress_callback, cancel_requested=cancel_requested,
+                cleanup=cleanup, browser_cookie_path=browser_cookie_path,
+            )
         try:
             if cancel_requested and cancel_requested():
                 raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
@@ -1092,16 +1304,27 @@ class SocialVideoDownloader:
             if self._facebook_resolver is not None:
                 browser_fallback_platforms.add("Facebook")
             if platform == XIAOHONGSHU_PLATFORM:
-                raise SocialVideoDownloadError(_xiaohongshu_failure_message(
-                    exc, used_cookies=bool(effective_cookie_file), note_type=xiaohongshu_note_type,
-                )) from exc
+                photo_info = None
+                if effective_cookie_file and "no video formats" in str(exc).lower():
+                    # An image note (图文): its pictures become a slideshow like a TikTok photo post.
+                    try:
+                        photo_info = self._xiaohongshu_photo_post_info(normalized_url, options)
+                    except Exception as page_error:
+                        logger.warning("Cannot read Xiaohongshu image note: %s", page_error)
+                if not photo_info:
+                    raise SocialVideoDownloadError(_xiaohongshu_failure_message(
+                        exc, used_cookies=bool(effective_cookie_file), note_type=xiaohongshu_note_type,
+                    )) from exc
+                browser_fallback_platforms.add(XIAOHONGSHU_PLATFORM)
             if platform not in browser_fallback_platforms:
                 raise SocialVideoDownloadError(
                     _download_failure_message(platform, exc, used_cookies=bool(effective_cookie_file))
                 ) from exc
-            
+
             try:
-                if platform == "Douyin":
+                if platform == XIAOHONGSHU_PLATFORM:
+                    info = photo_info
+                elif platform == "Douyin":
                     if self._douyin_resolver is None:
                         raise RuntimeError("Douyin browser is not configured")
                     info = self._douyin_resolver(normalized_url, browser_cookie_path, cancel_requested)
@@ -1152,6 +1375,9 @@ class SocialVideoDownloader:
                         "Không lấy được video qua phiên trình duyệt. Mở tab Douyin, đăng nhập hoặc hoàn tất "
                         "xác minh rồi bấm Đồng bộ và thử lại. Nếu trình duyệt không mở được, kiểm tra dịch vụ douyin-browser."
                     )
+                elif platform == XIAOHONGSHU_PLATFORM:
+                    logger.warning("Xiaohongshu image note download failed: %s", fallback_error)
+                    message = "không tải được ảnh của bài đăng (图文); hãy thử lại sau ít phút"
                 elif platform == "Facebook":
                     message = (
                         "video không công khai, đã bị xóa hoặc cần đăng nhập. Hãy đăng nhập Facebook trong "

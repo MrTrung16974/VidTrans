@@ -4575,7 +4575,8 @@ def deliver_source_video(job_id: str, video_path: Path, *, apply_logo: bool) -> 
         TENANT_GOVERNANCE.release(job_id)
 
 
-# A photo post (TikTok/Douyin) has only images and a soundtrack. The job stops in
+# A photo post (TikTok, Douyin, Xiaohongshu, Facebook, a YouTube community post or a
+# Drive image) has only images and maybe a soundtrack. The job stops in
 # AWAITING_INPUT_STATUS until the owner picks: the images as a zip, or a slideshow
 # video of a chosen length with the post's music or a library track.
 AWAITING_INPUT_STATUS = "awaiting_input"

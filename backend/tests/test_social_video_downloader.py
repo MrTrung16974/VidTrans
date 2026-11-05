@@ -15,6 +15,9 @@ from infrastructure.social_video_downloader import (
     social_platform,
     social_video_download_issue,
     xiaohongshu_note_url,
+    xiaohongshu_photo_post_info,
+    youtube_post_id,
+    youtube_post_photo_info,
 )
 
 
@@ -100,6 +103,13 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             "https://www.facebook.com/watch/?v=274175099429670",
             "https://www.facebook.com/share/v/1AbC/",
             "https://fb.watch/abc/",
+            # Photo posts become slideshows.
+            "https://www.iesdouyin.com/share/note/7661982102736473384/",
+            "https://www.youtube.com/post/UgkxAbCdEfGhIjKlMnOp",
+            "https://www.youtube.com/@channel/community?lb=UgkxAbCdEfGhIjKlMnOp",
+            "https://www.facebook.com/photo/?fbid=1234567890&set=a.987",
+            "https://www.facebook.com/photo.php?fbid=1234567890",
+            "https://www.facebook.com/cnn/photos/a.987/1234567890/",
         ]
         for url in downloadable:
             with self.subTest(url=url):
@@ -108,7 +118,8 @@ class SocialVideoDownloaderTests(unittest.TestCase):
             "https://www.tiktok.com/",
             "https://www.tiktok.com/@creator",
             "https://www.douyin.com/",
-            "https://www.iesdouyin.com/share/note/7661982102736473384/",
+            "https://www.youtube.com/@channel/community",
+            "https://www.facebook.com/photo/",
             "https://www.youtube.com/",
             "https://www.youtube.com/@channel",
             "https://www.youtube.com/playlist?list=PL123",
@@ -1037,6 +1048,173 @@ class XiaohongshuTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(SocialVideoDownloadError, "bài đăng ảnh"):
                 logged_in.download("http://xhslink.com/o/jxVcmTNr5R", Path(directory) / "video")
+
+    def test_image_note_is_turned_into_a_slideshow(self) -> None:
+        note_id = "69554df60000000021032ccd"
+        page = (
+            '<script>window.__INITIAL_STATE__={"note":{"noteDetailMap":{"' + note_id + '":{"note":{'
+            '"title":"Chợ Bến Thành","type":"normal","video":undefined,"imageList":['
+            '{"urlDefault":"http://sns-webpic-qc.xhscdn.com/a!nd_dft","urlPre":"http://x/a!pre"},'
+            '{"urlDefault":"","infoList":[{"imageScene":"WB_PRV","url":"http://x/b!pre"},'
+            '{"imageScene":"WB_DFT","url":"http://x/b!dft"}]}]}}}}}</script>'
+        )
+
+        class ImageNote(FakeYoutubeDL):
+            def extract_info(self, url, *, download):
+                raise RuntimeError("ERROR: [XiaoHongShu] 69554df6: No video formats found!")
+
+            def urlopen(self, url):
+                assert "cookiefile" in self.options
+                response = Mock()
+                response.read.return_value = page.encode("utf-8")
+                return response
+
+        def provider(path: Path) -> Path:
+            path.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            return path
+
+        fetched = []
+
+        def fake_fetch(self, url, stem, *, referer="https://www.tiktok.com/"):
+            fetched.append((url, referer))
+            stem.write_bytes(b"image")
+            return stem
+
+        def fake_render(ffmpeg, images, audio, output, **kwargs):
+            self.assertIsNone(audio)
+            Path(output).write_bytes(b"slideshow")
+            return 6.0
+
+        with TemporaryDirectory() as directory, \
+                patch.object(SocialVideoDownloader, "_fetch_to", fake_fetch), \
+                patch("infrastructure.social_video_downloader.render_slideshow", side_effect=fake_render):
+            result = SocialVideoDownloader(
+                ydl_factory=ImageNote, redirect_resolver=lambda url: XHS_LOGIN_REDIRECT,
+                platform_cookie_providers={"Xiaohongshu": provider},
+            ).download("http://xhslink.com/o/jxVcmTNr5R", Path(directory) / "video")
+            self.assertEqual(result.path.read_bytes(), b"slideshow")
+            self.assertEqual(len(result.photo_post["images"]), 2)
+        self.assertEqual(result.title, "Chợ Bến Thành")
+        self.assertEqual(result.video_id, note_id)
+        self.assertEqual(fetched, [
+            ("https://sns-webpic-qc.xhscdn.com/a!nd_dft", "https://www.xiaohongshu.com/"),
+            ("https://x/b!dft", "https://www.xiaohongshu.com/"),
+        ])
+
+    def test_note_page_without_images_yields_nothing(self) -> None:
+        self.assertIsNone(xiaohongshu_photo_post_info("abc", "<html></html>"))
+        self.assertIsNone(xiaohongshu_photo_post_info(
+            "abc", '<script>window.__INITIAL_STATE__={"note":{"noteDetailMap":{}}}</script>'
+        ))
+
+
+YOUTUBE_POST_PAGE = (
+    '<script>var ytInitialData = {"contents":{"x":[{"backstagePostThreadRenderer":{"post":{"backstagePostRenderer":{'
+    '"postId":"UgkxAbCdEfGhIjKlMnOp","contentText":{"runs":[{"text":"Ảnh "},{"text":"đẹp"}]},'
+    '"backstageAttachment":{"postMultiImageRenderer":{"images":['
+    '{"backstageImageRenderer":{"image":{"thumbnails":[{"url":"https://yt3.ggpht.com/a=s288","width":288,"height":288},'
+    '{"url":"https://yt3.ggpht.com/a=s1080","width":1080,"height":1080}]}}},'
+    '{"backstageImageRenderer":{"image":{"thumbnails":[{"url":"//yt3.ggpht.com/b=s1080","width":1080,"height":720}]}}}'
+    ']}}}}}}]}};</script>'
+)
+
+
+class PhotoPostPlatformTests(unittest.TestCase):
+    def fake_fetch(self, fetched):
+        def fetch(downloader, url, stem, *, referer="https://www.tiktok.com/"):
+            fetched.append((url, referer))
+            stem.write_bytes(b"image")
+            return stem
+        return fetch
+
+    @staticmethod
+    def fake_render(ffmpeg, images, audio, output, **kwargs):
+        Path(output).write_bytes(b"slideshow")
+        return 3.0 * len(images)
+
+    def test_youtube_post_ids(self) -> None:
+        self.assertEqual(youtube_post_id("https://www.youtube.com/post/UgkxAbCdEfGhIjKlMnOp"), "UgkxAbCdEfGhIjKlMnOp")
+        self.assertEqual(youtube_post_id("https://www.youtube.com/channel/UC1/community?lb=UgkxAbCdEfGhIjKlMnOp"),
+                         "UgkxAbCdEfGhIjKlMnOp")
+        self.assertIsNone(youtube_post_id("https://www.youtube.com/watch?v=abcdefghijk"))
+
+    def test_youtube_post_images_are_read_largest_first_in_order(self) -> None:
+        info = youtube_post_photo_info("UgkxAbCdEfGhIjKlMnOp", YOUTUBE_POST_PAGE)
+        self.assertEqual(info["title"], "Ảnh đẹp")
+        self.assertEqual(info["_vidtrans_slideshow"]["images"],
+                         ["https://yt3.ggpht.com/a=s1080", "https://yt3.ggpht.com/b=s1080"])
+        self.assertIsNone(youtube_post_photo_info("x", "<html></html>"))
+
+    def test_youtube_post_is_rendered_without_yt_dlp_extraction(self) -> None:
+        class PostPage(FakeYoutubeDL):
+            def extract_info(self, url, *, download):
+                raise AssertionError("yt-dlp must not extract a community post")
+
+            def urlopen(self, url):
+                assert url == "https://www.youtube.com/post/UgkxAbCdEfGhIjKlMnOp"
+                response = Mock()
+                response.read.return_value = YOUTUBE_POST_PAGE.encode("utf-8")
+                return response
+
+        fetched = []
+        with TemporaryDirectory() as directory, \
+                patch.object(SocialVideoDownloader, "_fetch_to", self.fake_fetch(fetched)), \
+                patch("infrastructure.social_video_downloader.render_slideshow", side_effect=self.fake_render):
+            result = SocialVideoDownloader(ydl_factory=PostPage).download(
+                "https://www.youtube.com/@channel/community?lb=UgkxAbCdEfGhIjKlMnOp", Path(directory) / "job"
+            )
+            self.assertEqual(result.path.read_bytes(), b"slideshow")
+            self.assertEqual(len(result.photo_post["images"]), 2)
+        self.assertEqual(result.platform, "YouTube")
+        self.assertEqual(result.duration, 6.0)
+        self.assertEqual([referer for _, referer in fetched], ["https://www.youtube.com/"] * 2)
+
+    def test_youtube_post_without_images_explains_itself(self) -> None:
+        class TextPost(FakeYoutubeDL):
+            def urlopen(self, url):
+                response = Mock()
+                response.read.return_value = b'var ytInitialData = {"backstagePostRenderer":{"postId":"x"}};'
+                return response
+
+        with TemporaryDirectory() as directory, self.assertRaisesRegex(SocialVideoDownloadError, "không có ảnh"):
+            SocialVideoDownloader(ydl_factory=TextPost).download(
+                "https://www.youtube.com/post/UgkxAbCdEfGhIjKlMnOp", Path(directory) / "job"
+            )
+
+    def test_facebook_photo_post_from_the_browser_is_rendered(self) -> None:
+        class NoVideo(FakeYoutubeDL):
+            def extract_info(self, url, *, download):
+                raise RuntimeError("ERROR: [facebook] Cannot parse data")
+
+        def resolver(url, cookie_path, cancel_requested):
+            return {"id": "1234567890", "title": "Ảnh Facebook", "duration": 6.0, "ext": "mp4",
+                    "http_headers": {"Referer": "https://www.facebook.com/"},
+                    "_vidtrans_slideshow": {"images": ["https://scontent.fbcdn.net/1.jpg",
+                                                       "https://scontent.fbcdn.net/2.jpg"], "music": None}}
+
+        fetched = []
+        with TemporaryDirectory() as directory, \
+                patch.object(SocialVideoDownloader, "_fetch_to", self.fake_fetch(fetched)), \
+                patch("infrastructure.social_video_downloader.render_slideshow", side_effect=self.fake_render):
+            result = SocialVideoDownloader(ydl_factory=NoVideo, facebook_resolver=resolver).download(
+                "https://www.facebook.com/photo/?fbid=1234567890", Path(directory) / "job"
+            )
+            self.assertEqual(len(result.photo_post["images"]), 2)
+        self.assertEqual(fetched[0], ("https://scontent.fbcdn.net/1.jpg", "https://www.facebook.com/"))
+
+    def test_google_drive_image_becomes_a_one_photo_post(self) -> None:
+        image_headers = {"Content-Type": "image/jpeg", "Content-Length": "5",
+                         "Content-Disposition": 'attachment; filename="anh.jpg"'}
+        with TemporaryDirectory() as directory, \
+                patch("infrastructure.social_video_downloader.render_slideshow", side_effect=self.fake_render):
+            result = drive_downloader(FakeDriveOpener([FakeDriveResponse(b"image", image_headers)])).download(
+                f"https://drive.google.com/file/d/{DRIVE_ID}/view", Path(directory) / "source"
+            )
+            self.assertEqual(result.path.read_bytes(), b"slideshow")
+            self.assertEqual(result.title, "anh")
+            self.assertEqual(Path(result.photo_post["images"][0]).read_bytes(), b"image")
+            self.assertEqual(sorted(path.name for path in Path(directory).iterdir()),
+                             ["source.mp4", "source.photos"])
 
 
 if __name__ == "__main__":

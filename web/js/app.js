@@ -895,10 +895,13 @@ const SHORT_LINK_HOSTS = new Set(["vm.tiktok.com", "vt.tiktok.com", "v.douyin.co
 const XIAOHONGSHU_NOTE_PATH = /^\/(?:explore|discovery\/item|user\/profile\/[0-9a-zA-Z]+)\/[0-9a-f]{24}\/?$/;
 const TIKTOK_VIDEO_PATH = /^\/(?:@[^/]+\/(?:video|photo)\/\d+|t\/[\w-]+|v\/\d+(?:\.html)?|embed(?:\/v2)?\/\d+|player\/v1\/\d+|share\/video\/\d+)\/?$/;
 const YOUTUBE_ID_PATH = /^\/(?:shorts|embed|live|v)\/[\w-]{3,}\/?$/;
-const FACEBOOK_VIDEO_PATH = /^\/(?:reels?\/[\w-]+|watch\/?|video\.php|story\.php|permalink\.php|share\/(?:v\/|r\/|p\/)?[\w-]+|(?:[^/]+\/)?videos\/(?:[^/]+\/)?\d+|[^/]+\/posts\/[\w-]+|groups\/[^/]+\/(?:posts|permalink)\/\d+)\/?$/;
-const FACEBOOK_QUERY_KEYS = { "/watch": "v", "/watch/": "v", "/video.php": "v", "/story.php": "story_fbid", "/permalink.php": "story_fbid" };
+// youtube_post_id() in the backend: a community post with images becomes a slideshow.
+const YOUTUBE_POST_PATH = /^\/post\/[\w-]{10,}\/?$/;
+const YOUTUBE_COMMUNITY_PATH = /^\/(?:@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)\/(?:community|posts)\/?$/;
+const FACEBOOK_VIDEO_PATH = /^\/(?:reels?\/[\w-]+|watch\/?|video\.php|story\.php|permalink\.php|photo\/?|photo\.php|(?:[^/]+\/)?photos\/(?:[^/]+\/)*\d+|share\/(?:v\/|r\/|p\/)?[\w-]+|(?:[^/]+\/)?videos\/(?:[^/]+\/)?\d+|[^/]+\/posts\/[\w-]+|groups\/[^/]+\/(?:posts|permalink)\/\d+)\/?$/;
+const FACEBOOK_QUERY_KEYS = { "/watch": "v", "/watch/": "v", "/video.php": "v", "/story.php": "story_fbid", "/permalink.php": "story_fbid", "/photo": "fbid", "/photo/": "fbid", "/photo.php": "fbid" };
 const DOUYIN_PATH_ID = /\/(?:share\/)?(video|note|slides)\/(\d+)/;
-const SUPPORTED_LINK_FORMS_HINT = "Chỉ nhận link một video: TikTok (/@user/video/…, vm.tiktok.com), Douyin (/video/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be), Facebook (reel, videos, watch?v=…, share, posts, fb.watch), Xiaohongshu (xhslink.com, /explore/…, /discovery/item/…), Google Drive (drive.google.com/file/d/…, open?id=…; file chia sẻ “Bất kỳ ai có đường liên kết”).";
+const SUPPORTED_LINK_FORMS_HINT = "Chỉ nhận link một video hoặc bài đăng ảnh: TikTok (/@user/video/…, /@user/photo/…, vm.tiktok.com), Douyin (/video/…, /note/…, modal_id=…, v.douyin.com), YouTube (watch?v=…, shorts, youtu.be, bài đăng /post/…), Facebook (reel, videos, watch?v=…, share, posts, photo, fb.watch), Xiaohongshu (xhslink.com, /explore/…, /discovery/item/…), Google Drive (drive.google.com/file/d/…, open?id=…; file video hoặc ảnh chia sẻ “Bất kỳ ai có đường liên kết”).";
 
 function socialPlatformOf(hostname) {
   for (const [platform, domains] of Object.entries(SOCIAL_PLATFORM_DOMAINS)) {
@@ -921,8 +924,8 @@ function sourceLinkDownloadIssue(url) {
   const param = key => (url.searchParams.get(key) || "").trim();
   if (platform === "Google Drive") {
     if (googleDriveFileId(url)) return null;
-    if (DRIVE_FOLDER_PATH.test(path)) return "link thư mục Google Drive chưa được hỗ trợ, hãy dán link chia sẻ của từng file video";
-    if (GOOGLE_EDITOR_PATH.test(path)) return "đây là tài liệu Google Docs/Sheets/Slides, không phải file video";
+    if (DRIVE_FOLDER_PATH.test(path)) return "link thư mục Google Drive chưa được hỗ trợ, hãy dán link chia sẻ của từng file video hoặc ảnh";
+    if (GOOGLE_EDITOR_PATH.test(path)) return "đây là tài liệu Google Docs/Sheets/Slides, không phải file video hay ảnh";
     return "không tìm thấy mã file Google Drive (cần /file/d/<id> hoặc open?id=<id>)";
   }
   if (SHORT_LINK_HOSTS.has(hostname)) return path.replace(/\//g, "") ? null : "link rút gọn thiếu mã video";
@@ -940,7 +943,8 @@ function sourceLinkDownloadIssue(url) {
   }
   if (platform === "YouTube") {
     if (path.replace(/\/$/, "") === "/watch" && param("v")) return null;
-    if (YOUTUBE_ID_PATH.test(path)) return null;
+    if (YOUTUBE_ID_PATH.test(path) || YOUTUBE_POST_PATH.test(path)) return null;
+    if (YOUTUBE_COMMUNITY_PATH.test(path) && /^[\w-]{10,}$/.test(param("lb"))) return null;
     if (param("list")) return "playlist YouTube chưa được hỗ trợ, hãy dán link từng video";
     return "không phải link một video YouTube (kênh, trang chủ, tìm kiếm…)";
   }

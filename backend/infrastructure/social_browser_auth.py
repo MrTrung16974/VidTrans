@@ -13,6 +13,8 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
 from infrastructure.douyin_browser_auth import write_netscape_cookies
+from infrastructure.social_video_downloader import SLIDESHOW_KEY
+from infrastructure.tiktok_slideshow import MAX_IMAGES, slideshow_duration
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,7 @@ def has_required_cookies(
 _FACEBOOK_ID_PATTERNS = (
     re.compile(r"/(?:videos|reel|watch/live)/(?:[^/]+/)?(\d{6,})"),
     re.compile(r"/(?:posts|permalink)/(\d{6,})"),
+    re.compile(r"/photos/(?:[^/]+/)*(\d{6,})"),
 )
 _FACEBOOK_MEDIA_PATTERN = re.compile(
     r'"(browser_native_hd_url|browser_native_sd_url|playable_url_quality_hd|playable_url)"'
@@ -90,6 +93,7 @@ _FACEBOOK_MEDIA_PATTERN = re.compile(
 _FACEBOOK_TITLE_STATS = re.compile(
     r"^[^|]*\b(?:views|shares|reactions|lượt xem|lượt chia sẻ|cảm xúc)\b[^|]*\|\s*", re.IGNORECASE
 )
+_FACEBOOK_UNREAD_PREFIX = re.compile(r"^\(\d+\+?\)\s*")
 _FACEBOOK_MEDIA_PRIORITY = (
     "browser_native_hd_url",
     "playable_url_quality_hd",
@@ -105,7 +109,7 @@ def facebook_video_id(url: str) -> str | None:
         if match:
             return match.group(1)
     query = parse_qs(parsed.query)
-    for key in ("v", "story_fbid"):
+    for key in ("v", "story_fbid", "fbid"):
         value = (query.get(key) or [""])[0]
         if value.isdigit():
             return value
@@ -137,6 +141,32 @@ def facebook_media_url_from_html(html: str, page_url: str) -> str | None:
         if key in candidates:
             return candidates[key]
     return None
+
+
+# The photos of a post as the browser renders them: the photo viewer's own image when
+# the link opens one, otherwise the large post images in the main column (avatars,
+# icons and stickers are smaller than MIN_SIDE).
+_FACEBOOK_PHOTOS_SCRIPT = """
+() => {
+  const MIN_SIDE = 200;
+  const root = document.querySelector('[role="main"]') || document.body;
+  const viewer = [...document.querySelectorAll('img[data-visualcompletion="media-vc-image"]')];
+  const images = viewer.length ? viewer : [...root.querySelectorAll('img')];
+  const seen = new Set();
+  const urls = [];
+  for (const img of images) {
+    const src = img.currentSrc || img.src || '';
+    if (!/^https:\\/\\/[^/]*(fbcdn\\.net|facebook\\.com)\\//.test(src)) continue;
+    const width = img.naturalWidth || img.width, height = img.naturalHeight || img.height;
+    if (Math.min(width, height) < MIN_SIDE) continue;
+    const key = src.split('?')[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    urls.push(src);
+  }
+  return urls;
+}
+"""
 
 
 class SocialBrowserAuthManager:
@@ -257,8 +287,12 @@ class SocialBrowserAuthManager:
                     if "browser_native_" in html:
                         break
                 media_url = facebook_media_url_from_html(html, url)
+                photos: list[str] = []
                 if not media_url:
-                    raise RuntimeError("Trang Facebook không có video phát được trong phiên trình duyệt")
+                    # A photo post: its pictures become a slideshow like a TikTok photo post.
+                    photos = [str(value) for value in page.evaluate(_FACEBOOK_PHOTOS_SCRIPT) or [] if value]
+                    if not photos:
+                        raise RuntimeError("Trang Facebook không có video hay ảnh xem được trong phiên trình duyệt")
                 title = str(page.evaluate(
                     "() => document.querySelector('meta[property=\"og:title\"]')?.content || document.title"
                 ) or "").strip()
@@ -269,6 +303,17 @@ class SocialBrowserAuthManager:
             headers = {"Referer": "https://www.facebook.com/"}
             if user_agent:
                 headers["User-Agent"] = user_agent
+            if photos:
+                # A photo page's title is often just "(20+) Facebook" (unread count + site name).
+                photo_title = _FACEBOOK_TITLE_STATS.sub("", _FACEBOOK_UNREAD_PREFIX.sub("", title)).strip()
+                return {
+                    "id": facebook_video_id(url) or "photo",
+                    "title": photo_title if photo_title.lower() not in {"", "facebook"} else "Ảnh Facebook",
+                    "duration": slideshow_duration(min(len(photos), MAX_IMAGES)),
+                    "ext": "mp4",
+                    "http_headers": headers,
+                    SLIDESHOW_KEY: {"images": photos[:MAX_IMAGES], "music": None},
+                }
             return {
                 "id": facebook_video_id(url) or "video",
                 "title": _FACEBOOK_TITLE_STATS.sub("", title).strip() or "Video Facebook",
