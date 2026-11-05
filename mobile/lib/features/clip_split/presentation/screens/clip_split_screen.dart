@@ -131,13 +131,22 @@ class _SourcePickerState extends ConsumerState<_SourcePicker> {
         else
           for (final item in _items)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 10),
               child: StudioCard(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 onTap: () => widget.onPick(item.jobId),
                 child: Row(
                   children: [
-                    const Icon(Icons.movie_rounded, color: AppColors.brand),
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppColors.brandTint,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.brandBorder),
+                      ),
+                      child: const Icon(Icons.movie_rounded, color: AppColors.brand, size: 20),
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -146,14 +155,14 @@ class _SourcePickerState extends ConsumerState<_SourcePicker> {
                           Text(item.filename,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.ink)),
-                          const SizedBox(height: 2),
+                              style: const TextStyle(fontWeight: FontWeight.w800, color: AppColors.ink, fontSize: 13.5)),
+                          const SizedBox(height: 3),
                           Text(
                             [
                               if (item.duration != null) formatClipTime(item.duration!),
                               item.hasSubtitles ? 'có phụ đề' : 'không phụ đề',
                             ].join(' · '),
-                            style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                            style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w500),
                           ),
                         ],
                       ),
@@ -523,25 +532,36 @@ class _FramePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DropdownButton<ClipFrame>(
-      value: value,
-      isExpanded: true,
-      isDense: true,
-      onChanged: (frame) => frame == null ? null : onChanged(frame),
-      items: [
-        for (final frame in ClipFrame.values)
-          DropdownMenuItem(
-            value: frame,
-            enabled: frame != ClipFrame.verticalCrop || canCrop,
-            child: Text(
-              frame.label,
-              style: TextStyle(
-                fontSize: 13.5,
-                color: frame == ClipFrame.verticalCrop && !canCrop ? AppColors.mutedLight : AppColors.ink,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<ClipFrame>(
+          value: value,
+          isExpanded: true,
+          isDense: true,
+          onChanged: (frame) => frame == null ? null : onChanged(frame),
+          items: [
+            for (final frame in ClipFrame.values)
+              DropdownMenuItem(
+                value: frame,
+                enabled: frame != ClipFrame.verticalCrop || canCrop,
+                child: Text(
+                  frame.label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: frame == ClipFrame.verticalCrop && !canCrop ? AppColors.mutedLight : AppColors.ink,
+                  ),
+                ),
               ),
-            ),
-          ),
-      ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -577,20 +597,25 @@ class _AiCard extends StatelessWidget {
             enabled: available,
             keyboardType: TextInputType.number,
             textAlign: TextAlign.center,
-            decoration: const InputDecoration(isDense: true),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            decoration: const InputDecoration(isDense: true, filled: true, fillColor: Colors.white),
           ),
         );
     return StudioCard(
+      topAccentColor: AppColors.brand,
       backgroundColor: AppColors.brandTint,
       borderColor: AppColors.brandBorder,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('✨ AI gợi ý đoạn hay', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5)),
+          const Text(
+            '✨ AI gợi ý đoạn hay',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: AppColors.brandDark),
+          ),
           const SizedBox(height: 4),
           Text(
             available ? 'AI đọc phụ đề rồi đề xuất, bạn sửa tiếp trước khi tạo clip.' : (source.aiReason ?? ''),
-            style: TextStyle(fontSize: 12, color: available ? AppColors.muted : AppColors.danger),
+            style: TextStyle(fontSize: 12, color: available ? AppColors.muted : AppColors.danger, height: 1.35),
           ),
           const SizedBox(height: 10),
           TextField(
@@ -600,6 +625,8 @@ class _AiCard extends StatelessWidget {
             maxLines: 2,
             minLines: 1,
             decoration: const InputDecoration(
+              filled: true,
+              fillColor: Colors.white,
               hintText: 'Bạn muốn cắt đoạn nào? Ví dụ: các đoạn đánh nhau, đoạn hài hước',
               counterText: '',
             ),
@@ -610,21 +637,37 @@ class _AiCard extends StatelessWidget {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Text('Số clip'),
-              DropdownButton<int>(
-                value: count,
-                isDense: true,
-                onChanged: available ? (value) => value == null ? null : onCount(value) : null,
-                items: [for (final value in const [3, 5, 8, 10]) DropdownMenuItem(value: value, child: Text('$value'))],
+              const Text('Số clip', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.line),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: count,
+                    isDense: true,
+                    onChanged: available ? (value) => value == null ? null : onCount(value) : null,
+                    items: [
+                      for (final value in const [3, 5, 8, 10])
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text('$value', style: const TextStyle(fontWeight: FontWeight.w700)),
+                        ),
+                    ],
+                  ),
+                ),
               ),
-              const Text('Mỗi clip'),
+              const Text('Mỗi clip', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
               secondsField(minSeconds),
-              const Text('–'),
+              const Text('–', style: TextStyle(fontWeight: FontWeight.w700)),
               secondsField(maxSeconds),
-              const Text('giây'),
+              const Text('giây', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           StudioGradientButton(
             onPressed: onSuggest,
             isLoading: busy,
@@ -673,11 +716,18 @@ class _ClipCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              CircleAvatar(
-                radius: 12,
-                backgroundColor: AppColors.brand,
-                child: Text('${index + 1}',
-                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
+              Container(
+                width: 26,
+                height: 26,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.brand,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${index + 1}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -685,12 +735,21 @@ class _ClipCard extends StatelessWidget {
                   key: ValueKey('title-$index-${clip.start}'),
                   initialValue: clip.title,
                   maxLength: 120,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
                   decoration: InputDecoration(isDense: true, hintText: 'Phần ${index + 1}', counterText: ''),
                   onChanged: (title) => onChanged(clip.copyWith(title: title)),
                 ),
               ),
-              IconButton(onPressed: onPreview, icon: const Icon(Icons.play_arrow_rounded), tooltip: 'Xem đoạn này'),
-              IconButton(onPressed: onRemove, icon: const Icon(Icons.close_rounded), tooltip: 'Xóa đoạn'),
+              IconButton(
+                onPressed: onPreview,
+                icon: const Icon(Icons.play_arrow_rounded, color: AppColors.brand),
+                tooltip: 'Xem đoạn này',
+              ),
+              IconButton(
+                onPressed: onRemove,
+                icon: const Icon(Icons.close_rounded, color: AppColors.muted),
+                tooltip: 'Xóa đoạn',
+              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -716,9 +775,21 @@ class _ClipCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Text(
-                problem ?? formatClipTime(clip.duration),
-                style: TextStyle(fontSize: 12.5, color: problem == null ? AppColors.muted : AppColors.danger),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: problem == null ? AppColors.surfaceSoft : const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: problem == null ? AppColors.line : const Color(0xFFFECACA)),
+                ),
+                child: Text(
+                  problem ?? formatClipTime(clip.duration),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: problem == null ? AppColors.inkSecondary : AppColors.danger,
+                  ),
+                ),
               ),
               const SizedBox(width: 6),
             ],

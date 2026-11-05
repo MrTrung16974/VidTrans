@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261105-photo-choice-redesign" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261105-studio-features-polish" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261104-saas-legal-v1" />
   </head>
   <body>
@@ -824,9 +824,9 @@
                 <label class="field"><span>Nhạc nền (tùy chọn)</span><input name="background_music" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg" /></label>
                 <label class="field"><span>Âm lượng nhạc nền</span><input name="music_volume" type="number" min="0" max="1" step="0.05" value="0.15" /></label>
               </div>
-              <label class="comic-check"><input name="burn_subtitles" type="checkbox" checked /> Ghép phụ đề vào video</label>
-              <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước khi lồng tiếng</small></label>
-              <label class="comic-check"><input name="apply_logo" type="checkbox" disabled /> Chèn logo thương hiệu <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></label>
+              <label class="comic-check"><input name="burn_subtitles" type="checkbox" checked /> <span>Ghép phụ đề vào video</span></label>
+              <label class="comic-check"><input name="auto_render" type="checkbox" checked /> <span>Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước khi lồng tiếng</small></span></label>
+              <label class="comic-check"><input name="apply_logo" type="checkbox" disabled /> <span>Chèn logo thương hiệu <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></span></label>
               </details>
               <div class="comic-form-actions">
                 <button class="button primary" type="submit" data-comic-step="review">Tiếp: AI đề xuất nhân vật &amp; bối cảnh →</button>
@@ -881,8 +881,8 @@
                 <label class="field"><span>Hoặc tải file (.txt, .docx)</span><input name="file" type="file" accept=".txt,.md,.docx" /></label>
                 <label class="field"><span>Nhạc nền (tùy chọn)</span><input name="background_music" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg" /></label>
               </div>
-              <label class="comic-check"><input name="auto_render" type="checkbox" checked /> Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước</small></label>
-              <label class="comic-check"><input name="apply_logo" type="checkbox" disabled /> Chèn logo thương hiệu <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></label>
+              <label class="comic-check"><input name="auto_render" type="checkbox" checked /> <span>Dựng video ngay <small class="field-hint">— bỏ chọn để duyệt storyboard và ảnh trước</small></span></label>
+              <label class="comic-check"><input name="apply_logo" type="checkbox" disabled /> <span>Chèn logo thương hiệu <small class="field-hint" data-logo-hint>— tải logo ở trang Tài khoản &amp; logo để dùng</small></span></label>
               <button class="button primary full" type="submit">Tạo tập</button>
             </form>
             <section id="comicEpisodeReview" class="card comic-form comic-bible is-hidden" aria-live="polite">
@@ -1120,6 +1120,8 @@
                   <option value="queued">Đang chờ</option>
                   <option value="scheduled">Đã đặt lịch</option>
                   <option value="processing">Đang chạy</option>
+                  <option value="pausing">Đang tạm dừng</option>
+                  <option value="paused">Đã tạm dừng</option>
                   <option value="cancelling">Đang hủy</option>
                   <option value="completed">Hoàn tất</option>
                   <option value="failed">Thất bại</option>
@@ -1140,6 +1142,8 @@
                 <span id="selectedJobsCount" class="selected-count-badge">Chưa chọn job</span>
               </div>
               <div class="bulk-buttons">
+                <button id="bulkPause" data-bulk-action="pause" type="button" disabled>Tạm dừng</button>
+                <button id="bulkResume" data-bulk-action="resume" type="button" disabled>Tiếp tục</button>
                 <button id="bulkCancel" data-bulk-action="cancel" type="button" disabled>Hủy</button>
                 <button id="bulkRetry" data-bulk-action="retry" type="button" disabled>Chạy lại</button>
                 <button id="bulkDelete" data-bulk-action="delete" class="danger" type="button" disabled>Xóa</button>
@@ -2936,6 +2940,21 @@
                   </div>
                 </div>
 
+                <div class="photo-ai-director">
+                  <div class="photo-ai-director-head">
+                    <div>
+                      <strong>✨ AI dựng tối ưu</strong>
+                      <p>AI phân tích ảnh và caption để chọn nhịp dựng, chuyển động, chuyển cảnh và nhạc phù hợp.</p>
+                    </div>
+                    <button id="photoAiPlanButton" class="button secondary photo-ai-plan-btn" type="button">Phân tích bằng AI</button>
+                  </div>
+                  <label class="photo-ai-order-option">
+                    <input id="photoAiKeepOrder" type="checkbox" />
+                    <span>Giữ nguyên thứ tự ảnh gốc</span>
+                  </label>
+                  <div id="photoAiPlanResult" class="photo-ai-plan-result is-hidden" aria-live="polite"></div>
+                </div>
+
                 <div class="photo-choice-fields">
                   <div class="photo-field-group">
                     <label class="photo-field-label" for="photoChoiceMinutes">
@@ -3113,6 +3132,8 @@
 
         <footer class="job-detail-footer">
           <div class="footer-left">
+            <button id="jobDetailPauseBtn" class="button secondary is-hidden" type="button">Tạm dừng</button>
+            <button id="jobDetailResumeBtn" class="button secondary is-hidden" type="button">Tiếp tục</button>
             <button id="jobDetailCancelBtn" class="button secondary danger-text is-hidden" type="button">Hủy tiến trình</button>
             <button id="jobDetailRetryBtn" class="button secondary is-hidden" type="button">Chạy lại</button>
             <button id="jobDetailDownloadOnlyBtn" class="button secondary is-hidden" type="button">Chỉ tải video</button>
@@ -3124,6 +3145,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261105-photo-playlist"></script>
+    <script type="module" src="/js/app.js?v=20261105-studio-features-polish"></script>
   </body>
 </html>

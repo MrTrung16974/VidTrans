@@ -16,9 +16,7 @@ class VidTransLogo extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(
-        painter: const VidTransLogoPainter(),
-      ),
+      child: CustomPaint(painter: const VidTransLogoPainter()),
     );
   }
 }
@@ -39,7 +37,6 @@ class VidTransLogoPainter extends CustomPainter {
   }
 
   void _paintTile(Canvas canvas, double s) {
-
     // 1. Main rounded square background (x:4, y:4, w:56, h:56, rx:17)
     final bgRect = RRect.fromRectAndRadius(
       Rect.fromLTWH(4 * s, 4 * s, 56 * s, 56 * s),
@@ -49,11 +46,7 @@ class VidTransLogoPainter extends CustomPainter {
       ..shader = const LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [
-          Color(0xFFFF985A),
-          Color(0xFFF16B3B),
-          Color(0xFFD94C22),
-        ],
+        colors: [Color(0xFFFF985A), Color(0xFFF16B3B), Color(0xFFD94C22)],
         stops: [0.0, 0.52, 1.0],
       ).createShader(Rect.fromLTWH(6 * s, 6 * s, 52 * s, 52 * s));
     canvas.drawRRect(bgRect, bgPaint);
@@ -88,16 +81,12 @@ class VidTransLogoPainter extends CustomPainter {
     // 3. Teal circular play badge (cx:48, cy:47, r:10)
     final badgeCenter = Offset(48 * s, 47 * s);
     final badgeRadius = 10 * s;
-    final badgeRect =
-        Rect.fromCircle(center: badgeCenter, radius: badgeRadius);
+    final badgeRect = Rect.fromCircle(center: badgeCenter, radius: badgeRadius);
     final badgePaint = Paint()
       ..shader = const LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [
-          Color(0xFF239A94),
-          Color(0xFF12615F),
-        ],
+        colors: [Color(0xFF239A94), Color(0xFF12615F)],
       ).createShader(badgeRect);
     canvas.drawCircle(badgeCenter, badgeRadius, badgePaint);
 
@@ -228,11 +217,7 @@ class StudioEyebrow extends StatelessWidget {
 
 /// System status pill matching `.system-state` in the web top bar.
 class StudioSystemBadge extends StatelessWidget {
-  const StudioSystemBadge({
-    super.key,
-    required this.label,
-    this.busy = false,
-  });
+  const StudioSystemBadge({super.key, required this.label, this.busy = false});
 
   final String label;
   final bool busy;
@@ -261,10 +246,7 @@ class StudioSystemBadge extends StatelessWidget {
               color: dot,
               shape: BoxShape.circle,
               boxShadow: [
-                BoxShadow(
-                  color: dot.withValues(alpha: 0.25),
-                  spreadRadius: 2,
-                ),
+                BoxShadow(color: dot.withValues(alpha: 0.25), spreadRadius: 2),
               ],
             ),
           ),
@@ -287,14 +269,7 @@ class StudioSystemBadge extends StatelessWidget {
   }
 }
 
-enum StudioStatusTone {
-  brand,
-  success,
-  warning,
-  danger,
-  info,
-  neutral,
-}
+enum StudioStatusTone { brand, success, warning, danger, info, neutral }
 
 /// Semantic status pill with indicator dot matching `.status-pill` in `web/assets/styles.css`.
 class StudioStatusPill extends StatelessWidget {
@@ -317,85 +292,90 @@ class StudioStatusPill extends StatelessWidget {
     if (tone != null) {
       return switch (tone!) {
         StudioStatusTone.brand => (
-            bg: AppColors.brandSoft,
-            fg: AppColors.brandDark,
-            border: AppColors.brandBorder,
-            dot: AppColors.brand,
-          ),
+          bg: AppColors.brandSoft,
+          fg: AppColors.brandDark,
+          border: AppColors.brandBorder,
+          dot: AppColors.brand,
+        ),
         StudioStatusTone.success => (
-            bg: AppColors.greenSoft,
-            fg: AppColors.greenText,
-            border: AppColors.greenBorder,
-            dot: AppColors.green,
-          ),
-        StudioStatusTone.info => (
-            bg: AppColors.blueSoft,
-            fg: AppColors.blueText,
-            border: AppColors.blueBorder,
-            dot: AppColors.blue,
-          ),
-        StudioStatusTone.warning => (
-            bg: AppColors.amberSoft,
-            fg: AppColors.amberText,
-            border: AppColors.amberBorder,
-            dot: AppColors.amber,
-          ),
-        StudioStatusTone.danger => (
-            bg: AppColors.redSoft,
-            fg: AppColors.redText,
-            border: AppColors.redBorder,
-            dot: AppColors.red,
-          ),
-        StudioStatusTone.neutral => (
-            bg: AppColors.surfaceMuted,
-            fg: AppColors.inkSoft,
-            border: AppColors.line,
-            dot: AppColors.muted,
-          ),
-      };
-    }
-    return switch (status) {
-      'completed' || 'ready' || 'active' || 'paid' => (
           bg: AppColors.greenSoft,
           fg: AppColors.greenText,
           border: AppColors.greenBorder,
           dot: AppColors.green,
         ),
-      'processing' ||
-      'running' ||
-      'generating' ||
-      'rendering' ||
-      'analyzing' =>
-        (
+        StudioStatusTone.info => (
           bg: AppColors.blueSoft,
           fg: AppColors.blueText,
           border: AppColors.blueBorder,
           dot: AppColors.blue,
         ),
-      'queued' || 'pending' || 'cancelling' || 'draft' || 'stale' || 'awaiting_input' => (
+        StudioStatusTone.warning => (
           bg: AppColors.amberSoft,
           fg: AppColors.amberText,
           border: AppColors.amberBorder,
           dot: AppColors.amber,
         ),
-      'scheduled' => (
-          bg: AppColors.tealSoft,
-          fg: AppColors.tealText,
-          border: AppColors.tealBorder,
-          dot: AppColors.teal,
-        ),
-      'failed' || 'cancelled' || 'error' || 'expired' => (
+        StudioStatusTone.danger => (
           bg: AppColors.redSoft,
           fg: AppColors.redText,
           border: AppColors.redBorder,
           dot: AppColors.red,
         ),
-      _ => (
+        StudioStatusTone.neutral => (
           bg: AppColors.surfaceMuted,
           fg: AppColors.inkSoft,
           border: AppColors.line,
           dot: AppColors.muted,
         ),
+      };
+    }
+    return switch (status) {
+      'completed' || 'ready' || 'active' || 'paid' => (
+        bg: AppColors.greenSoft,
+        fg: AppColors.greenText,
+        border: AppColors.greenBorder,
+        dot: AppColors.green,
+      ),
+      'processing' ||
+      'running' ||
+      'generating' ||
+      'rendering' ||
+      'analyzing' => (
+        bg: AppColors.blueSoft,
+        fg: AppColors.blueText,
+        border: AppColors.blueBorder,
+        dot: AppColors.blue,
+      ),
+      'queued' ||
+      'pending' ||
+      'pausing' ||
+      'cancelling' ||
+      'draft' ||
+      'stale' ||
+      'awaiting_input' => (
+        bg: AppColors.amberSoft,
+        fg: AppColors.amberText,
+        border: AppColors.amberBorder,
+        dot: AppColors.amber,
+      ),
+      'scheduled' => (
+        bg: AppColors.tealSoft,
+        fg: AppColors.tealText,
+        border: AppColors.tealBorder,
+        dot: AppColors.teal,
+      ),
+      'failed' || 'cancelled' || 'error' || 'expired' => (
+        bg: AppColors.redSoft,
+        fg: AppColors.redText,
+        border: AppColors.redBorder,
+        dot: AppColors.red,
+      ),
+      _ => (
+        bg: AppColors.surfaceMuted,
+        fg: AppColors.inkSoft,
+        border: AppColors.line,
+        dot: AppColors.muted,
+      ),
     };
   }
 
@@ -419,10 +399,7 @@ class StudioStatusPill extends StatelessWidget {
             Container(
               width: 6,
               height: 6,
-              decoration: BoxDecoration(
-                color: p.dot,
-                shape: BoxShape.circle,
-              ),
+              decoration: BoxDecoration(color: p.dot, shape: BoxShape.circle),
             ),
             const SizedBox(width: 5),
           ],
@@ -477,10 +454,7 @@ class StudioCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final resolvedBg = color ?? backgroundColor;
-    Widget content = Padding(
-      padding: padding,
-      child: child,
-    );
+    Widget content = Padding(padding: padding, child: child);
 
     if (topAccentColor != null && leftAccentColor == null) {
       content = Column(
@@ -496,19 +470,13 @@ class StudioCard extends StatelessWidget {
               ),
             ),
           ),
-          Padding(
-            padding: padding,
-            child: child,
-          ),
+          Padding(padding: padding, child: child),
         ],
       );
     } else if (leftAccentColor != null) {
       content = Stack(
         children: [
-          Padding(
-            padding: padding,
-            child: child,
-          ),
+          Padding(padding: padding, child: child),
           Positioned(
             left: 0,
             top: 0,
@@ -604,8 +572,9 @@ class StudioStepHeader extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
               boxShadow: [
                 BoxShadow(
-                  color: (darkBadge ? AppColors.ink : accentColor)
-                      .withValues(alpha: 0.18),
+                  color: (darkBadge ? AppColors.ink : accentColor).withValues(
+                    alpha: 0.18,
+                  ),
                   blurRadius: 8,
                   offset: const Offset(0, 3),
                 ),
@@ -661,10 +630,7 @@ class StudioStepHeader extends StatelessWidget {
             ],
           ),
         ),
-        if (trailing != null) ...[
-          const SizedBox(width: 8),
-          trailing!,
-        ],
+        if (trailing != null) ...[const SizedBox(width: 8), trailing!],
       ],
     );
   }
@@ -739,10 +705,7 @@ class StudioGradientButton extends StatelessWidget {
           child: InkWell(
             onTap: enabled ? onPressed : null,
             borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: padding,
-              child: child,
-            ),
+            child: Padding(padding: padding, child: child),
           ),
         ),
       ),
@@ -815,10 +778,7 @@ class StudioEmptyState extends StatelessWidget {
                   ),
                 ),
               ],
-              if (action != null) ...[
-                const SizedBox(height: 18),
-                action!,
-              ],
+              if (action != null) ...[const SizedBox(height: 18), action!],
             ],
           ),
         ),
@@ -827,9 +787,24 @@ class StudioEmptyState extends StatelessWidget {
   }
 }
 
+/// Returns true whenever the soft keyboard is visible, even if an ancestor
+/// [Scaffold] has already consumed [MediaQueryData.viewInsets] from [context].
+bool isStudioKeyboardOpen(BuildContext context) {
+  if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+    return true;
+  }
+  final view = View.maybeOf(context);
+  return view != null && view.viewInsets.bottom > 0;
+}
+
 /// Height of the floating dock area at the bottom of [HomeShell], including
 /// the device's physical bottom safe area inset.
+/// When the soft keyboard is open, the floating dock is hidden so only a
+/// minimal breathing gap above the keyboard is needed.
 double studioDockClearance(BuildContext context) {
+  if (isStudioKeyboardOpen(context)) {
+    return 8.0;
+  }
   final viewBottom = MediaQuery.viewPaddingOf(context).bottom;
   final padBottom = MediaQuery.paddingOf(context).bottom;
   final hardwareBottom = viewBottom > 0
@@ -841,6 +816,9 @@ double studioDockClearance(BuildContext context) {
 /// Bottom scroll padding that clears the floating glassmorphic dock in [HomeShell]
 /// with generous breathing room so the last card/button sits high above the menu.
 double studioDockBottomPadding(BuildContext context, {double extra = 40}) {
+  if (isStudioKeyboardOpen(context)) {
+    return extra;
+  }
   return studioDockClearance(context) + extra;
 }
 
@@ -873,7 +851,8 @@ class StudioMetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final resolvedIconBg = iconBackgroundColor ??
+    final resolvedIconBg =
+        iconBackgroundColor ??
         (accentColor == AppColors.ink
             ? AppColors.surfaceMuted
             : accentColor.withValues(alpha: 0.12));
@@ -892,10 +871,7 @@ class StudioMetricCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: resolvedBg,
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(
-          color: resolvedBorder,
-          width: selected ? 1.5 : 1.0,
-        ),
+        border: Border.all(color: resolvedBorder, width: selected ? 1.5 : 1.0),
         boxShadow: AppColors.cardShadow,
       ),
       child: Column(
@@ -1007,7 +983,9 @@ class StudioPageHeader extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: AppColors.studioHeroGradient,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.brandBorder.withValues(alpha: 0.85)),
+        border: Border.all(
+          color: AppColors.brandBorder.withValues(alpha: 0.85),
+        ),
         boxShadow: AppColors.cardShadow,
       ),
       child: Column(
@@ -1042,7 +1020,9 @@ class StudioPageHeader extends StatelessWidget {
                               shape: BoxShape.circle,
                               boxShadow: [
                                 BoxShadow(
-                                  color: AppColors.brand.withValues(alpha: 0.35),
+                                  color: AppColors.brand.withValues(
+                                    alpha: 0.35,
+                                  ),
                                   spreadRadius: 2,
                                 ),
                               ],
@@ -1116,10 +1096,7 @@ class StudioPageHeader extends StatelessWidget {
               children: actions!,
             ),
           ],
-          if (bottom != null) ...[
-            const SizedBox(height: 12),
-            bottom!,
-          ],
+          if (bottom != null) ...[const SizedBox(height: 12), bottom!],
         ],
       ),
     );
@@ -1226,10 +1203,7 @@ class StudioSubBar extends StatelessWidget implements PreferredSizeWidget {
                     ),
                     if (actions != null && actions!.isNotEmpty) ...[
                       const SizedBox(width: 6),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: actions!,
-                      ),
+                      Row(mainAxisSize: MainAxisSize.min, children: actions!),
                     ],
                   ],
                 ),
@@ -1306,10 +1280,7 @@ class StudioDashedBox extends StatelessWidget {
 }
 
 class _DashedRRectPainter extends CustomPainter {
-  const _DashedRRectPainter({
-    required this.color,
-    required this.radius,
-  });
+  const _DashedRRectPainter({required this.color, required this.radius});
 
   final Color color;
   final double radius;

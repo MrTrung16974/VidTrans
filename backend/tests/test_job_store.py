@@ -286,6 +286,19 @@ class SQLiteJobStoreTests(unittest.TestCase):
         self.assertEqual(self.store.claim_next("worker-2")[0], "old")
         self.assertIsNone(self.store.claim_next("worker-3"))
 
+    def test_claim_next_shares_slots_between_users(self) -> None:
+        for name in ("a1", "a2", "a3"):
+            self.store.create(name, {"status": "queued"}, owner_user_id="alice")
+        self.store.create("b1", {"status": "queued"}, owner_user_id="bob")
+
+        # Alice queued first, but Bob gets the second slot before Alice's second job.
+        self.assertEqual(self.store.claim_next("w1")[0], "a1")
+        self.assertEqual(self.store.claim_next("w2")[0], "b1")
+        # Bob has nothing left, so Alice alone fills the remaining slots.
+        self.assertEqual(self.store.claim_next("w3")[0], "a2")
+        self.assertEqual(self.store.claim_next("w4")[0], "a3")
+        self.assertIsNone(self.store.claim_next("w5"))
+
     def test_cancel_queued_and_running_jobs(self) -> None:
         self.store.create("queued-cancel", {"status": "queued"})
         self.store.create("running-cancel", {"status": "queued"})
@@ -387,6 +400,51 @@ class SQLiteJobStoreTests(unittest.TestCase):
 
         self.assertFalse(changed)
         self.assertEqual(payload["status"], "completed")
+
+    def test_pause_queued_job_preserves_checkpoint_and_resumes(self) -> None:
+        self.store.create(
+            "pause-queued",
+            {"status": "queued", "step": "transcribing", "step_detail": "12 / 60 giây", "progress": 0.3},
+        )
+
+        paused = self.store.request_pause("pause-queued")
+        self.assertEqual(paused["status"], "paused")
+        self.assertEqual(paused["progress"], 0.3)
+        self.assertIsNone(self.store.claim_next("worker"))
+        with self.assertRaises(JobStateConflictError):
+            self.store.retry("pause-queued")
+
+        resumed = self.store.resume_paused("pause-queued")
+        self.assertEqual(resumed["status"], "queued")
+        self.assertEqual(resumed["step"], "transcribing")
+        self.assertEqual(resumed["step_detail"], "12 / 60 giây")
+        self.assertFalse(self.store.is_cancel_requested("pause-queued"))
+        self.assertEqual(self.store.claim_next("worker")[0], "pause-queued")
+
+    def test_pause_processing_job_waits_for_worker_acknowledgement(self) -> None:
+        self.store.create("pause-running", {"status": "queued", "progress": 0.4})
+        self.store.claim_next("worker")
+
+        pausing = self.store.request_pause("pause-running")
+        self.assertEqual(pausing["status"], "pausing")
+        self.assertTrue(self.store.is_cancel_requested("pause-running"))
+        ignored = self.store.update("pause-running", status="completed", progress=1.0)
+        self.assertEqual(ignored["status"], "pausing")
+
+        paused, changed = self.store.finalize_cancellation("pause-running")
+        self.assertTrue(changed)
+        self.assertEqual(paused["status"], "paused")
+        self.assertIsNone(paused["finished_at"])
+        self.assertFalse(self.store.is_cancel_requested("pause-running"))
+
+    def test_pause_rejects_active_tiktok_upload(self) -> None:
+        self.store.create(
+            "pause-upload",
+            {"status": "processing", "job_action": "publish_tiktok", "step": "publishing-tiktok"},
+        )
+
+        with self.assertRaises(JobStateConflictError):
+            self.store.request_pause("pause-upload")
 
     def test_concurrent_retries_requeue_a_cancelled_job_once(self) -> None:
         self.store.create("again", {"status": "cancelled", "cancel_requested": True})

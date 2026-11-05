@@ -124,6 +124,17 @@ class JobService:
         self._changed(job_id)
         return cancelled
 
+    def request_pause(self, job_id: str) -> dict[str, Any]:
+        paused = self._store.request_pause(job_id)
+        self._changed(job_id)
+        return paused
+
+    def resume_paused(self, job_id: str) -> dict[str, Any]:
+        resumed = self._store.resume_paused(job_id)
+        self._changed(job_id)
+        self._status_written(job_id, str(resumed.get("status") or "queued"))
+        return resumed
+
     def is_cancel_requested(self, job_id: str) -> bool:
         return self._store.is_cancel_requested(job_id)
 

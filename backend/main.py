@@ -116,6 +116,7 @@ from application.contact_routes import ContactRouteDependencies, create_contact_
 from application.job_report_routes import JobReportRouteDependencies, create_job_report_router
 from application.music_routes import MusicRouteDependencies, create_music_router
 from application.music_suggestions import suggest_music
+from application.photo_slideshow_planning import STYLES as SLIDESHOW_STYLES, parse_plan, plan_slideshow
 from infrastructure.music_library import MusicLibraryStore, MusicTrackNotFound, probe_audio_duration
 from domain.legal import SUPPORT_PHONE, TERMS_VERSION, support_email, terms_outdated
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
@@ -130,6 +131,7 @@ from infrastructure.tiktok_slideshow import (
     MAX_VIDEO_SECONDS,
     MIN_VIDEO_SECONDS,
     join_audio_tracks,
+    render_planned_slideshow,
     render_timed_slideshow,
 )
 from infrastructure.mailer import MailConfig, MailDeliveryError, SmtpMailer
@@ -1725,6 +1727,15 @@ def update_job(job_id: str, **fields: Any) -> None:
     if current and current.get("status") == "cancelled" and fields.get("status") != "cancelled":
         return
     if current and current.get("cancel_requested"):
+        if current.get("status") == "pausing" and fields.get("status") in {"cancelled", "failed"}:
+            fields = {
+                "status": "paused",
+                "step": "paused",
+                "step_detail": "Đã tạm dừng",
+                "cancel_requested": False,
+                "pause_requested": True,
+                "finished_at": None,
+            }
         if fields.get("status") == "processing":
             fields.pop("status")
         elif fields.get("status") == "completed":
@@ -1742,6 +1753,13 @@ def update_job(job_id: str, **fields: Any) -> None:
     if N8N_WORKFLOW_CONFIG.enabled:
         WORKFLOW_EVENTS.emit_transition(job_id, current, updated)
         notify_workflow_dispatcher()
+
+
+def release_job_quota_after_worker_stop(job_id: str) -> None:
+    """Keep the existing reservation while paused; release it for cancellation/failure."""
+    current = JOB_SERVICE.get(job_id) or {}
+    if current.get("status") != "paused":
+        TENANT_GOVERNANCE.release(job_id)
 
 
 def record_job_stage_measurement(job_id: str, measurement: StageMeasurement) -> None:
@@ -2984,6 +3002,10 @@ def normalize_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any
 # loud music defeat Whisper, yet such clips usually show their lyrics on screen.
 SPEECH_RESCUE_MAX_COVERAGE = 0.5
 SPEECH_RESCUE_MIN_SECONDS = 8.0
+# Speech mode looks for the burned-in caption band higher than the OCR ROI:
+# Douyin talking-head captions often sit around 60% of the frame height
+# (job 1f9a8646: 61-65%), above the default 68% OCR ROI top.
+SPEECH_CAPTION_SCAN_TOP = 0.4
 
 
 def speech_coverage(segments: list[dict[str, Any]], duration: float | None) -> float:
@@ -3414,7 +3436,9 @@ def recognize_video_source(
                         segments,
                         ffmpeg=FFMPEG,
                         frame_size=(source_probe.width, source_probe.height),
-                        config=CaptionAlignmentConfig(roi_top=ocr_roi_top, roi_bottom=ocr_roi_bottom),
+                        config=CaptionAlignmentConfig(
+                            roi_top=min(ocr_roi_top, SPEECH_CAPTION_SCAN_TOP), roi_bottom=ocr_roi_bottom
+                        ),
                         has_caption_text=caption_text_checker(),
                     )
             except JobCancelled:
@@ -4316,7 +4340,7 @@ def process_video(
             step_detail="Đã hủy theo yêu cầu",
             finished_at=utc_now(),
         )
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     except Exception as exc:
         logger.exception("Video processing failed for job %s", job_id)
         update_job(
@@ -4327,7 +4351,7 @@ def process_video(
             error_code=getattr(exc, "error_code", None),
             finished_at=utc_now(),
         )
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     finally:
         if hasattr(_job_context, "job_id"):
             del _job_context.job_id
@@ -4413,7 +4437,7 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
             job_action=None,
             publish_request=None,
         )
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     except Exception as exc:
         logger.warning("Scheduled TikTok publish failed for job %s", job_id, exc_info=True)
         if JOB_SERVICE.is_cancel_requested(job_id):
@@ -4428,7 +4452,7 @@ def publish_scheduled_tiktok(job_id: str, publish_request: dict[str, Any]) -> No
                 tiktok_publish_status="FAILED",
                 tiktok_publish_error=str(exc),
             )
-            TENANT_GOVERNANCE.release(job_id)
+            release_job_quota_after_worker_stop(job_id)
             return
         update_job(
             job_id,
@@ -4586,11 +4610,11 @@ def deliver_source_video(job_id: str, video_path: Path, *, apply_logo: bool) -> 
         current = JOB_SERVICE.get(job_id) or {}
         update_job(job_id, status="cancelled", step="cancelled", progress=float(current.get("progress", 0.0)),
                    step_detail="Đã hủy theo yêu cầu", finished_at=utc_now())
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     except Exception as exc:
         logger.exception("Delivering the source video failed for job %s", job_id)
         update_job(job_id, status="failed", step="failed", error=public_error_message(exc), finished_at=utc_now())
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
 
 
 # A photo post (TikTok, Douyin, Xiaohongshu, Facebook, a YouTube community post or a
@@ -4697,7 +4721,13 @@ def run_photo_post_job(job_id: str, resume_request: dict[str, Any]) -> None:
             try:
                 # Several library tracks play one after another; the set loops if the video is longer.
                 music = join_audio_tracks(FFMPEG, track_files, work / "music.m4a") if track_files else original_music
-                duration = render_timed_slideshow(FFMPEG, images, music, rendered, seconds, work_dir=work)
+                slideshow_plan = choice.get("slideshow_plan")
+                if isinstance(slideshow_plan, dict):
+                    duration = render_planned_slideshow(
+                        FFMPEG, images, slideshow_plan, music, rendered, work_dir=work,
+                    )
+                else:
+                    duration = render_timed_slideshow(FFMPEG, images, music, rendered, seconds, work_dir=work)
             except subprocess.CalledProcessError as exc:
                 logger.warning("Slideshow render failed for job %s: %s", job_id,
                                (exc.stderr or b"").decode("utf-8", errors="ignore")[-400:])
@@ -4721,12 +4751,12 @@ def run_photo_post_job(job_id: str, resume_request: dict[str, Any]) -> None:
         current = JOB_SERVICE.get(job_id) or {}
         update_job(job_id, status="cancelled", step="cancelled", progress=float(current.get("progress", 0.0)),
                    step_detail="Đã hủy theo yêu cầu", finished_at=utc_now(), job_action=None)
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     except Exception as exc:
         logger.exception("Photo post job %s failed", job_id)
         update_job(job_id, status="failed", step="failed", error=public_error_message(exc),
                    finished_at=utc_now(), job_action=None)
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
 
 
 def write_clip_caption(segments: list[dict[str, Any]], output_dir: Path, job_id: str) -> tuple[Path, Path]:
@@ -4850,7 +4880,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             step_detail=str(exc),
             finished_at=utc_now(),
         )
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     except (KeyError, TypeError, ValueError, FileNotFoundError, SocialVideoDownloadError, PlanEntitlementError) as exc:
         logger.warning("Unable to resume job %s: %s", job_id, exc)
         update_job(
@@ -4861,7 +4891,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             finished_at=utc_now(),
         )
         # Nothing was produced, so the minutes held for this attempt go back.
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
 
 
 def comic_project_root(owner_user_id: str, job_id: str) -> Path:
@@ -4950,11 +4980,11 @@ def run_comic_job(job_id: str, request: dict[str, Any]) -> None:
             step_detail="Đã hủy theo yêu cầu",
             finished_at=utc_now(),
         )
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     except Exception as exc:
         logger.exception("Comic video failed for job %s", job_id)
         update_job(job_id, status="failed", step="failed", error=public_error_message(exc), finished_at=utc_now())
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     finally:
         if hasattr(_job_context, "job_id"):
             del _job_context.job_id
@@ -5113,11 +5143,11 @@ def run_branding_job(job_id: str, request: dict[str, Any]) -> None:
             step_detail="Đã hủy theo yêu cầu",
             finished_at=utc_now(),
         )
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     except Exception as exc:
         logger.exception("Logo branding failed for job %s", job_id)
         update_job(job_id, status="failed", step="failed", error=public_error_message(exc), finished_at=utc_now())
-        TENANT_GOVERNANCE.release(job_id)
+        release_job_quota_after_worker_stop(job_id)
     finally:
         if hasattr(_job_context, "job_id"):
             del _job_context.job_id
@@ -8257,8 +8287,10 @@ def get_batch_endpoint(request: Request, batch_id: str) -> JSONResponse:
     batch["jobs"] = [job_response(str(job["job_id"]), job, positions) for job in jobs]
     batch["total_jobs"] = total
     statuses = {str(job.get("status")) for job in jobs}
-    if statuses & {"queued", "processing", "scheduled", "cancelling"}:
+    if statuses & {"queued", "processing", "scheduled", "cancelling", "pausing"}:
         batch["status"] = "processing"
+    elif statuses == {"paused"}:
+        batch["status"] = "paused"
     elif statuses == {"completed"}:
         batch["status"] = "completed"
     elif statuses:
@@ -8273,6 +8305,29 @@ def cancel_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     job = JOB_SERVICE.request_cancel(job_id)
     if job.get("status") == "cancelled":
         TENANT_GOVERNANCE.release(job_id)
+    return JSONResponse(job_response(job_id, job))
+
+
+@app.post("/api/v1/jobs/{job_id}/pause", response_model=Job)
+def pause_job_endpoint(request: Request, job_id: str) -> JSONResponse:
+    if job_for_request(request, job_id) is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        job = JOB_SERVICE.request_pause(job_id)
+    except JobStateConflictError as exc:
+        raise HTTPException(status_code=409, detail="Tiến trình này hiện không thể tạm dừng") from exc
+    return JSONResponse(job_response(job_id, job))
+
+
+@app.post("/api/v1/jobs/{job_id}/resume", response_model=Job)
+def resume_paused_job_endpoint(request: Request, job_id: str) -> JSONResponse:
+    if job_for_request(request, job_id) is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        job = JOB_SERVICE.resume_paused(job_id)
+    except JobStateConflictError as exc:
+        raise HTTPException(status_code=409, detail="Tiến trình chưa ở trạng thái tạm dừng hoàn tất") from exc
+    notify_scheduler()
     return JSONResponse(job_response(job_id, job))
 
 
@@ -8301,6 +8356,14 @@ class PhotoPostChoice(BaseModel):
     music_track_id: str | None = Field(default=None, max_length=100)
     # One or more library tracks, played in this order, instead of the post's own soundtrack.
     music_track_ids: list[Annotated[str, Field(max_length=100)]] | None = Field(default=None, max_length=MAX_MUSIC_TRACKS)
+    # Optional AI-generated plan. The server validates the complete snapshot again before queueing.
+    slideshow_plan: dict[str, Any] | None = None
+
+
+class PhotoPostAiPlanRequest(BaseModel):
+    target_minutes: float | None = Field(default=None, gt=0, le=10)
+    keep_original_order: bool = False
+    preferred_style: str = Field(default="auto", max_length=32)
 
 
 @app.post("/api/v1/jobs/{job_id}/photo-post", response_model=Job)
@@ -8341,6 +8404,20 @@ def choose_photo_post_endpoint(request: Request, job_id: str, choice: PhotoPostC
             if not MUSIC_LIBRARY.file_path(track).is_file():
                 raise HTTPException(status_code=400, detail="File nhạc đã chọn không còn trên máy chủ")
         stored_choice.update(seconds=seconds, music_track_ids=track_ids)
+        if choice.slideshow_plan is not None:
+            try:
+                validated_plan = parse_plan(
+                    choice.slideshow_plan,
+                    image_count=len(photo_post_files(resume_request)[0]),
+                    tracks=MUSIC_LIBRARY.list(),
+                    target_seconds=seconds,
+                    keep_original_order=bool(choice.slideshow_plan.get("keep_original_order")),
+                    source="submitted",
+                    strict=True,
+                )
+            except (ValueError, TypeError, KeyError) as exc:
+                raise HTTPException(status_code=400, detail="Phương án dựng AI không hợp lệ; hãy phân tích lại") from exc
+            stored_choice["slideshow_plan"] = validated_plan.as_json()
         quota_minutes = max(1, math.ceil(seconds / 60))
     quota_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
     reserve_job_quota(job_id, quota_account, minutes=quota_minutes)
@@ -8382,6 +8459,52 @@ def suggest_photo_post_music_endpoint(request: Request, job_id: str) -> JSONResp
     return JSONResponse(suggestions.as_json(), headers={"Cache-Control": "no-store"})
 
 
+@app.post("/api/v1/jobs/{job_id}/photo-post/ai-plan")
+def create_photo_post_ai_plan_endpoint(
+    request: Request, job_id: str, options: PhotoPostAiPlanRequest,
+) -> JSONResponse:
+    """Return a validated AI/heuristic edit plan without queueing work or consuming quota."""
+    account = current_account(request)
+    source = job_for_request(request, job_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if source.get("status") != AWAITING_INPUT_STATUS:
+        raise HTTPException(status_code=409, detail="Job này không chờ chọn cách xử lý bài đăng ảnh")
+    resume_request = source.get("resume_request")
+    if not isinstance(resume_request, dict):
+        raise HTTPException(status_code=409, detail="Dữ liệu bài đăng ảnh không còn; hãy tạo lại job từ link")
+    images, _ = photo_post_files(resume_request)
+    if not images:
+        raise HTTPException(status_code=409, detail="Ảnh của bài đăng không còn trên máy chủ; hãy tạo lại job từ link")
+    owner_user_id = str(source.get("owner_user_id") or account["user_id"])
+    entitlement_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
+    try:
+        ensure_feature_allowed(entitlement_account, PHOTO_POST_FEATURE)
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    style = options.preferred_style.strip().lower()
+    if style != "auto" and style not in SLIDESHOW_STYLES:
+        raise HTTPException(status_code=400, detail="Phong cách dựng không hợp lệ")
+    caption = str((resume_request.get("photo_post") or {}).get("title") or Path(str(source.get("filename") or "")).stem)
+    try:
+        llm = create_story_llm("auto")
+        if llm is not None:
+            llm.timeout = min(llm.timeout, 120.0)
+    except LLMError as exc:
+        logger.warning("No model for photo slideshow plan: %s", exc)
+        llm = None
+    plan = plan_slideshow(
+        caption=caption,
+        image_paths=images,
+        tracks=MUSIC_LIBRARY.list(),
+        llm=llm,
+        requested_seconds=options.target_minutes * 60 if options.target_minutes is not None else None,
+        keep_original_order=options.keep_original_order,
+        preferred_style=style,
+    )
+    return JSONResponse(plan.as_json(), headers={"Cache-Control": "no-store"})
+
+
 def requeue_clip_job(job_id: str, source: dict[str, Any], entitlement_account: dict[str, Any]) -> JSONResponse:
     """Cut a clip again from the same source video; uses no quota."""
     try:
@@ -8412,8 +8535,10 @@ def requeue_video_job(request: Request, job_id: str, *, download_only: bool = Fa
     if source is None:
         raise HTTPException(status_code=404, detail="job not found")
     owner_user_id = str(source.get("owner_user_id") or account["user_id"])
-    if source.get("status") in {"queued", "scheduled", "processing", "cancelling"}:
+    if source.get("status") in {"queued", "scheduled", "processing", "pausing", "cancelling"}:
         raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý")
+    if source.get("status") == "paused":
+        raise HTTPException(status_code=409, detail="Job đang tạm dừng; hãy chọn Tiếp tục để giữ nguyên tiến độ")
     # A job keeps the providers it was created with; a later downgrade must not keep paid AI running.
     entitlement_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
     if is_comic_job(source):
@@ -8526,7 +8651,7 @@ def delete_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     active = TIKTOK_BROWSER.active_attempt()
     if active and active["job_id"] == job_id:
         raise HTTPException(status_code=409, detail="Hãy kết thúc lượt chuẩn bị TikTok trước khi xóa video")
-    if job.get("status") in {"queued", "processing", "scheduled", "cancelling"}:
+    if job.get("status") in {"queued", "processing", "scheduled", "pausing", "cancelling"}:
         raise HTTPException(status_code=409, detail="Hãy hủy và chờ job dừng trước khi xóa")
     # The row is soft-deleted (kept for quota/audit until retention purges it),
     # but the videos and work files go now so deleted jobs stop using disk.

@@ -20,7 +20,10 @@ final jobPageProvider = StateProvider<int>((ref) => 1);
 const jobPageSizes = [10, 20, 50, 100];
 final jobPageSizeProvider = StateProvider<int>((ref) => 10);
 
-final jobListProvider = AsyncNotifierProvider.autoDispose<JobListController, JobList>(JobListController.new);
+final jobListProvider =
+    AsyncNotifierProvider.autoDispose<JobListController, JobList>(
+      JobListController.new,
+    );
 
 /// The selected page from REST, then patched in place by WebSocket change sets.
 class JobListController extends AutoDisposeAsyncNotifier<JobList> {
@@ -39,18 +42,20 @@ class JobListController extends AutoDisposeAsyncNotifier<JobList> {
 
   /// The page, size, filter and search a request was made for.
   (int, int, String?, String) _view() => (
-        ref.read(jobPageProvider),
-        ref.read(jobPageSizeProvider),
-        ref.read(jobStatusFilterProvider),
-        ref.read(jobSearchProvider).trim(),
-      );
+    ref.read(jobPageProvider),
+    ref.read(jobPageSizeProvider),
+    ref.read(jobStatusFilterProvider),
+    ref.read(jobSearchProvider).trim(),
+  );
 
   Future<JobList> _fetch() async {
     final list = await _fetchPage();
     // The server moves a page past the end (jobs deleted) back to the last one; follow
     // it, so tapping that page number again is not a no-op on a stale value.
     if (list.page != ref.read(jobPageProvider)) {
-      Future.microtask(() => ref.read(jobPageProvider.notifier).state = list.page);
+      Future.microtask(
+        () => ref.read(jobPageProvider.notifier).state = list.page,
+      );
     }
     return list;
   }
@@ -79,10 +84,16 @@ class JobListController extends AutoDisposeAsyncNotifier<JobList> {
   void _onChanges(JobChanges changes) {
     final current = state.valueOrNull;
     if (current == null) return;
-    final result = applyJobChanges(current.jobs, changes, statusFilter: ref.read(jobStatusFilterProvider));
+    final result = applyJobChanges(
+      current.jobs,
+      changes,
+      statusFilter: ref.read(jobStatusFilterProvider),
+    );
     final before = {for (final job in current.jobs) job.id: job.status};
     // A status change moves the per-status counts of every page: fetch them again.
-    final statusChanged = result.jobs.any((job) => before[job.id] != job.status);
+    final statusChanged = result.jobs.any(
+      (job) => before[job.id] != job.status,
+    );
     state = AsyncData(current.copyWith(jobs: result.jobs));
     if (result.reload || statusChanged) unawaited(refresh());
   }
@@ -106,6 +117,8 @@ class JobListController extends AutoDisposeAsyncNotifier<JobList> {
     Future<void> one(Job job) async {
       try {
         await switch (action) {
+          BulkJobAction.pause => _repo.pause(job.id),
+          BulkJobAction.resume => _repo.resume(job.id),
           BulkJobAction.cancel => _repo.cancel(job.id),
           BulkJobAction.retry => _repo.retry(job.id),
           BulkJobAction.delete => _repo.delete(job.id),
@@ -125,7 +138,10 @@ class JobListController extends AutoDisposeAsyncNotifier<JobList> {
 }
 
 /// Job detail: fetched by REST, kept fresh by the same event stream.
-final jobDetailProvider = StreamProvider.autoDispose.family<Job, String>((ref, jobId) async* {
+final jobDetailProvider = StreamProvider.autoDispose.family<Job, String>((
+  ref,
+  jobId,
+) async* {
   final repo = ref.read(jobsRepositoryProvider);
   final events = ref.read(jobEventsProvider).changes;
   var job = await repo.get(jobId);

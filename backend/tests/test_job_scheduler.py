@@ -9,6 +9,7 @@ class _FakeService:
         self.jobs = [("job-1", {"resume_request": {"value": 1}})]
         self.updated = []
         self.cancelling = set()
+        self.pausing = set()
 
     def claim_next(self, _worker_id):
         return self.jobs.pop(0) if self.jobs else None
@@ -17,6 +18,9 @@ class _FakeService:
         self.updated.append((job_id, fields))
 
     def finalize_cancellation(self, job_id, **_fields):
+        if job_id in self.pausing:
+            self.pausing.discard(job_id)
+            return {"status": "paused"}, True
         finalized = job_id in self.cancelling
         self.cancelling.discard(job_id)
         return {"status": "cancelled" if finalized else "completed"}, finalized
@@ -125,6 +129,27 @@ class JobSchedulerTests(unittest.IsolatedAsyncioTestCase):
         await scheduler.stop()
 
         self.assertEqual(released, [])
+
+    async def test_paused_job_is_acknowledged_without_releasing_quota(self) -> None:
+        service = _FakeService()
+        service.pausing.add("job-1")
+        released = []
+        completed = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def runner(_job_id, _request):
+            loop.call_soon_threadsafe(completed.set)
+
+        scheduler = JobScheduler(
+            service, runner, concurrency=1, poll_interval=0.01, on_cancelled=released.append
+        )
+        await scheduler.start()
+        await asyncio.wait_for(completed.wait(), timeout=1)
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+        self.assertEqual(released, [])
+        self.assertEqual(service.pausing, set())
 
 
 if __name__ == "__main__":

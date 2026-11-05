@@ -27,6 +27,7 @@ class JobsScreen extends ConsumerStatefulWidget {
     null,
     'processing',
     'queued',
+    'paused',
     'completed',
     'failed',
   ];
@@ -90,7 +91,11 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
   void _goToPage(int page) {
     ref.read(jobPageProvider.notifier).state = page;
     if (_scrollController.hasClients) {
-      _scrollController.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
     }
   }
 
@@ -107,6 +112,9 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
       builder: (context) => AlertDialog(
         title: Text('${action.label} ${jobs.length} job?'),
         content: Text(switch (action) {
+          BulkJobAction.pause =>
+            'Các job sẽ dừng ở điểm an toàn và giữ nguyên tiến độ.',
+          BulkJobAction.resume => 'Các job đã tạm dừng sẽ trở lại hàng đợi.',
           BulkJobAction.cancel =>
             'Các job đang chờ hoặc đang xử lý sẽ dừng lại.',
           BulkJobAction.retry => 'Các job sẽ được xếp hàng xử lý lại từ đầu.',
@@ -158,15 +166,18 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
     final allJobs = list?.jobs ?? const <Job>[];
     // Counts span every page (server `counts`), as on the web dashboard.
     final totalCount = list?.allCount ?? 0;
-    final processingCount = list?.countOf(const ['processing', 'cancelling']) ?? 0;
-    final queuedCount = list?.countOf(const ['queued', 'scheduled']) ?? 0;
+    final processingCount =
+        list?.countOf(const ['processing', 'pausing', 'cancelling']) ?? 0;
+    final queuedCount =
+        list?.countOf(const ['queued', 'scheduled', 'paused']) ?? 0;
     final completedCount = list?.countOf(const ['completed']) ?? 0;
     final failedCount = list?.countOf(const ['failed', 'cancelled']) ?? 0;
 
     final query = _searchQuery.trim();
     final filteredJobs = allJobs;
     final readOnly = ref.watch(sessionProvider).valueOrNull?.isReadOnly ?? true;
-    final canCutClips = ref.watch(sessionProvider).valueOrNull?.canCutClips ?? false;
+    final canCutClips =
+        ref.watch(sessionProvider).valueOrNull?.canCutClips ?? false;
     final selectedJobs = allJobs
         .where((job) => _selectedIds.contains(job.id))
         .toList();
@@ -214,41 +225,32 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
             color: AppColors.brand,
             onRefresh: () => ref.read(jobListProvider.notifier).refresh(),
             child: ListView(
-                controller: _scrollController,
-                padding: EdgeInsets.fromLTRB(
-                  14,
-                  14,
-                  14,
-                  studioDockBottomPadding(context),
-                ),
-                children: [
-                  StudioPageHeader(
-                    eyebrow: 'Background Jobs · Thời gian thực',
-                    eyebrowPulse: true,
-                    title: 'Quản lý tiến trình',
-                    subtitle:
-                        'Theo dõi trạng thái xử lý video, tải kết quả và đăng bài tự động.',
-                    actions: [
-                      StudioGradientButton(
-                        expanded: false,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 9,
-                        ),
-                        icon: Icons.add_rounded,
-                        label: 'Batch mới',
-                        onPressed: () => context.go('/translate'),
+              controller: _scrollController,
+              padding: EdgeInsets.fromLTRB(
+                14,
+                14,
+                14,
+                studioDockBottomPadding(context),
+              ),
+              children: [
+                StudioPageHeader(
+                  eyebrow: 'Background Jobs · Thời gian thực',
+                  eyebrowPulse: true,
+                  title: 'Quản lý tiến trình',
+                  subtitle:
+                      'Theo dõi trạng thái xử lý video, tải kết quả và đăng bài tự động.',
+                  actions: [
+                    StudioGradientButton(
+                      expanded: false,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 9,
                       ),
-                      if (!readOnly && canCutClips)
-                        OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: Size.zero,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                          ),
-                          onPressed: () => context.push('/clips'),
-                          icon: const Icon(Icons.content_cut_rounded, size: 16),
-                          label: const Text('Cắt clip'),
-                        ),
+                      icon: Icons.add_rounded,
+                      label: 'Batch mới',
+                      onPressed: () => context.go('/translate'),
+                    ),
+                    if (!readOnly && canCutClips)
                       OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                           minimumSize: Size.zero,
@@ -257,223 +259,241 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                             vertical: 9,
                           ),
                         ),
-                        onPressed: () =>
-                            ref.read(jobListProvider.notifier).refresh(),
-                        icon: const Icon(Icons.refresh_rounded, size: 16),
-                        label: const Text('Làm mới'),
+                        onPressed: () => context.push('/clips'),
+                        icon: const Icon(Icons.content_cut_rounded, size: 16),
+                        label: const Text('Cắt clip'),
                       ),
-                      if (!readOnly && allJobs.isNotEmpty)
-                        OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: Size.zero,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 9,
-                            ),
-                          ),
-                          onPressed: _selecting
-                              ? _stopSelecting
-                              : _startSelecting,
-                          icon: Icon(
-                            _selecting
-                                ? Icons.close_rounded
-                                : Icons.checklist_rounded,
-                            size: 16,
-                          ),
-                          label: Text(_selecting ? 'Bỏ chọn' : 'Chọn'),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: Size.zero,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 9,
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // 2x2 responsive metric grid matching `.metric-grid` in `web/index.html`
-                  Row(
+                      ),
+                      onPressed: () =>
+                          ref.read(jobListProvider.notifier).refresh(),
+                      icon: const Icon(Icons.refresh_rounded, size: 16),
+                      label: const Text('Làm mới'),
+                    ),
+                    if (!readOnly && allJobs.isNotEmpty)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: Size.zero,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 9,
+                          ),
+                        ),
+                        onPressed: _selecting
+                            ? _stopSelecting
+                            : _startSelecting,
+                        icon: Icon(
+                          _selecting
+                              ? Icons.close_rounded
+                              : Icons.checklist_rounded,
+                          size: 16,
+                        ),
+                        label: Text(_selecting ? 'Bỏ chọn' : 'Chọn'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // 2x2 responsive metric grid matching `.metric-grid` in `web/index.html`
+                Row(
+                  children: [
+                    Expanded(
+                      child: StudioMetricCard(
+                        label: 'Tổng tiến trình',
+                        value: '$totalCount',
+                        subtitle: failedCount > 0
+                            ? 'Lỗi/Hủy: $failedCount'
+                            : 'Trong danh sách',
+                        icon: Icons.layers_outlined,
+                        accentColor: AppColors.ink,
+                        selected: filter == null,
+                        onTap: () {
+                          ref.read(jobPageProvider.notifier).state = 1;
+                          ref.read(jobStatusFilterProvider.notifier).state =
+                              null;
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: StudioMetricCard(
+                        label: 'Đang chạy',
+                        value: '$processingCount',
+                        subtitle: 'Đang xử lý AI',
+                        icon: Icons.autorenew_rounded,
+                        accentColor: AppColors.blue,
+                        backgroundColor: processingCount > 0
+                            ? AppColors.blueTint
+                            : AppColors.surface,
+                        borderColor: processingCount > 0
+                            ? AppColors.blueBorder
+                            : AppColors.line,
+                        selected: filter == 'processing',
+                        onTap: () {
+                          ref.read(jobPageProvider.notifier).state = 1;
+                          ref.read(jobStatusFilterProvider.notifier).state =
+                              filter == 'processing' ? null : 'processing';
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: StudioMetricCard(
+                        label: 'Đang chờ',
+                        value: '$queuedCount',
+                        subtitle: 'Trong hàng đợi',
+                        icon: Icons.schedule_rounded,
+                        accentColor: AppColors.amberDark,
+                        selected: filter == 'queued',
+                        onTap: () {
+                          ref.read(jobPageProvider.notifier).state = 1;
+                          ref.read(jobStatusFilterProvider.notifier).state =
+                              filter == 'queued' ? null : 'queued';
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: StudioMetricCard(
+                        label: 'Hoàn tất',
+                        value: '$completedCount',
+                        subtitle: 'Sẵn sàng tải về',
+                        icon: Icons.check_circle_outline_rounded,
+                        accentColor: AppColors.greenDark,
+                        selected: filter == 'completed',
+                        onTap: () {
+                          ref.read(jobPageProvider.notifier).state = 1;
+                          ref.read(jobStatusFilterProvider.notifier).state =
+                              filter == 'completed' ? null : 'completed';
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // Toolbar card matching `.jobs-toolbar` on the web
+                StudioCard(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(
-                        child: StudioMetricCard(
-                          label: 'Tổng tiến trình',
-                          value: '$totalCount',
-                          subtitle: failedCount > 0
-                              ? 'Lỗi/Hủy: $failedCount'
-                              : 'Trong danh sách',
-                          icon: Icons.layers_outlined,
-                          accentColor: AppColors.ink,
-                          selected: filter == null,
-                          onTap: () {
-                            ref.read(jobPageProvider.notifier).state = 1;
-                            ref.read(jobStatusFilterProvider.notifier).state =
-                                null;
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: StudioMetricCard(
-                          label: 'Đang chạy',
-                          value: '$processingCount',
-                          subtitle: 'Đang xử lý AI',
-                          icon: Icons.autorenew_rounded,
-                          accentColor: AppColors.blue,
-                          backgroundColor: processingCount > 0
-                              ? AppColors.blueTint
-                              : AppColors.surface,
-                          borderColor: processingCount > 0
-                              ? AppColors.blueBorder
-                              : AppColors.line,
-                          selected: filter == 'processing',
-                          onTap: () {
-                            ref.read(jobPageProvider.notifier).state = 1;
-                            ref.read(jobStatusFilterProvider.notifier).state =
-                                filter == 'processing' ? null : 'processing';
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: StudioMetricCard(
-                          label: 'Đang chờ',
-                          value: '$queuedCount',
-                          subtitle: 'Trong hàng đợi',
-                          icon: Icons.schedule_rounded,
-                          accentColor: AppColors.amberDark,
-                          selected: filter == 'queued',
-                          onTap: () {
-                            ref.read(jobPageProvider.notifier).state = 1;
-                            ref.read(jobStatusFilterProvider.notifier).state =
-                                filter == 'queued' ? null : 'queued';
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: StudioMetricCard(
-                          label: 'Hoàn tất',
-                          value: '$completedCount',
-                          subtitle: 'Sẵn sàng tải về',
-                          icon: Icons.check_circle_outline_rounded,
-                          accentColor: AppColors.greenDark,
-                          selected: filter == 'completed',
-                          onTap: () {
-                            ref.read(jobPageProvider.notifier).state = 1;
-                            ref.read(jobStatusFilterProvider.notifier).state =
-                                filter == 'completed' ? null : 'completed';
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Toolbar card matching `.jobs-toolbar` on the web
-                  StudioCard(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        TextField(
-                          controller: _searchController,
-                          onChanged: _onSearch,
-                          decoration: InputDecoration(
-                            isDense: true,
-                            hintText: 'Tìm theo tên video hoặc mã job...',
-                            prefixIcon: const Icon(
-                              Icons.search_rounded,
-                              size: 19,
-                              color: AppColors.muted,
-                            ),
-                            suffixIcon: _searchQuery.isEmpty
-                                ? null
-                                : IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    icon: const Icon(
-                                      Icons.clear_rounded,
-                                      size: 17,
-                                    ),
-                                    onPressed: _clearSearch,
-                                  ),
+                      TextField(
+                        controller: _searchController,
+                        onChanged: _onSearch,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: 'Tìm theo tên video hoặc mã job...',
+                          prefixIcon: const Icon(
+                            Icons.search_rounded,
+                            size: 19,
+                            color: AppColors.muted,
                           ),
-                        ),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          height: 36,
-                          child: ListView(
-                            scrollDirection: Axis.horizontal,
-                            children: [
-                              for (final status in JobsScreen._filters)
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 8),
-                                  child: ChoiceChip(
-                                    showCheckmark: false,
-                                    label: Text(
-                                      status == null
-                                          ? 'Tất cả'
-                                          : jobStatusLabels[status]!,
-                                    ),
-                                    selected: filter == status,
-                                    onSelected: (_) {
-                                      ref.read(jobPageProvider.notifier).state = 1;
-                                      ref.read(jobStatusFilterProvider.notifier).state = status;
-                                    },
+                          suffixIcon: _searchQuery.isEmpty
+                              ? null
+                              : IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  icon: const Icon(
+                                    Icons.clear_rounded,
+                                    size: 17,
                                   ),
+                                  onPressed: _clearSearch,
                                 ),
-                            ],
-                          ),
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  for (final item in pending) ...[
-                    PendingSubmissionCard(item: item),
-                    const SizedBox(height: 10),
-                  ],
-                  if (filteredJobs.isEmpty && pending.isEmpty)
-                    StudioEmptyState(
-                      icon: Icons.inbox_outlined,
-                      title: query.isNotEmpty
-                          ? 'Không tìm thấy tiến trình phù hợp'
-                          : 'Chưa có công việc nào',
-                      subtitle: query.isNotEmpty
-                          ? 'Thử từ khóa khác hoặc xóa bộ lọc tìm kiếm.'
-                          : 'Chuyển sang tab Dịch video để tải video lên hoặc dán link TikTok/Douyin để tự động xử lý.',
-                      action: query.isNotEmpty
-                          ? OutlinedButton(
-                              onPressed: _clearSearch,
-                              child: const Text('Xóa tìm kiếm'),
-                            )
-                          : StudioGradientButton(
-                              expanded: false,
-                              icon: Icons.add_circle_outline_rounded,
-                              label: 'Tạo công việc mới',
-                              onPressed: () => context.go('/translate'),
-                            ),
-                    )
-                  else if (filteredJobs.isNotEmpty) ...[
-                    for (var i = 0; i < filteredJobs.length; i++) ...[
-                      if (i > 0) const SizedBox(height: 10),
-                      _JobTile(
-                        job: filteredJobs[i],
-                        selecting: _selecting,
-                        selected: _selectedIds.contains(filteredJobs[i].id),
-                        onTap: _selecting
-                            ? () => _toggle(filteredJobs[i])
-                            : () => context.push('/jobs/${filteredJobs[i].id}'),
-                        onLongPress: readOnly || _selecting
-                            ? null
-                            : () => _startSelecting(filteredJobs[i]),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 36,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            for (final status in JobsScreen._filters)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: ChoiceChip(
+                                  showCheckmark: false,
+                                  label: Text(
+                                    status == null
+                                        ? 'Tất cả'
+                                        : jobStatusLabels[status]!,
+                                  ),
+                                  selected: filter == status,
+                                  onSelected: (_) {
+                                    ref.read(jobPageProvider.notifier).state =
+                                        1;
+                                    ref
+                                            .read(
+                                              jobStatusFilterProvider.notifier,
+                                            )
+                                            .state =
+                                        status;
+                                  },
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ],
-                    const SizedBox(height: 14),
-                    JobsPagination(
-                      list: list,
-                      onPage: _goToPage,
-                      onPageSize: _setPageSize,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                for (final item in pending) ...[
+                  PendingSubmissionCard(item: item),
+                  const SizedBox(height: 10),
+                ],
+                if (filteredJobs.isEmpty && pending.isEmpty)
+                  StudioEmptyState(
+                    icon: Icons.inbox_outlined,
+                    title: query.isNotEmpty
+                        ? 'Không tìm thấy tiến trình phù hợp'
+                        : 'Chưa có công việc nào',
+                    subtitle: query.isNotEmpty
+                        ? 'Thử từ khóa khác hoặc xóa bộ lọc tìm kiếm.'
+                        : 'Chuyển sang tab Dịch video để tải video lên hoặc dán link TikTok/Douyin để tự động xử lý.',
+                    action: query.isNotEmpty
+                        ? OutlinedButton(
+                            onPressed: _clearSearch,
+                            child: const Text('Xóa tìm kiếm'),
+                          )
+                        : StudioGradientButton(
+                            expanded: false,
+                            icon: Icons.add_circle_outline_rounded,
+                            label: 'Tạo công việc mới',
+                            onPressed: () => context.go('/translate'),
+                          ),
+                  )
+                else if (filteredJobs.isNotEmpty) ...[
+                  for (var i = 0; i < filteredJobs.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 10),
+                    _JobTile(
+                      job: filteredJobs[i],
+                      selecting: _selecting,
+                      selected: _selectedIds.contains(filteredJobs[i].id),
+                      onTap: _selecting
+                          ? () => _toggle(filteredJobs[i])
+                          : () => context.push('/jobs/${filteredJobs[i].id}'),
+                      onLongPress: readOnly || _selecting
+                          ? null
+                          : () => _startSelecting(filteredJobs[i]),
                     ),
                   ],
+                  const SizedBox(height: 14),
+                  JobsPagination(
+                    list: list,
+                    onPage: _goToPage,
+                    onPageSize: _setPageSize,
+                  ),
                 ],
-              ),
+              ],
+            ),
           ),
         ),
       ),
@@ -500,7 +520,11 @@ class _JobTile extends StatelessWidget {
     return switch (status) {
       'completed' => AppColors.green,
       'processing' => AppColors.blue,
-      'queued' || 'cancelling' || 'awaiting_input' => AppColors.amber,
+      'queued' ||
+      'pausing' ||
+      'cancelling' ||
+      'awaiting_input' => AppColors.amber,
+      'paused' => AppColors.muted,
       'scheduled' => AppColors.teal,
       'failed' || 'cancelled' => AppColors.red,
       _ => AppColors.muted,

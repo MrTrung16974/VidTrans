@@ -811,6 +811,23 @@ class TimedSlideshowTests(unittest.TestCase):
         self.assertIn("-stream_loop", command)
         self.assertEqual(command[command.index("-t", command.index("-filter_complex")) + 1], "15.000")
 
+    def test_planned_command_uses_validated_motion_timing_and_transitions(self) -> None:
+        from infrastructure.tiktok_slideshow import build_planned_slideshow_command
+
+        slides = [
+            (Path("a.jpg"), {"duration_seconds": 3.0, "motion": "pan_right", "transition": "crossfade",
+                              "transition_seconds": 0.4}),
+            (Path("b.jpg"), {"duration_seconds": 4.0, "motion": "slow_zoom_out", "transition": "cut",
+                              "transition_seconds": 0.0}),
+        ]
+        command = build_planned_slideshow_command("ffmpeg", slides, Path("music.mp3"), Path("out.mp4"))
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertIn("zoompan=", graph)
+        self.assertIn("(iw-iw/zoom)*min(on/", graph)
+        self.assertIn("xfade=transition=fade:duration=0.400:offset=3.000", graph)
+        self.assertIn("-t", command)
+        self.assertEqual(command[command.index("-t", command.index("-filter_complex")) + 1], "7.000")
+
 
 DRIVE_ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
 

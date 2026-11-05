@@ -157,6 +157,50 @@ class CancellationLifecycleTests(unittest.TestCase):
         self.assertEqual(payload["status"], "cancelled")
         self.governance.release.assert_called_once_with("queued")
 
+    def test_pause_queued_job_and_resume_preserve_progress_and_quota(self) -> None:
+        self.service.create(
+            "queued", {"status": "queued", "step": "queued", "progress": 0.25,
+                       "resume_request": {"video_path": str(self.source_video)}}, owner_user_id="user-a",
+        )
+
+        paused = response_json(main.pause_job_endpoint(request_for("user-a"), "queued"))
+        self.assertEqual(paused["status"], "paused")
+        self.assertEqual(paused["progress"], 0.25)
+        self.assertIsNone(self.service.claim_next("other-worker"))
+        self.governance.release.assert_not_called()
+
+        resumed = response_json(main.resume_paused_job_endpoint(request_for("user-a"), "queued"))
+        self.assertEqual(resumed["status"], "queued")
+        self.assertEqual(resumed["progress"], 0.25)
+        self.assertFalse(self.service.is_cancel_requested("queued"))
+
+    def test_pause_running_job_stops_safely_then_can_resume(self) -> None:
+        self.create_running_job()
+        paused = response_json(main.pause_job_endpoint(request_for("user-a"), "job-1"))
+        self.assertEqual(paused["status"], "pausing")
+        self.assertTrue(self.service.is_cancel_requested("job-1"))
+
+        main.update_job("job-1", status="cancelled", step="cancelled", finished_at=main.utc_now())
+        stored = self.service.get("job-1")
+        self.assertEqual(stored["status"], "paused")
+        self.assertIsNone(stored["finished_at"])
+        main.release_job_quota_after_worker_stop("job-1")
+        self.governance.release.assert_not_called()
+
+        resumed = response_json(main.resume_paused_job_endpoint(request_for("user-a"), "job-1"))
+        self.assertEqual(resumed["status"], "queued")
+        self.assertEqual(resumed["progress"], stored["progress"])
+
+    def test_other_tenant_cannot_pause_or_resume(self) -> None:
+        self.service.create("queued", {"status": "queued"}, owner_user_id="user-a")
+        for operation in (
+            lambda: main.pause_job_endpoint(request_for("user-b"), "queued"),
+            lambda: main.resume_paused_job_endpoint(request_for("user-b"), "queued"),
+        ):
+            with self.assertRaises(HTTPException) as denied:
+                operation()
+            self.assertEqual(denied.exception.status_code, 404)
+
     def test_cancel_by_other_tenant_is_not_found(self) -> None:
         self.create_running_job()
 

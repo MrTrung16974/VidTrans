@@ -6,53 +6,101 @@ import '../../../core/api/providers.dart';
 import '../domain/job.dart';
 import '../domain/job_list.dart';
 
-final jobsRepositoryProvider = Provider<JobsRepository>((ref) => JobsRepository(ref.watch(apiClientProvider)));
+final jobsRepositoryProvider = Provider<JobsRepository>(
+  (ref) => JobsRepository(ref.watch(apiClientProvider)),
+);
 
 class JobsRepository {
   JobsRepository(this._api);
 
   final ApiClient _api;
 
-  Future<JobList> list({int page = 1, int limit = 20, String? status, String? search}) async {
-    final data = await _api.get<Map<String, dynamic>>('/api/v1/jobs', query: {
-      'page': page,
-      'limit': limit,
-      if (status != null && status.isNotEmpty) 'status': status,
-      if (search != null && search.isNotEmpty) 'search': search,
-    });
+  Future<JobList> list({
+    int page = 1,
+    int limit = 20,
+    String? status,
+    String? search,
+  }) async {
+    final data = await _api.get<Map<String, dynamic>>(
+      '/api/v1/jobs',
+      query: {
+        'page': page,
+        'limit': limit,
+        if (status != null && status.isNotEmpty) 'status': status,
+        if (search != null && search.isNotEmpty) 'search': search,
+      },
+    );
     return JobList.fromJson(data);
   }
 
   Future<Job> get(String jobId) async =>
       Job.fromJson(await _api.get<Map<String, dynamic>>('/api/v1/jobs/$jobId'));
 
-  Future<void> cancel(String jobId) => _api.post<dynamic>('/api/v1/jobs/$jobId/cancel');
+  Future<void> cancel(String jobId) =>
+      _api.post<dynamic>('/api/v1/jobs/$jobId/cancel');
 
-  Future<void> retry(String jobId) => _api.post<dynamic>('/api/v1/jobs/$jobId/retry');
+  Future<void> pause(String jobId) =>
+      _api.post<dynamic>('/api/v1/jobs/$jobId/pause');
+
+  Future<void> resume(String jobId) =>
+      _api.post<dynamic>('/api/v1/jobs/$jobId/resume');
+
+  Future<void> retry(String jobId) =>
+      _api.post<dynamic>('/api/v1/jobs/$jobId/retry');
 
   /// Re-runs a voiceless job as "Chỉ tải video": the source, no subtitles or dubbing.
-  Future<void> downloadOnly(String jobId) => _api.post<dynamic>('/api/v1/jobs/$jobId/download-only');
+  Future<void> downloadOnly(String jobId) =>
+      _api.post<dynamic>('/api/v1/jobs/$jobId/download-only');
 
   /// Answers a photo post waiting in `awaiting_input`: its images as a zip
   /// (`action: images`) or a slideshow of [minutes] (`action: video`).
   /// [musicTrackIds] are library tracks played one after another; empty keeps the post's music.
-  Future<void> choosePhotoPost(String jobId, {required String action, double? minutes, List<String>? musicTrackIds}) =>
-      _api.post<dynamic>('/api/v1/jobs/$jobId/photo-post', data: {
-        'action': action,
-        'minutes': ?minutes,
-        'music_track_ids': ?musicTrackIds,
-      });
+  Future<void> choosePhotoPost(
+    String jobId, {
+    required String action,
+    double? minutes,
+    List<String>? musicTrackIds,
+    Map<String, dynamic>? slideshowPlan,
+  }) => _api.post<dynamic>(
+    '/api/v1/jobs/$jobId/photo-post',
+    data: {
+      'action': action,
+      'minutes': ?minutes,
+      'music_track_ids': ?musicTrackIds,
+      'slideshow_plan': ?slideshowPlan,
+    },
+  );
+
+  /// AI/heuristic edit plan for a waiting photo post. This does not queue work or consume quota.
+  Future<PhotoSlideshowPlan> photoPostAiPlan(
+    String jobId, {
+    required double targetMinutes,
+    required bool keepOriginalOrder,
+  }) async => PhotoSlideshowPlan.fromJson(
+    await _api.post<Map<String, dynamic>>(
+      '/api/v1/jobs/$jobId/photo-post/ai-plan',
+      data: {
+        'target_minutes': targetMinutes,
+        'keep_original_order': keepOriginalOrder,
+        'preferred_style': 'auto',
+      },
+      options: Options(receiveTimeout: const Duration(seconds: 150)),
+    ),
+  );
 
   /// Library tracks that AI thinks fit a waiting photo post, best first.
-  Future<MusicSuggestions> photoPostMusicSuggestions(String jobId) async => MusicSuggestions.fromJson(
-        await _api.post<Map<String, dynamic>>(
-          '/api/v1/jobs/$jobId/photo-post/music-suggestions',
-          // The model may look at the post's pictures; the server gives it up to 2 minutes.
-          options: Options(receiveTimeout: const Duration(seconds: 150)),
-        ),
-      );
+  Future<MusicSuggestions> photoPostMusicSuggestions(
+    String jobId,
+  ) async => MusicSuggestions.fromJson(
+    await _api.post<Map<String, dynamic>>(
+      '/api/v1/jobs/$jobId/photo-post/music-suggestions',
+      // The model may look at the post's pictures; the server gives it up to 2 minutes.
+      options: Options(receiveTimeout: const Duration(seconds: 150)),
+    ),
+  );
 
-  Future<void> delete(String jobId) => _api.delete<dynamic>('/api/v1/jobs/$jobId');
+  Future<void> delete(String jobId) =>
+      _api.delete<dynamic>('/api/v1/jobs/$jobId');
 
   Uri artifactUri(String path) => _api.resolve(path);
 
@@ -68,14 +116,20 @@ class JobsRepository {
 
 /// A library track suggested for a photo post, with why it fits.
 class MusicSuggestion {
-  const MusicSuggestion({required this.trackId, required this.title, required this.category, required this.reason});
+  const MusicSuggestion({
+    required this.trackId,
+    required this.title,
+    required this.category,
+    required this.reason,
+  });
 
   final String trackId;
   final String title;
   final String category;
   final String reason;
 
-  factory MusicSuggestion.fromJson(Map<String, dynamic> json) => MusicSuggestion(
+  factory MusicSuggestion.fromJson(Map<String, dynamic> json) =>
+      MusicSuggestion(
         trackId: json['track_id'].toString(),
         title: json['title'] as String? ?? '',
         category: json['category'] as String? ?? '',
@@ -84,7 +138,11 @@ class MusicSuggestion {
 }
 
 class MusicSuggestions {
-  const MusicSuggestions({required this.items, required this.mood, required this.byAi});
+  const MusicSuggestions({
+    required this.items,
+    required this.mood,
+    required this.byAi,
+  });
 
   final List<MusicSuggestion> items;
   final String mood;
@@ -92,12 +150,55 @@ class MusicSuggestions {
   /// False when no AI model answered and the caption's mood words picked the tracks.
   final bool byAi;
 
-  factory MusicSuggestions.fromJson(Map<String, dynamic> json) => MusicSuggestions(
+  factory MusicSuggestions.fromJson(Map<String, dynamic> json) =>
+      MusicSuggestions(
         items: [
           for (final item in json['items'] as List? ?? const [])
-            if (item is Map) MusicSuggestion.fromJson(Map<String, dynamic>.from(item)),
+            if (item is Map)
+              MusicSuggestion.fromJson(Map<String, dynamic>.from(item)),
         ],
         mood: json['mood'] as String? ?? '',
         byAi: (json['source'] as String? ?? 'heuristic') != 'heuristic',
+      );
+}
+
+class PhotoSlideshowPlan {
+  const PhotoSlideshowPlan({
+    required this.raw,
+    required this.source,
+    required this.style,
+    required this.mood,
+    required this.summary,
+    required this.targetSeconds,
+    required this.slidesCount,
+    required this.musicSuggestions,
+  });
+
+  final Map<String, dynamic> raw;
+  final String source;
+  final String style;
+  final String mood;
+  final String summary;
+  final double targetSeconds;
+  final int slidesCount;
+  final List<MusicSuggestion> musicSuggestions;
+
+  bool get byAi => source != 'heuristic';
+  Map<String, dynamic> toJson() => Map<String, dynamic>.from(raw);
+
+  factory PhotoSlideshowPlan.fromJson(Map<String, dynamic> json) =>
+      PhotoSlideshowPlan(
+        raw: Map<String, dynamic>.from(json),
+        source: json['source'] as String? ?? 'heuristic',
+        style: json['style'] as String? ?? 'clean',
+        mood: json['mood'] as String? ?? '',
+        summary: json['summary'] as String? ?? '',
+        targetSeconds: (json['target_seconds'] as num?)?.toDouble() ?? 0,
+        slidesCount: (json['slides'] as List? ?? const []).length,
+        musicSuggestions: [
+          for (final item in json['music_suggestions'] as List? ?? const [])
+            if (item is Map)
+              MusicSuggestion.fromJson(Map<String, dynamic>.from(item)),
+        ],
       );
 }

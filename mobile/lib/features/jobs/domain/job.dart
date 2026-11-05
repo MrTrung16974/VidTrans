@@ -11,12 +11,15 @@ class Job {
   String get id => raw['job_id'].toString();
   String get status => raw['status'] as String? ?? 'queued';
   String get title =>
-      (raw['filename'] as String?) ?? (raw['source_url'] as String?) ?? 'Job ${id.substring(0, 8)}';
+      (raw['filename'] as String?) ??
+      (raw['source_url'] as String?) ??
+      'Job ${id.substring(0, 8)}';
   String? get step => raw['step'] as String?;
   String? get stepDetail => raw['step_detail'] as String?;
   String? get error => raw['error'] as String?;
   int? get queuePosition => (raw['queue_position'] as num?)?.toInt();
-  DateTime? get createdAt => DateTime.tryParse(raw['created_at']?.toString() ?? '')?.toLocal();
+  DateTime? get createdAt =>
+      DateTime.tryParse(raw['created_at']?.toString() ?? '')?.toLocal();
 
   /// Progress in 0..1. Every pipeline (translation, logo_branding,
   /// comic_video) stores a 0..1 fraction; the web shows `progress * 100`.
@@ -34,7 +37,8 @@ class Job {
   }
 
   /// `translation` (default), `logo_branding`, `comic_video`, `publish_tiktok`.
-  String get action => _string('job_action') ?? _string('job_type') ?? 'translation';
+  String get action =>
+      _string('job_action') ?? _string('job_type') ?? 'translation';
   String get actionLabel => jobActionLabels[action] ?? 'Dịch video';
 
   String? get sourceUrl => _string('source_url');
@@ -50,7 +54,8 @@ class Job {
     return (nested?.isNotEmpty ?? false) ? nested : _string('tts_provider');
   }
 
-  String? get ownerName => _string('owner_display_name') ?? _string('owner_email');
+  String? get ownerName =>
+      _string('owner_display_name') ?? _string('owner_email');
   String? get tiktokStatus => _string('tiktok_publish_status');
   String? get tiktokError => _string('tiktok_publish_error');
   DateTime? get tiktokPublishAt => _date('tiktok_publish_at');
@@ -81,21 +86,33 @@ class Job {
   String? get videoUrl => raw['video_url'] as String?;
   String? get subtitleUrl => raw['subtitle_url'] as String?;
 
-  bool get isActive => const {'queued', 'scheduled', 'processing', 'cancelling'}.contains(status);
-  bool get canCancel => status == 'queued' || status == 'processing';
+  bool get isActive => const {
+    'queued',
+    'scheduled',
+    'processing',
+    'pausing',
+    'cancelling',
+  }.contains(status);
+  bool get canPause =>
+      const {'queued', 'scheduled', 'processing'}.contains(status);
+  bool get canResume => status == 'paused';
+  bool get canCancel =>
+      const {'queued', 'scheduled', 'processing', 'paused'}.contains(status);
   bool get canRetry => status == 'failed' || status == 'cancelled';
 
   /// `error_code` of a failed job (see NoSpeechError on the backend).
   String? get errorCode => raw['error_code'] as String?;
 
   /// Failed because the video holds no speech: it can still be downloaded as is.
-  bool get canDownloadOnly => status == 'failed' && errorCode == noSpeechErrorCode;
+  bool get canDownloadOnly =>
+      status == 'failed' && errorCode == noSpeechErrorCode;
 
   /// A photo post waiting for the owner: download its images or make a slideshow.
   bool get awaitsPhotoChoice => status == 'awaiting_input';
 
-  Map<String, dynamic> get _photoPost =>
-      raw['photo_post'] is Map ? Map<String, dynamic>.from(raw['photo_post'] as Map) : const {};
+  Map<String, dynamic> get _photoPost => raw['photo_post'] is Map
+      ? Map<String, dynamic>.from(raw['photo_post'] as Map)
+      : const {};
 
   int get photoImageCount => (_photoPost['image_count'] as num?)?.toInt() ?? 0;
 
@@ -118,6 +135,8 @@ const jobStatusLabels = {
   'queued': 'Đang chờ',
   'scheduled': 'Đã lên lịch',
   'processing': 'Đang xử lý',
+  'pausing': 'Đang tạm dừng',
+  'paused': 'Đã tạm dừng',
   'cancelling': 'Đang hủy',
   'completed': 'Hoàn thành',
   'failed': 'Lỗi',
@@ -145,6 +164,8 @@ const jobStepLabels = {
   'failed': 'Xử lý thất bại',
   'cancelled': 'Đã hủy',
   'cancelling': 'Đang dừng an toàn',
+  'pausing': 'Đang tạm dừng an toàn',
+  'paused': 'Đã tạm dừng',
   'photo-choice': 'Bài đăng ảnh: chờ bạn chọn',
   'packing-images': 'Đang gom ảnh để tải về',
   'rendering-slideshow': 'Đang dựng video ghép ảnh',

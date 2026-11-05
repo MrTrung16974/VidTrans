@@ -29,7 +29,7 @@ class JobStateConflictError(JobStoreError):
 
 # "awaiting_input": the worker stopped and the owner must choose how to go on
 # (a photo post: download its images or make a slideshow video).
-TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "awaiting_input"})
+TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "paused", "awaiting_input"})
 
 
 def _utc_now() -> str:
@@ -487,7 +487,7 @@ class JobStore:
                 batch["total_jobs"] = sum(batch["counts"].values())
                 active = sum(
                     batch["counts"].get(status, 0)
-                    for status in ("queued", "processing", "scheduled", "cancelling")
+                    for status in ("queued", "processing", "scheduled", "pausing", "cancelling")
                 )
                 if active:
                     batch["status"] = "processing"
@@ -606,6 +606,10 @@ class JobStore:
                 return payload
             if current_status == "cancelling" and requested_status != "cancelled":
                 return payload
+            if current_status == "pausing" and requested_status != "paused":
+                return payload
+            if current_status == "paused" and requested_status != "paused":
+                return payload
             payload.update(fields)
             status = str(payload.get("status", "queued"))
             scheduled_for = (
@@ -666,25 +670,39 @@ class JobStore:
                 )
 
     def claim_next(self, worker_id: str) -> tuple[str, dict[str, Any]] | None:
-        """Atomically claim the oldest highest-priority queued job."""
+        """Atomically claim the next job, sharing worker slots fairly between users.
+
+        Due scheduled publishes go first. Otherwise the job whose owner has the fewest
+        jobs running wins, so every waiting user gets a slot before anyone gets a
+        second one; a user alone in the queue still fills every free slot. Running
+        jobs are never preempted. Ties fall back to priority, then age.
+        """
 
         now = _utc_now()
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT job_id, payload_json
+                SELECT jobs.job_id, jobs.payload_json
                 FROM jobs
-                WHERE cancel_requested = 0
-                  AND deleted_at IS NULL
+                LEFT JOIN (
+                  SELECT owner_user_id, COUNT(*) AS running
+                  FROM jobs
+                  WHERE status IN ('processing', 'cancelling', 'pausing')
+                    AND deleted_at IS NULL
+                  GROUP BY owner_user_id
+                ) AS active ON active.owner_user_id = jobs.owner_user_id
+                WHERE jobs.cancel_requested = 0
+                  AND jobs.deleted_at IS NULL
                   AND (
-                    status = 'queued'
-                    OR (status = 'scheduled' AND scheduled_for IS NOT NULL AND scheduled_for <= ?)
+                    jobs.status = 'queued'
+                    OR (jobs.status = 'scheduled' AND jobs.scheduled_for IS NOT NULL AND jobs.scheduled_for <= ?)
                   )
                 ORDER BY
-                  CASE WHEN status = 'scheduled' THEN 0 ELSE 1 END,
-                  priority DESC,
-                  COALESCE(scheduled_for, created_at) ASC
+                  CASE WHEN jobs.status = 'scheduled' THEN 0 ELSE 1 END,
+                  COALESCE(active.running, 0) ASC,
+                  jobs.priority DESC,
+                  COALESCE(jobs.scheduled_for, jobs.created_at) ASC
                 LIMIT 1
                 """,
                 (now,),
@@ -732,7 +750,7 @@ class JobStore:
                 return payload
             if status == "cancelling":
                 return payload
-            stops_immediately = status in {"queued", "scheduled", "awaiting_input"}
+            stops_immediately = status in {"queued", "scheduled", "paused", "awaiting_input"}
             next_status = "cancelled" if stops_immediately else "cancelling"
             if stops_immediately:
                 step_detail = "Đã hủy theo yêu cầu"
@@ -762,6 +780,91 @@ class JobStore:
                 WHERE job_id = ?
                 """,
                 (next_status, self._encode(payload), now, job_id),
+            )
+        return payload
+
+    def request_pause(self, job_id: str) -> dict[str, Any]:
+        """Pause a queued job immediately or ask its active worker to stop at a safe checkpoint."""
+        now = _utc_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, payload_json, scheduled_for FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(f"Job not found: {job_id}")
+            payload = self._decode(row["payload_json"])
+            status = str(row["status"])
+            if status in {"paused", "pausing"}:
+                return payload
+            if status not in {"queued", "scheduled", "processing"}:
+                raise JobStateConflictError(f"Job cannot be paused from status {status}: {job_id}")
+            if status == "processing" and (
+                payload.get("job_action") == "publish_tiktok" or payload.get("step") == "publishing-tiktok"
+            ):
+                raise JobStateConflictError("A TikTok upload cannot be paused after it starts")
+            stops_immediately = status in {"queued", "scheduled"}
+            next_status = "paused" if stops_immediately else "pausing"
+            payload.update(
+                {
+                    "status": next_status,
+                    "step": next_status,
+                    "step_detail": "Đã tạm dừng" if stops_immediately else "Đang tạm dừng tại điểm an toàn",
+                    "cancel_requested": not stops_immediately,
+                    "pause_requested": True,
+                    "paused_from_status": status,
+                    "paused_step": payload.get("step"),
+                    "paused_step_detail": payload.get("step_detail"),
+                    "paused_scheduled_for": row["scheduled_for"],
+                    "finished_at": None,
+                }
+            )
+            connection.execute(
+                """
+                UPDATE jobs
+                SET status = ?, cancel_requested = ?, payload_json = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (next_status, 0 if stops_immediately else 1, self._encode(payload), now, job_id),
+            )
+        return payload
+
+    def resume_paused(self, job_id: str) -> dict[str, Any]:
+        """Return a fully paused job to its queue while preserving checkpoints and artifacts."""
+        now = _utc_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, payload_json FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(f"Job not found: {job_id}")
+            if str(row["status"]) != "paused":
+                raise JobStateConflictError(f"Job is not paused: {job_id}")
+            payload = self._decode(row["payload_json"])
+            resume_status = "scheduled" if payload.get("paused_from_status") == "scheduled" else "queued"
+            scheduled_for = payload.get("paused_scheduled_for") if resume_status == "scheduled" else None
+            payload.update(
+                {
+                    "status": resume_status,
+                    "step": payload.get("paused_step") or ("scheduled" if resume_status == "scheduled" else "queued"),
+                    "step_detail": payload.get("paused_step_detail") or "Đang chờ tiếp tục xử lý",
+                    "cancel_requested": False,
+                    "pause_requested": False,
+                    "worker_id": None,
+                    "finished_at": None,
+                }
+            )
+            connection.execute(
+                """
+                UPDATE jobs
+                SET status = ?, cancel_requested = 0, worker_id = NULL, scheduled_for = ?,
+                    payload_json = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (resume_status, scheduled_for, self._encode(payload), now, job_id),
             )
         return payload
 
@@ -827,6 +930,8 @@ class JobStore:
             ).fetchone()
             if row is None:
                 raise JobNotFoundError(f"Job not found: {job_id}")
+            if str(row["status"]) == "paused":
+                raise JobStateConflictError(f"Paused job must be resumed instead of retried: {job_id}")
             if str(row["status"]) not in TERMINAL_STATUSES:
                 raise JobStateConflictError(f"Job is still active: {job_id}")
             payload = self._decode(row["payload_json"])
@@ -862,25 +967,29 @@ class JobStore:
             if row is None:
                 raise JobNotFoundError(f"Job not found: {job_id}")
             payload = self._decode(row["payload_json"])
-            if str(row["status"]) != "cancelling":
+            current_status = str(row["status"])
+            if current_status not in {"cancelling", "pausing"}:
                 return payload, False
+            paused = current_status == "pausing"
+            final_status = "paused" if paused else "cancelled"
             payload.update(
                 {
-                    "step": "cancelled",
-                    "step_detail": "Đã hủy theo yêu cầu",
+                    "step": final_status,
+                    "step_detail": "Đã tạm dừng" if paused else "Đã hủy theo yêu cầu",
                     **fields,
-                    "status": "cancelled",
-                    "cancel_requested": True,
-                    "finished_at": fields.get("finished_at") or now,
+                    "status": final_status,
+                    "cancel_requested": False if paused else True,
+                    "pause_requested": paused,
+                    "finished_at": None if paused else fields.get("finished_at") or now,
                 }
             )
             connection.execute(
                 """
-                UPDATE jobs
-                SET status = 'cancelled', cancel_requested = 1, payload_json = ?, updated_at = ?
+                UPDATE jobs SET status = ?, cancel_requested = ?, worker_id = NULL,
+                    payload_json = ?, updated_at = ?
                 WHERE job_id = ?
                 """,
-                (self._encode(payload), now, job_id),
+                (final_status, 0 if paused else 1, self._encode(payload), now, job_id),
             )
         return payload, True
 
@@ -968,11 +1077,21 @@ class JobStore:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
                 "SELECT job_id, payload_json FROM jobs "
-                "WHERE status IN ('queued', 'processing', 'cancelling')"
+                "WHERE status IN ('queued', 'processing', 'cancelling', 'pausing')"
             ).fetchall()
             for row in rows:
                 payload = self._decode(row["payload_json"])
-                if payload.get("cancel_requested") or payload.get("status") == "cancelling":
+                if payload.get("status") == "pausing" or payload.get("pause_requested"):
+                    payload.update(
+                        {
+                            "status": "paused",
+                            "step": "paused",
+                            "step_detail": "Đã tạm dừng sau khi worker dừng",
+                            "cancel_requested": False,
+                            "finished_at": None,
+                        }
+                    )
+                elif payload.get("cancel_requested") or payload.get("status") == "cancelling":
                     payload.update(
                         {
                             "status": "cancelled",
@@ -992,10 +1111,14 @@ class JobStore:
                 connection.execute(
                     """
                     UPDATE jobs
-                    SET status = ?, payload_json = ?, updated_at = ?
+                    SET status = ?, cancel_requested = ?, worker_id = NULL, payload_json = ?, updated_at = ?
                     WHERE job_id = ?
                     """,
-                    (str(payload["status"]), self._encode(payload), now, row["job_id"]),
+                    (
+                        str(payload["status"]),
+                        0 if payload["status"] == "paused" else int(bool(payload.get("cancel_requested"))),
+                        self._encode(payload), now, row["job_id"],
+                    ),
                 )
                 recovered += 1
         return recovered
@@ -1019,10 +1142,26 @@ class JobStore:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
                 "SELECT job_id, payload_json FROM jobs "
-                "WHERE status IN ('queued', 'processing', 'cancelling')"
+                "WHERE status IN ('queued', 'processing', 'cancelling', 'pausing')"
             ).fetchall()
             for row in rows:
                 payload = self._decode(row["payload_json"])
+                if payload.get("status") == "pausing" or payload.get("pause_requested"):
+                    payload.update(
+                        {
+                            "status": "paused",
+                            "step": "paused",
+                            "step_detail": "Đã tạm dừng sau khi worker dừng",
+                            "cancel_requested": False,
+                            "finished_at": None,
+                        }
+                    )
+                    connection.execute(
+                        "UPDATE jobs SET status='paused', cancel_requested=0, worker_id=NULL, "
+                        "payload_json=?, updated_at=? WHERE job_id=?",
+                        (self._encode(payload), now, row["job_id"]),
+                    )
+                    continue
                 if payload.get("cancel_requested") or payload.get("status") == "cancelling":
                     payload.update(
                         {

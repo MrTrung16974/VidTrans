@@ -103,8 +103,8 @@ class JobScheduler:
         """Finish a job left in ``cancelling`` now that its runner returned."""
 
         try:
-            _, finalized = self._service.finalize_cancellation(job_id)
-            if finalized and self._on_cancelled is not None:
+            result, finalized = self._service.finalize_cancellation(job_id)
+            if finalized and result.get("status") == "cancelled" and self._on_cancelled is not None:
                 self._on_cancelled(job_id)
         except JobNotFoundError:
             return

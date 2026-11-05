@@ -2,7 +2,7 @@ import { createTikTokWorkspace } from "./tiktok.js?v=20261105-staff-browser";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261104-shared-source";
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261105-notifications";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
-import { createComicWorkspace } from "./comic.js?v=20261104-plan-hide";
+import { createComicWorkspace } from "./comic.js?v=20261105-novel-ui-polish";
 import { createClipWorkspace } from "./clips.js?v=20261105-clips-ai";
 import { createBrandingWorkspace } from "./branding.js?v=20261031-apply-logo";
 import { createAccessConfig } from "./access-config.js?v=20261104-plan-minutes";
@@ -171,13 +171,14 @@ const stepLabels = {
   tts: "Đang tạo giọng đọc", "mixing-audio": "Đang trộn âm thanh", rendering: "Đang dựng video", "publishing-tiktok": "Đang đăng lên TikTok",
   "waiting-tiktok-publish": "Đang chờ lịch đăng TikTok",
   completed: "Đã hoàn tất", failed: "Xử lý thất bại", cancelled: "Đã hủy", cancelling: "Đang dừng an toàn",
+  pausing: "Đang tạm dừng an toàn", paused: "Đã tạm dừng",
   comic_storyboard: "Đang chia cảnh truyện", comic_references: "Đang vẽ nhân vật tham chiếu", comic_images: "Đang vẽ minh họa",
   comic_voice: "Đang lồng tiếng truyện", comic_clips: "Đang dựng clip cảnh", comic_export: "Đang xuất video truyện",
   storyboard_ready: "Storyboard chờ duyệt",
   "photo-choice": "Bài đăng ảnh: chờ bạn chọn", "packing-images": "Đang gom ảnh để tải về",
   "rendering-slideshow": "Đang dựng video ghép ảnh",
 };
-const statusLabels = { queued: "Đang chờ", scheduled: "Đã đặt lịch", processing: "Đang chạy", completed: "Hoàn tất", failed: "Thất bại", cancelled: "Đã hủy", cancelling: "Đang hủy", awaiting_input: "Chờ bạn chọn" };
+const statusLabels = { queued: "Đang chờ", scheduled: "Đã đặt lịch", processing: "Đang chạy", pausing: "Đang tạm dừng", paused: "Đã tạm dừng", completed: "Hoàn tất", failed: "Thất bại", cancelled: "Đã hủy", cancelling: "Đang hủy", awaiting_input: "Chờ bạn chọn" };
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
@@ -2968,22 +2969,28 @@ function jobActions(job) {
     downloads += `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Tải video MP4 hoàn tất" aria-label="Tải video MP4 hoàn tất"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span translate="no">Video</span></button>`;
   }
   if (job.images_url) {
-    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.images_url)}" data-download-name="${escapeHtml(`${job.job_id}_images.zip`)}" title="Tải ảnh của bài đăng (ZIP)" aria-label="Tải ảnh của bài đăng (ZIP)"><span>Ảnh (ZIP)</span></button>`;
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.images_url)}" data-download-name="${escapeHtml(`${job.job_id}_images.zip`)}" title="Tải ảnh của bài đăng (ZIP)" aria-label="Tải ảnh của bài đăng (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg><span>Ảnh (ZIP)</span></button>`;
   }
   if (awaitingChoice) {
-    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-detail" data-action="detail" data-job="${escapeHtml(job.job_id)}" title="Chọn tải ảnh hoặc tạo video ghép ảnh" aria-label="Chọn tải ảnh hoặc tạo video ghép ảnh"><span>Chọn cách xử lý</span></button>`;
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-photo-choice" data-action="detail" data-job="${escapeHtml(job.job_id)}" title="Chọn tải ảnh hoặc tạo video ghép ảnh" aria-label="Chọn tải ảnh hoặc tạo video ghép ảnh"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg><span>Chọn cách xử lý</span></button>`;
   }
   if (job.download_all_url) {
     const zipName = `${job.job_id}.artifacts.zip`;
     downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)" aria-label="Tải toàn bộ tài nguyên (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg><span translate="no">ZIP</span></button>`;
   }
-  const cancel = ["queued", "scheduled", "processing"].includes(job.status)
+  const pause = ["queued", "scheduled", "processing"].includes(job.status)
+    ? `<button type="button" class="btn-job-action" data-action="pause" data-job="${job.job_id}" title="Tạm dừng tiến trình" aria-label="Tạm dừng tiến trình"><span>⏸</span><span>Tạm dừng</span></button>`
+    : "";
+  const resume = job.status === "paused"
+    ? `<button type="button" class="btn-job-action btn-retry" data-action="resume" data-job="${job.job_id}" title="Tiếp tục tiến trình" aria-label="Tiếp tục tiến trình"><span>▶</span><span>Tiếp tục</span></button>`
+    : "";
+  const cancel = ["queued", "scheduled", "processing", "paused"].includes(job.status)
     ? `<button type="button" class="btn-job-action btn-cancel" data-action="cancel" data-job="${job.job_id}" title="Hủy tiến trình" aria-label="Hủy tiến trình"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Hủy</span></button>`
     : "";
   const retry = terminal
     ? `<button type="button" class="btn-job-action btn-retry" data-action="retry" data-job="${job.job_id}" title="Chạy lại video này" aria-label="Chạy lại video này"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>Chạy lại</span></button>`
     : "";
-  const remove = terminal || awaitingChoice
+  const remove = terminal || awaitingChoice || job.status === "paused"
     ? `<button type="button" class="btn-job-action btn-delete" data-action="delete" data-job="${job.job_id}" title="Xóa video và dữ liệu liên quan" aria-label="Xóa video và dữ liệu liên quan"><svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg><span>Xóa</span></button>`
     : "";
   const refreshTikTok = job.tiktok_publish_id && !["PUBLISH_COMPLETE", "FAILED"].includes(job.tiktok_publish_status)
@@ -2993,13 +3000,15 @@ function jobActions(job) {
     && (state.auth.role === "owner" || !state.auth.user_id || job.owner_user_id === state.auth.user_id)
     ? `<button type="button" data-action="tiktok-review" data-job="${escapeHtml(job.job_id)}" class="btn-job-action tiktok-review-action" title="Mở trang chuẩn bị và đăng bài" aria-label="Mở trang chuẩn bị và đăng bài"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4Z"></path></svg><span>Đăng bài</span></button>`
     : "";
-  return detail + downloads + refreshTikTok + cancel + retry + remove + review;
+  return detail + downloads + refreshTikTok + pause + resume + cancel + retry + remove + review;
 }
 
 function eligibleJobs(action) {
   const selected = state.jobs.filter(job => state.selectedJobIds.has(job.job_id));
-  if (action === "cancel") return selected.filter(job => ["queued", "scheduled", "processing"].includes(job.status));
-  if (action === "delete") return selected.filter(job => ["completed", "failed", "cancelled", "awaiting_input"].includes(job.status));
+  if (action === "pause") return selected.filter(job => ["queued", "scheduled", "processing"].includes(job.status));
+  if (action === "resume") return selected.filter(job => job.status === "paused");
+  if (action === "cancel") return selected.filter(job => ["queued", "scheduled", "processing", "paused"].includes(job.status));
+  if (action === "delete") return selected.filter(job => ["completed", "failed", "cancelled", "paused", "awaiting_input"].includes(job.status));
   return selected.filter(job => ["completed", "failed", "cancelled"].includes(job.status));
 }
 
@@ -3097,12 +3106,16 @@ function updateJobSelectionUI() {
   const totalSelected = state.selectedJobIds.size;
   $("#selectedJobsCount").textContent = totalSelected ? `Đã chọn ${totalSelected} tiến trình` : "Chưa chọn job";
   const counts = {
+    pause: eligibleJobs("pause").length,
+    resume: eligibleJobs("resume").length,
     cancel: eligibleJobs("cancel").length,
     retry: eligibleJobs("retry").length,
     delete: eligibleJobs("delete").length,
   };
-  const labels = { cancel: "Hủy", retry: "Chạy lại", delete: "Xóa" };
+  const labels = { pause: "Tạm dừng", resume: "Tiếp tục", cancel: "Hủy", retry: "Chạy lại", delete: "Xóa" };
   const icons = {
+    pause: `<span aria-hidden="true">⏸</span>`,
+    resume: `<span aria-hidden="true">▶</span>`,
     cancel: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`,
     retry: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>`,
     delete: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
@@ -3254,8 +3267,8 @@ function renderJobDashboard() {
   const counts = state.jobStatusCounts || state.jobs.reduce((result, job) => ({ ...result, [job.status]: (result[job.status] || 0) + 1 }), {});
   const activeUploads = state.pendingUploads.filter(upload => upload.status === "uploading").length;
   const failedUploads = state.pendingUploads.filter(upload => upload.status !== "uploading").length;
-  const queuedCount = (counts.queued || 0) + (counts.scheduled || 0);
-  const processingCount = (counts.processing || 0) + (counts.cancelling || 0) + activeUploads;
+  const queuedCount = (counts.queued || 0) + (counts.scheduled || 0) + (counts.paused || 0);
+  const processingCount = (counts.processing || 0) + (counts.pausing || 0) + (counts.cancelling || 0) + activeUploads;
   const completedCount = counts.completed || 0;
   const failedCount = (counts.failed || 0) + (counts.cancelled || 0) + failedUploads;
 
@@ -3467,15 +3480,97 @@ const PHOTO_MAX_MUSIC_TRACKS = 10;
 let photoChosenTracks = [];
 let photoMusicPreview = null;
 let photoMusicPreviewTrackId = null;
+let photoSlideshowPlan = null;
+let photoAppliedSlideshowPlan = null;
 
 function syncPhotoMusicPreviewButtons() {
-  $("#photoChoiceMusicList")?.querySelectorAll('[data-action="preview"]').forEach(button => {
+  $("#jobDetailPhotoCard")?.querySelectorAll(".photo-music-preview-btn").forEach(button => {
     const isPlaying = button.dataset.trackId === photoMusicPreviewTrackId;
     button.classList.toggle("is-playing", isPlaying);
     button.setAttribute("aria-pressed", String(isPlaying));
     button.setAttribute("aria-label", isPlaying ? "Dừng nghe thử bài này" : "Nghe thử bài này");
     button.innerHTML = isPlaying ? "⏸ <span>Dừng</span>" : "▶ <span>Nghe thử</span>";
   });
+}
+
+function renderPhotoAiPlan(hasOriginalMusic) {
+  const container = $("#photoAiPlanResult");
+  if (!container) return;
+  if (!photoSlideshowPlan) {
+    container.classList.add("is-hidden");
+    container.innerHTML = "";
+    return;
+  }
+  const plan = photoSlideshowPlan;
+  const sourceLabel = plan.source === "heuristic" ? "Phương án dự phòng" : "AI phân tích";
+  const suggestions = (plan.music_suggestions || []).map(item => `
+    <div class="photo-ai-music-item">
+      <div><strong>${escapeHtml(item.title || item.track_id)}</strong><small>${escapeHtml(item.reason || "Phù hợp với mạch ảnh")}</small></div>
+      <button class="button secondary mini-btn photo-music-preview-btn" type="button" data-track-id="${escapeHtml(item.track_id)}" aria-label="Nghe thử bài này" aria-pressed="false">▶ <span>Nghe thử</span></button>
+      <button class="button secondary mini-btn" type="button" data-ai-choose-track="${escapeHtml(item.track_id)}">Chọn bài</button>
+    </div>`).join("");
+  container.innerHTML = `
+    <div class="photo-ai-plan-summary">
+      <span class="photo-ai-style">${escapeHtml(plan.style || "clean")}</span>
+      <span>${escapeHtml(plan.mood || "Cân bằng")}</span>
+      <span>${formatTrackLength(plan.target_seconds || 0)}</span>
+      <span>${escapeHtml(sourceLabel)}</span>
+    </div>
+    <strong>${escapeHtml(plan.summary || "Đã tạo phương án dựng phù hợp với bộ ảnh.")}</strong>
+    <p>${(plan.slides || []).length} cảnh · chuyển động và thời lượng được tối ưu theo từng ảnh.</p>
+    ${suggestions ? `<div class="photo-ai-music-list"><b>Nhạc gợi ý</b>${suggestions}</div>` : '<p>Chưa tìm thấy nhạc phù hợp trong thư viện.</p>'}
+    <button id="photoAiApplyPlan" class="button primary mini-btn" type="button">${photoAppliedSlideshowPlan === plan ? "✓ Đã áp dụng" : "Áp dụng phương án"}</button>`;
+  container.classList.remove("is-hidden");
+  container.querySelectorAll(".photo-music-preview-btn").forEach(button => {
+    button.onclick = () => togglePhotoMusicPreview(button.dataset.trackId);
+  });
+  container.querySelectorAll("[data-ai-choose-track]").forEach(button => {
+    button.onclick = () => {
+      const trackId = button.dataset.aiChooseTrack;
+      if (!photoChosenTracks.includes(trackId) && photoChosenTracks.length < PHOTO_MAX_MUSIC_TRACKS) {
+        photoChosenTracks.push(trackId);
+        renderPhotoChosenTracks(hasOriginalMusic);
+      }
+    };
+  });
+  $("#photoAiApplyPlan").onclick = () => {
+    photoAppliedSlideshowPlan = plan;
+    $("#photoChoiceMinutes").value = Math.max(0.25, Number(plan.target_seconds || 60) / 60);
+    const firstTrack = plan.music_suggestions?.[0]?.track_id;
+    if (firstTrack && !photoChosenTracks.includes(firstTrack) && photoChosenTracks.length < PHOTO_MAX_MUSIC_TRACKS) {
+      photoChosenTracks.push(firstTrack);
+      renderPhotoChosenTracks(hasOriginalMusic);
+    }
+    renderPhotoAiPlan(hasOriginalMusic);
+    toast("Đã áp dụng phương án dựng AI");
+  };
+  syncPhotoMusicPreviewButtons();
+}
+
+async function requestPhotoAiPlan(job, hasOriginalMusic) {
+  const button = $("#photoAiPlanButton");
+  button.disabled = true;
+  button.textContent = "AI đang phân tích…";
+  try {
+    const minutes = Number($("#photoChoiceMinutes").value);
+    const plan = await requestJson(`/api/v1/jobs/${job.job_id}/photo-post/ai-plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_minutes: Number.isFinite(minutes) ? minutes : 1,
+        keep_original_order: $("#photoAiKeepOrder").checked,
+        preferred_style: "auto",
+      }),
+    });
+    photoSlideshowPlan = plan;
+    photoAppliedSlideshowPlan = null;
+    renderPhotoAiPlan(hasOriginalMusic);
+  } catch (error) {
+    toast(error.message || "Không tạo được phương án dựng AI", true);
+  } finally {
+    button.disabled = false;
+    button.textContent = photoSlideshowPlan ? "Phân tích lại" : "Phân tích bằng AI";
+  }
 }
 
 function stopPhotoMusicPreview() {
@@ -3562,6 +3657,9 @@ function renderPhotoChoiceCard(job) {
     stopPhotoMusicPreview();
     select.dataset.jobId = job.job_id;
     photoChosenTracks = [];
+    photoSlideshowPlan = null;
+    photoAppliedSlideshowPlan = null;
+    renderPhotoAiPlan(hasOriginalMusic);
     renderPhotoChosenTracks(hasOriginalMusic);
     photoMusicOptions(hasOriginalMusic).then(html => {
       if (select.dataset.jobId === job.job_id) select.innerHTML = html;
@@ -3577,6 +3675,16 @@ function renderPhotoChoiceCard(job) {
     }
     photoChosenTracks.push(trackId);
     renderPhotoChosenTracks(hasOriginalMusic);
+  };
+  $("#photoAiPlanButton").onclick = () => requestPhotoAiPlan(job, hasOriginalMusic);
+  $("#photoChoiceMinutes").onchange = () => {
+    if (!photoAppliedSlideshowPlan) return;
+    const seconds = Number($("#photoChoiceMinutes").value) * 60;
+    if (Number.isFinite(seconds) && seconds < (photoAppliedSlideshowPlan.slides || []).length) {
+      photoAppliedSlideshowPlan = null;
+      renderPhotoAiPlan(hasOriginalMusic);
+      toast("Độ dài quá ngắn để giữ đủ ảnh; đã chuyển về cách dựng thủ công", true);
+    }
   };
   const send = async (button, choice) => {
     button.disabled = true;
@@ -3605,7 +3713,12 @@ function renderPhotoChoiceCard(job) {
       toast("Độ dài video phải từ 0,25 đến 10 phút", true);
       return;
     }
-    send(event.currentTarget, { action: "video", minutes, music_track_ids: [...photoChosenTracks] });
+    send(event.currentTarget, {
+      action: "video",
+      minutes,
+      music_track_ids: [...photoChosenTracks],
+      ...(photoAppliedSlideshowPlan ? { slideshow_plan: photoAppliedSlideshowPlan } : {}),
+    });
   };
 }
 
@@ -3790,6 +3903,7 @@ async function jobAction(action, jobId) {
   }
   if (action === "delete" && !confirm("Xóa job và toàn bộ file kết quả?")) return;
   if (action === "cancel" && !confirm("Yêu cầu dừng job này?")) return;
+  if (action === "pause" && !confirm("Tạm dừng job tại điểm an toàn gần nhất?")) return;
   const method = action === "delete" ? "DELETE" : "POST";
   const endpoint = action === "delete" ? `/api/v1/jobs/${jobId}` : action === "tiktok-status" ? `/api/v1/jobs/${jobId}/refresh-tiktok-status` : `/api/v1/jobs/${jobId}/${action}`;
   try {
@@ -3797,7 +3911,7 @@ async function jobAction(action, jobId) {
     if (response.status === 401) lockApplication();
     const data = await response.json();
     if (!response.ok) throw new Error(errorDetail(data.detail) || `Không thể ${action} job`);
-    toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "cancel" ? (data.status === "cancelling" ? "Đang dừng job an toàn…" : "Đã hủy job") : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
+    toast(action === "retry" ? `Đã chạy lại job ${data.job_id}` : action === "resume" ? "Đã đưa job trở lại hàng đợi" : action === "pause" ? (data.status === "pausing" ? "Đang tạm dừng job tại điểm an toàn…" : "Đã tạm dừng job") : action === "cancel" ? (data.status === "cancelling" ? "Đang dừng job an toàn…" : "Đã hủy job") : action === "tiktok-status" ? `TikTok: ${data.tiktok_publish_status}` : "Đã xóa job");
     await loadJobs();
   } catch (error) { toast(error.message, true); }
 }
@@ -3904,7 +4018,7 @@ function renderJobDetailModal(job, { preserveMedia = false } = {}) {
   // Progress Card
   const progressCard = $("#jobDetailProgressCard");
   const percent = Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100)));
-  const isActive = ["queued", "scheduled", "processing", "cancelling"].includes(job.status);
+  const isActive = ["queued", "scheduled", "processing", "pausing", "cancelling"].includes(job.status);
   if (progressCard) {
     if (isActive) {
       progressCard.classList.remove("is-hidden");
@@ -4105,9 +4219,25 @@ function renderJobDetailModal(job, { preserveMedia = false } = {}) {
   if ($("#jobDetailDuration")) $("#jobDetailDuration").textContent = formatDurationSeconds(elapsedSec);
 
   // Footer action buttons
+  const pauseBtn = $("#jobDetailPauseBtn");
+  if (pauseBtn) {
+    pauseBtn.classList.toggle("is-hidden", !["queued", "scheduled", "processing"].includes(job.status));
+    pauseBtn.onclick = async () => {
+      await jobAction("pause", job.job_id);
+      openJobDetailModal(job.job_id, { refresh: true });
+    };
+  }
+  const resumeBtn = $("#jobDetailResumeBtn");
+  if (resumeBtn) {
+    resumeBtn.classList.toggle("is-hidden", job.status !== "paused");
+    resumeBtn.onclick = async () => {
+      await jobAction("resume", job.job_id);
+      openJobDetailModal(job.job_id, { refresh: true });
+    };
+  }
   const cancelBtn = $("#jobDetailCancelBtn");
   if (cancelBtn) {
-    if (isActive) {
+    if (isActive || job.status === "paused") {
       cancelBtn.classList.remove("is-hidden");
       cancelBtn.onclick = async () => {
         await jobAction("cancel", job.job_id);
@@ -4226,7 +4356,7 @@ function closeJobDetailModal() {
 async function bulkJobAction(action) {
   const jobs = eligibleJobs(action);
   if (!jobs.length) return;
-  const verbs = { cancel: "hủy", retry: "chạy lại", delete: "xóa" };
+  const verbs = { pause: "tạm dừng", resume: "tiếp tục", cancel: "hủy", retry: "chạy lại", delete: "xóa" };
   if (!confirm(`Bạn muốn ${verbs[action]} ${jobs.length} job đã chọn?`)) return;
   const results = await Promise.all(jobs.map(async job => {
     const method = action === "delete" ? "DELETE" : "POST";

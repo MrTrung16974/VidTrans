@@ -189,6 +189,44 @@ class PhotoPostJobTests(unittest.TestCase):
         self.assertEqual(seen["tracks"], [files["t2"], files["t1"]])
         self.assertEqual(seen["audio"].name, "music.m4a")
 
+    def test_ai_plan_is_validated_stored_and_sent_to_the_planned_renderer(self) -> None:
+        self.wait_for_choice()
+        plan = {
+            "version": 1, "source": "fake", "style": "cinematic", "mood": "ấm áp",
+            "summary": "Mở nhẹ và kết chậm", "confidence": 0.8, "keep_original_order": False,
+            "slides": [
+                {"image_index": 2, "duration_seconds": 5, "motion": "slow_zoom_in",
+                 "transition": "crossfade", "transition_seconds": 0.4, "role": "hook"},
+                {"image_index": 0, "duration_seconds": 5, "motion": "pan_right",
+                 "transition": "fade", "transition_seconds": 0.4, "role": "story"},
+                {"image_index": 1, "duration_seconds": 5, "motion": "slow_zoom_out",
+                 "transition": "cut", "transition_seconds": 0, "role": "ending"},
+            ],
+            "music_suggestions": [],
+        }
+        library = Mock()
+        library.list.return_value = []
+        seen = {}
+
+        def fake_render(ffmpeg, images, validated_plan, audio, output, *, work_dir):
+            seen.update(images=list(images), plan=validated_plan, audio=audio)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"planned-slideshow")
+            return sum(slide["duration_seconds"] for slide in validated_plan["slides"])
+
+        with patch.object(main, "MUSIC_LIBRARY", library), \
+                patch.object(main, "render_planned_slideshow", side_effect=fake_render):
+            main.choose_photo_post_endpoint(
+                request_for(account("user-a")), "job-p",
+                main.PhotoPostChoice(action="video", minutes=0.25, slideshow_plan=plan),
+            )
+            self.run_worker()
+        job = self.service.get("job-p")
+        self.assertEqual(job["status"], "completed", job.get("error"))
+        self.assertEqual([slide["image_index"] for slide in seen["plan"]["slides"]], [2, 0, 1])
+        self.assertEqual(seen["audio"], self.music)
+        self.assertEqual(job["photo_choice"]["slideshow_plan"]["version"], 1)
+
     def test_ai_suggests_library_music_from_the_post(self) -> None:
         self.wait_for_choice()
         stored = self.service.get("job-p")["resume_request"]
@@ -218,6 +256,46 @@ class PhotoPostJobTests(unittest.TestCase):
 
         with self.assertRaises(HTTPException) as other_user:
             main.suggest_photo_post_music_endpoint(request_for(account("user-b")), "job-p")
+        self.assertEqual(other_user.exception.status_code, 404)
+
+    def test_ai_director_returns_validated_plan_and_hides_other_users_job(self) -> None:
+        self.wait_for_choice()
+        library = Mock()
+        library.list.return_value = [
+            {"track_id": "t1", "title": "Travel", "category": "Du lịch", "duration_seconds": 60.0},
+        ]
+        model = Mock(accepts_images=False, timeout=900.0)
+        model.name = "director-model"
+        model.generate_json.return_value = json.dumps({
+            "style": "travel", "mood": "khám phá", "summary": "Mở bằng ảnh nổi bật", "confidence": 0.9,
+            "slides": [
+                {"image_index": 2, "duration_seconds": 3, "motion": "pan_right", "transition": "crossfade",
+                 "transition_seconds": 0.4, "role": "hook"},
+                {"image_index": 0, "duration_seconds": 3, "motion": "slow_zoom_in", "transition": "fade",
+                 "transition_seconds": 0.4, "role": "story"},
+                {"image_index": 1, "duration_seconds": 3, "motion": "static", "transition": "cut",
+                 "transition_seconds": 0, "role": "ending"},
+            ],
+            "music_suggestions": [
+                {"track_id": "t1", "reason": "Hợp không khí khám phá", "score": 0.9},
+                {"track_id": "invented", "reason": "Bịa", "score": 1},
+            ],
+        })
+        with patch.object(main, "MUSIC_LIBRARY", library), \
+                patch.object(main, "create_story_llm", return_value=model):
+            result = body(main.create_photo_post_ai_plan_endpoint(
+                request_for(account("user-a")), "job-p",
+                main.PhotoPostAiPlanRequest(target_minutes=0.25, keep_original_order=False),
+            ))
+        self.assertEqual(result["source"], "director-model")
+        self.assertEqual([slide["image_index"] for slide in result["slides"]], [2, 0, 1])
+        self.assertEqual([item["track_id"] for item in result["music_suggestions"]], ["t1"])
+        self.assertEqual(model.timeout, 120.0)
+
+        with self.assertRaises(HTTPException) as other_user:
+            main.create_photo_post_ai_plan_endpoint(
+                request_for(account("user-b")), "job-p", main.PhotoPostAiPlanRequest(),
+            )
         self.assertEqual(other_user.exception.status_code, 404)
 
     def test_playlist_command_joins_tracks_in_order(self) -> None:

@@ -10,28 +10,28 @@ export function createNovelImporter({ container, requestJson, toast, escapeHtml,
   const api = (path, init = {}) => requestJson(`/api/v1/comic/sources${path}`, init);
   container.innerHTML = `
     <details class="novel-import">
-      <summary><span class="novel-import-badge">📖 Qidian · Jinjiang</span> Nhập chương từ link truyện (tự động chia tập)</summary>
+      <summary><span class="novel-import-badge">📖 Qidian · Jinjiang</span> <span class="novel-import-summary-text">Nhập chương từ link truyện (tự động chia tập)</span></summary>
       <div class="novel-import-body">
-        <div class="novel-import-row">
+        <div class="novel-import-row novel-import-url-row">
           <input type="url" data-novel="url" placeholder="https://www.qidian.com/book/… hoặc https://www.jjwxc.net/onebook.php?novelid=…" aria-label="Link truyện" />
           <button type="button" class="button secondary" data-novel="catalog">Tải mục lục</button>
         </div>
-        <div data-novel="catalog-view" class="is-hidden">
+        <div data-novel="catalog-view" class="novel-import-catalog is-hidden">
           <p data-novel="book" class="novel-import-book"></p>
-          <div class="novel-import-row">
-            <label>Từ chương <input type="number" min="1" data-novel="from" /></label>
-            <label>đến chương <input type="number" min="1" data-novel="to" /></label>
-            <label class="comic-check"><input type="checkbox" data-novel="skip-locked" checked /> Bỏ qua chương bị khóa (VIP chưa mua)</label>
+          <div class="novel-import-row novel-import-controls-row">
+            <label class="novel-import-field"><span>Từ chương</span> <input type="number" min="1" data-novel="from" /></label>
+            <label class="novel-import-field"><span>đến chương</span> <input type="number" min="1" data-novel="to" /></label>
+            <label class="comic-check novel-import-skip"><input type="checkbox" data-novel="skip-locked" checked /> <span>Bỏ qua chương bị khóa (VIP chưa mua)</span></label>
           </div>
-          <p data-novel="range" class="field-hint"></p>
-          <label class="comic-check"><input type="checkbox" data-novel="rights" /> Tôi là tác giả, hoặc đã được tác giả/đơn vị giữ bản quyền (ví dụ Yuewen/Qidian, Jinjiang) cho phép chuyển thể truyện này thành video, và tự chịu trách nhiệm về bản quyền theo <a href="/terms#content" target="_blank" rel="noopener">Điều khoản mục 4</a>.</label>
-          <div class="novel-import-row">
+          <p data-novel="range" class="field-hint novel-import-range"></p>
+          <label class="comic-check novel-import-rights"><input type="checkbox" data-novel="rights" /> <span>Tôi là tác giả, hoặc đã được tác giả/đơn vị giữ bản quyền (ví dụ Yuewen/Qidian, Jinjiang) cho phép chuyển thể truyện này thành video, và tự chịu trách nhiệm về bản quyền theo <a href="/terms#content" target="_blank" rel="noopener">Điều khoản mục 4</a>.</span></label>
+          <div class="novel-import-row novel-import-actions">
             <button type="button" class="button primary" data-novel="start">Tải chương</button>
             <button type="button" class="button secondary is-hidden" data-novel="cancel">Hủy</button>
           </div>
         </div>
-        <p data-novel="progress" class="field-hint" role="status"></p>
-        <div data-novel="result"></div>
+        <p data-novel="progress" class="field-hint novel-import-progress" role="status"></p>
+        <div data-novel="result" class="novel-import-result"></div>
       </div>
     </details>`;
   const $ = name => container.querySelector(`[data-novel="${name}"]`);

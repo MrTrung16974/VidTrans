@@ -85,7 +85,7 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
   Future<void> _loadCatalog() async {
     final url = _urlController.text.trim();
     if (url.isEmpty) {
-      setState(() => _error = 'Hãy dán link truyện Qidian để tải mục lục');
+      setState(() => _error = 'Hãy dán link truyện (Qidian hoặc Jinjiang) để tải mục lục');
       return;
     }
     FocusScope.of(context).unfocus();
@@ -291,7 +291,7 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                           Text('📖', style: TextStyle(fontSize: 11)),
                           SizedBox(width: 4),
                           Text(
-                            'Qidian',
+                            'Qidian · Jinjiang',
                             style: TextStyle(
                               fontSize: 10.5,
                               fontWeight: FontWeight.w800,
@@ -307,7 +307,7 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Nhập chương từ link truyện (Qidian)',
+                            'Nhập chương từ link truyện (tự động chia tập)',
                             style: TextStyle(
                               fontSize: 12.8,
                               fontWeight: FontWeight.w800,
@@ -352,7 +352,7 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                           controller: _urlController,
                           enabled: !_loadingCatalog && !_importing,
                           decoration: InputDecoration(
-                            hintText: 'https://www.qidian.com/book/1045928363/',
+                            hintText: 'https://www.qidian.com/book/… hoặc jjwxc.net/…',
                             hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
                             isDense: true,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -380,7 +380,8 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                         child: OutlinedButton(
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFFC2410C),
-                            side: const BorderSide(color: Color(0xFFFDBA74)),
+                            backgroundColor: const Color(0xFFFFF7ED),
+                            side: const BorderSide(color: Color(0xFFFDBA74), width: 1.3),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                           ),
@@ -393,7 +394,7 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                                 )
                               : const Text(
                                   'Tải mục lục',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
                                 ),
                         ),
                       ),
@@ -446,37 +447,57 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                   if (_catalog != null) ...[
                     const SizedBox(height: 12),
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFFED7AA), width: 1.4),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x0A0F172A),
+                            blurRadius: 8,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // Book name + Author
-                          Row(
-                            children: [
-                              const Icon(Icons.menu_book_rounded, size: 18, color: Color(0xFFEA580C)),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  '${_catalog!['title'] ?? 'Truyện'}'
-                                  '${_catalog!['author'] != null ? ' · ${_catalog!['author']}' : ''}',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w800,
-                                    color: Color(0xFF0F172A),
-                                  ),
+                          // Book name + Author banner
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF7ED),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFFED7AA)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.menu_book_rounded, size: 17, color: Color(0xFFEA580C)),
+                                    const SizedBox(width: 7),
+                                    Expanded(
+                                      child: Text(
+                                        '${_catalog!['title'] ?? 'Truyện'}'
+                                        '${_catalog!['author'] != null ? ' · ${_catalog!['author']}' : ''}',
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w800,
+                                          color: Color(0xFF0F172A),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Tổng ${_rawChapters.length} chương · ${_rawChapters.where((c) => c['access'] == 'accessible').length} chương đọc được',
-                            style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Tổng ${_rawChapters.length} chương · ${_rawChapters.where((c) => c['access'] == 'accessible').length} chương đọc được',
+                                  style: const TextStyle(fontSize: 11.2, color: Color(0xFF64748B), fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ),
                           ),
                           const SizedBox(height: 10),
 
@@ -484,127 +505,219 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                           Row(
                             children: [
                               Expanded(
-                                child: Row(
-                                  children: [
-                                    const Text('Từ: ', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                                    Expanded(
-                                      child: SizedBox(
-                                        height: 34,
-                                        child: TextFormField(
-                                          initialValue: '$_fromChapter',
-                                          keyboardType: TextInputType.number,
-                                          enabled: !_importing,
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                                          decoration: InputDecoration(
-                                            isDense: true,
-                                            contentPadding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                child: Container(
+                                  padding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF8FAFC),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Text(
+                                        'Từ chương',
+                                        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: SizedBox(
+                                          height: 32,
+                                          child: TextFormField(
+                                            initialValue: '$_fromChapter',
+                                            keyboardType: TextInputType.number,
+                                            enabled: !_importing,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                                            decoration: InputDecoration(
+                                              isDense: true,
+                                              filled: true,
+                                              fillColor: Colors.white,
+                                              contentPadding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(7)),
+                                            ),
+                                            onChanged: (v) {
+                                              final val = int.tryParse(v);
+                                              if (val != null) setState(() => _fromChapter = val);
+                                            },
                                           ),
-                                          onChanged: (v) {
-                                            final val = int.tryParse(v);
-                                            if (val != null) setState(() => _fromChapter = val);
-                                          },
                                         ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: 10),
                               Expanded(
-                                child: Row(
-                                  children: [
-                                    const Text('Đến: ', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                                    Expanded(
-                                      child: SizedBox(
-                                        height: 34,
-                                        child: TextFormField(
-                                          initialValue: '$_toChapter',
-                                          keyboardType: TextInputType.number,
-                                          enabled: !_importing,
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                                          decoration: InputDecoration(
-                                            isDense: true,
-                                            contentPadding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                child: Container(
+                                  padding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF8FAFC),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Text(
+                                        'đến chương',
+                                        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: SizedBox(
+                                          height: 32,
+                                          child: TextFormField(
+                                            initialValue: '$_toChapter',
+                                            keyboardType: TextInputType.number,
+                                            enabled: !_importing,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                                            decoration: InputDecoration(
+                                              isDense: true,
+                                              filled: true,
+                                              fillColor: Colors.white,
+                                              contentPadding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(7)),
+                                            ),
+                                            onChanged: (v) {
+                                              final val = int.tryParse(v);
+                                              if (val != null) setState(() => _toChapter = val);
+                                            },
                                           ),
-                                          onChanged: (v) {
-                                            final val = int.tryParse(v);
-                                            if (val != null) setState(() => _toChapter = val);
-                                          },
                                         ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 8),
 
-                          // Skip locked checkbox
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: Checkbox(
-                                  value: _skipLocked,
-                                  activeColor: const Color(0xFFEA580C),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                  onChanged: _importing ? null : (v) => setState(() => _skipLocked = v ?? true),
-                                ),
+                          // Skip locked checkbox pill
+                          InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: _importing ? null : () => setState(() => _skipLocked = !_skipLocked),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFF7ED),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFFFED7AA)),
                               ),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  'Bỏ qua chương bị khóa (VIP chưa mua)',
-                                  style: TextStyle(fontSize: 11.5, color: Color(0xFF475569), fontWeight: FontWeight.w600),
-                                ),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: Checkbox(
+                                      value: _skipLocked,
+                                      activeColor: const Color(0xFFEA580C),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                      onChanged: _importing ? null : (v) => setState(() => _skipLocked = v ?? true),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Expanded(
+                                    child: Text(
+                                      'Bỏ qua chương bị khóa (VIP chưa mua)',
+                                      style: TextStyle(fontSize: 11.8, color: Color(0xFF9A3412), fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 8),
 
-                          // Rights consent checkbox
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: Checkbox(
-                                  value: _rightsConfirmed,
-                                  activeColor: const Color(0xFFEA580C),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                  onChanged: _importing ? null : (v) => setState(() => _rightsConfirmed = v ?? false),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  'Tôi là tác giả, hoặc đã được tác giả/đơn vị giữ bản quyền (ví dụ Yuewen/Qidian, Jinjiang) '
-                                  'cho phép chuyển thể truyện này thành video, và tự chịu trách nhiệm về bản quyền '
-                                  '(Điều khoản mục 4).',
-                                  style: TextStyle(fontSize: 11.5, color: Color(0xFF475569), fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-
-                          // Summary badge
+                          // Summary badge callout
                           Builder(builder: (context) {
                             final chosen = _selectedChapters();
                             final words = chosen.fold<int>(0, (sum, c) => sum + ((c['word_count'] as num?)?.toInt() ?? 0));
                             final limit = (_catalog!['episode_chars'] as num?)?.toInt() ?? 59000;
                             final episodes = max(1, (words / limit).ceil());
-                            return Text(
-                              'Đã chọn ${chosen.length} chương (~${words > 0 ? words : (chosen.length * 2000)} chữ) → dự kiến chia thành $episodes tập.',
-                              style: const TextStyle(fontSize: 11, color: Color(0xFFEA580C), fontWeight: FontWeight.w700),
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(9),
+                                border: const Border(
+                                  left: BorderSide(color: Color(0xFFF97316), width: 3.5),
+                                  top: BorderSide(color: Color(0xFFE2E8F0)),
+                                  right: BorderSide(color: Color(0xFFE2E8F0)),
+                                  bottom: BorderSide(color: Color(0xFFE2E8F0)),
+                                ),
+                              ),
+                              child: Text(
+                                'Đã chọn ${chosen.length} chương (~${words > 0 ? words : (chosen.length * 2000)} chữ) → dự kiến chia thành $episodes tập.',
+                                style: const TextStyle(fontSize: 11.5, color: Color(0xFF334155), fontWeight: FontWeight.w700),
+                              ),
                             );
                           }),
+                          const SizedBox(height: 8),
+
+                          // Rights consent checkbox card (top-aligned checkbox + inline Terms reference)
+                          InkWell(
+                            borderRadius: BorderRadius.circular(11),
+                            onTap: _importing ? null : () => setState(() => _rightsConfirmed = !_rightsConfirmed),
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFFBF7),
+                                borderRadius: BorderRadius.circular(11),
+                                border: Border.all(
+                                  color: _rightsConfirmed ? const Color(0xFFFB923C) : const Color(0xFFFED7AA),
+                                  width: 1.2,
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 1),
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: Checkbox(
+                                        value: _rightsConfirmed,
+                                        activeColor: const Color(0xFFEA580C),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                        onChanged: _importing ? null : (v) => setState(() => _rightsConfirmed = v ?? false),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 9),
+                                  const Expanded(
+                                    child: Text.rich(
+                                      TextSpan(
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: Color(0xFF334155),
+                                          fontWeight: FontWeight.w600,
+                                          height: 1.45,
+                                        ),
+                                        children: [
+                                          TextSpan(
+                                            text: 'Tôi là tác giả, hoặc đã được tác giả/đơn vị giữ bản quyền '
+                                                '(ví dụ Yuewen/Qidian, Jinjiang) cho phép chuyển thể truyện này thành video, '
+                                                'và tự chịu trách nhiệm về bản quyền theo ',
+                                          ),
+                                          TextSpan(
+                                            text: 'Điều khoản mục 4',
+                                            style: TextStyle(
+                                              color: Color(0xFFEA580C),
+                                              fontWeight: FontWeight.w800,
+                                              decoration: TextDecoration.underline,
+                                            ),
+                                          ),
+                                          TextSpan(text: '.'),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                           const SizedBox(height: 12),
 
                           // CTA Button & Progress Bar
@@ -624,11 +737,11 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                               children: [
                                 Text(
                                   'Đang tải chương $_doneChapters/$_totalChapters…',
-                                  style: const TextStyle(fontSize: 11.5, color: Color(0xFFC2410C), fontWeight: FontWeight.w600),
+                                  style: const TextStyle(fontSize: 11.5, color: Color(0xFFC2410C), fontWeight: FontWeight.w700),
                                 ),
                                 TextButton(
                                   onPressed: _cancelImport,
-                                  child: const Text('Hủy', style: TextStyle(color: Color(0xFFEF4444), fontSize: 11.5)),
+                                  child: const Text('Hủy', style: TextStyle(color: Color(0xFFEF4444), fontSize: 11.5, fontWeight: FontWeight.w700)),
                                 ),
                               ],
                             ),
@@ -638,14 +751,14 @@ class _NovelImportCardState extends ConsumerState<NovelImportCard> {
                                 backgroundColor: const Color(0xFFEA580C),
                                 foregroundColor: Colors.white,
                                 elevation: 0,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
+                                padding: const EdgeInsets.symmetric(vertical: 11),
                               ),
                               onPressed: _startImport,
-                              icon: const Icon(Icons.cloud_download_rounded, size: 17),
+                              icon: const Icon(Icons.cloud_download_rounded, size: 18),
                               label: const Text(
                                 'Tải chương vào truyện',
-                                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
                               ),
                             ),
                           ],

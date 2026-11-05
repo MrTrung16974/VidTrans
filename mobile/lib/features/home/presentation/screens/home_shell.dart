@@ -71,14 +71,18 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       isCompactHeight ? 6.0 : 10.0,
       bottomInset + 2.0,
     );
-    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final keyboardOpen = isStudioKeyboardOpen(context);
 
     return Scaffold(
-      extendBody: true,
+      // Let each branch screen's own Scaffold handle keyboard insets directly
+      // so nested screens still receive MediaQuery.viewInsetsOf(context).bottom
+      // and don't double-offset or misdetect keyboard state.
+      resizeToAvoidBottomInset: false,
+      extendBody: !keyboardOpen,
       backgroundColor: AppColors.bg,
       body: shell,
       bottomNavigationBar: keyboardOpen
-          ? const SizedBox.shrink()
+          ? null
           : Padding(
               padding: EdgeInsets.fromLTRB(
                 14,

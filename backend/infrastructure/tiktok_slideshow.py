@@ -11,7 +11,7 @@ import logging
 import math
 import subprocess
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -247,3 +247,105 @@ def render_timed_slideshow(
     )
     subprocess.run(command, check=True, capture_output=True, timeout=timeout)
     return len(slides) * max(1, round(seconds * FPS)) / FPS
+
+
+def _planned_motion(motion: str, frames: int) -> tuple[str, str, str]:
+    """Safe zoompan expressions for the slideshow-plan motion allowlist."""
+    progress = f"min(on/{max(1, frames - 1)},1)"
+    center_x, center_y = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    if motion == "slow_zoom_out":
+        return f"1+{ZOOM_AMOUNT}*(1-{progress})", center_x, center_y
+    if motion == "pan_left":
+        return f"1+{ZOOM_AMOUNT}", f"(iw-iw/zoom)*(1-{progress})", center_y
+    if motion == "pan_right":
+        return f"1+{ZOOM_AMOUNT}", f"(iw-iw/zoom)*{progress}", center_y
+    if motion == "pan_up":
+        return f"1+{ZOOM_AMOUNT}", center_x, f"(ih-ih/zoom)*(1-{progress})"
+    if motion == "pan_down":
+        return f"1+{ZOOM_AMOUNT}", center_x, f"(ih-ih/zoom)*{progress}"
+    if motion == "static":
+        return "1.001", center_x, center_y
+    return f"1+{ZOOM_AMOUNT}*{progress}", center_x, center_y
+
+
+def build_planned_slideshow_command(
+    ffmpeg: str,
+    slides: Sequence[tuple[Path, dict[str, Any]]],
+    audio: Path | None,
+    output: Path,
+) -> list[str]:
+    """Build an FFmpeg graph for validated per-slide timing, motion and transitions."""
+    if not slides:
+        raise ValueError("A slideshow plan needs at least one slide")
+    total = sum(float(spec["duration_seconds"]) for _, spec in slides)
+    command = [ffmpeg, "-y", "-v", "error"]
+    effective_transitions: list[float] = []
+    for index, (image, spec) in enumerate(slides):
+        transition = 0.0 if index == len(slides) - 1 else float(spec.get("transition_seconds") or 0)
+        effective = max(0.001, transition) if index < len(slides) - 1 else 0.0
+        effective_transitions.append(effective)
+        input_seconds = float(spec["duration_seconds"]) + effective
+        command += ["-loop", "1", "-framerate", str(FPS), "-t", f"{input_seconds:.3f}", "-i", str(image)]
+    if audio is not None:
+        command += ["-stream_loop", "-1", "-i", str(audio)]
+    else:
+        command += ["-f", "lavfi", "-t", f"{total:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
+
+    parts: list[str] = []
+    for index, (_, spec) in enumerate(slides):
+        duration = float(spec["duration_seconds"]) + effective_transitions[index]
+        frames = max(1, round(duration * FPS))
+        zoom, x, y = _planned_motion(str(spec.get("motion") or "slow_zoom_in"), frames)
+        parts.append(
+            f"[{index}:v]zoompan=z='{zoom}':x='{x}':y='{y}':d={frames}:"
+            f"s={WIDTH}x{HEIGHT}:fps={FPS},trim=duration={duration:.3f},"
+            f"setpts=PTS-STARTPTS,setsar=1,format=yuv420p[v{index}]"
+        )
+    video_label = "v0"
+    offset = float(slides[0][1]["duration_seconds"])
+    for index in range(1, len(slides)):
+        previous = slides[index - 1][1]
+        transition = effective_transitions[index - 1]
+        transition_name = "fadeblack" if previous.get("transition") == "fade" else "fade"
+        output_label = f"mix{index}"
+        parts.append(
+            f"[{video_label}][v{index}]xfade=transition={transition_name}:"
+            f"duration={transition:.3f}:offset={offset:.3f}[{output_label}]"
+        )
+        video_label = output_label
+        offset += float(slides[index][1]["duration_seconds"])
+    audio_index = len(slides)
+    fade = min(2.0, total / 4)
+    parts.append(f"[{audio_index}:a]afade=t=out:st={max(0.0, total - fade):.3f}:d={fade:.3f},aresample=44100[audio]")
+    command += [
+        "-filter_complex", ";".join(parts),
+        "-map", f"[{video_label}]", "-map", "[audio]",
+        "-t", f"{total:.3f}", "-r", str(FPS),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(output),
+    ]
+    return command
+
+
+def render_planned_slideshow(
+    ffmpeg: str,
+    images: Sequence[Path],
+    plan: dict[str, Any],
+    audio: Path | None,
+    output: Path,
+    *,
+    work_dir: Path,
+    timeout: float = 3600,
+) -> float:
+    """Render a server-validated slideshow plan and return its target duration."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    planned: list[tuple[Path, dict[str, Any]]] = []
+    for position, spec in enumerate(plan.get("slides") or []):
+        index = int(spec["image_index"])
+        if index < 0 or index >= len(images):
+            raise ValueError("Slideshow plan image index is out of range")
+        composed = compose_slide(images[index], work_dir / f"planned_{position:03d}.jpg")
+        planned.append((composed, spec))
+    command = build_planned_slideshow_command(ffmpeg, planned, audio, output)
+    subprocess.run(command, check=True, capture_output=True, timeout=timeout)
+    return sum(float(spec["duration_seconds"]) for _, spec in planned)

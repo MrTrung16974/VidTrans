@@ -707,9 +707,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     // has pasted valid links or added files (state.sourceCount > 0), and hides
     // when scrolled down to the full submit card.
     // When the soft keyboard is open, the dock in HomeShell is hidden, so the
-    // bar docks directly above the keyboard (bottom: 10) instead of leaving a
-    // large empty clearance (studioDockClearance ~108px) that obstructs inputs.
-    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    // bar docks snugly right above the keyboard (bottom: 6) instead of leaving
+    // a large empty clearance (studioDockClearance ~108px) that obstructs inputs.
+    final keyboardOpen = isStudioKeyboardOpen(context);
     final showQuickBar = !_atBottomSubmit && state.sourceCount > 0;
 
     return Scaffold(
@@ -728,7 +728,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 14,
                 14,
                 keyboardOpen
-                    ? (showQuickBar ? 72.0 : 20.0)
+                    ? (showQuickBar ? 68.0 : 18.0)
                     : studioDockBottomPadding(
                         context,
                         extra: showQuickBar ? 82 : 24,
@@ -793,17 +793,17 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               ],
             ),
             AnimatedPositioned(
-              duration: const Duration(milliseconds: 200),
+              duration: const Duration(milliseconds: 180),
               curve: Curves.easeOutCubic,
               left: 0,
               right: 0,
-              bottom: keyboardOpen ? 10.0 : studioDockClearance(context),
+              bottom: keyboardOpen ? 6.0 : studioDockClearance(context),
               child: AnimatedSlide(
-                duration: const Duration(milliseconds: 260),
+                duration: const Duration(milliseconds: 240),
                 curve: Curves.easeOutCubic,
                 offset: showQuickBar ? Offset.zero : const Offset(0, 1.0),
                 child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 220),
+                  duration: const Duration(milliseconds: 200),
                   curve: Curves.easeOut,
                   opacity: showQuickBar ? 1.0 : 0.0,
                   child: IgnorePointer(
@@ -812,8 +812,13 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 420),
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 14),
-                          child: _quickSubmitBar(state),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: keyboardOpen ? 10 : 14,
+                          ),
+                          child: _quickSubmitBar(
+                            state,
+                            compact: keyboardOpen,
+                          ),
                         ),
                       ),
                     ),
@@ -1365,7 +1370,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 maxLines: 5,
                 maxLength: 12000,
                 scrollPadding: const EdgeInsets.only(
-                  bottom: 76,
+                  bottom: 92,
                   top: 20,
                   left: 20,
                   right: 20,
@@ -2239,7 +2244,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     };
   }
 
-  Widget _quickSubmitBar(TranslateFormState state) {
+  Widget _quickSubmitBar(TranslateFormState state, {bool compact = false}) {
     final config = state.config;
     final modeLabel = switch (config.mode) {
       1 => 'Phụ đề',
@@ -2256,17 +2261,17 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
-          boxShadow: const [
+          boxShadow: [
             BoxShadow(
-              color: Color(0x220F172A),
-              blurRadius: 28,
+              color: const Color(0x220F172A),
+              blurRadius: compact ? 18 : 28,
               spreadRadius: -4,
-              offset: Offset(0, 12),
+              offset: Offset(0, compact ? 6 : 12),
             ),
             BoxShadow(
-              color: Color(0x1FEA580C),
-              blurRadius: 12,
-              offset: Offset(0, 4),
+              color: const Color(0x1FEA580C),
+              blurRadius: compact ? 8 : 12,
+              offset: Offset(0, compact ? 2 : 4),
             ),
           ],
         ),
@@ -2275,15 +2280,20 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
             child: Container(
-              padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+              padding: EdgeInsets.fromLTRB(
+                10,
+                compact ? 4 : 6,
+                compact ? 5 : 6,
+                compact ? 4 : 6,
+              ),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Color(0xF0FFFFFF), Color(0xF8FFFAF5)],
+                  colors: [Color(0xF5FFFFFF), Color(0xFAFFFAF5)],
                 ),
                 borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: const Color(0xE6FED7AA), width: 1.5),
+                border: Border.all(color: const Color(0xE6FED7AA), width: 1.4),
               ),
               child: Row(
                 children: [
@@ -2291,9 +2301,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                     behavior: HitTestBehavior.opaque,
                     onTap: _submit,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 5,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compact ? 8 : 9,
+                        vertical: compact ? 4 : 5,
                       ),
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(
@@ -2309,8 +2319,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                       ),
                       child: Text(
                         '${state.sourceCount}/50',
-                        style: const TextStyle(
-                          fontSize: 11.5,
+                        style: TextStyle(
+                          fontSize: compact ? 11.0 : 11.5,
                           fontWeight: FontWeight.w900,
                           color: AppColors.brandDark,
                         ),
@@ -2330,20 +2340,22 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                             modeLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12.5,
+                            style: TextStyle(
+                              fontSize: compact ? 12.0 : 12.5,
                               fontWeight: FontWeight.w800,
                               color: AppColors.ink,
+                              height: 1.15,
                             ),
                           ),
                           Text(
                             langLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 10.5,
+                            style: TextStyle(
+                              fontSize: compact ? 10.2 : 10.5,
                               fontWeight: FontWeight.w600,
                               color: AppColors.muted,
+                              height: 1.15,
                             ),
                           ),
                         ],
@@ -2384,11 +2396,16 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                         splashColor: const Color(0x33FFFFFF),
                         highlightColor: const Color(0x1AFFFFFF),
                         child: ConstrainedBox(
-                          // min-height: 40px
-                          constraints: const BoxConstraints(minHeight: 40),
+                          constraints: BoxConstraints(
+                            minHeight: compact ? 36 : 40,
+                          ),
                           child: Padding(
-                            // padding: 6px 12px 6px 14px
-                            padding: const EdgeInsets.fromLTRB(14, 6, 12, 6),
+                            padding: EdgeInsets.fromLTRB(
+                              compact ? 12 : 14,
+                              compact ? 5 : 6,
+                              compact ? 10 : 12,
+                              compact ? 5 : 6,
+                            ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [

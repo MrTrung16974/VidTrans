@@ -30,6 +30,8 @@ class JobBulkBar extends StatelessWidget {
   final void Function(BulkJobAction action) onAction;
 
   static const _icons = {
+    BulkJobAction.pause: Icons.pause_rounded,
+    BulkJobAction.resume: Icons.play_arrow_rounded,
     BulkJobAction.cancel: Icons.close_rounded,
     BulkJobAction.retry: Icons.replay_rounded,
     BulkJobAction.delete: Icons.delete_outline_rounded,
@@ -46,12 +48,7 @@ class JobBulkBar extends StatelessWidget {
         child: Padding(
           // Extra bottom space so the floating HomeShell dock does not cover
           // the bulk action buttons.
-          padding: EdgeInsets.fromLTRB(
-            8,
-            6,
-            12,
-            studioDockClearance(context),
-          ),
+          padding: EdgeInsets.fromLTRB(8, 6, 12, studioDockClearance(context)),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -97,18 +94,19 @@ class JobBulkBar extends StatelessWidget {
                     ),
                 ],
               ),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
                 children: [
-                  for (final action in BulkJobAction.values) ...[
-                    if (action != BulkJobAction.values.first)
-                      const SizedBox(width: 8),
-                    Expanded(
+                  for (final action in BulkJobAction.values)
+                    SizedBox(
+                      width: 112,
                       child: _actionButton(
                         action,
                         action.eligible(selected).length,
                       ),
                     ),
-                  ],
                 ],
               ),
             ],

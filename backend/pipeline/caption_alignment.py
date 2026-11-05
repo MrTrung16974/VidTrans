@@ -404,12 +404,27 @@ def detect_caption_intervals(
     frame_size: tuple[int, int],
     config: CaptionAlignmentConfig,
 ) -> list[tuple[float, float]]:
+    return detect_caption_layout(
+        video_path, segments, ffmpeg=ffmpeg, frame_size=frame_size, config=config
+    )[0]
+
+
+def detect_caption_layout(
+    video_path: Path,
+    segments: Sequence[dict[str, Any]],
+    *,
+    ffmpeg: str,
+    frame_size: tuple[int, int],
+    config: CaptionAlignmentConfig,
+) -> tuple[list[tuple[float, float]], dict[str, float] | None]:
+    """Caption windows plus the caption band as a frame-fraction ``source_bbox``."""
+
     import numpy as np
 
     config.validate()
     source_width, source_height = frame_size
     if source_width <= 0 or source_height <= 0:
-        return []
+        return [], None
     roi_y = _even(source_height * config.roi_top) if config.roi_top > 0 else 0
     roi_height = _even(source_height * (config.roi_bottom - config.roi_top))
     scan_width = min(config.scan_width, source_width)
@@ -433,9 +448,15 @@ def detect_caption_intervals(
     scan_times = [(index + 0.5) / config.scan_fps for index in range(len(masks))]
     band = locate_caption_band(masks, scan_times, segments)
     if band is None:
-        return []
+        return [], None
 
     top, bottom, left, right = band
+    bbox = {
+        "x": round(float(left), 6),
+        "y": round(float((roi_y + top * roi_height) / source_height), 6),
+        "width": round(float(right - left), 6),
+        "height": round(float((bottom - top) * roi_height / source_height), 6),
+    }
     # Keep the crop tight: static scenery inside it dilutes the mask change
     # when one caption replaces another at the same position.
     pad_y = 1.0 / scan_height
@@ -466,7 +487,7 @@ def detect_caption_intervals(
         changes.append(1.0 if previous is None else _mask_overlap(mask, previous))
         previous = mask
     times = [index / config.frame_rate for index in range(len(density))]
-    return caption_intervals(density, changes, times, segments, config)
+    return caption_intervals(density, changes, times, segments, config), bbox
 
 
 CAPTION_CHECK_FRAMES = 3
@@ -479,16 +500,25 @@ def caption_check_frames(
     *,
     ffmpeg: str,
     config: CaptionAlignmentConfig,
+    bbox: dict[str, float] | None = None,
 ) -> list[Path]:
-    """The caption band of the middle frame of the longest intervals, as PNG files."""
+    """The caption band of the middle frame of the longest intervals, as PNG files.
+
+    With ``bbox`` only the found band (plus a little margin) is read, so other text
+    inside a tall scan ROI cannot vouch for a band that holds none.
+    """
     longest = sorted(intervals, key=lambda span: span[1] - span[0], reverse=True)[:CAPTION_CHECK_FRAMES]
-    height = config.roi_bottom - config.roi_top
+    top, height = config.roi_top, config.roi_bottom - config.roi_top
+    if bbox is not None:
+        margin = bbox["height"] * 0.5
+        top = max(0.0, bbox["y"] - margin)
+        height = min(1.0 - top, bbox["height"] + 2 * margin)
     frames: list[Path] = []
     for index, (first, last) in enumerate(longest):
         output = directory / f"caption_check_{index}.png"
         subprocess.run(
             [ffmpeg, "-v", "error", "-y", "-ss", f"{(first + last) / 2:.3f}", "-i", str(video_path),
-             "-frames:v", "1", "-vf", f"crop=iw:ih*{height:.4f}:0:ih*{config.roi_top:.4f}", str(output)],
+             "-frames:v", "1", "-vf", f"crop=iw:ih*{height:.4f}:0:ih*{top:.4f}", str(output)],
             check=True, capture_output=True, timeout=60,
         )
         if output.is_file():
@@ -513,7 +543,7 @@ def align_speech_to_burned_captions(
     """
 
     config = config or CaptionAlignmentConfig()
-    intervals = detect_caption_intervals(
+    intervals, bbox = detect_caption_layout(
         video_path,
         segments,
         ffmpeg=ffmpeg,
@@ -525,9 +555,38 @@ def align_speech_to_burned_captions(
         return segments
     if has_caption_text is not None:
         with tempfile.TemporaryDirectory(prefix="caption-check-") as directory:
-            frames = caption_check_frames(video_path, intervals, Path(directory), ffmpeg=ffmpeg, config=config)
+            frames = caption_check_frames(
+                video_path, intervals, Path(directory), ffmpeg=ffmpeg, config=config, bbox=bbox
+            )
             if frames and not has_caption_text(frames):
                 logger.info("Caption band holds no readable text in %d sampled frame(s); keeping Whisper timing",
                             len(frames))
                 return segments
-    return align_words_to_captions(segments, intervals, config) or segments
+    aligned = align_words_to_captions(segments, intervals, config)
+    if not aligned:
+        return segments
+    return attach_caption_position(aligned, bbox)
+
+
+def attach_caption_position(
+    segments: Sequence[dict[str, Any]],
+    bbox: dict[str, float] | None,
+) -> list[dict[str, Any]]:
+    """Give every cue the burned-in caption band as its source position.
+
+    Speech cues carry no OCR box, so "replace the original caption" used to fall
+    back to the bottom of the frame even when the captions sat mid-frame. All cues
+    share the band so the translation stays put between captions.
+    """
+
+    if bbox is None or bbox["width"] <= 0 or bbox["height"] <= 0:
+        return list(segments)
+    output = []
+    for segment in segments:
+        cue = dict(segment)
+        if not isinstance(cue.get("source_bbox"), dict):
+            cue["source_bbox"] = dict(bbox)
+            cue["source_font_height"] = bbox["height"]
+            cue["position_source"] = "caption_band"
+        output.append(cue)
+    return output

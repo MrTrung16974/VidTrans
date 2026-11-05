@@ -3,6 +3,8 @@ import 'job.dart';
 /// Actions on several selected jobs, with the rules of the web job list
 /// (`eligibleJobs` in web/js/app.js).
 enum BulkJobAction {
+  pause('Tạm dừng', 'tạm dừng'),
+  resume('Tiếp tục', 'tiếp tục'),
   cancel('Hủy', 'hủy'),
   retry('Chạy lại', 'chạy lại'),
   delete('Xóa', 'xóa');
@@ -13,10 +15,23 @@ enum BulkJobAction {
   final String verb;
 
   bool accepts(Job job) => switch (this) {
-    cancel => const {'queued', 'scheduled', 'processing'}.contains(job.status),
+    pause => job.canPause,
+    resume => job.canResume,
+    cancel => const {
+      'queued',
+      'scheduled',
+      'processing',
+      'paused',
+    }.contains(job.status),
     retry => const {'completed', 'failed', 'cancelled'}.contains(job.status),
     // A photo post waiting for the owner's choice can be dropped too.
-    delete => const {'completed', 'failed', 'cancelled', 'awaiting_input'}.contains(job.status),
+    delete => const {
+      'completed',
+      'failed',
+      'cancelled',
+      'paused',
+      'awaiting_input',
+    }.contains(job.status),
   };
 
   List<Job> eligible(Iterable<Job> jobs) => jobs.where(accepts).toList();

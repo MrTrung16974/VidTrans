@@ -173,7 +173,7 @@ class FalseCaptionTests(unittest.TestCase):
 
         segments = [{"start": 0.0, "end": 2.0, "text": "Kìa mùa xuân", "words": [_word("Kìa", 0.0, 0.5)]}]
         checked = []
-        with patch("pipeline.caption_alignment.detect_caption_intervals", return_value=[(0.0, 2.0)]), \
+        with patch("pipeline.caption_alignment.detect_caption_layout", return_value=([(0.0, 2.0)], None)), \
                 patch("pipeline.caption_alignment.caption_check_frames", return_value=[Path("band.png")]):
             result = align_speech_to_burned_captions(
                 Path("v.mp4"), segments, ffmpeg="ffmpeg", frame_size=(1080, 1920),
@@ -182,6 +182,28 @@ class FalseCaptionTests(unittest.TestCase):
         self.assertIs(result, segments)
         self.assertEqual(checked, [[Path("band.png")]])
 
+
+    def test_aligned_cues_carry_caption_band_position(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from pipeline.caption_alignment import align_speech_to_burned_captions
+        from pipeline.subtitle_layout import apply_subtitle_layout
+
+        band = {"x": 0.2, "y": 0.615, "width": 0.6, "height": 0.033}
+        segments = [{"start": 0.0, "end": 2.0, "text": "Kìa mùa xuân",
+                     "words": [_word("Kìa", 0.1, 0.5), _word("mùa", 0.6, 1.0), _word("xuân", 1.1, 1.6)]}]
+        with patch("pipeline.caption_alignment.detect_caption_layout", return_value=([(0.0, 2.0)], band)):
+            result = align_speech_to_burned_captions(Path("v.mp4"), segments, ffmpeg="ffmpeg", frame_size=(1080, 1920))
+        self.assertTrue(result)
+        self.assertTrue(all(cue["source_bbox"] == band for cue in result))
+
+        laid = apply_subtitle_layout(result, video_width=1080, video_height=1920,
+                                     style={"placement_mode": "replace_original"})
+        layout = laid[0]["subtitle_layout"]
+        self.assertEqual(layout["placement_mode"], "replace_original")
+        self.assertAlmostEqual(layout["y"], (0.615 + 0.033 / 2) * 1920, delta=1)
+        self.assertTrue(layout["mask_original"])
 
 if __name__ == "__main__":
     unittest.main()

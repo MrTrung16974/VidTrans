@@ -67,7 +67,7 @@ class Job(_Open):
     job_id: str
     status: str | None = Field(
         default=None,
-        description="queued, scheduled, processing, cancelling, completed, failed or cancelled.",
+        description="queued, scheduled, processing, pausing, paused, cancelling, completed, failed or cancelled.",
     )
     step: str | None = None
     step_detail: str | None = None

@@ -3337,12 +3337,70 @@
               }
             ],
             "title": "Music Track Id"
+          },
+          "music_track_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Music Track Ids"
+          },
+          "slideshow_plan": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slideshow Plan"
           }
         },
         "required": [
           "action"
         ],
         "title": "PhotoPostChoice",
+        "type": "object"
+      },
+      "PhotoPostAiPlanRequest": {
+        "properties": {
+          "target_minutes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 10.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Minutes"
+          },
+          "keep_original_order": {
+            "default": false,
+            "title": "Keep Original Order",
+            "type": "boolean"
+          },
+          "preferred_style": {
+            "default": "auto",
+            "maxLength": 32,
+            "title": "Preferred Style",
+            "type": "string"
+          }
+        },
+        "title": "PhotoPostAiPlanRequest",
         "type": "object"
       },
       "PlanQuotaUpdate": {
@@ -11055,6 +11113,64 @@
           }
         ],
         "summary": "Choose Photo Post Endpoint"
+      }
+    },
+    "/api/v1/jobs/{job_id}/photo-post/ai-plan": {
+      "post": {
+        "description": "Return a validated AI/heuristic edit plan without queueing work or consuming quota.",
+        "operationId": "create_photo_post_ai_plan_endpoint_api_v1_jobs__job_id__photo_post_ai_plan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhotoPostAiPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create Photo Post Ai Plan Endpoint"
       }
     },
     "/api/v1/jobs/{job_id}/photo-post/music-suggestions": {

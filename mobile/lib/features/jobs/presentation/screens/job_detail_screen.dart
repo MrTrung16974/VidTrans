@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/auth/session_controller.dart';
@@ -18,7 +19,11 @@ import '../widgets/job_downloads.dart';
 import '../widgets/job_status_chip.dart';
 
 class JobDetailScreen extends ConsumerStatefulWidget {
-  const JobDetailScreen({super.key, required this.jobId, this.askDownloadOnly = false});
+  const JobDetailScreen({
+    super.key,
+    required this.jobId,
+    this.askDownloadOnly = false,
+  });
 
   final String jobId;
 
@@ -77,7 +82,11 @@ class _JobDetailScreenState extends ConsumerState<JobDetailScreen> {
 }
 
 /// Asks whether to re-run a voiceless job as "Chỉ tải video" and does it on yes.
-Future<void> confirmDownloadOnly(BuildContext context, WidgetRef ref, Job job) async {
+Future<void> confirmDownloadOnly(
+  BuildContext context,
+  WidgetRef ref,
+  Job job,
+) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -103,7 +112,9 @@ Future<void> confirmDownloadOnly(BuildContext context, WidgetRef ref, Job job) a
   final messenger = ScaffoldMessenger.of(context);
   try {
     await ref.read(jobsRepositoryProvider).downloadOnly(job.id);
-    messenger.showSnackBar(const SnackBar(content: Text('Đang chuẩn bị video gốc để tải về')));
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Đang chuẩn bị video gốc để tải về')),
+    );
     ref.invalidate(jobDetailProvider(job.id));
   } catch (error) {
     messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
@@ -337,7 +348,9 @@ class _JobDetail extends ConsumerWidget {
                     label: const Text('Đăng mạng xã hội'),
                   ),
                 ],
-                if (job.status == 'completed' && !readOnly && (account?.canCutClips ?? false)) ...[
+                if (job.status == 'completed' &&
+                    !readOnly &&
+                    (account?.canCutClips ?? false)) ...[
                   const SizedBox(height: 10),
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
@@ -356,7 +369,9 @@ class _JobDetail extends ConsumerWidget {
             ),
           ),
         ],
-        if (job.awaitsPhotoChoice && !readOnly && (account?.canUsePhotoPosts ?? false))
+        if (job.awaitsPhotoChoice &&
+            !readOnly &&
+            (account?.canUsePhotoPosts ?? false))
           _PhotoPostChoiceCard(job: job),
         JobDownloads(job: job),
         const SizedBox(height: 14),
@@ -365,6 +380,29 @@ class _JobDetail extends ConsumerWidget {
         _JobTimelineCard(job: job),
         if (!readOnly) ...[
           const SizedBox(height: 16),
+          if (job.canPause)
+            FilledButton.tonalIcon(
+              onPressed: () => _run(
+                context,
+                ref,
+                () => repo.pause(job.id),
+                'Đang tạm dừng tại điểm an toàn',
+              ),
+              icon: const Icon(Icons.pause_rounded),
+              label: const Text('Tạm dừng'),
+            ),
+          if (job.canResume) ...[
+            FilledButton.icon(
+              onPressed: () => _run(
+                context,
+                ref,
+                () => repo.resume(job.id),
+                'Đã đưa công việc trở lại hàng đợi',
+              ),
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text('Tiếp tục'),
+            ),
+          ],
           if (job.canCancel)
             OutlinedButton.icon(
               onPressed: () => _run(
@@ -416,8 +454,9 @@ class _JobDetail extends ConsumerWidget {
 /// Lengths offered for a photo-post slideshow, in minutes.
 const _slideshowMinutes = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0];
 
-String _minutesLabel(double minutes) =>
-    minutes < 1 ? '${(minutes * 60).round()} giây' : '${minutes.toStringAsFixed(0)} phút';
+String _minutesLabel(double minutes) => minutes < 1
+    ? '${(minutes * 60).round()} giây'
+    : '${minutes.toStringAsFixed(0)} phút';
 
 /// At most this many library tracks per slideshow (the server's limit).
 const _maxMusicTracks = 10;
@@ -437,32 +476,181 @@ class _PhotoPostChoiceCard extends ConsumerStatefulWidget {
   final Job job;
 
   @override
-  ConsumerState<_PhotoPostChoiceCard> createState() => _PhotoPostChoiceCardState();
+  ConsumerState<_PhotoPostChoiceCard> createState() =>
+      _PhotoPostChoiceCardState();
 }
 
 class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
   double _minutes = 1;
+
   /// Library tracks in play order; empty keeps the post's own music.
   final List<String> _musicTrackIds = [];
+  VideoPlayerController? _musicPreviewPlayer;
+  String? _musicPreviewTrackId;
+  String? _musicPreviewLoadingTrackId;
   bool _sending = false;
   bool _suggesting = false;
   MusicSuggestions? _suggestions;
+  bool _planning = false;
+  bool _keepOriginalOrder = false;
+  PhotoSlideshowPlan? _aiPlan;
+  PhotoSlideshowPlan? _appliedAiPlan;
+
+  @override
+  void didUpdateWidget(_PhotoPostChoiceCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.job.id != widget.job.id) {
+      _stopMusicPreview();
+      _musicTrackIds.clear();
+      _aiPlan = null;
+      _appliedAiPlan = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _musicPreviewPlayer?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _stopMusicPreview() async {
+    final player = _musicPreviewPlayer;
+    _musicPreviewPlayer = null;
+    _musicPreviewTrackId = null;
+    _musicPreviewLoadingTrackId = null;
+    await player?.dispose();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleMusicPreview(String trackId) async {
+    if (_musicPreviewLoadingTrackId != null) return;
+    if (_musicPreviewTrackId == trackId) {
+      await _stopMusicPreview();
+      return;
+    }
+
+    await _stopMusicPreview();
+    if (!mounted) return;
+    setState(() => _musicPreviewLoadingTrackId = trackId);
+    final repo = ref.read(translationRepositoryProvider);
+    VideoPlayerController? player;
+    try {
+      player = VideoPlayerController.networkUrl(
+        repo.musicTrackAudioUri(trackId),
+        httpHeaders: await repo.authHeaders(),
+      );
+      await player.initialize();
+      if (!mounted || _musicPreviewLoadingTrackId != trackId) {
+        await player.dispose();
+        return;
+      }
+      player.addListener(() {
+        final value = player!.value;
+        if (value.isInitialized &&
+            !value.isPlaying &&
+            value.position >= value.duration &&
+            _musicPreviewPlayer == player) {
+          _stopMusicPreview();
+        }
+      });
+      await player.play();
+      if (!mounted) {
+        await player.dispose();
+        return;
+      }
+      setState(() {
+        _musicPreviewPlayer = player;
+        _musicPreviewTrackId = trackId;
+        _musicPreviewLoadingTrackId = null;
+      });
+    } catch (_) {
+      await player?.dispose();
+      if (!mounted) return;
+      setState(() => _musicPreviewLoadingTrackId = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không phát được bản nhạc.')),
+      );
+    }
+  }
+
+  Future<void> _removeTrack(int index) async {
+    final trackId = _musicTrackIds[index];
+    if (_musicPreviewTrackId == trackId ||
+        _musicPreviewLoadingTrackId == trackId) {
+      await _stopMusicPreview();
+    }
+    if (mounted) setState(() => _musicTrackIds.removeAt(index));
+  }
 
   Future<void> _suggestMusic() async {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _suggesting = true);
     try {
-      final suggestions = await ref.read(jobsRepositoryProvider).photoPostMusicSuggestions(widget.job.id);
+      final suggestions = await ref
+          .read(jobsRepositoryProvider)
+          .photoPostMusicSuggestions(widget.job.id);
       if (!mounted) return;
       setState(() => _suggestions = suggestions);
       if (suggestions.items.isEmpty) {
-        messenger.showSnackBar(const SnackBar(content: Text('AI chưa tìm được bài nào hợp trong thư viện nhạc')));
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('AI chưa tìm được bài nào hợp trong thư viện nhạc'),
+          ),
+        );
       }
     } catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
     } finally {
       if (mounted) setState(() => _suggesting = false);
     }
+  }
+
+  Future<void> _planSlideshow() async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _planning = true);
+    try {
+      final plan = await ref
+          .read(jobsRepositoryProvider)
+          .photoPostAiPlan(
+            widget.job.id,
+            targetMinutes: _minutes,
+            keepOriginalOrder: _keepOriginalOrder,
+          );
+      if (!mounted) return;
+      setState(() {
+        _aiPlan = plan;
+        _appliedAiPlan = null;
+        _suggestions = MusicSuggestions(
+          items: plan.musicSuggestions,
+          mood: plan.mood,
+          byAi: plan.byAi,
+        );
+      });
+    } catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
+    } finally {
+      if (mounted) setState(() => _planning = false);
+    }
+  }
+
+  void _applyAiPlan() {
+    final plan = _aiPlan;
+    if (plan == null) return;
+    setState(() {
+      _appliedAiPlan = plan;
+      _minutes = plan.targetSeconds / 60;
+      final firstTrack = plan.musicSuggestions.isEmpty
+          ? null
+          : plan.musicSuggestions.first.trackId;
+      if (firstTrack != null &&
+          !_musicTrackIds.contains(firstTrack) &&
+          _musicTrackIds.length < _maxMusicTracks) {
+        _musicTrackIds.add(firstTrack);
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Đã áp dụng phương án dựng AI')),
+    );
   }
 
   void _addTracks(Iterable<String> trackIds) {
@@ -474,6 +662,27 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
     });
   }
 
+  Widget _aiPlanTag(String label, {bool highlight = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: highlight ? const Color(0xFFF5F3FF) : Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: highlight ? const Color(0xFFC4B5FD) : AppColors.line,
+        ),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: highlight ? const Color(0xFF6D28D9) : AppColors.inkSecondary,
+        ),
+      ),
+    );
+  }
+
   Widget _suggestionList(MusicSuggestions suggestions) {
     final pending = [
       for (final item in suggestions.items)
@@ -482,10 +691,10 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
     final full = _musicTrackIds.length >= _maxMusicTracks;
     return Container(
       margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.amberTint,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(13),
         border: Border.all(color: AppColors.amberBorder),
       ),
       child: Column(
@@ -493,42 +702,124 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
         children: [
           Row(
             children: [
-              const Icon(Icons.auto_awesome, size: 16, color: AppColors.amberDark),
+              const Icon(
+                Icons.auto_awesome,
+                size: 16,
+                color: AppColors.amberDark,
+              ),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   suggestions.byAi
                       ? 'AI gợi ý${suggestions.mood.isEmpty ? '' : ' · ${suggestions.mood}'}'
                       : 'Gợi ý theo từ khoá caption (AI đang không khả dụng)',
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.amberDark),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12.5,
+                    color: AppColors.amberDark,
+                  ),
                 ),
               ),
               if (pending.length > 1)
                 TextButton(
-                  onPressed: _sending || full ? null : () => _addTracks(pending),
-                  child: const Text('Thêm tất cả'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: _sending || full
+                      ? null
+                      : () => _addTracks(pending),
+                  child: const Text(
+                    'Thêm tất cả',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
                 ),
             ],
           ),
+          const SizedBox(height: 6),
           for (final item in suggestions.items)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(item.title, overflow: TextOverflow.ellipsis),
-              subtitle: Text(
-                item.reason.isEmpty ? item.category : item.reason,
-                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+            Container(
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.line),
               ),
-              trailing: _musicTrackIds.contains(item.trackId)
-                  ? const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Icon(Icons.check_rounded, size: 20, color: AppColors.green),
-                    )
-                  : IconButton(
-                      tooltip: 'Thêm bài này',
-                      icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.amberDark),
-                      onPressed: _sending || full ? null : () => _addTracks([item.trackId]),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12.8,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          item.reason.isEmpty ? item.category : item.reason,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11.2,
+                            color: AppColors.muted,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
                     ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: _musicPreviewTrackId == item.trackId
+                        ? 'Dừng'
+                        : 'Nghe thử',
+                    icon: _musicPreviewLoadingTrackId == item.trackId
+                        ? const SizedBox.square(
+                            dimension: 17,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            _musicPreviewTrackId == item.trackId
+                                ? Icons.stop_circle_outlined
+                                : Icons.play_circle_outline,
+                            color: AppColors.brand,
+                            size: 21,
+                          ),
+                    onPressed: _musicPreviewLoadingTrackId != null
+                        ? null
+                        : () => _toggleMusicPreview(item.trackId),
+                  ),
+                  if (_musicTrackIds.contains(item.trackId))
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 10),
+                      child: Icon(
+                        Icons.check_circle_rounded,
+                        size: 20,
+                        color: AppColors.green,
+                      ),
+                    )
+                  else
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Thêm bài này',
+                      icon: const Icon(
+                        Icons.add_circle_outline_rounded,
+                        color: AppColors.amberDark,
+                        size: 21,
+                      ),
+                      onPressed: _sending || full
+                          ? null
+                          : () => _addTracks([item.trackId]),
+                    ),
+                ],
+              ),
             ),
         ],
       ),
@@ -539,15 +830,24 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _sending = true);
     try {
-      await ref.read(jobsRepositoryProvider).choosePhotoPost(
+      await ref
+          .read(jobsRepositoryProvider)
+          .choosePhotoPost(
             widget.job.id,
             action: action,
             minutes: action == 'video' ? _minutes : null,
             musicTrackIds: action == 'video' ? List.of(_musicTrackIds) : null,
+            slideshowPlan: action == 'video' ? _appliedAiPlan?.toJson() : null,
           );
-      messenger.showSnackBar(SnackBar(
-        content: Text(action == 'images' ? 'Đang gom ảnh để tải về' : 'Đang dựng video ghép ảnh'),
-      ));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            action == 'images'
+                ? 'Đang gom ảnh để tải về'
+                : 'Đang dựng video ghép ảnh',
+          ),
+        ),
+      );
       ref.invalidate(jobDetailProvider(widget.job.id));
     } catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
@@ -559,7 +859,12 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
   @override
   Widget build(BuildContext context) {
     final job = widget.job;
-    final tracks = ref.watch(musicTracksProvider).valueOrNull ?? const <MusicTrack>[];
+    final tracks =
+        ref.watch(musicTracksProvider).valueOrNull ?? const <MusicTrack>[];
+    final durationOptions = <double>{
+      ..._slideshowMinutes,
+      if (_aiPlan != null) _aiPlan!.targetSeconds / 60,
+    }.toList()..sort();
     return Padding(
       padding: const EdgeInsets.only(top: 14),
       child: StudioCard(
@@ -579,7 +884,10 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                   decoration: BoxDecoration(
                     color: AppColors.brandTint,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.brandBorder, width: 1.5),
+                    border: Border.all(
+                      color: AppColors.brandBorder,
+                      width: 1.5,
+                    ),
                   ),
                   child: const Icon(
                     Icons.photo_library_rounded,
@@ -596,7 +904,8 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                         children: [
                           Text(
                             'Bài đăng ảnh',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
                                   fontWeight: FontWeight.w800,
                                   color: AppColors.ink,
                                   letterSpacing: -0.2,
@@ -604,7 +913,10 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                           ),
                           const SizedBox(width: 8),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
                               color: AppColors.brandTint,
                               borderRadius: BorderRadius.circular(999),
@@ -696,7 +1008,10 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                                 ),
                                 const SizedBox(width: 6),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: AppColors.surfaceMuted,
                                     borderRadius: BorderRadius.circular(5),
@@ -716,7 +1031,10 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                             const SizedBox(height: 2),
                             const Text(
                               'Nhận toàn bộ ảnh gốc chất lượng cao trong một file ZIP.',
-                              style: TextStyle(fontSize: 12, color: AppColors.muted),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.muted,
+                              ),
                             ),
                           ],
                         ),
@@ -728,11 +1046,16 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                     onPressed: _sending ? null : () => _choose('images'),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                       side: const BorderSide(color: AppColors.lineStrong),
                     ),
                     icon: const Icon(Icons.download_rounded, size: 18),
-                    label: const Text('Tải ảnh về (ZIP)', style: TextStyle(fontWeight: FontWeight.w700)),
+                    label: const Text(
+                      'Tải ảnh về (ZIP)',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
                   ),
                 ],
               ),
@@ -794,11 +1117,16 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                                 ),
                                 const SizedBox(width: 6),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 2,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: AppColors.brandTint,
                                     borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(color: AppColors.brandBorder),
+                                    border: Border.all(
+                                      color: AppColors.brandBorder,
+                                    ),
                                   ),
                                   child: const Text(
                                     '✨ Khuyên dùng',
@@ -814,7 +1142,11 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                             const SizedBox(height: 3),
                             const Text(
                               'Mỗi ảnh hiện tối đa 8 giây, có zoom nhẹ (Ken Burns); video dài thì bộ ảnh được lặp lại cho đủ thời lượng.',
-                              style: TextStyle(fontSize: 12, color: AppColors.muted, height: 1.35),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.muted,
+                                height: 1.35,
+                              ),
                             ),
                           ],
                         ),
@@ -822,21 +1154,268 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                     ],
                   ),
                   const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFAF5FF), Color(0xFFFFF7ED)],
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: const Color(0xFFD8B4FE),
+                        width: 1.4,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '✨ AI dựng tối ưu',
+                                    style: TextStyle(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: Color(0xFF4C1D95),
+                                    ),
+                                  ),
+                                  SizedBox(height: 3),
+                                  Text(
+                                    'Phân tích ảnh và caption để chọn nhịp dựng, chuyển động, chuyển cảnh và nhạc.',
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      color: AppColors.muted,
+                                      height: 1.38,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFF6D28D9),
+                                backgroundColor: Colors.white,
+                                side: const BorderSide(
+                                  color: Color(0xFFC4B5FD),
+                                  width: 1.3,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 11,
+                                  vertical: 8,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              onPressed: _sending || _planning
+                                  ? null
+                                  : _planSlideshow,
+                              icon: _planning
+                                  ? const SizedBox.square(
+                                      dimension: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFF6D28D9),
+                                      ),
+                                    )
+                                  : const Icon(Icons.auto_awesome, size: 16),
+                              label: Text(
+                                _planning
+                                    ? 'Đang phân tích'
+                                    : _aiPlan == null
+                                    ? 'Phân tích AI'
+                                    : 'Phân tích lại',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(9),
+                          onTap: _planning
+                              ? null
+                              : () => setState(
+                                  () =>
+                                      _keepOriginalOrder = !_keepOriginalOrder,
+                                ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.72),
+                              borderRadius: BorderRadius.circular(9),
+                              border: Border.all(
+                                color: const Color(0xFFDDD6FE),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: Checkbox(
+                                    value: _keepOriginalOrder,
+                                    activeColor: const Color(0xFF7C3AED),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    onChanged: _planning
+                                        ? null
+                                        : (value) => setState(
+                                            () => _keepOriginalOrder =
+                                                value ?? false,
+                                          ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Text(
+                                    'Giữ nguyên thứ tự ảnh gốc',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.inkSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (_aiPlan case final plan?) ...[
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 10),
+                            child: Divider(height: 1, color: Color(0xFFDDD6FE)),
+                          ),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              _aiPlanTag(plan.style, highlight: true),
+                              if (plan.mood.isNotEmpty) _aiPlanTag(plan.mood),
+                              _aiPlanTag('${plan.slidesCount} cảnh'),
+                              _aiPlanTag(
+                                plan.byAi
+                                    ? 'AI phân tích'
+                                    : 'Phương án dự phòng',
+                              ),
+                            ],
+                          ),
+                          if (plan.summary.isNotEmpty) ...[
+                            const SizedBox(height: 7),
+                            Text(
+                              plan.summary,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.ink,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 10),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFF6D28D9),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 8,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              onPressed: _appliedAiPlan == plan
+                                  ? null
+                                  : _applyAiPlan,
+                              icon: Icon(
+                                _appliedAiPlan == plan
+                                    ? Icons.check_rounded
+                                    : Icons.auto_fix_high_rounded,
+                                size: 17,
+                              ),
+                              label: Text(
+                                _appliedAiPlan == plan
+                                    ? 'Đã áp dụng'
+                                    : 'Áp dụng phương án',
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   DropdownButtonFormField<double>(
                     initialValue: _minutes,
                     decoration: InputDecoration(
                       labelText: 'Độ dài video',
-                      prefixIcon: const Icon(Icons.schedule_rounded, size: 20, color: AppColors.brand),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.brand, width: 1.5)),
+                      prefixIcon: const Icon(
+                        Icons.schedule_rounded,
+                        size: 20,
+                        color: AppColors.brand,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(11),
+                        borderSide: const BorderSide(color: AppColors.line),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(11),
+                        borderSide: const BorderSide(color: AppColors.line),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(11),
+                        borderSide: const BorderSide(
+                          color: AppColors.brand,
+                          width: 1.5,
+                        ),
+                      ),
                     ),
                     items: [
-                      for (final minutes in _slideshowMinutes)
-                        DropdownMenuItem(value: minutes, child: Text(_minutesLabel(minutes), style: const TextStyle(fontWeight: FontWeight.w600))),
+                      for (final minutes in durationOptions)
+                        DropdownMenuItem(
+                          value: minutes,
+                          child: Text(
+                            _minutesLabel(minutes),
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
                     ],
-                    onChanged: _sending ? null : (value) => setState(() => _minutes = value ?? _minutes),
+                    onChanged: _sending
+                        ? null
+                        : (value) => setState(() {
+                            _minutes = value ?? _minutes;
+                            final plan = _appliedAiPlan;
+                            if (plan != null &&
+                                _minutes * 60 < plan.slidesCount) {
+                              _appliedAiPlan = null;
+                            }
+                          }),
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
@@ -846,24 +1425,56 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                     isExpanded: true,
                     decoration: InputDecoration(
                       labelText: 'Nhạc nền (chọn 1 hoặc nhiều bài)',
-                      prefixIcon: const Icon(Icons.music_note_rounded, size: 20, color: AppColors.brand),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.brand, width: 1.5)),
+                      prefixIcon: const Icon(
+                        Icons.music_note_rounded,
+                        size: 20,
+                        color: AppColors.brand,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(11),
+                        borderSide: const BorderSide(color: AppColors.line),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(11),
+                        borderSide: const BorderSide(color: AppColors.line),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(11),
+                        borderSide: const BorderSide(
+                          color: AppColors.brand,
+                          width: 1.5,
+                        ),
+                      ),
                     ),
-                    hint: const Text('+ Thêm bài nhạc từ thư viện', style: TextStyle(fontSize: 13)),
+                    hint: const Text(
+                      '+ Thêm bài nhạc từ thư viện',
+                      style: TextStyle(fontSize: 13),
+                    ),
                     items: [
                       for (final track in tracks)
                         DropdownMenuItem(
                           value: track.id,
-                          child: Text('${track.title} (${track.durationLabel})', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                          child: Text(
+                            '${track.title} (${track.durationLabel})',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
                         ),
                     ],
-                    onChanged: _sending || _musicTrackIds.length >= _maxMusicTracks
+                    onChanged:
+                        _sending || _musicTrackIds.length >= _maxMusicTracks
                         ? null
                         : (value) {
-                            if (value != null) setState(() => _musicTrackIds.add(value));
+                            if (value != null) {
+                              setState(() => _musicTrackIds.add(value));
+                            }
                           },
                   ),
                   if (tracks.isNotEmpty) ...[
@@ -871,22 +1482,38 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: TextButton.icon(
-                        onPressed: _sending || _suggesting ? null : _suggestMusic,
+                        onPressed: _sending || _suggesting
+                            ? null
+                            : _suggestMusic,
                         icon: _suggesting
-                            ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.auto_awesome, size: 17, color: AppColors.amberDark),
+                            ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.auto_awesome,
+                                size: 17,
+                                color: AppColors.amberDark,
+                              ),
                         label: Text(
                           _suggesting
                               ? 'AI đang xem bài đăng…'
                               : _suggestions == null
-                                  ? 'AI gợi ý nhạc hợp bài đăng'
-                                  : 'Gợi ý lại',
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.amberDark),
+                              ? 'AI gợi ý nhạc hợp bài đăng'
+                              : 'Gợi ý lại',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: AppColors.amberDark,
+                          ),
                         ),
                       ),
                     ),
                   ],
-                  if (_suggestions != null && _suggestions!.items.isNotEmpty) _suggestionList(_suggestions!),
+                  if (_suggestions != null && _suggestions!.items.isNotEmpty)
+                    _suggestionList(_suggestions!),
                   if (_musicTrackIds.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     for (final (index, trackId) in _musicTrackIds.indexed)
@@ -898,7 +1525,10 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(color: AppColors.line),
                           ),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
                           child: Row(
                             children: [
                               Container(
@@ -907,12 +1537,18 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                                 decoration: BoxDecoration(
                                   color: AppColors.brandTint,
                                   borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: AppColors.brandBorder),
+                                  border: Border.all(
+                                    color: AppColors.brandBorder,
+                                  ),
                                 ),
                                 child: Center(
                                   child: Text(
                                     '${index + 1}',
-                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.brandDark),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.brandDark,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -921,15 +1557,80 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                                 child: Text(
                                   _trackLabel(tracks, trackId),
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.ink),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.ink,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              OutlinedButton.icon(
+                                onPressed:
+                                    _sending ||
+                                        _musicPreviewLoadingTrackId != null
+                                    ? null
+                                    : () => _toggleMusicPreview(trackId),
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size(0, 32),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 9,
+                                    vertical: 5,
+                                  ),
+                                  foregroundColor:
+                                      _musicPreviewTrackId == trackId
+                                      ? Colors.white
+                                      : AppColors.brandDark,
+                                  backgroundColor:
+                                      _musicPreviewTrackId == trackId
+                                      ? AppColors.brand
+                                      : AppColors.brandTint,
+                                  side: const BorderSide(
+                                    color: AppColors.brandBorder,
+                                  ),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                                icon: _musicPreviewLoadingTrackId == trackId
+                                    ? const SizedBox.square(
+                                        dimension: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: AppColors.brand,
+                                        ),
+                                      )
+                                    : Icon(
+                                        _musicPreviewTrackId == trackId
+                                            ? Icons.stop_rounded
+                                            : Icons.play_arrow_rounded,
+                                        size: 17,
+                                      ),
+                                label: Text(
+                                  _musicPreviewLoadingTrackId == trackId
+                                      ? 'Đang tải'
+                                      : _musicPreviewTrackId == trackId
+                                      ? 'Dừng'
+                                      : 'Nghe thử',
+                                  style: const TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
                               IconButton(
                                 tooltip: 'Bỏ bài này',
-                                icon: const Icon(Icons.close_rounded, size: 16, color: AppColors.muted),
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  size: 16,
+                                  color: AppColors.muted,
+                                ),
                                 padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                onPressed: _sending ? null : () => setState(() => _musicTrackIds.removeAt(index)),
+                                constraints: const BoxConstraints(
+                                  minWidth: 28,
+                                  minHeight: 28,
+                                ),
+                                onPressed: _sending
+                                    ? null
+                                    : () => _removeTrack(index),
                               ),
                             ],
                           ),
@@ -943,22 +1644,33 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: AppColors.line),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.brand),
+                        const Icon(
+                          Icons.info_outline_rounded,
+                          size: 16,
+                          color: AppColors.brand,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             _musicTrackIds.length > 1
                                 ? 'Các bài phát nối tiếp theo thứ tự trên; video dài hơn thì lặp lại từ bài đầu.'
                                 : _musicTrackIds.isNotEmpty
-                                    ? 'Bài nhạc lặp lại cho đủ độ dài video.'
-                                    : job.photoHasMusic
-                                        ? 'Chưa chọn bài nào: dùng nhạc gốc của bài đăng.'
-                                        : 'Chưa chọn bài nào: bài đăng không có nhạc gốc nên video sẽ im lặng.',
-                            style: const TextStyle(fontSize: 12, color: AppColors.muted, height: 1.35),
+                                ? 'Bài nhạc lặp lại cho đủ độ dài video.'
+                                : job.photoHasMusic
+                                ? 'Chưa chọn bài nào: dùng nhạc gốc của bài đăng.'
+                                : 'Chưa chọn bài nào: bài đăng không có nhạc gốc nên video sẽ im lặng.',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.muted,
+                              height: 1.35,
+                            ),
                           ),
                         ),
                       ],
@@ -1032,8 +1744,8 @@ class _JobInfoCard extends StatelessWidget {
     final tiktok = job.tiktokError != null
         ? 'Lỗi: ${job.tiktokError}'
         : job.tiktokPublishAt != null && job.status == 'scheduled'
-            ? 'Hẹn đăng lúc ${_formatDate(job.tiktokPublishAt)}'
-            : job.tiktokStatus;
+        ? 'Hẹn đăng lúc ${_formatDate(job.tiktokPublishAt)}'
+        : job.tiktokStatus;
 
     final rows = <Widget>[
       _InfoRow(
@@ -1091,7 +1803,8 @@ class _JobInfoCard extends StatelessWidget {
         _InfoRow(
           icon: Icons.auto_awesome_outlined,
           label: 'AI dịch',
-          value: _translationProviderLabels[job.translationProvider] ??
+          value:
+              _translationProviderLabels[job.translationProvider] ??
               job.translationProvider!,
         ),
       if (tts != null && (mode ?? 1) >= 2)
@@ -1268,7 +1981,11 @@ class _InfoRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               child: const Padding(
                 padding: EdgeInsets.only(left: 8),
-                child: Icon(Icons.copy_rounded, size: 16, color: AppColors.brand),
+                child: Icon(
+                  Icons.copy_rounded,
+                  size: 16,
+                  color: AppColors.brand,
+                ),
               ),
             ),
         ],
