@@ -126,9 +126,12 @@ def apply_subtitle_layout(
     if video_width <= 0 or video_height <= 0:
         raise ValueError("video dimensions must be positive")
     options = SubtitleLayoutOptions.from_style(style)
-    default_font = int(round(float(style.get("font_size", 36)) * video_height / 720))
-    default_font = int(_clamp(default_font, options.min_font_size, options.max_font_size))
-    margin_v = int(round(float(style.get("margin_v", 60)) * video_height / 720))
+    resolution_scale = video_height / 720
+    min_font_size = int(round(options.min_font_size * resolution_scale))
+    max_font_size = int(round(options.max_font_size * resolution_scale))
+    default_font = int(round(float(style.get("font_size", 36)) * resolution_scale))
+    default_font = int(_clamp(default_font, min_font_size, max_font_size))
+    margin_v = int(round(float(style.get("margin_v", 60)) * resolution_scale))
     laid_out: list[dict[str, Any]] = []
     matched_fonts = [
         font for font in (_matched_font(segment, video_height) for segment in segments) if font is not None
@@ -151,14 +154,14 @@ def apply_subtitle_layout(
             if typical_font:
                 matched_font = min(matched_font, round(typical_font * MAX_FONT_ABOVE_TYPICAL))
             font_size = matched_font if options.match_source_size else default_font
-            font_size = int(_clamp(font_size, options.min_font_size, options.max_font_size))
+            font_size = int(_clamp(font_size, min_font_size, max_font_size))
             # Chinese captions are narrow; the same line in Vietnamese needs more room,
             # so a short line is not broken in two just because its source was short.
             max_text_width = min(video_width * 0.92, max(box_w * 1.45, video_width * MIN_TEXT_WIDTH_SHARE))
             font_size, render_text = _fit_text(
                 str(segment.get("text", "")),
                 font_size=font_size,
-                min_font_size=options.min_font_size,
+                min_font_size=min_font_size,
                 max_width=max_text_width,
             )
             line_count = max(1, render_text.count("\n") + 1)
@@ -187,7 +190,7 @@ def apply_subtitle_layout(
             font_size, render_text = _fit_text(
                 str(segment.get("text", "")),
                 font_size=font_size,
-                min_font_size=options.min_font_size,
+                min_font_size=min_font_size,
                 max_width=max_text_width,
             )
             line_count = max(1, render_text.count("\n") + 1)

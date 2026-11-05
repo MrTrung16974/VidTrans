@@ -91,6 +91,34 @@ class SubtitleLayoutTests(unittest.TestCase):
         self.assertEqual(result["x"], 540)
         self.assertFalse(result["mask_original"])
 
+    def test_scales_readability_floor_for_vertical_high_resolution_video(self) -> None:
+        result = apply_subtitle_layout(
+            [{
+                "text": "không bao giờ quên",
+                "source_bbox": {"x": 0.14, "y": 0.8, "width": 0.72, "height": 0.014},
+                "source_font_height": 0.014,
+            }],
+            video_width=1080,
+            video_height=1920,
+            style={"placement_mode": "above_original", "min_font_size": 22},
+        )[0]["subtitle_layout"]
+
+        self.assertEqual(result["font_size"], 59)
+
+    def test_keeps_existing_readability_floor_at_720p(self) -> None:
+        result = apply_subtitle_layout(
+            [{
+                "text": "không bao giờ quên",
+                "source_bbox": {"x": 0.14, "y": 0.8, "width": 0.72, "height": 0.014},
+                "source_font_height": 0.014,
+            }],
+            video_width=1280,
+            video_height=720,
+            style={"min_font_size": 22},
+        )[0]["subtitle_layout"]
+
+        self.assertEqual(result["font_size"], 22)
+
     def test_long_cue_shrinks_and_never_runs_past_frame(self) -> None:
         text = (
             "Tôi cảm thấy rất buồn khi biết chuyện này. Ban đầu, tôi nghĩ rằng cặp đôi đã yêu nhau "
