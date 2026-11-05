@@ -38,7 +38,12 @@ FEATURES: dict[str, tuple[str, str]] = {
     "source_google_drive": ("Tải video Google Drive", "Dán link file Google Drive để tải video nguồn"),
     "photo_post": (
         "Xử lý bài đăng ảnh",
-        "Link TikTok/Douyin là bài đăng ảnh: tải ảnh gốc về (ZIP) hoặc tạo video ghép ảnh có nhạc dài tùy chọn",
+        "Link bài đăng ảnh (TikTok, Douyin, Xiaohongshu, Facebook, YouTube, ảnh Google Drive): "
+        "tải ảnh gốc về (ZIP) hoặc tạo video ghép ảnh có nhạc dài tùy chọn",
+    ),
+    "clip_split": (
+        "Cắt clip",
+        "Cắt video đã dịch/lồng tiếng thành nhiều clip (chia đều hoặc tự chọn đoạn), giữ khung gốc hoặc 9:16",
     ),
     "comic_video": ("Tạo video truyện", "Tạo, sửa và render truyện thành video"),
     "novel_import": (
@@ -52,6 +57,10 @@ FEATURES: dict[str, tuple[str, str]] = {
     "ai_translation_gemini": ("AI dịch phụ đề Gemini AI", "Dịch phụ đề bằng Gemini (tính phí theo lượt)"),
     "ai_tts_elevenlabs": ("AI lồng tiếng ElevenLabs", "Lồng tiếng bằng ElevenLabs (tính phí theo lượt)"),
     "ai_comic_script_gemini": ("AI viết kịch bản Gemini", "Viết kịch bản truyện bằng Gemini"),
+    "ai_clip_suggest_gemini": (
+        "AI gợi ý đoạn cắt clip (Gemini)",
+        "Gemini đọc phụ đề và đề xuất các đoạn hay để cắt clip, theo mong muốn của người dùng",
+    ),
     "ai_comic_image_gemini": ("AI vẽ ảnh Gemini Image", "Vẽ minh họa truyện bằng Gemini Image"),
     "ai_comic_animation_veo": ("AI tạo chuyển động Google Veo", "Tạo chuyển động cho cảnh truyện bằng Veo"),
 }
@@ -81,7 +90,7 @@ SOURCE_PLATFORM_FEATURES: dict[str, str] = {
 _PAID_FEATURES = frozenset(FEATURES)
 # Features every plan gets out of the box; admins may still switch them off per plan.
 _BASIC_FEATURES = frozenset({
-    "image_translation", "screen_translator", "photo_post", *SOURCE_PLATFORM_FEATURES.values(),
+    "image_translation", "screen_translator", "photo_post", "clip_split", *SOURCE_PLATFORM_FEATURES.values(),
 })
 # plan_key -> enabled features; every feature not listed is an explicit deny row.
 DEFAULT_PLAN_FEATURES: dict[str, frozenset[str]] = {

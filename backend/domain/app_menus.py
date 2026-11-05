@@ -28,6 +28,7 @@ MOBILE_DOCK_SIZE = 4
 DEFAULT_MENUS: tuple[tuple[str, str, str, str, int, str | None, str], ...] = (
     ("web", "create", "Dịch video", "Dịch", 10, None, "viewer"),
     ("web", "comic", "Truyện → Video", "Truyện", 20, "comic_video", "editor"),
+    ("web", "clips", "Cắt clip", "Cắt clip", 25, "clip_split", "viewer"),
     ("web", "jobs", "Tiến trình", "Tiến trình", 30, None, "viewer"),
     ("web", "tiktok", "Đăng bài mạng xã hội", "Đăng bài", 40, "social_publishing", "editor"),
     ("web", "douyin", "Đăng nhập nguồn", "Nguồn", 50, None, "admin"),

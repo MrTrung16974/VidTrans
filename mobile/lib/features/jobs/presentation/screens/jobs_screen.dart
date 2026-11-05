@@ -166,6 +166,7 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
     final query = _searchQuery.trim();
     final filteredJobs = allJobs;
     final readOnly = ref.watch(sessionProvider).valueOrNull?.isReadOnly ?? true;
+    final canCutClips = ref.watch(sessionProvider).valueOrNull?.canCutClips ?? false;
     final selectedJobs = allJobs
         .where((job) => _selectedIds.contains(job.id))
         .toList();
@@ -238,6 +239,16 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                         label: 'Batch mới',
                         onPressed: () => context.go('/translate'),
                       ),
+                      if (!readOnly && canCutClips)
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: Size.zero,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                          ),
+                          onPressed: () => context.push('/clips'),
+                          icon: const Icon(Icons.content_cut_rounded, size: 16),
+                          label: const Text('Cắt clip'),
+                        ),
                       OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                           minimumSize: Size.zero,

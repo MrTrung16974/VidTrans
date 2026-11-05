@@ -43,14 +43,15 @@ class AccessConfigApiTests(unittest.TestCase):
         for plan in ("free", "trial"):
             self.user = user("editor", plan)
             self.assertEqual(self.menu_keys("mobile")[:4], ["translate", "jobs", "upgrade", "profile"])
-            self.assertEqual(self.menu_keys("web"), ["create", "jobs"])
+            # "Cắt clip" comes with every plan.
+            self.assertEqual(self.menu_keys("web"), ["create", "clips", "jobs"])
         self.user = user("editor", "pro")
         self.assertEqual(self.menu_keys("mobile")[:4], ["translate", "comic", "jobs", "social"])
-        self.assertEqual(self.menu_keys("web"), ["create", "comic", "jobs", "tiktok"])
+        self.assertEqual(self.menu_keys("web"), ["create", "comic", "clips", "jobs", "tiktok"])
         self.user = user("viewer", "pro")
-        self.assertEqual(self.menu_keys("web"), ["create", "jobs"])
+        self.assertEqual(self.menu_keys("web"), ["create", "clips", "jobs"])
         self.user = user("admin", "free")
-        self.assertEqual(self.menu_keys("web"), ["create", "comic", "jobs", "tiktok", "douyin", "admin"])
+        self.assertEqual(self.menu_keys("web"), ["create", "comic", "clips", "jobs", "tiktok", "douyin", "admin"])
         self.assertEqual(self.client.get("/api/v1/me/menus?platform=tv").status_code, 422)
 
     def test_only_admins_read_or_change_the_config(self) -> None:

@@ -2355,6 +2355,69 @@
         "title": "CharacterPatch",
         "type": "object"
       },
+      "ClipIn": {
+        "properties": {
+          "end": {
+            "exclusiveMinimum": 0.0,
+            "title": "End",
+            "type": "number"
+          },
+          "frame": {
+            "default": "original",
+            "description": "original | vertical_blur | vertical_crop",
+            "title": "Frame",
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "number"
+          },
+          "title": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "ClipIn",
+        "type": "object"
+      },
+      "CreateClipsIn": {
+        "properties": {
+          "clips": {
+            "items": {
+              "$ref": "#/components/schemas/ClipIn"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Clips",
+            "type": "array"
+          },
+          "snap": {
+            "default": true,
+            "description": "Move cut points to the nearest gap between subtitle cues.",
+            "title": "Snap",
+            "type": "boolean"
+          },
+          "source_job_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Source Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_job_id",
+          "clips"
+        ],
+        "title": "CreateClipsIn",
+        "type": "object"
+      },
       "CreateSocialPublishRequest": {
         "properties": {
           "account_id": {
@@ -2665,6 +2728,34 @@
           "enabled"
         ],
         "title": "EntitlementUpdate",
+        "type": "object"
+      },
+      "EqualPlanIn": {
+        "properties": {
+          "clip_seconds": {
+            "maximum": 600.0,
+            "minimum": 5.0,
+            "title": "Clip Seconds",
+            "type": "number"
+          },
+          "frame": {
+            "default": "original",
+            "description": "original | vertical_blur | vertical_crop",
+            "title": "Frame",
+            "type": "string"
+          },
+          "source_job_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Source Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_job_id",
+          "clip_seconds"
+        ],
+        "title": "EqualPlanIn",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -3188,6 +3279,48 @@
           "rights_confirmed"
         ],
         "title": "NovelImportRequest",
+        "type": "object"
+      },
+      "PhotoPostChoice": {
+        "description": "What to make of a photo post: its images as a zip, or a slideshow of ``minutes``.",
+        "properties": {
+          "action": {
+            "enum": [
+              "images",
+              "video"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "minutes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minutes"
+          },
+          "music_track_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Music Track Id"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "PhotoPostChoice",
         "type": "object"
       },
       "PlanQuotaUpdate": {
@@ -3786,6 +3919,55 @@
           }
         },
         "title": "ShotPatch",
+        "type": "object"
+      },
+      "SuggestIn": {
+        "properties": {
+          "count": {
+            "default": 5,
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "frame": {
+            "default": "original",
+            "description": "original | vertical_blur | vertical_crop",
+            "title": "Frame",
+            "type": "string"
+          },
+          "max_seconds": {
+            "default": 60,
+            "maximum": 600.0,
+            "minimum": 5.0,
+            "title": "Max Seconds",
+            "type": "number"
+          },
+          "min_seconds": {
+            "default": 15,
+            "maximum": 600.0,
+            "minimum": 5.0,
+            "title": "Min Seconds",
+            "type": "number"
+          },
+          "source_job_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Source Job Id",
+            "type": "string"
+          },
+          "wish": {
+            "default": "",
+            "description": "What the user wants, e.g. “các đoạn đánh nhau”.",
+            "maxLength": 300,
+            "title": "Wish",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_job_id"
+        ],
+        "title": "SuggestIn",
         "type": "object"
       },
       "TextTranslationRequest": {
@@ -6492,6 +6674,284 @@
           }
         ],
         "summary": "Browser Power Heartbeat"
+      }
+    },
+    "/api/v1/clips": {
+      "post": {
+        "operationId": "create_clips_api_v1_clips_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateClipsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create Clips",
+        "tags": [
+          "Clips"
+        ]
+      }
+    },
+    "/api/v1/clips/plan": {
+      "post": {
+        "operationId": "plan_equal_api_v1_clips_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EqualPlanIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Plan Equal",
+        "tags": [
+          "Clips"
+        ]
+      }
+    },
+    "/api/v1/clips/sources": {
+      "get": {
+        "operationId": "list_clip_sources_api_v1_clips_sources_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Clip Sources",
+        "tags": [
+          "Clips"
+        ]
+      }
+    },
+    "/api/v1/clips/sources/{job_id}": {
+      "get": {
+        "operationId": "get_clip_source_api_v1_clips_sources__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get Clip Source",
+        "tags": [
+          "Clips"
+        ]
+      }
+    },
+    "/api/v1/clips/suggest": {
+      "post": {
+        "operationId": "suggest_api_v1_clips_suggest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Suggest",
+        "tags": [
+          "Clips"
+        ]
       }
     },
     "/api/v1/comic/bible/suggest": {
@@ -10465,6 +10925,115 @@
           }
         ],
         "summary": "Download All Job Artifacts"
+      }
+    },
+    "/api/v1/jobs/{job_id}/download-only": {
+      "post": {
+        "description": "Hand back the source of a job that failed for lack of speech (mode 4), no subtitles or dubbing.",
+        "operationId": "download_only_job_endpoint_api_v1_jobs__job_id__download_only_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Download Only Job Endpoint"
+      }
+    },
+    "/api/v1/jobs/{job_id}/photo-post": {
+      "post": {
+        "operationId": "choose_photo_post_endpoint_api_v1_jobs__job_id__photo_post_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhotoPostChoice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Choose Photo Post Endpoint"
       }
     },
     "/api/v1/jobs/{job_id}/refresh-tiktok-status": {

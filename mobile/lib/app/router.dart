@@ -6,6 +6,7 @@ import '../core/auth/account.dart';
 import '../core/auth/session_controller.dart';
 import '../core/widgets/studio_widgets.dart';
 import '../features/authentication/presentation/screens/login_screen.dart';
+import '../features/clip_split/presentation/clip_split_routes.dart';
 import '../features/comic_video/presentation/comic_video_routes.dart';
 import '../features/home/presentation/screens/home_shell.dart';
 import '../features/jobs/presentation/screens/job_detail_screen.dart';
@@ -43,6 +44,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (!account.canPublishSocial && _under(location, '/social')) {
         return '/translate';
       }
+      if (!account.canCutClips && _under(location, '/clips')) return '/jobs';
       if (_under(location, '/translate/image')) {
         // "Dịch nổi" (?mode=live) and "Dịch ảnh" are separate plan features.
         final live = state.uri.queryParameters['mode'] == 'live';
@@ -98,6 +100,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       // Opened from the account menu: full screen above the bottom navigation.
       ...brandingRoutes,
+      ...clipSplitRoutes,
       StatefulShellRoute.indexedStack(
         builder: (_, _, shell) => HomeShell(shell: shell),
         branches: [

@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261105-job-logo" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261105-clips-ai" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261104-saas-legal-v1" />
   </head>
   <body>
@@ -76,6 +76,7 @@
         <nav id="mainNavigation" class="nav-tabs" aria-label="Điều hướng chính">
           <a href="#create" data-view-link="create" class="active"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></i><span><span class="nav-label-full">Dịch video</span><span class="nav-label-short">Dịch</span></span></a>
           <a href="#comic" data-view-link="comic" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v6h-7zM13 13h7v6h-7z"/></svg></i><span><span class="nav-label-full">Truyện → Video</span><span class="nav-label-short">Truyện</span></span></a>
+          <a href="#clips" data-view-link="clips"><i aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg></i><span><span class="nav-label-full">Cắt clip</span><span class="nav-label-short">Cắt clip</span></span></a>
           <a href="#jobs" data-view-link="jobs"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6M9 13h6M9 17h3"/></svg></i><span>Tiến trình</span><b id="runningBadge" class="nav-badge is-zero">0</b></a>
           <a href="#tiktok" data-view-link="tiktok" data-min-role="editor"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5v10.5a3.5 3.5 0 1 1-3-3.46M14 5c1.1 2.45 2.77 3.8 5 4"/></svg></i><span><span class="nav-label-full">Đăng bài mạng xã hội</span><span class="nav-label-short">Đăng bài</span></span></a>
           <a href="#douyin" data-view-link="douyin" data-admin-only class="is-hidden" hidden><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14M8 5h3.5a5 5 0 0 1 0 10H8"/></svg></i><span><span class="nav-label-full">Đăng nhập nguồn</span><span class="nav-label-short">Nguồn</span></span></a>
@@ -974,6 +975,69 @@
               <div id="comicScenesPagination" class="jobs-pagination comic-scenes-pagination is-hidden"></div>
             </div>
           </section>
+            </div>
+          </div>
+        </section>
+
+        <section id="clipsView" class="view clips-view is-hidden">
+          <div class="page-heading">
+            <div>
+              <div class="create-badge-row">
+                <span class="eyebrow-chip">✂️ Cắt clip</span>
+                <span class="eyebrow-note">Chia đều · Tự chọn đoạn · AI gợi ý · Khung dọc 9:16</span>
+              </div>
+              <h1>Cắt video đã dịch thành nhiều clip</h1>
+              <p>Chọn một video đã dịch hoặc lồng tiếng xong, lên plan các đoạn muốn cắt rồi tạo clip. Giọng lồng tiếng và phụ đề giữ nguyên như bản đầy đủ; điểm cắt tự khớp vào khoảng lặng giữa hai câu. Cắt clip không trừ phút của gói.</p>
+            </div>
+          </div>
+          <div class="clips-layout">
+            <aside class="card clips-sources" aria-label="Video đã xong">
+              <h2>Video đã xong</h2>
+              <input id="clipSourceSearch" type="search" placeholder="Tìm theo tên video" aria-label="Tìm video" />
+              <div id="clipSourceList" class="clips-source-list"></div>
+              <button id="clipSourceMore" class="button secondary mini-btn is-hidden" type="button">Xem thêm</button>
+            </aside>
+            <div class="card clips-editor">
+              <p id="clipEditorEmpty" class="clips-note">Chọn một video ở danh sách để bắt đầu lên plan cắt.</p>
+              <div id="clipEditorBody" class="is-hidden">
+                <div class="clips-editor-head">
+                  <h2 id="clipSourceTitle"></h2>
+                  <small id="clipSourceMeta"></small>
+                </div>
+                <video id="clipVideo" class="clip-video" controls playsinline preload="metadata"></video>
+                <div id="clipTimeline" class="clip-timeline" title="Bấm để tua tới vị trí; vạch xám là câu phụ đề, khối cam là clip"></div>
+                <div class="clip-tools">
+                  <label class="clip-every">Mỗi clip dài <input id="clipEvery" type="number" min="5" max="600" step="5" value="60" /> giây</label>
+                  <select id="clipDefaultFrame" aria-label="Khung hình mặc định">
+                    <option value="original">Giữ khung gốc</option>
+                    <option value="vertical_blur">Dọc 9:16 (nền mờ)</option>
+                    <option value="vertical_crop">Dọc 9:16 (crop giữa)</option>
+                  </select>
+                  <button id="clipSplitEqual" class="button secondary mini-btn" type="button">Chia đều</button>
+                  <button id="clipAddHere" class="button secondary mini-btn" type="button">+ Thêm đoạn từ vị trí đang xem</button>
+                  <label class="clip-snap"><input id="clipSnap" type="checkbox" checked /> Khớp ranh giới câu</label>
+                </div>
+                <div id="clipAiPanel" class="clip-ai">
+                  <div class="clip-ai-head"><strong>✨ AI gợi ý đoạn hay</strong><small id="clipAiNote" class="clips-note"></small></div>
+                  <input id="clipAiWish" maxlength="300" placeholder="Bạn muốn cắt đoạn nào? Ví dụ: các đoạn đánh nhau, đoạn hài hước, đoạn cao trào" aria-label="Mong muốn khi cắt" />
+                  <div class="clip-ai-options">
+                    <label>Số clip <select id="clipAiCount"><option>3</option><option selected>5</option><option>8</option><option>10</option></select></label>
+                    <label>Mỗi clip <input id="clipAiMin" type="number" min="5" max="600" value="15" /> – <input id="clipAiMax" type="number" min="5" max="600" value="60" /> giây</label>
+                    <button id="clipAiSuggest" class="button primary mini-btn" type="button">✨ Gợi ý</button>
+                  </div>
+                </div>
+                <p class="clips-note clip-frame-help">Nền mờ: giữ trọn khung ngang, nền phía sau làm mờ. Crop giữa: lấy phần giữa khung đầy màn hình dọc, phụ đề được vẽ lại cho vừa khung (chậm hơn).</p>
+                <p id="clipCropNote" class="clips-note clip-error is-hidden">Video nguồn chưa in phụ đề của tiến trình này đã bị xóa, nên không dùng được kiểu crop giữa.</p>
+                <ol id="clipList" class="clip-list"></ol>
+                <div class="clip-actions">
+                  <span id="clipSummary"></span>
+                  <button id="clipCreate" class="button primary" type="button" disabled>Tạo clip</button>
+                </div>
+                <div id="clipResults" class="clip-results is-hidden">
+                  <h3>Clip đã tạo <a class="clips-jobs-link" href="#jobs">Xem ở Tiến trình →</a></h3>
+                  <ul id="clipResultList"></ul>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -2953,6 +3017,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261105-job-logo"></script>
+    <script type="module" src="/js/app.js?v=20261105-clips-ai"></script>
   </body>
 </html>

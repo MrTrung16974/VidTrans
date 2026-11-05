@@ -47,6 +47,15 @@ from application.novel_import_routes import create_novel_import_router
 from infrastructure.novel_sources import CdpPageRunner, JjwxcSource, NovelImportService, QidianSource
 from domain.comic import MAX_STORY_CHARS
 from application.comic_service import COMIC_JOB_ACTION, ComicJobRunner, is_comic_job
+from application.clip_routes import ClipRouteDependencies, create_clip_router
+from application.clip_service import (
+    CLIP_FEATURE,
+    CLIP_JOB_ACTION,
+    ClipJobDependencies,
+    is_clip_job,
+    load_clip_source,
+    run_clip_job,
+)
 from application.branding_routes import BrandingRouteDependencies, create_branding_router
 from application.branding_service import BRANDING_JOB_ACTION, STAGES as BRANDING_STAGES, BrandingJobRunner
 from pipeline.logo_overlay import Placement, build_filter_graph
@@ -117,6 +126,7 @@ from infrastructure.media_validation import InvalidVideoError, public_error_mess
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
 from infrastructure.tiktok_slideshow import MAX_VIDEO_SECONDS, MIN_VIDEO_SECONDS, render_timed_slideshow
 from infrastructure.mailer import MailConfig, MailDeliveryError, SmtpMailer
+from infrastructure.llm_providers import GeminiJSONClient
 from infrastructure.media_probe import MediaProbe, probe_media_file
 from infrastructure.password_reset import CODE_TTL_SECONDS, PasswordResetStore
 from infrastructure.stage_checkpoint import (
@@ -4700,6 +4710,42 @@ def run_photo_post_job(job_id: str, resume_request: dict[str, Any]) -> None:
         TENANT_GOVERNANCE.release(job_id)
 
 
+def write_clip_caption(segments: list[dict[str, Any]], output_dir: Path, job_id: str) -> tuple[Path, Path]:
+    post = TIKTOK_SUMMARY_PROVIDER.generate(segments, max_summary_chars=350, hashtag_count=6)
+    return write_tiktok_artifacts(post, output_dir, job_id)
+
+
+def run_clip_video_job(job_id: str, request: dict[str, Any]) -> None:
+    """"Cắt clip": cut one clip out of a finished video (no quota: the source was paid for)."""
+    owner_user_id = str((JOB_SERVICE.get(job_id) or {}).get("owner_user_id") or _bootstrap_owner["user_id"])
+    deps = ClipJobDependencies(
+        ffmpeg=FFMPEG,
+        update_job=update_job,
+        ensure_active=ensure_job_active,
+        output_dir=lambda clip_job_id: tenant_job_dir(OUTPUT_DIR, owner_user_id, clip_job_id),
+        artifact_name=stored_artifact_name,
+        utc_now=utc_now,
+        write_caption=write_clip_caption,
+        work_dir=lambda clip_job_id: tenant_job_dir(WORK_DIR, owner_user_id, clip_job_id),
+        video_size=get_video_dimensions,
+        write_ass=write_ass,
+        burn_subtitles=burn_subtitles,
+        stamp_logo=lambda clip_job_id, video: stamp_account_logo(clip_job_id, owner_user_id, video, detect=False),
+    )
+    try:
+        fields = run_clip_job(job_id, request, deps)
+        ensure_job_active(job_id)
+        update_job(job_id, status="completed", step="completed", progress=1.0, finished_at=utc_now(),
+                   step_detail="Clip đã sẵn sàng để tải về hoặc đăng", **fields)
+    except JobCancelled:
+        current = JOB_SERVICE.get(job_id) or {}
+        update_job(job_id, status="cancelled", step="cancelled", progress=float(current.get("progress", 0.0)),
+                   step_detail="Đã hủy theo yêu cầu", finished_at=utc_now())
+    except Exception as exc:
+        logger.exception("Clip job %s failed", job_id)
+        update_job(job_id, status="failed", step="failed", error=public_error_message(exc), finished_at=utc_now())
+
+
 def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
     """Run a persisted job request after the API process has restarted."""
     try:
@@ -4715,6 +4761,9 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             return
         if job_action == PHOTO_POST_JOB_ACTION:
             run_photo_post_job(job_id, resume_request)
+            return
+        if job_action == CLIP_JOB_ACTION:
+            run_clip_video_job(job_id, resume_request)
             return
         if job_action != "process_video":
             raise ValueError("Stored background action is invalid")
@@ -8288,6 +8337,30 @@ def choose_photo_post_endpoint(request: Request, job_id: str, choice: PhotoPostC
     return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
 
 
+def requeue_clip_job(job_id: str, source: dict[str, Any], entitlement_account: dict[str, Any]) -> JSONResponse:
+    """Cut a clip again from the same source video; uses no quota."""
+    try:
+        ensure_feature_allowed(entitlement_account, CLIP_FEATURE)
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    resume_request = source.get("resume_request")
+    if not isinstance(resume_request, dict) or not Path(str(resume_request.get("source_video") or "")).is_file():
+        raise HTTPException(status_code=409, detail="Video gốc của clip không còn trên máy chủ")
+    try:
+        JOB_SERVICE.retry(
+            job_id, step="queued", progress=0.0, error=None, error_code=None, step_detail="Đang chờ cắt clip",
+            started_at=None, finished_at=None, completed_at=None, output_video=None, subtitle_file=None,
+            translation_file=None, tiktok_json_file=None, tiktok_text_file=None,
+            job_action=CLIP_JOB_ACTION, resume_request=resume_request,
+        )
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    except JobStateConflictError:
+        raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý") from None
+    notify_scheduler()
+    return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
+
+
 def requeue_video_job(request: Request, job_id: str, *, download_only: bool = False) -> JSONResponse:
     account = current_account(request)
     source = job_for_request(request, job_id)
@@ -8311,6 +8384,9 @@ def requeue_video_job(request: Request, job_id: str, *, download_only: bool = Fa
         except JobStateConflictError:
             raise HTTPException(status_code=409, detail="Không thể chạy lại job đang xử lý") from None
         return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
+
+    if is_clip_job(source):
+        return requeue_clip_job(job_id, source, entitlement_account)
 
     resume_request = source.get("resume_request")
     if not isinstance(resume_request, dict):
@@ -8547,6 +8623,51 @@ COMIC_ROUTE_DEPS = ComicRouteDependencies(
     has_logo=lambda user_id: BRANDING_STORE.logo_path(user_id) is not None,
 )
 app.include_router(create_comic_router(COMIC_ROUTE_DEPS), dependencies=require_paid_feature("comic_video"))
+
+
+def probe_video_duration(path: Path) -> float | None:
+    try:
+        return probe_media_file(path, ffprobe=FFPROBE).duration
+    except Exception:
+        return None
+
+
+def list_clip_sources(account: dict[str, Any], search: str | None, limit: int, offset: int):
+    owner_scope = None if can_manage_all_jobs(account) else str(account["user_id"])
+    return JOB_SERVICE.list_jobs(owner_user_id=owner_scope, status="completed", search=search,
+                                 limit=limit, offset=offset, with_output_video=True)
+
+
+CLIP_SUGGEST_FEATURE = "ai_clip_suggest_gemini"
+
+
+def clip_suggest_unavailable(account: dict[str, Any]) -> str | None:
+    try:
+        ensure_feature_allowed(account, CLIP_SUGGEST_FEATURE)
+    except PlanEntitlementError as exc:
+        return str(exc)
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        return "Máy chủ chưa cấu hình Gemini (GEMINI_API_KEY) nên chưa dùng được AI gợi ý"
+    return None
+
+
+CLIP_ROUTE_DEPS = ClipRouteDependencies(
+    current_account=lambda request: current_account(request),
+    job_for_request=lambda request, job_id: job_for_request(request, job_id),
+    list_sources=list_clip_sources,
+    load_source=lambda job: load_clip_source(job, artifact_path=stored_artifact_path,
+                                             probe_duration=probe_video_duration),
+    create_batch=lambda batch_id, name, config, owner: JOB_SERVICE.create_batch(
+        batch_id, name=name, config=config, owner_user_id=owner),
+    create_job=lambda job_id, payload, owner: JOB_SERVICE.create(job_id, payload, owner_user_id=owner),
+    attach_to_batch=lambda job_id, batch_id: JOB_SERVICE.attach_to_batch(job_id, batch_id),
+    job_response=lambda job_id, job: job_response(job_id, job),
+    notify_scheduler=notify_scheduler,
+    suggest_unavailable=clip_suggest_unavailable,
+    suggest_model=lambda: GeminiJSONClient(timeout=90),
+)
+# A feature of its own ("Cắt clip" menu), separate from the translate form.
+app.include_router(create_clip_router(CLIP_ROUTE_DEPS), dependencies=require_paid_feature(CLIP_FEATURE))
 # Chapters are read in the shared source-login Chromium (Qidian answers plain HTTP with
 # an anti-bot shell). Episodes stay under the story limit with room for normalisation.
 NOVEL_IMPORTS = NovelImportService(

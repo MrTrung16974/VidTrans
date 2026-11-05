@@ -3,6 +3,7 @@ import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-f
 import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261105-notifications";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261104-plan-hide";
+import { createClipWorkspace } from "./clips.js?v=20261105-clips-ai";
 import { createBrandingWorkspace } from "./branding.js?v=20261031-apply-logo";
 import { createAccessConfig } from "./access-config.js?v=20261104-plan-minutes";
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -1354,10 +1355,10 @@ function bindWorkflowStepNav() {
 }
 
 let activeView = null;
-const NAV_MENU_VIEWS = new Set(["create", "comic", "jobs", "tiktok", "douyin", "admin"]);
+const NAV_MENU_VIEWS = new Set(["create", "comic", "clips", "jobs", "tiktok", "douyin", "admin"]);
 
 function showView() {
-  let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : location.hash === "#account" ? "account" : "create";
+  let view = location.hash.startsWith("#comic") ? "comic" : location.hash === "#clips" ? "clips" : location.hash === "#tiktok" ? "tiktok" : location.hash === "#jobs" ? "jobs" : location.hash === "#douyin" ? "douyin" : location.hash === "#admin" ? "admin" : location.hash === "#billing" ? "billing" : location.hash === "#account" ? "account" : "create";
   if (["admin", "douyin"].includes(view) && !["owner", "admin"].includes(state.auth.role || "owner")) view = "create";
   if (["tiktok", "comic", "account"].includes(view) && state.auth.role === "viewer") view = "jobs";
   // Views behind a main-menu entry the admin hid (or the plan lacks) are closed too.
@@ -1369,6 +1370,9 @@ function showView() {
   $("#comicView").classList.toggle("is-hidden", view !== "comic");
   if (view === "comic" && state.appStarted) comicWorkspace.enter();
   else comicWorkspace.leave();
+  $("#clipsView").classList.toggle("is-hidden", view !== "clips");
+  if (view === "clips" && state.appStarted) clipWorkspace.enter();
+  else clipWorkspace.leave();
   $("#tiktokView").classList.toggle("is-hidden", view !== "tiktok");
   if (view === "tiktok" && state.appStarted) tiktokWorkspace.enter();
   else tiktokWorkspace.leave();
@@ -3155,6 +3159,7 @@ const jobEvents = createJobEvents({
     scheduleJobRender();
     if (reload) scheduleJobsReload();
     comicWorkspace.onJobChanges(message);
+    clipWorkspace.onJobChanges(message);
     if (activeDetailJobId) {
       const activeJob = state.jobs.find(j => j.job_id === activeDetailJobId);
       if (activeJob) renderJobDetailModal(activeJob, { preserveMedia: true });
@@ -4808,6 +4813,7 @@ const tiktokWorkspace = createTikTokWorkspace({
   canManageAllVideos: () => state.auth.role === "owner",
 });
 const comicWorkspace = createComicWorkspace({ requestJson, toast, escapeHtml });
+const clipWorkspace = createClipWorkspace({ requestJson, toast, escapeHtml });
 const brandingWorkspace = createBrandingWorkspace({
   requestJson,
   toast,

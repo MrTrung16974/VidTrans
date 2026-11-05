@@ -44,6 +44,10 @@ class Account {
   /// has it by default; servers that predate the feature never ask.
   bool get canUsePhotoPosts => features == null || hasFeature(PlanFeature.photoPost);
 
+  /// "Cắt clip": every plan has it by default. Servers that predate the feature
+  /// (no `features` list) have no `/api/v1/clips` either.
+  bool get canCutClips => features != null && hasFeature(PlanFeature.clipSplit);
+
   String get name => (displayName?.isNotEmpty ?? false) ? displayName! : email;
 
   factory Account.fromJson(Map<String, dynamic> json) => Account(
@@ -62,6 +66,8 @@ class Account {
 abstract final class PlanFeature {
   static const comicVideo = 'comic_video';
   static const photoPost = 'photo_post';
+  static const clipSplit = 'clip_split';
+  static const aiClipSuggest = 'ai_clip_suggest_gemini';
   static const novelImport = 'novel_import';
   static const socialPublishing = 'social_publishing';
   static const imageTranslation = 'image_translation';

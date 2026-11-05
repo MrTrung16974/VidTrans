@@ -337,6 +337,21 @@ class _JobDetail extends ConsumerWidget {
                     label: const Text('Đăng mạng xã hội'),
                   ),
                 ],
+                if (job.status == 'completed' && !readOnly && (account?.canCutClips ?? false)) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      iconColor: Colors.white,
+                      backgroundColor: const Color(0x14FFFFFF),
+                      side: const BorderSide(color: Color(0xFF475569)),
+                    ),
+                    // Opens the separate "Cắt clip" feature on this video.
+                    onPressed: () => context.push('/clips?source=${job.id}'),
+                    icon: const Icon(Icons.content_cut_rounded, size: 18),
+                    label: const Text('Cắt thành nhiều clip'),
+                  ),
+                ],
               ],
             ),
           ),

@@ -9087,3 +9087,78 @@ body.modal-open {
 .job-report-dialog textarea { width: 100%; resize: vertical; min-height: 96px; font: inherit; }
 .job-report-dialog select { width: 100%; }
 .admin-report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---- Cắt clip (#clips) ---------------------------------------------------------------- */
+.clips-layout { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.clips-sources, .clips-editor { padding: 16px; min-width: 0; }
+.clips-sources h2, .clips-editor-head h2 { margin: 0 0 10px; font-size: 1rem; }
+.clips-view input:not([type="checkbox"]) { min-width: 0; min-height: 36px; border: 1px solid #d7dee6; border-radius: 10px; outline: none; color: var(--ink); background: #fff; padding: 6px 10px; font: inherit; font-size: .84rem; transition: border-color .15s, box-shadow .15s; }
+.clips-view input:not([type="checkbox"]):focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(239,107,58,.11); }
+.clips-view select { min-height: 36px; font-size: .84rem; width: auto; border: 1px solid #d7dee6; border-radius: 10px; padding-left: 10px; color: var(--ink); }
+.clips-sources input[type="search"] { width: 100%; margin-bottom: 10px; }
+.clips-source-list { display: grid; gap: 8px; max-height: 62vh; overflow-y: auto; }
+.clip-source { display: grid; gap: 3px; text-align: left; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; cursor: pointer; }
+.clip-source strong { font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clip-source small { color: #64748b; font-size: .72rem; }
+.clip-source:hover { border-color: #cbd5e1; }
+.clip-source.is-active { border-color: var(--brand, #ea580c); background: #fff7ed; }
+.clips-note { color: #64748b; font-size: .86rem; margin: 6px 0; }
+.clips-editor-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; }
+.clips-editor-head h2 { margin: 0; overflow-wrap: anywhere; }
+.clips-editor-head small { color: #64748b; }
+.clip-video { width: 100%; max-height: 52vh; background: #0f172a; border-radius: 12px; display: block; }
+.clip-timeline { position: relative; height: 30px; margin: 10px 0 14px; border-radius: 8px; background: #f1f5f9; cursor: pointer; overflow: hidden; }
+.clip-cue { position: absolute; top: 4px; height: 6px; border-radius: 3px; background: #cbd5e1; }
+.clip-range { position: absolute; top: 12px; bottom: 3px; border-radius: 5px; background: rgba(234, 88, 12, .78); color: #fff; font-size: .68rem; font-weight: 800; display: grid; place-items: center; overflow: hidden; border-left: 1px solid #fff; }
+.clip-range.is-invalid { background: rgba(220, 38, 38, .8); }
+.clip-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #0f172a; pointer-events: none; }
+.clip-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 12px; }
+.clip-every input { width: 72px; }
+.clip-ai { display: grid; gap: 8px; margin-bottom: 12px; padding: 12px; border: 1px solid #fed7aa; border-radius: 14px; background: linear-gradient(135deg, #fff7ed, #ffffff); }
+.clip-ai-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.clip-ai-head strong { font-size: .9rem; }
+.clip-ai-head .clips-note { margin: 0; font-size: .78rem; }
+.clip-ai > input { width: 100%; }
+.clip-ai-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: .84rem; color: #475569; }
+.clip-ai-options input { width: 68px; }
+.clip-snap { display: inline-flex; align-items: center; gap: 6px; font-size: .84rem; }
+.clip-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.clip-row { display: grid; grid-template-columns: 26px minmax(120px, 1fr) auto auto auto auto auto auto; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.clip-row.is-invalid { border-color: #fca5a5; background: #fef2f2; }
+.clip-number { width: 24px; height: 24px; border-radius: 50%; background: var(--brand, #ea580c); color: #fff; font-size: .72rem; font-weight: 800; display: grid; place-items: center; }
+.clip-time { display: inline-flex; align-items: center; gap: 4px; font-size: .8rem; color: #475569; white-space: nowrap; }
+.clip-time input { width: 74px; }
+.clip-duration { font-size: .78rem; color: #475569; white-space: nowrap; }
+.clip-row.is-invalid .clip-duration { color: #b91c1c; }
+.clip-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 14px; }
+.clip-actions span { color: #475569; font-size: .86rem; }
+.clip-results { margin-top: 18px; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+.clip-results h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: .95rem; margin: 0 0 8px; }
+.clips-jobs-link { font-size: .8rem; font-weight: 600; }
+.clip-results ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.clip-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 12px; }
+.clip-result > span:first-child { display: grid; min-width: 0; }
+.clip-result strong { font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clip-result small { color: #64748b; font-size: .72rem; }
+.clip-result-links { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.clip-result-links:empty { display: none; }
+.clip-error { color: #b91c1c !important; }
+
+@media (max-width: 960px) {
+  .clips-layout { grid-template-columns: minmax(0, 1fr); }
+  .clips-source-list { max-height: 240px; }
+  .clip-row {
+    grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr) 40px 40px;
+    grid-template-areas: "num title title dur dur" "start start start start start" "end end end end end" "frame frame frame prev del";
+  }
+  .clip-row .clip-number { grid-area: num; }
+  .clip-row .clip-title { grid-area: title; }
+  .clip-row .clip-start { grid-area: start; }
+  .clip-row .clip-end { grid-area: end; }
+  .clip-row select { grid-area: frame; min-width: 0; width: 100%; }
+  .clip-row .clip-duration { grid-area: dur; white-space: normal; text-align: right; font-size: .72rem; }
+  .clip-row [data-action="preview"] { grid-area: prev; }
+  .clip-row [data-action="remove"] { grid-area: del; }
+  .clip-row .clip-time { min-width: 0; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; }
+  .clip-row .clip-time input { width: 100%; }
+}

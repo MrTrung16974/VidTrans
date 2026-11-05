@@ -14,7 +14,7 @@ from infrastructure.plan_store import PlanStore
 
 # What trial and free get out of the box: image and floating translation, and
 # downloading from every source platform (each one can be switched off).
-BASIC = frozenset({"image_translation", "screen_translator", "photo_post", *SOURCE_PLATFORM_FEATURES.values()})
+BASIC = frozenset({"image_translation", "screen_translator", "photo_post", "clip_split", *SOURCE_PLATFORM_FEATURES.values()})
 
 
 def on_plan(plan: str, role: str = "editor") -> dict:

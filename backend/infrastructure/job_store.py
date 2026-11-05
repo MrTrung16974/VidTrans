@@ -419,9 +419,16 @@ class JobStore:
         limit: int = 50,
         offset: int = 0,
         owner_user_id: str | None = None,
+        with_output_video: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         clauses: list[str] = ["deleted_at IS NULL"]
-        values: list[Any] = []
+        if with_output_video:
+            # A finished video is stored as a string; a cleared one is null.
+            clauses.append("(payload_json LIKE ? OR payload_json LIKE ?)")
+            values_prefix = ['%"output_video":"%', '%"output_video": "%']
+        else:
+            values_prefix = []
+        values: list[Any] = list(values_prefix)
         if owner_user_id is not None:
             clauses.append("owner_user_id = ?")
             values.append(owner_user_id)
