@@ -1,11 +1,12 @@
 """JSON-producing LLM clients for story analysis (Gemini API or a local Ollama model)."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Protocol
+from typing import Any, Protocol, Sequence
 
 from infrastructure.translation_providers import _direct_open, local_model, local_model_available, ollama_url
 
@@ -31,6 +32,10 @@ class StoryLLM(Protocol):
     def generate_json(self, system: str, user: str, schema: dict[str, Any]) -> str: ...
 
 
+# (mime type, raw bytes) of a picture sent along with a prompt.
+PromptImage = tuple[str, bytes]
+
+
 def gemini_models() -> list[str]:
     preferred = os.environ.get("VIDTRANS_COMIC_LLM_MODEL", "").strip()
     configured = [m.strip() for m in os.environ.get("GEMINI_TRANSLATION_MODELS", "").split(",") if m.strip()]
@@ -48,10 +53,20 @@ class GeminiJSONClient:
         self._open = opener or urllib.request.urlopen
         self.name = f"gemini-{self.models[0]}"
 
-    def generate_json(self, system: str, user: str, schema: dict[str, Any]) -> str:
+    # Gemini reads pictures; callers may pass a few with the prompt.
+    accepts_images = True
+
+    def generate_json(
+        self, system: str, user: str, schema: dict[str, Any], *, images: Sequence[PromptImage] = (),
+    ) -> str:
+        parts: list[dict[str, Any]] = [
+            {"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode("ascii")}}
+            for mime, data in images
+        ]
+        parts.append({"text": user})
         body = json.dumps({
             "systemInstruction": {"parts": [{"text": system}]},
-            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"},
         }).encode("utf-8")
         limited = False

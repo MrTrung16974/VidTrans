@@ -11057,6 +11057,54 @@
         "summary": "Choose Photo Post Endpoint"
       }
     },
+    "/api/v1/jobs/{job_id}/photo-post/music-suggestions": {
+      "post": {
+        "description": "Library tracks that fit a photo post waiting for its owner's choice, best first.",
+        "operationId": "suggest_photo_post_music_endpoint_api_v1_jobs__job_id__photo_post_music_suggestions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Suggest Photo Post Music Endpoint"
+      }
+    },
     "/api/v1/jobs/{job_id}/refresh-tiktok-status": {
       "post": {
         "operationId": "refresh_tiktok_publish_status_api_v1_jobs__job_id__refresh_tiktok_status_post",

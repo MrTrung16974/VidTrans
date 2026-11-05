@@ -115,6 +115,7 @@ from application.device_routes import DeviceRouteDependencies, create_device_rou
 from application.contact_routes import ContactRouteDependencies, create_contact_router
 from application.job_report_routes import JobReportRouteDependencies, create_job_report_router
 from application.music_routes import MusicRouteDependencies, create_music_router
+from application.music_suggestions import suggest_music
 from infrastructure.music_library import MusicLibraryStore, MusicTrackNotFound, probe_audio_duration
 from domain.legal import SUPPORT_PHONE, TERMS_VERSION, support_email, terms_outdated
 from infrastructure.credential_cipher import CredentialCipher, CredentialCipherError
@@ -132,7 +133,7 @@ from infrastructure.tiktok_slideshow import (
     render_timed_slideshow,
 )
 from infrastructure.mailer import MailConfig, MailDeliveryError, SmtpMailer
-from infrastructure.llm_providers import GeminiJSONClient
+from infrastructure.llm_providers import GeminiJSONClient, LLMError, create_story_llm
 from infrastructure.media_probe import MediaProbe, probe_media_file
 from infrastructure.password_reset import CODE_TTL_SECONDS, PasswordResetStore
 from infrastructure.stage_checkpoint import (
@@ -4530,7 +4531,8 @@ def prepare_job_source_video(job_id: str, resume_request: dict[str, Any]) -> Pat
     stored_request = {**resume_request, "video_path": str(result.path), "source_url": result.source_url}
     if result.photo_post:
         # A photo post: the owner chooses what to make of it before anything else runs.
-        stored_request["photo_post"] = result.photo_post
+        # The caption (with hashtags) lets AI suggest music that fits the post.
+        stored_request["photo_post"] = {**result.photo_post, "title": result.title}
     source_cookie_value = stored_request.pop("source_cookie_path", None)
     if source_cookie_value:
         source_cookie_path = Path(str(source_cookie_value)).resolve()
@@ -8355,6 +8357,29 @@ def choose_photo_post_endpoint(request: Request, job_id: str, choice: PhotoPostC
         raise HTTPException(status_code=409, detail="Job này không chờ chọn cách xử lý bài đăng ảnh") from None
     notify_scheduler()
     return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
+
+
+@app.post("/api/v1/jobs/{job_id}/photo-post/music-suggestions")
+def suggest_photo_post_music_endpoint(request: Request, job_id: str) -> JSONResponse:
+    """Library tracks that fit a photo post waiting for its owner's choice, best first."""
+    current_account(request)
+    source = job_for_request(request, job_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    resume_request = source.get("resume_request")
+    if source.get("status") != AWAITING_INPUT_STATUS or not isinstance(resume_request, dict):
+        raise HTTPException(status_code=409, detail="Job này không chờ chọn cách xử lý bài đăng ảnh")
+    images, _ = photo_post_files(resume_request)
+    caption = str((resume_request.get("photo_post") or {}).get("title") or Path(str(source.get("filename") or "")).stem)
+    try:
+        llm = create_story_llm("auto")
+        if llm is not None:
+            llm.timeout = min(llm.timeout, 120.0)  # The user is waiting on the screen.
+    except LLMError as exc:
+        logger.warning("No model for music suggestions: %s", exc)
+        llm = None
+    suggestions = suggest_music(caption=caption, image_paths=images, tracks=MUSIC_LIBRARY.list(), llm=llm)
+    return JSONResponse(suggestions.as_json(), headers={"Cache-Control": "no-store"})
 
 
 def requeue_clip_job(job_id: str, source: dict[str, Any], entitlement_account: dict[str, Any]) -> JSONResponse:

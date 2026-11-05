@@ -445,6 +445,94 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
   /// Library tracks in play order; empty keeps the post's own music.
   final List<String> _musicTrackIds = [];
   bool _sending = false;
+  bool _suggesting = false;
+  MusicSuggestions? _suggestions;
+
+  Future<void> _suggestMusic() async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _suggesting = true);
+    try {
+      final suggestions = await ref.read(jobsRepositoryProvider).photoPostMusicSuggestions(widget.job.id);
+      if (!mounted) return;
+      setState(() => _suggestions = suggestions);
+      if (suggestions.items.isEmpty) {
+        messenger.showSnackBar(const SnackBar(content: Text('AI chưa tìm được bài nào hợp trong thư viện nhạc')));
+      }
+    } catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
+    } finally {
+      if (mounted) setState(() => _suggesting = false);
+    }
+  }
+
+  void _addTracks(Iterable<String> trackIds) {
+    setState(() {
+      for (final trackId in trackIds) {
+        if (_musicTrackIds.length >= _maxMusicTracks) break;
+        if (!_musicTrackIds.contains(trackId)) _musicTrackIds.add(trackId);
+      }
+    });
+  }
+
+  Widget _suggestionList(MusicSuggestions suggestions) {
+    final pending = [
+      for (final item in suggestions.items)
+        if (!_musicTrackIds.contains(item.trackId)) item.trackId,
+    ];
+    final full = _musicTrackIds.length >= _maxMusicTracks;
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.fromLTRB(12, 10, 4, 6),
+      decoration: BoxDecoration(
+        color: AppColors.amber.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, size: 16, color: AppColors.amber),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  suggestions.byAi
+                      ? 'AI gợi ý${suggestions.mood.isEmpty ? '' : ' · ${suggestions.mood}'}'
+                      : 'Gợi ý theo từ khoá caption (AI đang không khả dụng)',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+              ),
+              if (pending.length > 1)
+                TextButton(
+                  onPressed: _sending || full ? null : () => _addTracks(pending),
+                  child: const Text('Thêm tất cả'),
+                ),
+            ],
+          ),
+          for (final item in suggestions.items)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(item.title, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                item.reason.isEmpty ? item.category : item.reason,
+                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+              trailing: _musicTrackIds.contains(item.trackId)
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Icon(Icons.check_rounded, size: 20, color: AppColors.muted),
+                    )
+                  : IconButton(
+                      tooltip: 'Thêm bài này',
+                      icon: const Icon(Icons.add_circle_outline_rounded),
+                      onPressed: _sending || full ? null : () => _addTracks([item.trackId]),
+                    ),
+            ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _choose(String action) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -520,6 +608,24 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
                       if (value != null) setState(() => _musicTrackIds.add(value));
                     },
             ),
+            if (tracks.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _sending || _suggesting ? null : _suggestMusic,
+                  icon: _suggesting
+                      ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.auto_awesome, size: 18),
+                  label: Text(_suggesting
+                      ? 'AI đang xem bài đăng…'
+                      : _suggestions == null
+                          ? 'AI gợi ý nhạc hợp bài đăng'
+                          : 'Gợi ý lại'),
+                ),
+              ),
+            ],
+            if (_suggestions != null && _suggestions!.items.isNotEmpty) _suggestionList(_suggestions!),
             for (final (index, trackId) in _musicTrackIds.indexed)
               ListTile(
                 dense: true,

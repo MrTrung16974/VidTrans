@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
@@ -42,6 +43,15 @@ class JobsRepository {
         'music_track_ids': ?musicTrackIds,
       });
 
+  /// Library tracks that AI thinks fit a waiting photo post, best first.
+  Future<MusicSuggestions> photoPostMusicSuggestions(String jobId) async => MusicSuggestions.fromJson(
+        await _api.post<Map<String, dynamic>>(
+          '/api/v1/jobs/$jobId/photo-post/music-suggestions',
+          // The model may look at the post's pictures; the server gives it up to 2 minutes.
+          options: Options(receiveTimeout: const Duration(seconds: 150)),
+        ),
+      );
+
   Future<void> delete(String jobId) => _api.delete<dynamic>('/api/v1/jobs/$jobId');
 
   Uri artifactUri(String path) => _api.resolve(path);
@@ -54,4 +64,40 @@ class JobsRepository {
     await _api.probe(path);
     return _api.authHeaders();
   }
+}
+
+/// A library track suggested for a photo post, with why it fits.
+class MusicSuggestion {
+  const MusicSuggestion({required this.trackId, required this.title, required this.category, required this.reason});
+
+  final String trackId;
+  final String title;
+  final String category;
+  final String reason;
+
+  factory MusicSuggestion.fromJson(Map<String, dynamic> json) => MusicSuggestion(
+        trackId: json['track_id'].toString(),
+        title: json['title'] as String? ?? '',
+        category: json['category'] as String? ?? '',
+        reason: json['reason'] as String? ?? '',
+      );
+}
+
+class MusicSuggestions {
+  const MusicSuggestions({required this.items, required this.mood, required this.byAi});
+
+  final List<MusicSuggestion> items;
+  final String mood;
+
+  /// False when no AI model answered and the caption's mood words picked the tracks.
+  final bool byAi;
+
+  factory MusicSuggestions.fromJson(Map<String, dynamic> json) => MusicSuggestions(
+        items: [
+          for (final item in json['items'] as List? ?? const [])
+            if (item is Map) MusicSuggestion.fromJson(Map<String, dynamic>.from(item)),
+        ],
+        mood: json['mood'] as String? ?? '',
+        byAi: (json['source'] as String? ?? 'heuristic') != 'heuristic',
+      );
 }

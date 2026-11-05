@@ -189,6 +189,37 @@ class PhotoPostJobTests(unittest.TestCase):
         self.assertEqual(seen["tracks"], [files["t2"], files["t1"]])
         self.assertEqual(seen["audio"].name, "music.m4a")
 
+    def test_ai_suggests_library_music_from_the_post(self) -> None:
+        self.wait_for_choice()
+        stored = self.service.get("job-p")["resume_request"]
+        stored["photo_post"]["title"] = "Chia tay mùa hạ #sad"
+        self.service.update("job-p", resume_request=stored)
+        library = Mock()
+        library.list.return_value = [
+            {"track_id": "t1", "title": "Mưa", "category": "Buồn / Cảm động", "duration_seconds": 60.0},
+            {"track_id": "t2", "title": "Party", "category": "Sôi động / EDM", "duration_seconds": 60.0},
+        ]
+        model = Mock(name="model", accepts_images=False, timeout=900.0)
+        model.name = "fake-model"
+        model.generate_json.return_value = json.dumps(
+            {"mood": "buồn", "suggestions": [{"track_id": "t1", "reason": "Giai điệu buồn"}]})
+        with patch.object(main, "MUSIC_LIBRARY", library), \
+                patch.object(main, "create_story_llm", return_value=model):
+            result = body(main.suggest_photo_post_music_endpoint(request_for(account("user-a")), "job-p"))
+        self.assertEqual(result["source"], "fake-model")
+        self.assertEqual([item["track_id"] for item in result["items"]], ["t1"])
+        self.assertIn("Chia tay mùa hạ #sad", model.generate_json.call_args.args[1])
+        self.assertEqual(model.timeout, 120.0)
+
+        with patch.object(main, "MUSIC_LIBRARY", library), \
+                patch.object(main, "create_story_llm", side_effect=main.LLMError("không có model")):
+            result = body(main.suggest_photo_post_music_endpoint(request_for(account("user-a")), "job-p"))
+        self.assertEqual((result["source"], [item["track_id"] for item in result["items"]]), ("heuristic", ["t1"]))
+
+        with self.assertRaises(HTTPException) as other_user:
+            main.suggest_photo_post_music_endpoint(request_for(account("user-b")), "job-p")
+        self.assertEqual(other_user.exception.status_code, 404)
+
     def test_playlist_command_joins_tracks_in_order(self) -> None:
         from infrastructure.tiktok_slideshow import build_audio_playlist_command, join_audio_tracks
 
