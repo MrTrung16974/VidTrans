@@ -738,6 +738,8 @@ input[type="file"]::-webkit-file-upload-button:active {
 .video-icon-badge.status-accent-queued, .video-icon-badge.status-accent-scheduled { background: linear-gradient(135deg, #d97706, #b45309); }
 .video-icon-badge.status-accent-processing { background: linear-gradient(135deg, var(--brand), #ea580c); box-shadow: 0 2px 8px rgba(234, 88, 12, 0.25); }
 .video-icon-badge svg { fill: currentColor; }
+.video-icon-badge.has-logo { padding: 2px; }
+.video-icon-badge.has-logo img { width: 100%; height: 100%; object-fit: contain; border-radius: 10px; background: #ffffff; display: block; }
 .upload-icon { flex: 0 0 40px; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 0.72rem; font-weight: 800; transition: transform 0.2s ease; }
 .active-upload-icon { background: linear-gradient(135deg, var(--brand), #ea580c); color: #ffffff; box-shadow: 0 2px 8px rgba(234, 88, 12, 0.25); animation: pulse-upload 2s infinite ease-in-out; }
 @keyframes pulse-upload { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
@@ -5178,7 +5180,8 @@ body.modal-open {
     transform: translate(-50%, 0) scale(1);
   }
   .mobile-quick-submit-bar.is-at-bottom,
-  body:has(#authGate:not(.is-hidden)) .mobile-quick-submit-bar {
+  body:has(#authGate:not(.is-hidden)) .mobile-quick-submit-bar,
+  body:has(input:focus, textarea:focus) .mobile-quick-submit-bar {
     opacity: 0;
     pointer-events: none;
     transform: translate(-50%, 16px) scale(0.96);

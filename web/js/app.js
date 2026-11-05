@@ -397,7 +397,9 @@ function syncLogoOptions() {
 }
 
 function updateUserAvatar(logoUrl = state.userLogoUrl) {
+  const changed = (logoUrl || null) !== state.userLogoUrl;
   state.userLogoUrl = logoUrl || null;
+  if (changed && state.jobs?.length && $("#jobsBody")) renderJobs(state.jobs);
   syncLogoOptions();
   const avatar = $("#userAvatar");
   if (!avatar) return;
@@ -2999,6 +3001,19 @@ function renderPendingUpload(upload) {
   </article>`;
 }
 
+// The account logo stands in for the play icon on the user's own jobs; the status
+// colour stays as a ring around it. Other owners' jobs (admin view) keep the icon.
+function jobIconHtml(job) {
+  const ownJob = !job.owner_user_id || !state.auth.user_id || job.owner_user_id === state.auth.user_id;
+  const status = escapeHtml(job.status);
+  if (ownJob && state.userLogoUrl) {
+    return `<div class="job-file-icon video-icon-badge has-logo status-accent-${status}" aria-hidden="true"><img src="${escapeHtml(state.userLogoUrl)}" alt="" loading="lazy" /></div>`;
+  }
+  return `<div class="job-file-icon video-icon-badge status-accent-${status}" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </div>`;
+}
+
 function renderJobs(jobs) {
   const pageJobs = jobs || [];
   const totalJobs = Number.isFinite(state.jobsTotal) ? state.jobsTotal : pageJobs.length;
@@ -3055,9 +3070,7 @@ function renderJobs(jobs) {
     return `<article class="job-row${selected ? " selected" : ""}" data-job-row="${escapeHtml(job.job_id)}">
       <label class="job-select" title="Chọn job"><input type="checkbox" data-job-select="${escapeHtml(job.job_id)}" ${selected ? "checked" : ""} aria-label="Chọn ${escapeHtml(job.filename || job.job_id)}" /></label>
       <div class="job-file">
-        <div class="job-file-icon video-icon-badge status-accent-${escapeHtml(job.status)}" aria-hidden="true">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-        </div>
+        ${jobIconHtml(job)}
         <div class="job-file-meta">
           <strong title="${escapeHtml(job.filename || job.job_id)}">${escapeHtml(job.filename || job.job_id)}</strong>
           <small>${batchBadge}${queue}</small>

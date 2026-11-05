@@ -705,102 +705,110 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
     // The quick start bar mirrors the web UI: it only appears when the user
     // has pasted valid links or added files (state.sourceCount > 0), and hides
-    // when scrolled down to the full submit card.
-    final showQuickBar = !_atBottomSubmit && state.sourceCount > 0;
+    // when scrolled down to the full submit card or when the soft keyboard is
+    // open (to prevent covering input fields like the links TextField).
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final showQuickBar =
+        !keyboardOpen && !_atBottomSubmit && state.sourceCount > 0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: const StudioTopBar(activeStudioPill: StudioCategoryPill.video),
-      body: Stack(
-        children: [
-          ListView(
-            controller: _scrollController,
-            padding: EdgeInsets.fromLTRB(
-              14,
-              14,
-              14,
-              studioDockBottomPadding(context, extra: showQuickBar ? 82 : 24),
-            ),
-            children: [
-              _heroHeader(),
-              const SizedBox(height: 14),
-              _workflowStepsNav(),
-              const SizedBox(height: 14),
-              KeyedSubtree(key: _step1Key, child: _sourcesSection(state)),
-              KeyedSubtree(
-                key: _step2Key,
-                child: FormSection(
-                  stepNumber: 2,
-                  title: 'Cấu hình xử lý',
-                  subtitle: 'Đặt tên lô và chọn chế độ âm thanh đầu ra',
-                  children: [
-                    TextField(
-                      controller: _batchName,
-                      maxLength: 120,
-                      decoration: const InputDecoration(
-                        hintText: 'Ví dụ: Review phim tập 1-10',
-                        labelText: 'Tên batch (tùy chọn)',
-                        counterText: '',
-                        prefixIcon: Icon(Icons.folder_outlined, size: 19),
-                      ),
-                      onChanged: (value) =>
-                          _update((c) => c.copyWith(batchName: value)),
-                    ),
-                    _modeBody(state),
-                  ],
-                ),
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        child: Stack(
+          children: [
+            ListView(
+              controller: _scrollController,
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                14,
+                14,
+                14,
+                studioDockBottomPadding(context, extra: showQuickBar ? 82 : 24),
               ),
-              // Download-only skips every translation step; the logo still applies.
-              if (!config.downloadOnly) ...[
-                _languageSection(config, translation),
-                _recognitionSection(config),
-                if (config.hasVoice) ...[
-                  _voiceSection(config, tts),
-                  _audioSection(config),
-                ] else
-                  _mode1VoiceNotice(),
-              ],
-              _logoSection(config),
-              if (!config.downloadOnly) ...[
+              children: [
+                _heroHeader(),
+                const SizedBox(height: 14),
+                _workflowStepsNav(),
+                const SizedBox(height: 14),
+                KeyedSubtree(key: _step1Key, child: _sourcesSection(state)),
                 KeyedSubtree(
-                  key: _step3Key,
-                  child: _subtitleStyleSection(config),
+                  key: _step2Key,
+                  child: FormSection(
+                    stepNumber: 2,
+                    title: 'Cấu hình xử lý',
+                    subtitle: 'Đặt tên lô và chọn chế độ âm thanh đầu ra',
+                    children: [
+                      TextField(
+                        controller: _batchName,
+                        maxLength: 120,
+                        decoration: const InputDecoration(
+                          hintText: 'Ví dụ: Review phim tập 1-10',
+                          labelText: 'Tên batch (tùy chọn)',
+                          counterText: '',
+                          prefixIcon: Icon(Icons.folder_outlined, size: 19),
+                        ),
+                        onChanged: (value) =>
+                            _update((c) => c.copyWith(batchName: value)),
+                      ),
+                      _modeBody(state),
+                    ],
+                  ),
                 ),
-                KeyedSubtree(key: _step4Key, child: _tiktokSection(config)),
-                _ocrSection(config),
+                // Download-only skips every translation step; the logo still applies.
+                if (!config.downloadOnly) ...[
+                  _languageSection(config, translation),
+                  _recognitionSection(config),
+                  if (config.hasVoice) ...[
+                    _voiceSection(config, tts),
+                    _audioSection(config),
+                  ] else
+                    _mode1VoiceNotice(),
+                ],
+                _logoSection(config),
+                if (!config.downloadOnly) ...[
+                  KeyedSubtree(
+                    key: _step3Key,
+                    child: _subtitleStyleSection(config),
+                  ),
+                  KeyedSubtree(key: _step4Key, child: _tiktokSection(config)),
+                  _ocrSection(config),
+                ],
+                const SizedBox(height: 4),
+                KeyedSubtree(key: _submitCardKey, child: _submitCard(state)),
               ],
-              const SizedBox(height: 4),
-              KeyedSubtree(key: _submitCardKey, child: _submitCard(state)),
-            ],
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: studioDockClearance(context),
-            child: AnimatedSlide(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              offset: showQuickBar ? Offset.zero : const Offset(0, 0.4),
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOut,
-                opacity: showQuickBar ? 1.0 : 0.0,
-                child: IgnorePointer(
-                  ignoring: !showQuickBar,
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 420),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        child: _quickSubmitBar(state),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: studioDockClearance(context),
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                offset: showQuickBar ? Offset.zero : const Offset(0, 1.0),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOut,
+                  opacity: showQuickBar ? 1.0 : 0.0,
+                  child: IgnorePointer(
+                    ignoring: !showQuickBar,
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          child: _quickSubmitBar(state),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
