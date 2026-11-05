@@ -13,9 +13,10 @@ from typing import Any, Callable
 from urllib.parse import unquote, urlsplit
 
 from infrastructure.social_video_downloader import (
-    SocialVideoDownloadCancelled, SocialVideoDownloadError, douyin_video_id,
+    SLIDESHOW_KEY, SocialVideoDownloadCancelled, SocialVideoDownloadError, douyin_video_id,
     normalize_social_video_url, social_platform,
 )
+from infrastructure.tiktok_slideshow import MAX_IMAGES, slideshow_duration
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +69,55 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+DOUYIN_MEDIA_DOMAINS = ("douyinvod.com", "douyin.com", "douyinpic.com", "amemv.com", "snssdk.com",
+                        "bytecdn.cn", "ibytedtos.com", "douyinstatic.com")
+
+
+def _douyin_media_url(url_list: Any, *, prefer: tuple[str, ...] = ()) -> str | None:
+    """First https URL on a Douyin CDN, preferring one whose path holds a ``prefer`` marker."""
+    candidates = []
+    for url in url_list or []:
+        if not isinstance(url, str):
+            continue
+        parsed = urlsplit(url)
+        hostname = parsed.hostname or ""
+        if parsed.scheme not in {"https", "http"} or parsed.username or parsed.password:
+            continue
+        if any(hostname == domain or hostname.endswith("." + domain) for domain in DOUYIN_MEDIA_DOMAINS):
+            candidates.append(url)
+    for marker in prefer:
+        for url in candidates:
+            if marker in url.lower():
+                return url
+    return candidates[0] if candidates else None
+
+
+def douyin_photo_post_info(detail: dict[str, Any]) -> dict[str, Any] | None:
+    """yt-dlp-like info for an image post (图文): its pictures and background music."""
+    images = []
+    for image in detail.get("images") or []:
+        if not isinstance(image, dict):
+            continue
+        # HEIC cannot be decoded for the slideshow; JPEG/WebP copies sit in the same list.
+        url = _douyin_media_url(image.get("url_list"), prefer=(".jpeg", ".jpg", ".webp", "jpeg", "webp"))
+        if url:
+            images.append(url)
+    if not images:
+        return None
+    music = (
+        _douyin_media_url(((detail.get("music") or {}).get("play_url") or {}).get("url_list"))
+        # Image posts also carry the background music in video.play_addr.
+        or _douyin_media_url(((detail.get("video") or {}).get("play_addr") or {}).get("url_list"))
+    )
+    return {"id": str(detail["aweme_id"]), "title": detail.get("desc") or "Ảnh Douyin",
+            "duration": slideshow_duration(min(len(images), MAX_IMAGES)), "ext": "mp4",
+            "extractor": "douyin-browser",
+            SLIDESHOW_KEY: {"images": images[:MAX_IMAGES], "music": music}}
+
+
 def douyin_video_info(detail: dict[str, Any]) -> dict[str, Any] | None:
     if detail.get("images"):
-        # Image posts carry the background music in video.play_addr, not a video.
-        raise SocialVideoDownloadError(
-            "Link Douyin này là bài đăng ảnh (图文), không phải video. Hãy chọn link một video."
-        )
+        return douyin_photo_post_info(detail)
     video = detail.get("video") or {}
     addresses = [video.get("play_addr") or {}]
     formats = []
@@ -232,7 +276,7 @@ class DouyinBrowserAuthManager:
 
             def collect(value: Any) -> None:
                 if isinstance(value, dict):
-                    if value.get("aweme_id") and isinstance(value.get("video"), dict):
+                    if value.get("aweme_id") and (isinstance(value.get("video"), dict) or value.get("images")):
                         details[str(value["aweme_id"])] = value
                     else:
                         for child in value.values():

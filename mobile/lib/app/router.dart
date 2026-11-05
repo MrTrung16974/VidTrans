@@ -111,7 +111,10 @@ final routerProvider = Provider<GoRouter>((ref) {
                 GoRoute(
                   path: ':jobId',
                   builder: (_, state) =>
-                      JobDetailScreen(jobId: state.pathParameters['jobId']!),
+                      JobDetailScreen(
+                        jobId: state.pathParameters['jobId']!,
+                        askDownloadOnly: state.uri.queryParameters['ask'] == 'download-only',
+                      ),
                   routes: [
                     GoRoute(
                       path: 'player',

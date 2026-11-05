@@ -767,6 +767,7 @@ input[type="file"]::-webkit-file-upload-button:active {
 .status-queued, .status-cancelling { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
 .status-scheduled { background: #f0fdfa; color: #115e59; border: 1px solid #99f6e4; }
 .status-failed, .status-cancelled { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.status-awaiting_input { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
 
 /* Job Progress & Step Details */
 .job-progress { display: grid; grid-template-columns: 1fr 42px; align-items: center; gap: 10px; min-width: 0; }
@@ -1425,8 +1426,6 @@ input[type="file"]::-webkit-file-upload-button:active {
 .password-reset-dialog::backdrop { background: rgba(15,23,42,.55); }
 .password-reset-dialog h2 { margin: 0 0 4px; font-size: 1.25rem; }
 .password-reset-target { margin: 0; color: var(--muted); font-size: .82rem; word-break: break-all; }
-.no-speech-jobs { margin: .5rem 0; padding-left: 1.1rem; max-height: 9rem; overflow-y: auto; font-size: .85rem; word-break: break-word; }
-.no-speech-dialog p:last-child { margin-bottom: 0; }
 .password-reset-actions { display: flex; gap: 8px; }
 .password-reset-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
@@ -1847,6 +1846,16 @@ body.modal-open {
 .job-detail-section .section-title svg {
   color: #ea580c;
 }
+
+/* Photo post choice */
+.photo-choice-section { border-color: #fde68a; background: #fffbeb; }
+.photo-choice-summary { margin: 0 0 12px; color: #92400e; font-size: .9rem; }
+.photo-choice-option { padding: 12px 0; border-top: 1px solid #fde68a; display: grid; gap: 6px; }
+.photo-choice-option p { margin: 0; color: #64748b; font-size: .85rem; }
+.photo-choice-option .button { justify-self: start; }
+.photo-choice-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.photo-choice-fields label { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; }
+.photo-choice-fields input, .photo-choice-fields select { width: 100%; min-width: 0; }
 
 /* Progress card */
 .progress-section {

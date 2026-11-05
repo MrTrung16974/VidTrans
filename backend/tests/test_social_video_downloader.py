@@ -612,10 +612,12 @@ class DouyinCanonicalUrlTests(unittest.TestCase):
         downloader = self.downloader("https://www.iesdouyin.com/share/video/7661982102736473384/?u_code=x")
         self.assertEqual(downloader.canonical_douyin_url("https://v.douyin.com/GXgZS-F73fI/"), self.VIDEO)
 
-    def test_image_post_is_rejected_instead_of_downloading_music(self) -> None:
+    def test_image_post_maps_to_its_note_page(self) -> None:
         downloader = self.downloader("https://www.iesdouyin.com/share/note/7661982102736473384/")
-        with self.assertRaises(SocialVideoDownloadError):
-            downloader.canonical_douyin_url("https://v.douyin.com/abc/")
+        self.assertEqual(
+            downloader.canonical_douyin_url("https://v.douyin.com/abc/"),
+            "https://www.douyin.com/note/7661982102736473384",
+        )
 
     def test_yt_dlp_receives_canonical_url_and_no_generic_extractor(self) -> None:
         seen = {}
@@ -725,8 +727,15 @@ class AudioOnlyFallbackTests(unittest.TestCase):
             self.assertEqual(result.path, (Path(directory) / "job.mp4").resolve())
             self.assertEqual(result.path.read_bytes(), b"slideshow")
             self.assertEqual(result.duration, 6.0)
-            # The scratch folder with the raw images is removed.
-            self.assertEqual(sorted(path.name for path in Path(directory).iterdir()), ["job.mp4"])
+            # The scratch folder is gone; the images and music stay for the owner's choice.
+            self.assertEqual(sorted(path.name for path in Path(directory).iterdir()), ["job.mp4", "job.photos"])
+            photos = (Path(directory) / "job.photos").resolve()
+            self.assertEqual(result.photo_post, {
+                # Unrecognised bytes keep the default extensions.
+                "images": [str(photos / "image_00.jpg"), str(photos / "image_01.jpg")],
+                "music": str(photos / "music.mp3"),
+            })
+            self.assertEqual(Path(result.photo_post["images"][1]).read_bytes(), b"bytes-of-https://cdn/2.jpeg")
         self.assertEqual(calls, [([b"bytes-of-https://cdn/1.jpeg", b"bytes-of-https://cdn/2.jpeg"], b"bytes-of-https://cdn/m.mp3")])
         self.assertEqual(AudioOnlyYoutubeDL.processed, [])
 
@@ -754,6 +763,42 @@ class SlideshowCommandTests(unittest.TestCase):
 
         command = build_slideshow_command("ffmpeg", [Path("a.jpg")], None, Path("o.mp4"))
         self.assertIn("anullsrc=r=44100:cl=stereo", command)
+
+
+class TimedSlideshowTests(unittest.TestCase):
+    def test_few_images_share_a_short_video(self) -> None:
+        from infrastructure.tiktok_slideshow import plan_timed_slideshow
+
+        self.assertEqual(plan_timed_slideshow(4, 20), ([0, 1, 2, 3], 5.0))
+
+    def test_a_long_video_repeats_the_set_in_order(self) -> None:
+        from infrastructure.tiktok_slideshow import MAX_SECONDS_PER_SLIDE, plan_timed_slideshow
+
+        order, seconds = plan_timed_slideshow(10, 180)
+        self.assertEqual(order, list(range(10)) * 3)
+        self.assertEqual(seconds, 6.0)
+        self.assertLessEqual(seconds, MAX_SECONDS_PER_SLIDE)
+
+    def test_too_many_images_for_the_length_keep_the_first(self) -> None:
+        from infrastructure.tiktok_slideshow import plan_timed_slideshow
+
+        self.assertEqual(plan_timed_slideshow(35, 10), (list(range(10)), 1.0))
+
+    def test_command_zooms_each_slide_and_loops_music(self) -> None:
+        from infrastructure.tiktok_slideshow import build_timed_slideshow_command
+
+        with TemporaryDirectory() as directory:
+            listing = Path(directory) / "slides.txt"
+            command = build_timed_slideshow_command(
+                "ffmpeg", [Path("a.jpg"), Path("b.jpg"), Path("a.jpg")], 5.0, Path("m.mp3"), Path("o.mp4"),
+                list_file=listing,
+            )
+            self.assertEqual(listing.read_text(encoding="utf-8").count("file '"), 3)
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertIn("zoompan=", graph)
+        self.assertIn("d=150", graph)
+        self.assertIn("-stream_loop", command)
+        self.assertEqual(command[command.index("-t", command.index("-filter_complex")) + 1], "15.000")
 
 
 DRIVE_ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345"

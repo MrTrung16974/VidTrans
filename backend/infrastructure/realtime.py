@@ -17,7 +17,8 @@ JOBS_ALL_ROOM = "jobs:all"
 # Owner and admin accounts: notifications meant for the staff (problem reports).
 STAFF_ROOM = "staff"
 # "created" is the owner's own new job; the others are its outcome.
-NOTIFIED_STATUSES = {"created", "completed", "failed"}
+# "awaiting_input" asks the owner to choose (a photo post: images or a slideshow).
+NOTIFIED_STATUSES = {"created", "completed", "failed", "awaiting_input"}
 RESYNC = {"type": "jobs", "resync": True, "items": [], "removed": []}
 
 # (scope, auth payload) -> token claims, or None to refuse the connection.

@@ -20,12 +20,14 @@ from tests.test_logo_branding import account
 class FakeSender:
     def __init__(self, dead: set[str] | None = None) -> None:
         self.sent: list[tuple[str, dict]] = []
+        self.titles: list[tuple[str, str]] = []
         self.dead = dead or set()
 
     def send(self, token, *, title, body, data):
         if token in self.dead:
             raise FcmError("gone", error_code="UNREGISTERED")
         self.sent.append((token, data))
+        self.titles.append((title, body))
 
 
 class DeviceStoreTests(unittest.TestCase):
@@ -95,6 +97,16 @@ class JobPushNotifierTests(unittest.TestCase):
         self.service.update("job-1", status="failed")
         self.assertEqual(self.notifier.deliver("job-1", "failed"), 1)
         self.assertEqual([token for token, _ in self.sender.sent], ["phone"])
+
+    def test_voiceless_video_push_offers_download_only(self) -> None:
+        self.service.update("job-1", status="failed", error_code="no_speech")
+        self.assertEqual(self.notifier.deliver("job-1", "failed"), 1)
+        self.assertEqual(self.sender.sent, [("phone", {
+            "type": "job_status", "job_id": "job-1", "status": "failed", "error_code": "no_speech",
+        })])
+        title, body = self.sender.titles[0]
+        self.assertEqual(title, "Video không có lời để dịch")
+        self.assertIn("chỉ tải video gốc", body)
 
     def test_unregistered_tokens_are_removed(self) -> None:
         self.devices.register("u1", "dead-token", "android")

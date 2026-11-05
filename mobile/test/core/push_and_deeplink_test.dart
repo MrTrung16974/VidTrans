@@ -43,6 +43,16 @@ void main() {
       expect(push.body, 'clip.mp4 đã sẵn sàng.');
     });
 
+    test('carries the no-speech error code', () {
+      final push = JobPush.fromMessage(const RemoteMessage(data: {
+        'type': 'job_status',
+        'job_id': 'a1b2',
+        'status': 'failed',
+        'error_code': 'no_speech',
+      }))!;
+      expect(push.errorCode, 'no_speech');
+    });
+
     test('ignores other messages', () {
       expect(JobPush.fromMessage(const RemoteMessage(data: {'type': 'promo'})), isNull);
       expect(JobPush.fromMessage(const RemoteMessage(data: {'type': 'job_status'})), isNull);

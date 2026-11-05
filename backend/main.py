@@ -4,6 +4,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -15,6 +16,7 @@ import threading
 import time
 import unicodedata
 import uuid
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal, NamedTuple, Optional, Sequence
@@ -113,6 +115,7 @@ from infrastructure.social_credentials import SocialCredentialStore, is_app_redi
 from infrastructure.tenant_governance import QuotaExceededError, TenantGovernanceStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
+from infrastructure.tiktok_slideshow import MAX_VIDEO_SECONDS, MIN_VIDEO_SECONDS, render_timed_slideshow
 from infrastructure.mailer import MailConfig, MailDeliveryError, SmtpMailer
 from infrastructure.media_probe import MediaProbe, probe_media_file
 from infrastructure.password_reset import CODE_TTL_SECONDS, PasswordResetStore
@@ -166,6 +169,7 @@ from domain.plan_entitlements import (
     ensure_provider_allowed,
     ensure_source_platforms_allowed,
     ensure_video_providers_allowed,
+    feature_allowed,
     provider_allowed,
     source_platform_allowed,
 )
@@ -4508,6 +4512,9 @@ def prepare_job_source_video(job_id: str, resume_request: dict[str, Any]) -> Pat
         result.path.unlink(missing_ok=True)
         raise
     stored_request = {**resume_request, "video_path": str(result.path), "source_url": result.source_url}
+    if result.photo_post:
+        # A photo post: the owner chooses what to make of it before anything else runs.
+        stored_request["photo_post"] = result.photo_post
     source_cookie_value = stored_request.pop("source_cookie_path", None)
     if source_cookie_value:
         source_cookie_path = Path(str(source_cookie_value)).resolve()
@@ -4568,6 +4575,130 @@ def deliver_source_video(job_id: str, video_path: Path, *, apply_logo: bool) -> 
         TENANT_GOVERNANCE.release(job_id)
 
 
+# A photo post (TikTok/Douyin) has only images and a soundtrack. The job stops in
+# AWAITING_INPUT_STATUS until the owner picks: the images as a zip, or a slideshow
+# video of a chosen length with the post's music or a library track.
+AWAITING_INPUT_STATUS = "awaiting_input"
+PHOTO_POST_JOB_ACTION = "photo_post"
+PHOTO_ARCHIVE_FIELD = "images_archive"
+
+
+def photo_post_files(resume_request: dict[str, Any]) -> tuple[list[Path], Path | None]:
+    """The downloaded images and soundtrack of a photo post that are still on disk."""
+    photo_post = resume_request.get("photo_post") or {}
+    images = [Path(str(value)) for value in photo_post.get("images") or [] if Path(str(value)).is_file()]
+    music_value = photo_post.get("music")
+    music = Path(str(music_value)) if music_value and Path(str(music_value)).is_file() else None
+    return images, music
+
+
+PHOTO_POST_FEATURE = "photo_post"
+
+
+def await_photo_post_choice(job_id: str, resume_request: dict[str, Any]) -> None:
+    images, music = photo_post_files(resume_request)
+    if not images:
+        raise FileNotFoundError("Ảnh của bài đăng không còn trên máy chủ; hãy tạo lại job từ link")
+    try:
+        owner = ADMIN_ACCOUNTS.get(job_owner_user_id(job_id))
+    except AdminAccountError:
+        owner = None  # Legacy jobs without an account keep the choice.
+    if owner is not None and not feature_allowed(owner, PHOTO_POST_FEATURE):
+        # Not asked at all: the plan cannot use the answer ("Phân quyền gói & menu").
+        raise PlanEntitlementError(
+            "Link này là bài đăng ảnh, không phải video. Gói của bạn chưa có tính năng "
+            "Xử lý bài đăng ảnh (tải ảnh hoặc tạo video ghép ảnh)."
+        )
+    update_job(
+        job_id, status=AWAITING_INPUT_STATUS, step="photo-choice", progress=0.1, finished_at=utc_now(),
+        step_detail=f"Bài đăng {len(images)} ảnh: chọn tải ảnh về hoặc tạo video ghép ảnh có nhạc",
+        photo_post={"image_count": len(images), "has_music": music is not None}, job_action=None,
+    )
+    # Nothing is made until the owner chooses; the choice reserves quota again.
+    TENANT_GOVERNANCE.release(job_id)
+
+
+def format_video_length(seconds: float) -> str:
+    minutes, rest = divmod(round(seconds), 60)
+    if not minutes:
+        return f"{rest} giây"
+    return f"{minutes} phút" + (f" {rest} giây" if rest else "")
+
+
+def write_photo_archive(images: Sequence[Path], archive: Path) -> None:
+    temporary = archive.with_name(archive.name + ".partial")
+    with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_STORED) as bundle:
+        for number, image in enumerate(images, start=1):
+            bundle.write(image, f"anh_{number:02d}{image.suffix.lower() or '.jpg'}")
+    temporary.replace(archive)
+
+
+def run_photo_post_job(job_id: str, resume_request: dict[str, Any]) -> None:
+    """Carry out the owner's choice for a photo post: a zip of its images or a slideshow."""
+    owner_user_id = str((JOB_SERVICE.get(job_id) or {}).get("owner_user_id") or _bootstrap_owner["user_id"])
+    choice = resume_request.get("photo_choice") or {}
+    try:
+        ensure_job_active(job_id)
+        images, original_music = photo_post_files(resume_request)
+        if not images:
+            raise FileNotFoundError("Ảnh của bài đăng không còn trên máy chủ; hãy tạo lại job từ link")
+        output_dir = tenant_job_dir(OUTPUT_DIR, owner_user_id, job_id)
+        if choice.get("action") == "images":
+            update_job(job_id, status="processing", step="packing-images", progress=0.5,
+                       step_detail=f"Đang gom {len(images)} ảnh để tải về")
+            archive = output_dir / f"{job_id}_images.zip"
+            write_photo_archive(images, archive)
+            ensure_job_active(job_id)
+            update_job(
+                job_id, status="completed", step="completed", progress=1.0, finished_at=utc_now(),
+                step_detail=f"{len(images)} ảnh đã sẵn sàng để tải về",
+                **{PHOTO_ARCHIVE_FIELD: stored_artifact_name(archive)}, job_action=None,
+            )
+        elif choice.get("action") == "video":
+            seconds = float(choice["seconds"])
+            music = original_music
+            if choice.get("music_track_id"):
+                music = MUSIC_LIBRARY.file_path(MUSIC_LIBRARY.get(str(choice["music_track_id"])))
+                if not music.is_file():
+                    raise FileNotFoundError("File nhạc đã chọn không còn trên máy chủ")
+            update_job(job_id, status="processing", step="rendering-slideshow", progress=0.3,
+                       step_detail=f"Đang dựng video ghép {len(images)} ảnh dài {format_video_length(seconds)}")
+            work = tenant_job_dir(WORK_DIR, owner_user_id, job_id) / "slideshow"
+            shutil.rmtree(work, ignore_errors=True)
+            rendered = work / "slideshow.mp4"
+            try:
+                duration = render_timed_slideshow(FFMPEG, images, music, rendered, seconds, work_dir=work)
+            except subprocess.CalledProcessError as exc:
+                logger.warning("Slideshow render failed for job %s: %s", job_id,
+                               (exc.stderr or b"").decode("utf-8", errors="ignore")[-400:])
+                raise RuntimeError("Không dựng được video ghép ảnh") from exc
+            ensure_job_active(job_id)
+            output_video = output_dir / f"output_{job_id}.mp4"
+            copy_file_atomic(rendered, output_video)
+            shutil.rmtree(work, ignore_errors=True)
+            if resume_request.get("apply_logo"):
+                stamp_account_logo(job_id, owner_user_id, output_video, detect=False)
+            ensure_job_active(job_id)
+            update_job(
+                job_id, status="completed", step="completed", progress=1.0, finished_at=utc_now(),
+                step_detail=f"Video ghép ảnh dài {format_video_length(duration)} đã sẵn sàng",
+                output_video=stored_artifact_name(output_video), source_duration=duration, job_action=None,
+            )
+        else:
+            raise ValueError("Lựa chọn cho bài đăng ảnh không hợp lệ")
+        TENANT_GOVERNANCE.consume(job_id)
+    except JobCancelled:
+        current = JOB_SERVICE.get(job_id) or {}
+        update_job(job_id, status="cancelled", step="cancelled", progress=float(current.get("progress", 0.0)),
+                   step_detail="Đã hủy theo yêu cầu", finished_at=utc_now(), job_action=None)
+        TENANT_GOVERNANCE.release(job_id)
+    except Exception as exc:
+        logger.exception("Photo post job %s failed", job_id)
+        update_job(job_id, status="failed", step="failed", error=public_error_message(exc),
+                   finished_at=utc_now(), job_action=None)
+        TENANT_GOVERNANCE.release(job_id)
+
+
 def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
     """Run a persisted job request after the API process has restarted."""
     try:
@@ -4581,9 +4712,15 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
         if job_action == BRANDING_JOB_ACTION:
             run_branding_job(job_id, resume_request)
             return
+        if job_action == PHOTO_POST_JOB_ACTION:
+            run_photo_post_job(job_id, resume_request)
+            return
         if job_action != "process_video":
             raise ValueError("Stored background action is invalid")
         video_path = prepare_job_source_video(job_id, resume_request)
+        if resume_request.get("photo_post"):
+            await_photo_post_choice(job_id, resume_request)
+            return
         if int(resume_request["mode"]) == ProcessingMode.DOWNLOAD_ONLY:
             deliver_source_video(job_id, video_path, apply_logo=bool(resume_request.get("apply_logo", False)))
             return
@@ -4645,7 +4782,7 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             finished_at=utc_now(),
         )
         TENANT_GOVERNANCE.release(job_id)
-    except (KeyError, TypeError, ValueError, FileNotFoundError, SocialVideoDownloadError) as exc:
+    except (KeyError, TypeError, ValueError, FileNotFoundError, SocialVideoDownloadError, PlanEntitlementError) as exc:
         logger.warning("Unable to resume job %s: %s", job_id, exc)
         update_job(
             job_id,
@@ -4654,6 +4791,8 @@ def resume_process_video(job_id: str, resume_request: dict[str, Any]) -> None:
             error=public_error_message(exc),
             finished_at=utc_now(),
         )
+        # Nothing was produced, so the minutes held for this attempt go back.
+        TENANT_GOVERNANCE.release(job_id)
 
 
 def comic_project_root(owner_user_id: str, job_id: str) -> Path:
@@ -7656,6 +7795,8 @@ def job_response(job_id: str, job: dict[str, Any], queue_positions: dict[str, in
         response["tiktok_json_url"] = f"/api/v1/jobs/{job_id}/artifacts/tiktok-json"
     if job.get("tiktok_text_file"):
         response["tiktok_text_url"] = f"/api/v1/jobs/{job_id}/artifacts/tiktok-text"
+    if job.get(PHOTO_ARCHIVE_FIELD):
+        response["images_url"] = f"/api/v1/jobs/{job_id}/artifacts/images"
     if any(job.get(key) for key in ("output_video", "subtitle_file", "translation_file")):
         response["download_all_url"] = f"/api/v1/jobs/{job_id}/download-all"
     return response
@@ -8082,6 +8223,70 @@ def download_only_job_endpoint(request: Request, job_id: str) -> JSONResponse:
     return requeue_video_job(request, job_id, download_only=True)
 
 
+class PhotoPostChoice(BaseModel):
+    """What to make of a photo post: its images as a zip, or a slideshow of ``minutes``."""
+
+    action: Literal["images", "video"]
+    minutes: float | None = Field(default=None, gt=0)
+    # A library track instead of the post's own soundtrack.
+    music_track_id: str | None = Field(default=None, max_length=100)
+
+
+@app.post("/api/v1/jobs/{job_id}/photo-post", response_model=Job)
+def choose_photo_post_endpoint(request: Request, job_id: str, choice: PhotoPostChoice) -> JSONResponse:
+    account = current_account(request)
+    source = job_for_request(request, job_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if source.get("status") != AWAITING_INPUT_STATUS:
+        raise HTTPException(status_code=409, detail="Job này không chờ chọn cách xử lý bài đăng ảnh")
+    resume_request = source.get("resume_request")
+    if not isinstance(resume_request, dict) or not photo_post_files(resume_request)[0]:
+        raise HTTPException(status_code=409, detail="Ảnh của bài đăng không còn trên máy chủ; hãy tạo lại job từ link")
+    owner_user_id = str(source.get("owner_user_id") or account["user_id"])
+    entitlement_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
+    try:
+        ensure_feature_allowed(entitlement_account, PHOTO_POST_FEATURE)
+    except PlanEntitlementError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    stored_choice: dict[str, Any] = {"action": choice.action}
+    quota_minutes = 1
+    if choice.action == "video":
+        if choice.minutes is None:
+            raise HTTPException(status_code=400, detail="Hãy chọn độ dài video (phút)")
+        seconds = round(choice.minutes * 60, 1)
+        if not MIN_VIDEO_SECONDS <= seconds <= MAX_VIDEO_SECONDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Độ dài video phải từ {MIN_VIDEO_SECONDS:g} giây đến {MAX_VIDEO_SECONDS / 60:g} phút",
+            )
+        track_id = (choice.music_track_id or "").strip()
+        if track_id:
+            try:
+                track = MUSIC_LIBRARY.get(track_id)
+            except MusicTrackNotFound as exc:
+                raise HTTPException(status_code=400, detail="Bản nhạc đã chọn không còn trong thư viện") from exc
+            if not MUSIC_LIBRARY.file_path(track).is_file():
+                raise HTTPException(status_code=400, detail="File nhạc đã chọn không còn trên máy chủ")
+        stored_choice.update(seconds=seconds, music_track_id=track_id or None)
+        quota_minutes = max(1, math.ceil(seconds / 60))
+    quota_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
+    reserve_job_quota(job_id, quota_account, minutes=quota_minutes)
+    try:
+        JOB_SERVICE.retry(
+            job_id, step="queued", progress=0.0, error=None, error_code=None, step_detail=None,
+            started_at=None, finished_at=None, completed_at=None, output_video=None, **{PHOTO_ARCHIVE_FIELD: None},
+            job_action=PHOTO_POST_JOB_ACTION, photo_choice=stored_choice,
+            resume_request={**resume_request, "photo_choice": stored_choice},
+        )
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    except JobStateConflictError:
+        raise HTTPException(status_code=409, detail="Job này không chờ chọn cách xử lý bài đăng ảnh") from None
+    notify_scheduler()
+    return JSONResponse(job_response(job_id, JOB_SERVICE.get(job_id)), status_code=200)
+
+
 def requeue_video_job(request: Request, job_id: str, *, download_only: bool = False) -> JSONResponse:
     account = current_account(request)
     source = job_for_request(request, job_id)
@@ -8159,7 +8364,9 @@ def requeue_video_job(request: Request, job_id: str, *, download_only: bool = Fa
     if download_only:
         update_payload.update(mode=int(ProcessingMode.DOWNLOAD_ONLY), resume_request=resume_request,
                               tiktok={**(source.get("tiktok") or {}), "enabled": False, "auto_publish": False})
-    artifact_keys = ("output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file")
+    artifact_keys = (
+        "output_video", "subtitle_file", "translation_file", "tiktok_json_file", "tiktok_text_file", PHOTO_ARCHIVE_FIELD,
+    )
     for key in artifact_keys:
         update_payload[key] = None
 
@@ -8261,6 +8468,7 @@ def download_job_artifact(request: Request, job_id: str, kind: str) -> FileRespo
         "translation": "translation_file",
         "tiktok-json": "tiktok_json_file",
         "tiktok-text": "tiktok_text_file",
+        "images": PHOTO_ARCHIVE_FIELD,
     }
     field = artifact_fields.get(kind)
     filename = str(job.get(field) or "") if field else ""

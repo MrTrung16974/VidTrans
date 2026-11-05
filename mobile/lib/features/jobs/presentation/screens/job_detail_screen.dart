@@ -9,6 +9,7 @@ import '../../../../core/auth/session_controller.dart';
 import '../../../../core/errors/api_exception.dart';
 import '../../../../core/widgets/error_view.dart';
 import '../../../../core/widgets/studio_widgets.dart';
+import '../../../video_translation/data/translation_repository.dart';
 import '../../../video_translation/domain/options.dart';
 import '../../data/jobs_repository.dart';
 import '../../domain/job.dart';
@@ -16,13 +17,33 @@ import '../providers/jobs_providers.dart';
 import '../widgets/job_downloads.dart';
 import '../widgets/job_status_chip.dart';
 
-class JobDetailScreen extends ConsumerWidget {
-  const JobDetailScreen({super.key, required this.jobId});
+class JobDetailScreen extends ConsumerStatefulWidget {
+  const JobDetailScreen({super.key, required this.jobId, this.askDownloadOnly = false});
 
   final String jobId;
 
+  /// Opened from the "Video không có lời" push: ask once whether to just download it.
+  final bool askDownloadOnly;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<JobDetailScreen> createState() => _JobDetailScreenState();
+}
+
+class _JobDetailScreenState extends ConsumerState<JobDetailScreen> {
+  bool _asked = false;
+
+  String get jobId => widget.jobId;
+
+  void _maybeAskDownloadOnly(Job job) {
+    if (_asked || !widget.askDownloadOnly || !job.canDownloadOnly) return;
+    _asked = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) confirmDownloadOnly(context, ref, job);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final job = ref.watch(jobDetailProvider(jobId));
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -46,9 +67,46 @@ class JobDetailScreen extends ConsumerWidget {
           message: errorMessage(error),
           onRetry: () => ref.invalidate(jobDetailProvider(jobId)),
         ),
-        data: (job) => _JobDetail(job: job),
+        data: (job) {
+          _maybeAskDownloadOnly(job);
+          return _JobDetail(job: job);
+        },
       ),
     );
+  }
+}
+
+/// Asks whether to re-run a voiceless job as "Chỉ tải video" and does it on yes.
+Future<void> confirmDownloadOnly(BuildContext context, WidgetRef ref, Job job) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Video không có lời để dịch'),
+      content: Text(
+        '"${job.title}" chỉ có nhạc hoặc tiếng hát không rõ lời, nên không tạo được '
+        'phụ đề hay lồng tiếng.\n\nBạn có muốn chỉ tải video gốc về không? Video giữ '
+        'nguyên hình và tiếng, không phụ đề, không lồng tiếng.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Không'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Chỉ tải video'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await ref.read(jobsRepositoryProvider).downloadOnly(job.id);
+    messenger.showSnackBar(const SnackBar(content: Text('Đang chuẩn bị video gốc để tải về')));
+    ref.invalidate(jobDetailProvider(job.id));
+  } catch (error) {
+    messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
   }
 }
 
@@ -283,6 +341,8 @@ class _JobDetail extends ConsumerWidget {
             ),
           ),
         ],
+        if (job.awaitsPhotoChoice && !readOnly && (account?.canUsePhotoPosts ?? false))
+          _PhotoPostChoiceCard(job: job),
         JobDownloads(job: job),
         const SizedBox(height: 14),
         _JobInfoCard(job: job),
@@ -311,6 +371,14 @@ class _JobDetail extends ConsumerWidget {
                 backgroundColor: AppColors.redSoft,
               ),
             ),
+          if (job.canDownloadOnly) ...[
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: () => confirmDownloadOnly(context, ref, job),
+              icon: const Icon(Icons.download_rounded),
+              label: const Text('Chỉ tải video (không lồng tiếng)'),
+            ),
+          ],
           if (job.canRetry) ...[
             const SizedBox(height: 10),
             FilledButton.tonalIcon(
@@ -326,6 +394,114 @@ class _JobDetail extends ConsumerWidget {
           ],
         ],
       ],
+    );
+  }
+}
+
+/// Lengths offered for a photo-post slideshow, in minutes.
+const _slideshowMinutes = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0];
+
+String _minutesLabel(double minutes) =>
+    minutes < 1 ? '${(minutes * 60).round()} giây' : '${minutes.toStringAsFixed(0)} phút';
+
+/// A photo post waits here: download its images, or a slideshow of a chosen
+/// length with the post's music or a library track.
+class _PhotoPostChoiceCard extends ConsumerStatefulWidget {
+  const _PhotoPostChoiceCard({required this.job});
+
+  final Job job;
+
+  @override
+  ConsumerState<_PhotoPostChoiceCard> createState() => _PhotoPostChoiceCardState();
+}
+
+class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
+  double _minutes = 1;
+  String _musicTrackId = '';
+  bool _sending = false;
+
+  Future<void> _choose(String action) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _sending = true);
+    try {
+      await ref.read(jobsRepositoryProvider).choosePhotoPost(
+            widget.job.id,
+            action: action,
+            minutes: action == 'video' ? _minutes : null,
+            musicTrackId: action == 'video' ? _musicTrackId : null,
+          );
+      messenger.showSnackBar(SnackBar(
+        content: Text(action == 'images' ? 'Đang gom ảnh để tải về' : 'Đang dựng video ghép ảnh'),
+      ));
+      ref.invalidate(jobDetailProvider(widget.job.id));
+    } catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final job = widget.job;
+    final tracks = ref.watch(musicTracksProvider).valueOrNull ?? const <MusicTrack>[];
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: StudioCard(
+        topAccentColor: AppColors.amber,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Bài đăng ảnh', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text('Link này là bài đăng ${job.photoImageCount} ảnh, không phải video. Chọn cách xử lý:'),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: _sending ? null : () => _choose('images'),
+              icon: const Icon(Icons.photo_library_outlined),
+              label: const Text('Chỉ tải ảnh về (ZIP)'),
+            ),
+            const Divider(height: 28),
+            const Text('Tạo video ghép ảnh có nhạc', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<double>(
+              initialValue: _minutes,
+              decoration: const InputDecoration(labelText: 'Độ dài video'),
+              items: [
+                for (final minutes in _slideshowMinutes)
+                  DropdownMenuItem(value: minutes, child: Text(_minutesLabel(minutes))),
+              ],
+              onChanged: _sending ? null : (value) => setState(() => _minutes = value ?? _minutes),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _musicTrackId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Nhạc nền'),
+              items: [
+                DropdownMenuItem(
+                  value: '',
+                  child: Text(job.photoHasMusic ? 'Nhạc gốc của bài đăng' : 'Không có nhạc gốc (im lặng)'),
+                ),
+                for (final track in tracks)
+                  DropdownMenuItem(value: track.id, child: Text(track.title, overflow: TextOverflow.ellipsis)),
+              ],
+              onChanged: _sending ? null : (value) => setState(() => _musicTrackId = value ?? ''),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Mỗi ảnh hiện tối đa 8 giây, có zoom nhẹ; video dài thì bộ ảnh được lặp lại cho đủ thời lượng.',
+              style: TextStyle(fontSize: 12, color: AppColors.muted),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _sending ? null : () => _choose('video'),
+              icon: const Icon(Icons.movie_creation_outlined),
+              label: const Text('Tạo video'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

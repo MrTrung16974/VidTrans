@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261105-no-speech" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261105-photo-post" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261104-saas-legal-v1" />
   </head>
   <body>
@@ -2673,21 +2673,6 @@
       </form>
     </dialog>
 
-    <dialog id="noSpeechDialog" class="password-reset-dialog no-speech-dialog" aria-labelledby="noSpeechTitle">
-      <form id="noSpeechForm" class="auth-form" method="dialog">
-        <div>
-          <h2 id="noSpeechTitle">Video không có lời để dịch</h2>
-          <p id="noSpeechMessage" class="password-reset-target"></p>
-          <ul id="noSpeechJobs" class="no-speech-jobs"></ul>
-          <p>Bạn có muốn chỉ tải video gốc về không? Video sẽ được giữ nguyên hình và tiếng, không thêm phụ đề và không lồng tiếng.</p>
-        </div>
-        <div class="password-reset-footer">
-          <button id="noSpeechSkip" class="button secondary" type="button">Không, bỏ qua</button>
-          <button id="noSpeechDownload" class="button primary" type="submit">Chỉ tải video</button>
-        </div>
-      </form>
-    </dialog>
-
     <dialog id="confirmJobDialog" class="confirm-job-dialog" aria-labelledby="confirmJobTitle">
       <div class="confirm-dialog-card">
         <div class="confirm-sheet-handle" aria-hidden="true"></div>
@@ -2810,6 +2795,32 @@
               <div id="jobDetailProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
             </div>
             <p id="jobDetailStepDetail" class="progress-step-desc">Đang khởi tạo tiến trình...</p>
+          </section>
+
+          <!-- Photo post: the job waits for the owner's choice -->
+          <section id="jobDetailPhotoCard" class="job-detail-section photo-choice-section is-hidden">
+            <h3 class="section-title">Bài đăng ảnh</h3>
+            <p id="jobDetailPhotoSummary" class="photo-choice-summary"></p>
+            <div class="photo-choice-option">
+              <strong>Chỉ tải ảnh về</strong>
+              <p>Nhận toàn bộ ảnh gốc của bài trong một file ZIP.</p>
+              <button id="photoChoiceImages" class="button secondary" type="button">Tải ảnh về</button>
+            </div>
+            <div class="photo-choice-option">
+              <strong>Tạo video ghép ảnh có nhạc</strong>
+              <p>Mỗi ảnh hiện tối đa 8 giây, có zoom nhẹ; video dài thì bộ ảnh được lặp lại cho đủ thời lượng.</p>
+              <div class="photo-choice-fields">
+                <label>
+                  <span>Độ dài video (phút)</span>
+                  <input id="photoChoiceMinutes" type="number" min="0.25" max="10" step="0.25" value="1" inputmode="decimal" />
+                </label>
+                <label>
+                  <span>Nhạc nền</span>
+                  <select id="photoChoiceMusic"></select>
+                </label>
+              </div>
+              <button id="photoChoiceVideo" class="button primary" type="button">Tạo video</button>
+            </div>
           </section>
 
           <!-- Error Alert (shown if failed) -->
@@ -2942,6 +2953,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261105-no-speech"></script>
+    <script type="module" src="/js/app.js?v=20261105-photo-post"></script>
   </body>
 </html>

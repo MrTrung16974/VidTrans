@@ -139,6 +139,9 @@ class SocialVideoDownloadResult:
     title: str
     video_id: str | None
     duration: float | None
+    # A photo post: {"images": [paths], "music": path | None}, kept next to the
+    # rendered preview so the owner can still pick images or a longer video.
+    photo_post: dict[str, Any] | None = None
 
     @property
     def display_filename(self) -> str:
@@ -410,6 +413,30 @@ def douyin_video_id(url: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _media_suffix(path: Path, default: str) -> str:
+    """File extension for a downloaded image or soundtrack, read from its first bytes."""
+    with path.open("rb") as handle:
+        head = handle.read(16)
+    if head.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if head.startswith(b"\x89PNG"):
+        return ".png"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return ".webp"
+    if head.startswith(b"GIF8"):
+        return ".gif"
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in {b"heic", b"heix", b"mif1", b"msf1"}:
+            return ".heic"
+        if brand in {b"avif", b"avis"}:
+            return ".avif"
+        return ".m4a"
+    if head.startswith(b"ID3") or head[:2] in {b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"}:
+        return ".mp3"
+    return default
+
+
 def _follow_redirects(url: str, *, timeout: int, proxy: str | None) -> str:
     handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy} if proxy else {})
     request = urllib.request.Request(url, headers={
@@ -569,9 +596,8 @@ class SocialVideoDownloader:
             if video_id is None:
                 return url
         if kind in {"note", "slides"}:
-            raise SocialVideoDownloadError(
-                "Link Douyin này là bài đăng ảnh (图文), không phải video. Hãy chọn link một video."
-            )
+            # Image post (图文): the browser session reads its images and music.
+            return f"https://www.douyin.com/note/{video_id}"
         return f"https://www.douyin.com/video/{video_id}"
 
     def _create_ydl(self, options: dict[str, Any]) -> ContextManager[Any]:
@@ -617,26 +643,33 @@ class SocialVideoDownloader:
         progress_callback: ProgressCallback | None,
         cancel_requested: CancelCallback | None,
     ) -> dict[str, Any]:
-        """Fetch a photo post's images and soundtrack, render them to ``<stem>.mp4``."""
+        """Fetch a photo post's images and soundtrack, render them to ``<stem>.mp4``.
+
+        The images and soundtrack stay in ``<stem>.photos/`` for the owner's
+        choice (download the images, or a slideshow of a chosen length).
+        """
         slideshow = info[SLIDESHOW_KEY]
         image_urls: list[str] = slideshow["images"]
+        referer = str((info.get("http_headers") or {}).get("Referer") or "https://www.tiktok.com/")
         scratch = destination_stem.with_name(destination_stem.name + ".slideshow")
+        photos_dir = destination_stem.with_name(destination_stem.name + ".photos")
         shutil.rmtree(scratch, ignore_errors=True)
+        shutil.rmtree(photos_dir, ignore_errors=True)
         scratch.mkdir(parents=True)
         try:
             images: list[Path] = []
             for index, image_url in enumerate(image_urls):
                 if cancel_requested and cancel_requested():
                     raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
-                images.append(self._fetch_to(image_url, scratch / f"image_{index:02d}"))
+                images.append(self._fetch_to(image_url, scratch / f"image_{index:02d}", referer=referer))
                 if progress_callback:
                     progress_callback(index + 1, len(image_urls) + 1)
             audio = None
             if slideshow.get("music"):
                 try:
-                    audio = self._fetch_to(slideshow["music"], scratch / "music")
+                    audio = self._fetch_to(slideshow["music"], scratch / "music", referer=referer)
                 except Exception as music_error:
-                    logger.warning("TikTok slideshow music download failed; using silence: %s", music_error)
+                    logger.warning("Photo post music download failed; using silence: %s", music_error)
             if cancel_requested and cancel_requested():
                 raise SocialVideoDownloadCancelled("Đã hủy khi đang tải video nguồn")
             output = destination_stem.with_name(destination_stem.name + ".mp4")
@@ -645,19 +678,32 @@ class SocialVideoDownloader:
                 duration = render_slideshow(self.ffmpeg_location or "ffmpeg", images, audio, temporary)
             except subprocess.CalledProcessError as render_error:
                 detail = (render_error.stderr or b"").decode("utf-8", errors="ignore")[-300:]
-                logger.warning("TikTok slideshow render failed: %s", detail)
-                raise SocialVideoDownloadError("Không dựng được video từ bài đăng ảnh TikTok") from render_error
+                logger.warning("Photo post slideshow render failed: %s", detail)
+                raise SocialVideoDownloadError("Không dựng được video từ bài đăng ảnh") from render_error
             temporary.replace(output)
+            temporary_dir = scratch.with_name(scratch.name + ".keep")
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            temporary_dir.mkdir()
+            # Fetched files have no extension; name them by their content for the download.
+            kept_images = [image.replace(temporary_dir / (image.name + _media_suffix(image, ".jpg")))
+                           for image in images]
+            kept_music = (audio.replace(temporary_dir / (audio.name + _media_suffix(audio, ".mp3")))
+                          if audio is not None else None)
+            temporary_dir.replace(photos_dir)
+            photo_post = {
+                "images": [str(photos_dir / image.name) for image in kept_images],
+                "music": str(photos_dir / kept_music.name) if kept_music is not None else None,
+            }
             if progress_callback:
                 progress_callback(len(image_urls) + 1, len(image_urls) + 1)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
-        logger.info("Rendered TikTok photo post %s from %d images", info.get("id"), len(images))
-        return {"id": info.get("id"), "title": info.get("title"), "duration": duration}
+        logger.info("Rendered photo post %s from %d images", info.get("id"), len(images))
+        return {"id": info.get("id"), "title": info.get("title"), "duration": duration, "photo_post": photo_post}
 
-    def _fetch_to(self, url: str, stem: Path) -> Path:
+    def _fetch_to(self, url: str, stem: Path, *, referer: str = "https://www.tiktok.com/") -> Path:
         """Download ``url`` to ``stem`` (size-capped) and return the written path."""
-        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.tiktok.com/"})
+        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer})
         with urllib.request.urlopen(request, timeout=self.socket_timeout) as response:
             data = response.read(SLIDESHOW_MAX_FILE_BYTES + 1)
         if len(data) > SLIDESHOW_MAX_FILE_BYTES:
@@ -1156,4 +1202,5 @@ class SocialVideoDownloader:
             title=str(sanitized.get("title") or "").strip(),
             video_id=str(sanitized.get("id")) if sanitized.get("id") is not None else None,
             duration=duration,
+            photo_post=sanitized.get("photo_post") if isinstance(sanitized.get("photo_post"), dict) else None,
         )

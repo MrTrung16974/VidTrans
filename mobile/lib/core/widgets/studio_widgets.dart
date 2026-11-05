@@ -372,7 +372,7 @@ class StudioStatusPill extends StatelessWidget {
           border: AppColors.blueBorder,
           dot: AppColors.blue,
         ),
-      'queued' || 'pending' || 'cancelling' || 'draft' || 'stale' => (
+      'queued' || 'pending' || 'cancelling' || 'draft' || 'stale' || 'awaiting_input' => (
           bg: AppColors.amberSoft,
           fg: AppColors.amberText,
           border: AppColors.amberBorder,

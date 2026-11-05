@@ -8,6 +8,7 @@ import '../core/auth/session_controller.dart';
 import '../core/deeplink/deep_link_service.dart';
 import '../core/push/push_service.dart';
 import '../core/websocket/job_events.dart';
+import '../features/jobs/domain/job.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 
@@ -33,10 +34,16 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
     final push = ref.read(pushServiceProvider);
     final jobEvents = ref.read(jobEventsProvider);
     _subscriptions
-      ..add(push.opened.listen((event) => _openJob(event.jobId)))
-      ..add(push.foreground.listen((p) => _showJobOutcome(p.jobId, p.status, p.title, p.body)))
+      ..add(push.opened.listen((event) => _openJob(
+            event.jobId,
+            // Tapping "Video không có lời" asks there whether to just download it.
+            askDownloadOnly: event.errorCode == noSpeechErrorCode,
+          )))
+      ..add(push.foreground.listen((p) => _showJobOutcome(p.jobId, p.status, p.title, p.body,
+          askDownloadOnly: p.errorCode == noSpeechErrorCode)))
       ..add(jobEvents.notifications.listen(
-            (n) => _showJobOutcome(n.jobId, n.status, n.title, n.body),
+            (n) => _showJobOutcome(n.jobId, n.status, n.title, n.body,
+                askDownloadOnly: n.errorCode == noSpeechErrorCode),
           ))
       ..add(jobEvents.changes.listen(_onJobChanges))
       ..add(ref.read(deepLinkServiceProvider).links.listen(_onDeepLink));
@@ -65,7 +72,8 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
     super.dispose();
   }
 
-  void _openJob(String jobId) => ref.read(routerProvider).push('/jobs/$jobId');
+  void _openJob(String jobId, {bool askDownloadOnly = false}) =>
+      ref.read(routerProvider).push(askDownloadOnly ? '/jobs/$jobId?ask=download-only' : '/jobs/$jobId');
 
   void _onJobChanges(JobChanges changes) {
     for (final item in changes.items) {
@@ -86,7 +94,8 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
     }
   }
 
-  void _showJobOutcome(String jobId, String status, String? title, String? body) {
+  void _showJobOutcome(String jobId, String status, String? title, String? body,
+      {bool askDownloadOnly = false}) {
     if (!_shownOutcomes.add('$jobId:$status')) return;
     // A retried job can finish again later.
     Timer(const Duration(minutes: 2), () => _shownOutcomes.remove('$jobId:$status'));
@@ -206,7 +215,7 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
                   borderRadius: BorderRadius.circular(999),
                   onTap: () {
                     messenger.hideCurrentSnackBar();
-                    _openJob(jobId);
+                    _openJob(jobId, askDownloadOnly: askDownloadOnly);
                   },
                   child: const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 13, vertical: 7),

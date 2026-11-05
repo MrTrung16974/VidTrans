@@ -27,7 +27,9 @@ class JobStateConflictError(JobStoreError):
     """Raised when a mutation is not allowed in the job's current status."""
 
 
-TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+# "awaiting_input": the worker stopped and the owner must choose how to go on
+# (a photo post: download its images or make a slideshow video).
+TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "awaiting_input"})
 
 
 def _utc_now() -> str:
@@ -723,7 +725,7 @@ class JobStore:
                 return payload
             if status == "cancelling":
                 return payload
-            stops_immediately = status in {"queued", "scheduled"}
+            stops_immediately = status in {"queued", "scheduled", "awaiting_input"}
             next_status = "cancelled" if stops_immediately else "cancelling"
             if stops_immediately:
                 step_detail = "Đã hủy theo yêu cầu"
@@ -889,7 +891,7 @@ class JobStore:
         publish attempt that has not finished yet are kept so scheduled posts
         never lose their video.
         """
-        terminal = ("completed", "failed", "cancelled")
+        terminal = ("completed", "failed", "cancelled", "awaiting_input")
         excluded = sorted({str(item) for item in exclude_owner_user_ids if str(item)})
         owner_clause, owner_values = "", []
         if owner_user_id is not None:
@@ -912,7 +914,7 @@ class JobStore:
                     )
             rows = connection.execute(
                 "SELECT job_id,owner_user_id,payload_json FROM jobs "
-                f"WHERE status IN (?,?,?) AND updated_at < ?{owner_clause}{publish_clause}",
+                f"WHERE status IN ({','.join('?' * len(terminal))}) AND updated_at < ?{owner_clause}{publish_clause}",
                 (*terminal, cutoff, *owner_values),
             ).fetchall()
             removed = [

@@ -39,10 +39,11 @@ class JobChanges {
 
 /// `notification` event: a job finished or failed (same content as the FCM push).
 class JobNotification {
-  const JobNotification({required this.jobId, required this.status, this.title, this.body});
+  const JobNotification({required this.jobId, required this.status, this.errorCode, this.title, this.body});
 
   final String jobId;
   final String status;
+  final String? errorCode;
   final String? title;
   final String? body;
 
@@ -53,6 +54,7 @@ class JobNotification {
     return JobNotification(
       jobId: jobId,
       status: json['status']?.toString() ?? '',
+      errorCode: json['error_code']?.toString(),
       title: json['title'] as String?,
       body: json['body'] as String?,
     );

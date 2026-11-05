@@ -489,7 +489,7 @@ class _JobTile extends StatelessWidget {
     return switch (status) {
       'completed' => AppColors.green,
       'processing' => AppColors.blue,
-      'queued' || 'cancelling' => AppColors.amber,
+      'queued' || 'cancelling' || 'awaiting_input' => AppColors.amber,
       'scheduled' => AppColors.teal,
       'failed' || 'cancelled' => AppColors.red,
       _ => AppColors.muted,

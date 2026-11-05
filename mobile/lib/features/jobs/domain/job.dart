@@ -1,3 +1,6 @@
+/// `error_code` of a job that failed because its video has no speech to translate.
+const noSpeechErrorCode = 'no_speech';
+
 /// One job as returned by `/api/v1/jobs` and `/api/v1/jobs/{job_id}`
 /// (job_response on the backend). Unknown fields stay available in [raw].
 class Job {
@@ -82,6 +85,22 @@ class Job {
   bool get canCancel => status == 'queued' || status == 'processing';
   bool get canRetry => status == 'failed' || status == 'cancelled';
 
+  /// `error_code` of a failed job (see NoSpeechError on the backend).
+  String? get errorCode => raw['error_code'] as String?;
+
+  /// Failed because the video holds no speech: it can still be downloaded as is.
+  bool get canDownloadOnly => status == 'failed' && errorCode == noSpeechErrorCode;
+
+  /// A photo post waiting for the owner: download its images or make a slideshow.
+  bool get awaitsPhotoChoice => status == 'awaiting_input';
+
+  Map<String, dynamic> get _photoPost =>
+      raw['photo_post'] is Map ? Map<String, dynamic>.from(raw['photo_post'] as Map) : const {};
+
+  int get photoImageCount => (_photoPost['image_count'] as num?)?.toInt() ?? 0;
+
+  bool get photoHasMusic => _photoPost['has_music'] == true;
+
   Job withQueuePosition(int? position) {
     final next = Map<String, dynamic>.from(raw);
     if (position == null || position == 0) {
@@ -103,6 +122,7 @@ const jobStatusLabels = {
   'completed': 'Hoàn thành',
   'failed': 'Lỗi',
   'cancelled': 'Đã hủy',
+  'awaiting_input': 'Chờ bạn chọn',
 };
 
 /// Same wording as `stepLabels` in web/js/app.js.
@@ -125,6 +145,9 @@ const jobStepLabels = {
   'failed': 'Xử lý thất bại',
   'cancelled': 'Đã hủy',
   'cancelling': 'Đang dừng an toàn',
+  'photo-choice': 'Bài đăng ảnh: chờ bạn chọn',
+  'packing-images': 'Đang gom ảnh để tải về',
+  'rendering-slideshow': 'Đang dựng video ghép ảnh',
   'comic_storyboard': 'Đang chia cảnh truyện',
   'comic_references': 'Đang vẽ nhân vật tham chiếu',
   'comic_images': 'Đang vẽ minh họa',

@@ -40,6 +40,10 @@ class Account {
   bool get canUseComics => hasFeature(PlanFeature.comicVideo);
   bool get canPublishSocial => hasFeature(PlanFeature.socialPublishing);
 
+  /// Photo posts: download the images or make a slideshow video. Every plan
+  /// has it by default; servers that predate the feature never ask.
+  bool get canUsePhotoPosts => features == null || hasFeature(PlanFeature.photoPost);
+
   String get name => (displayName?.isNotEmpty ?? false) ? displayName! : email;
 
   factory Account.fromJson(Map<String, dynamic> json) => Account(
@@ -57,6 +61,7 @@ class Account {
 /// Feature keys of backend/domain/plan_entitlements.py `FEATURES`.
 abstract final class PlanFeature {
   static const comicVideo = 'comic_video';
+  static const photoPost = 'photo_post';
   static const novelImport = 'novel_import';
   static const socialPublishing = 'social_publishing';
   static const imageTranslation = 'image_translation';

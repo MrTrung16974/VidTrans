@@ -12,12 +12,15 @@ import '../api/api_client.dart';
 import '../api/providers.dart';
 import 'firebase_config.dart';
 
-/// A job push (`data: {type: job_status, job_id, status}`).
+/// A job push (`data: {type: job_status, job_id, status, error_code?}`).
 class JobPush {
-  const JobPush({required this.jobId, required this.status, this.title, this.body});
+  const JobPush({required this.jobId, required this.status, this.errorCode, this.title, this.body});
 
   final String jobId;
   final String status;
+
+  /// `no_speech` when the video had nothing to translate (see [noSpeechErrorCode]).
+  final String? errorCode;
   final String? title;
   final String? body;
 
@@ -28,6 +31,7 @@ class JobPush {
     return JobPush(
       jobId: jobId,
       status: data['status']?.toString() ?? '',
+      errorCode: data['error_code']?.toString(),
       title: message.notification?.title,
       body: message.notification?.body,
     );

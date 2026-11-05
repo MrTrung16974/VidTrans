@@ -160,10 +160,25 @@ if __name__ == "__main__":
 
 
 class DouyinImagePostTests(unittest.TestCase):
-    def test_image_post_is_not_treated_as_video(self) -> None:
+    def test_image_post_reads_its_pictures_and_music(self) -> None:
         from infrastructure.douyin_browser_auth import douyin_video_info
-        from infrastructure.social_video_downloader import SocialVideoDownloadError
-        detail = {"aweme_id": "1", "images": [{"url_list": ["https://p3.douyinpic.com/a.jpg"]}],
+        from infrastructure.social_video_downloader import SLIDESHOW_KEY
+        detail = {"aweme_id": "1", "desc": "Bộ ảnh",
+                  "images": [{"url_list": ["https://p3.douyinpic.com/a.heic", "https://p3.douyinpic.com/a.jpeg"]},
+                             {"url_list": ["https://evil.example/b.jpg"]},
+                             {"url_list": ["https://p9.douyinpic.com/c.webp"]}],
                   "video": {"play_addr": {"url_list": ["https://v.douyinvod.com/music.mp3"]}}}
-        with self.assertRaises(SocialVideoDownloadError):
-            douyin_video_info(detail)
+        info = douyin_video_info(detail)
+        self.assertEqual(info["title"], "Bộ ảnh")
+        self.assertEqual(info[SLIDESHOW_KEY], {
+            "images": ["https://p3.douyinpic.com/a.jpeg", "https://p9.douyinpic.com/c.webp"],
+            "music": "https://v.douyinvod.com/music.mp3",
+        })
+
+    def test_image_post_prefers_the_music_track(self) -> None:
+        from infrastructure.douyin_browser_auth import douyin_video_info
+        from infrastructure.social_video_downloader import SLIDESHOW_KEY
+        detail = {"aweme_id": "1", "images": [{"url_list": ["https://p3.douyinpic.com/a.jpg"]}],
+                  "music": {"play_url": {"url_list": ["https://sf3.douyinvod.com/song.mp3"]}},
+                  "video": {"play_addr": {"url_list": ["https://v.douyinvod.com/music.mp3"]}}}
+        self.assertEqual(douyin_video_info(detail)[SLIDESHOW_KEY]["music"], "https://sf3.douyinvod.com/song.mp3")

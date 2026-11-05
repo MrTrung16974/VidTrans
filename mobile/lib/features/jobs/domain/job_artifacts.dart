@@ -39,6 +39,8 @@ List<JobArtifact> jobArtifacts(Job job) {
         url: raw['tiktok_text_url'] as String,
         fileName: name('tiktok_text_file', '$id.tiktok.txt'),
       ),
+    if (raw['images_url'] is String)
+      JobArtifact(label: 'Ảnh (ZIP)', url: raw['images_url'] as String, fileName: name('images_archive', '${id}_images.zip')),
     if (raw['download_all_url'] is String)
       JobArtifact(label: 'Tất cả (ZIP)', url: raw['download_all_url'] as String, fileName: '$id.artifacts.zip'),
   ];

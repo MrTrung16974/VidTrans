@@ -29,6 +29,18 @@ class JobsRepository {
 
   Future<void> retry(String jobId) => _api.post<dynamic>('/api/v1/jobs/$jobId/retry');
 
+  /// Re-runs a voiceless job as "Chỉ tải video": the source, no subtitles or dubbing.
+  Future<void> downloadOnly(String jobId) => _api.post<dynamic>('/api/v1/jobs/$jobId/download-only');
+
+  /// Answers a photo post waiting in `awaiting_input`: its images as a zip
+  /// (`action: images`) or a slideshow of [minutes] (`action: video`).
+  Future<void> choosePhotoPost(String jobId, {required String action, double? minutes, String? musicTrackId}) =>
+      _api.post<dynamic>('/api/v1/jobs/$jobId/photo-post', data: {
+        'action': action,
+        'minutes': ?minutes,
+        'music_track_id': ?(musicTrackId == null || musicTrackId.isEmpty ? null : musicTrackId),
+      });
+
   Future<void> delete(String jobId) => _api.delete<dynamic>('/api/v1/jobs/$jobId');
 
   Uri artifactUri(String path) => _api.resolve(path);

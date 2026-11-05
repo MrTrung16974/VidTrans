@@ -36,6 +36,10 @@ FEATURES: dict[str, tuple[str, str]] = {
     "source_facebook": ("Tải video Facebook", "Dán link Facebook để tải video nguồn"),
     "source_xiaohongshu": ("Tải video Xiaohongshu", "Dán link Xiaohongshu (小红书) để tải video nguồn"),
     "source_google_drive": ("Tải video Google Drive", "Dán link file Google Drive để tải video nguồn"),
+    "photo_post": (
+        "Xử lý bài đăng ảnh",
+        "Link TikTok/Douyin là bài đăng ảnh: tải ảnh gốc về (ZIP) hoặc tạo video ghép ảnh có nhạc dài tùy chọn",
+    ),
     "comic_video": ("Tạo video truyện", "Tạo, sửa và render truyện thành video"),
     "novel_import": (
         "Tải truyện từ trang Trung Quốc",
@@ -76,7 +80,9 @@ SOURCE_PLATFORM_FEATURES: dict[str, str] = {
 
 _PAID_FEATURES = frozenset(FEATURES)
 # Features every plan gets out of the box; admins may still switch them off per plan.
-_BASIC_FEATURES = frozenset({"image_translation", "screen_translator", *SOURCE_PLATFORM_FEATURES.values()})
+_BASIC_FEATURES = frozenset({
+    "image_translation", "screen_translator", "photo_post", *SOURCE_PLATFORM_FEATURES.values(),
+})
 # plan_key -> enabled features; every feature not listed is an explicit deny row.
 DEFAULT_PLAN_FEATURES: dict[str, frozenset[str]] = {
     "trial": _BASIC_FEATURES,

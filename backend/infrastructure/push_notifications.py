@@ -25,9 +25,12 @@ from infrastructure.device_store import DeviceStore
 logger = logging.getLogger(__name__)
 
 FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
-NOTIFIED_STATUSES = {"completed", "failed"}
+# "awaiting_input": a photo post waits for the owner to choose what to make of it.
+NOTIFIED_STATUSES = {"completed", "failed", "awaiting_input"}
 # Errors after which a token will never work again.
 DEAD_TOKEN_ERRORS = {"UNREGISTERED", "NOT_FOUND"}
+# A job that failed for lack of speech: the app offers to just download the source.
+NO_SPEECH_ERROR = "no_speech"
 
 
 class FcmError(RuntimeError):
@@ -139,6 +142,16 @@ def job_message(job_id: str, status: str, job: dict[str, Any]) -> tuple[str, str
         title, body = "Đã tạo video", f"{name} đã được tạo và đang chờ xử lý."
     elif status == "completed":
         title, body = "Đã xử lý xong", f"{name} đã sẵn sàng."
+    elif status == "awaiting_input":
+        count = int((job.get("photo_post") or {}).get("image_count") or 0)
+        title = "Bài đăng ảnh: chọn cách xử lý"
+        body = (f"{name} là bài đăng {count} ảnh. "
+                "Chạm để chọn tải ảnh về hoặc tạo video ghép ảnh có nhạc.")
+    elif job.get("error_code") == NO_SPEECH_ERROR:
+        title = "Video không có lời để dịch"
+        body = (f"{name} chỉ có nhạc nên không tạo được phụ đề hay lồng tiếng. "
+                "Chạm để chọn chỉ tải video gốc về (không lồng tiếng).")
+        return title, body, {"type": "job_status", "job_id": job_id, "status": status, "error_code": NO_SPEECH_ERROR}
     else:
         title, body = "Xử lý thất bại", f"{name} gặp lỗi. Mở app để xem chi tiết hoặc chạy lại."
     return title, body, {"type": "job_status", "job_id": job_id, "status": status}
