@@ -705,11 +705,12 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
     // The quick start bar mirrors the web UI: it only appears when the user
     // has pasted valid links or added files (state.sourceCount > 0), and hides
-    // when scrolled down to the full submit card or when the soft keyboard is
-    // open (to prevent covering input fields like the links TextField).
+    // when scrolled down to the full submit card.
+    // When the soft keyboard is open, the dock in HomeShell is hidden, so the
+    // bar docks directly above the keyboard (bottom: 10) instead of leaving a
+    // large empty clearance (studioDockClearance ~108px) that obstructs inputs.
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final showQuickBar =
-        !keyboardOpen && !_atBottomSubmit && state.sourceCount > 0;
+    final showQuickBar = !_atBottomSubmit && state.sourceCount > 0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -726,7 +727,12 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 14,
                 14,
                 14,
-                studioDockBottomPadding(context, extra: showQuickBar ? 82 : 24),
+                keyboardOpen
+                    ? (showQuickBar ? 72.0 : 20.0)
+                    : studioDockBottomPadding(
+                        context,
+                        extra: showQuickBar ? 82 : 24,
+                      ),
               ),
               children: [
                 _heroHeader(),
@@ -744,6 +750,12 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                       TextField(
                         controller: _batchName,
                         maxLength: 120,
+                        scrollPadding: const EdgeInsets.only(
+                          bottom: 76,
+                          top: 20,
+                          left: 20,
+                          right: 20,
+                        ),
                         decoration: const InputDecoration(
                           hintText: 'Ví dụ: Review phim tập 1-10',
                           labelText: 'Tên batch (tùy chọn)',
@@ -780,10 +792,12 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 KeyedSubtree(key: _submitCardKey, child: _submitCard(state)),
               ],
             ),
-            Positioned(
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
               left: 0,
               right: 0,
-              bottom: studioDockClearance(context),
+              bottom: keyboardOpen ? 10.0 : studioDockClearance(context),
               child: AnimatedSlide(
                 duration: const Duration(milliseconds: 260),
                 curve: Curves.easeOutCubic,
@@ -1350,6 +1364,12 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 minLines: 2,
                 maxLines: 5,
                 maxLength: 12000,
+                scrollPadding: const EdgeInsets.only(
+                  bottom: 76,
+                  top: 20,
+                  left: 20,
+                  right: 20,
+                ),
                 keyboardType: TextInputType.multiline,
                 decoration: const InputDecoration(
                   hintText:

@@ -5180,8 +5180,7 @@ body.modal-open {
     transform: translate(-50%, 0) scale(1);
   }
   .mobile-quick-submit-bar.is-at-bottom,
-  body:has(#authGate:not(.is-hidden)) .mobile-quick-submit-bar,
-  body:has(input:focus, textarea:focus) .mobile-quick-submit-bar {
+  body:has(#authGate:not(.is-hidden)) .mobile-quick-submit-bar {
     opacity: 0;
     pointer-events: none;
     transform: translate(-50%, 16px) scale(0.96);
