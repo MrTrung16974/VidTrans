@@ -419,6 +419,16 @@ const _slideshowMinutes = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0];
 String _minutesLabel(double minutes) =>
     minutes < 1 ? '${(minutes * 60).round()} giây' : '${minutes.toStringAsFixed(0)} phút';
 
+/// At most this many library tracks per slideshow (the server's limit).
+const _maxMusicTracks = 10;
+
+String _trackLabel(List<MusicTrack> tracks, String trackId) {
+  for (final track in tracks) {
+    if (track.id == trackId) return '${track.title} (${track.durationLabel})';
+  }
+  return trackId;
+}
+
 /// A photo post waits here: download its images, or a slideshow of a chosen
 /// length with the post's music or a library track.
 class _PhotoPostChoiceCard extends ConsumerStatefulWidget {
@@ -432,7 +442,8 @@ class _PhotoPostChoiceCard extends ConsumerStatefulWidget {
 
 class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
   double _minutes = 1;
-  String _musicTrackId = '';
+  /// Library tracks in play order; empty keeps the post's own music.
+  final List<String> _musicTrackIds = [];
   bool _sending = false;
 
   Future<void> _choose(String action) async {
@@ -443,7 +454,7 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
             widget.job.id,
             action: action,
             minutes: action == 'video' ? _minutes : null,
-            musicTrackId: action == 'video' ? _musicTrackId : null,
+            musicTrackIds: action == 'video' ? List.of(_musicTrackIds) : null,
           );
       messenger.showSnackBar(SnackBar(
         content: Text(action == 'images' ? 'Đang gom ảnh để tải về' : 'Đang dựng video ghép ảnh'),
@@ -490,18 +501,47 @@ class _PhotoPostChoiceCardState extends ConsumerState<_PhotoPostChoiceCard> {
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
-              initialValue: _musicTrackId,
+              // Rebuilt after each pick so the field goes back to its prompt.
+              key: ValueKey(_musicTrackIds.length),
+              initialValue: null,
               isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Nhạc nền'),
+              decoration: const InputDecoration(labelText: 'Nhạc nền (chọn 1 hoặc nhiều bài)'),
+              hint: const Text('+ Thêm bài nhạc từ thư viện'),
               items: [
-                DropdownMenuItem(
-                  value: '',
-                  child: Text(job.photoHasMusic ? 'Nhạc gốc của bài đăng' : 'Không có nhạc gốc (im lặng)'),
-                ),
                 for (final track in tracks)
-                  DropdownMenuItem(value: track.id, child: Text(track.title, overflow: TextOverflow.ellipsis)),
+                  DropdownMenuItem(
+                    value: track.id,
+                    child: Text('${track.title} (${track.durationLabel})', overflow: TextOverflow.ellipsis),
+                  ),
               ],
-              onChanged: _sending ? null : (value) => setState(() => _musicTrackId = value ?? ''),
+              onChanged: _sending || _musicTrackIds.length >= _maxMusicTracks
+                  ? null
+                  : (value) {
+                      if (value != null) setState(() => _musicTrackIds.add(value));
+                    },
+            ),
+            for (final (index, trackId) in _musicTrackIds.indexed)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: CircleAvatar(radius: 12, child: Text('${index + 1}', style: const TextStyle(fontSize: 12))),
+                title: Text(_trackLabel(tracks, trackId), overflow: TextOverflow.ellipsis),
+                trailing: IconButton(
+                  tooltip: 'Bỏ bài này',
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  onPressed: _sending ? null : () => setState(() => _musicTrackIds.removeAt(index)),
+                ),
+              ),
+            const SizedBox(height: 4),
+            Text(
+              _musicTrackIds.length > 1
+                  ? 'Các bài phát nối tiếp theo thứ tự trên; video dài hơn thì lặp lại từ bài đầu.'
+                  : _musicTrackIds.isNotEmpty
+                      ? 'Bài nhạc lặp lại cho đủ độ dài video.'
+                      : job.photoHasMusic
+                          ? 'Chưa chọn bài nào: dùng nhạc gốc của bài đăng.'
+                          : 'Chưa chọn bài nào: bài đăng không có nhạc gốc nên video sẽ im lặng.',
+              style: const TextStyle(fontSize: 12, color: AppColors.muted),
             ),
             const SizedBox(height: 6),
             const Text(

@@ -1858,6 +1858,12 @@ body.modal-open {
 .photo-choice-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
 .photo-choice-fields label { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; }
 .photo-choice-fields input, .photo-choice-fields select { width: 100%; min-width: 0; }
+.photo-choice-music-list { margin: 0; padding-left: 22px; display: grid; gap: 4px; font-size: .85rem; }
+.photo-choice-music-list:empty { display: none; }
+.photo-choice-music-list li { display: flex; align-items: center; gap: 8px; }
+.photo-choice-music-list li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photo-choice-music-list button { border: 0; background: none; color: #b91c1c; cursor: pointer; font-size: .85rem; padding: 2px 6px; }
+.photo-choice-option p.photo-choice-music-hint { font-size: .8rem; }
 
 /* Progress card */
 .progress-section {

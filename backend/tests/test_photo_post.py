@@ -153,6 +153,50 @@ class PhotoPostJobTests(unittest.TestCase):
             self.run_worker()
         self.assertEqual(seen["audio"], track_file)
 
+    def test_several_library_tracks_play_one_after_another(self) -> None:
+        self.wait_for_choice()
+        files = {}
+        for track_id in ("t1", "t2"):
+            files[track_id] = self.upload_dir / f"{track_id}.mp3"
+            files[track_id].write_bytes(track_id.encode())
+        library = Mock()
+        library.get.side_effect = lambda track_id: {"track_id": track_id}
+        library.file_path.side_effect = lambda track: files[track["track_id"]]
+        seen = {}
+
+        def fake_join(ffmpeg, tracks, output):
+            seen["tracks"] = list(tracks)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"joined")
+            return output
+
+        def fake_render(ffmpeg, images, audio, output, seconds, *, work_dir):
+            seen["audio"] = audio
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"slideshow")
+            return seconds
+
+        with patch.object(main, "MUSIC_LIBRARY", library), \
+                patch.object(main, "join_audio_tracks", side_effect=fake_join), \
+                patch.object(main, "render_timed_slideshow", side_effect=fake_render):
+            main.choose_photo_post_endpoint(request_for(account("user-a")), "job-p",
+                                            main.PhotoPostChoice(action="video", minutes=1,
+                                                                 music_track_ids=["t2", "t1"]))
+            self.run_worker()
+        job = self.service.get("job-p")
+        self.assertEqual(job["status"], "completed", job.get("error"))
+        self.assertEqual(job["photo_choice"]["music_track_ids"], ["t2", "t1"])
+        self.assertEqual(seen["tracks"], [files["t2"], files["t1"]])
+        self.assertEqual(seen["audio"].name, "music.m4a")
+
+    def test_playlist_command_joins_tracks_in_order(self) -> None:
+        from infrastructure.tiktok_slideshow import build_audio_playlist_command, join_audio_tracks
+
+        command = build_audio_playlist_command("ffmpeg", [Path("a.mp3"), Path("b.wav")], Path("out.m4a"))
+        self.assertEqual([command[i + 1] for i, part in enumerate(command) if part == "-i"], ["a.mp3", "b.wav"])
+        self.assertIn("[a0][a1]concat=n=2:v=0:a=1[audio]", command[command.index("-filter_complex") + 1])
+        self.assertEqual(join_audio_tracks("ffmpeg", [Path("only.mp3")], Path("out.m4a")), Path("only.mp3"))
+
     def test_invalid_choices_are_refused(self) -> None:
         with self.assertRaises(HTTPException) as not_waiting:
             main.choose_photo_post_endpoint(request_for(account("user-a")), "job-p",

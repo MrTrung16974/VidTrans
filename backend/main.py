@@ -124,7 +124,13 @@ from infrastructure.social_credentials import SocialCredentialStore, is_app_redi
 from infrastructure.tenant_governance import QuotaExceededError, TenantGovernanceStore
 from infrastructure.media_validation import InvalidVideoError, public_error_message, validate_video_file
 from infrastructure.artifact_io import copy_file_atomic, write_json_atomic
-from infrastructure.tiktok_slideshow import MAX_VIDEO_SECONDS, MIN_VIDEO_SECONDS, render_timed_slideshow
+from infrastructure.tiktok_slideshow import (
+    MAX_MUSIC_TRACKS,
+    MAX_VIDEO_SECONDS,
+    MIN_VIDEO_SECONDS,
+    join_audio_tracks,
+    render_timed_slideshow,
+)
 from infrastructure.mailer import MailConfig, MailDeliveryError, SmtpMailer
 from infrastructure.llm_providers import GeminiJSONClient
 from infrastructure.media_probe import MediaProbe, probe_media_file
@@ -4644,6 +4650,14 @@ def write_photo_archive(images: Sequence[Path], archive: Path) -> None:
     temporary.replace(archive)
 
 
+def photo_choice_track_ids(choice: dict[str, Any]) -> list[str]:
+    """Library tracks picked for a slideshow, in play order (older jobs stored a single id)."""
+    ids = choice.get("music_track_ids")
+    if ids is None:
+        ids = [choice["music_track_id"]] if choice.get("music_track_id") else []
+    return [str(track_id) for track_id in ids if track_id]
+
+
 def run_photo_post_job(job_id: str, resume_request: dict[str, Any]) -> None:
     """Carry out the owner's choice for a photo post: a zip of its images or a slideshow."""
     owner_user_id = str((JOB_SERVICE.get(job_id) or {}).get("owner_user_id") or _bootstrap_owner["user_id"])
@@ -4667,17 +4681,20 @@ def run_photo_post_job(job_id: str, resume_request: dict[str, Any]) -> None:
             )
         elif choice.get("action") == "video":
             seconds = float(choice["seconds"])
-            music = original_music
-            if choice.get("music_track_id"):
-                music = MUSIC_LIBRARY.file_path(MUSIC_LIBRARY.get(str(choice["music_track_id"])))
-                if not music.is_file():
+            track_files: list[Path] = []
+            for track_id in photo_choice_track_ids(choice):
+                track_file = MUSIC_LIBRARY.file_path(MUSIC_LIBRARY.get(track_id))
+                if not track_file.is_file():
                     raise FileNotFoundError("File nhạc đã chọn không còn trên máy chủ")
+                track_files.append(track_file)
             update_job(job_id, status="processing", step="rendering-slideshow", progress=0.3,
                        step_detail=f"Đang dựng video ghép {len(images)} ảnh dài {format_video_length(seconds)}")
             work = tenant_job_dir(WORK_DIR, owner_user_id, job_id) / "slideshow"
             shutil.rmtree(work, ignore_errors=True)
             rendered = work / "slideshow.mp4"
             try:
+                # Several library tracks play one after another; the set loops if the video is longer.
+                music = join_audio_tracks(FFMPEG, track_files, work / "music.m4a") if track_files else original_music
                 duration = render_timed_slideshow(FFMPEG, images, music, rendered, seconds, work_dir=work)
             except subprocess.CalledProcessError as exc:
                 logger.warning("Slideshow render failed for job %s: %s", job_id,
@@ -8280,6 +8297,8 @@ class PhotoPostChoice(BaseModel):
     minutes: float | None = Field(default=None, gt=0)
     # A library track instead of the post's own soundtrack.
     music_track_id: str | None = Field(default=None, max_length=100)
+    # One or more library tracks, played in this order, instead of the post's own soundtrack.
+    music_track_ids: list[Annotated[str, Field(max_length=100)]] | None = Field(default=None, max_length=MAX_MUSIC_TRACKS)
 
 
 @app.post("/api/v1/jobs/{job_id}/photo-post", response_model=Job)
@@ -8310,15 +8329,16 @@ def choose_photo_post_endpoint(request: Request, job_id: str, choice: PhotoPostC
                 status_code=400,
                 detail=f"Độ dài video phải từ {MIN_VIDEO_SECONDS:g} giây đến {MAX_VIDEO_SECONDS / 60:g} phút",
             )
-        track_id = (choice.music_track_id or "").strip()
-        if track_id:
+        requested = choice.music_track_ids if choice.music_track_ids is not None else [choice.music_track_id or ""]
+        track_ids = [value.strip() for value in requested if value and value.strip()]
+        for track_id in track_ids:
             try:
                 track = MUSIC_LIBRARY.get(track_id)
             except MusicTrackNotFound as exc:
                 raise HTTPException(status_code=400, detail="Bản nhạc đã chọn không còn trong thư viện") from exc
             if not MUSIC_LIBRARY.file_path(track).is_file():
                 raise HTTPException(status_code=400, detail="File nhạc đã chọn không còn trên máy chủ")
-        stored_choice.update(seconds=seconds, music_track_id=track_id or None)
+        stored_choice.update(seconds=seconds, music_track_ids=track_ids)
         quota_minutes = max(1, math.ceil(seconds / 60))
     quota_account = ADMIN_ACCOUNTS.get(owner_user_id) if can_manage_all_jobs(account) else account
     reserve_job_quota(job_id, quota_account, minutes=quota_minutes)

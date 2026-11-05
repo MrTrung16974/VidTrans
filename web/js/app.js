@@ -3459,10 +3459,34 @@ async function photoMusicOptions(hasOriginalMusic) {
       photoMusicTracks = [];
     }
   }
-  const original = hasOriginalMusic
-    ? '<option value="">Nhạc gốc của bài đăng</option>'
-    : '<option value="">Không có nhạc gốc (video im lặng)</option>';
-  return original + musicTrackOptions(photoMusicTracks);
+  return '<option value="">+ Thêm bài nhạc từ thư viện…</option>' + musicTrackOptions(photoMusicTracks);
+}
+
+// Library tracks picked for the slideshow, in play order.
+const PHOTO_MAX_MUSIC_TRACKS = 10;
+let photoChosenTracks = [];
+
+function renderPhotoChosenTracks(hasOriginalMusic) {
+  const list = $("#photoChoiceMusicList");
+  const byId = new Map((photoMusicTracks || []).map(track => [track.track_id, track]));
+  list.innerHTML = photoChosenTracks.map((trackId, index) => {
+    const track = byId.get(trackId);
+    const label = track ? `${track.title} (${formatTrackLength(track.duration_seconds)})` : trackId;
+    return `<li><span>${escapeHtml(label)}</span><button type="button" data-index="${index}" aria-label="Bỏ bài này">✕</button></li>`;
+  }).join("");
+  list.querySelectorAll("button").forEach(button => {
+    button.onclick = () => {
+      photoChosenTracks.splice(Number(button.dataset.index), 1);
+      renderPhotoChosenTracks(hasOriginalMusic);
+    };
+  });
+  $("#photoChoiceMusicHint").textContent = photoChosenTracks.length > 1
+    ? "Các bài phát nối tiếp theo thứ tự trên; video dài hơn thì lặp lại từ bài đầu."
+    : photoChosenTracks.length
+      ? "Bài nhạc lặp lại cho đủ độ dài video."
+      : hasOriginalMusic
+        ? "Chưa chọn bài nào: dùng nhạc gốc của bài đăng."
+        : "Chưa chọn bài nào: bài đăng không có nhạc gốc nên video sẽ im lặng.";
 }
 
 function renderPhotoChoiceCard(job) {
@@ -3474,12 +3498,26 @@ function renderPhotoChoiceCard(job) {
   const count = job.photo_post?.image_count || 0;
   $("#jobDetailPhotoSummary").textContent = `Link này là bài đăng ${count} ảnh, không phải video. Chọn cách xử lý:`;
   const select = $("#photoChoiceMusic");
+  const hasOriginalMusic = Boolean(job.photo_post?.has_music);
   if (select.dataset.jobId !== job.job_id) {
     select.dataset.jobId = job.job_id;
-    photoMusicOptions(Boolean(job.photo_post?.has_music)).then(html => {
+    photoChosenTracks = [];
+    renderPhotoChosenTracks(hasOriginalMusic);
+    photoMusicOptions(hasOriginalMusic).then(html => {
       if (select.dataset.jobId === job.job_id) select.innerHTML = html;
     });
   }
+  select.onchange = () => {
+    const trackId = select.value;
+    select.value = "";
+    if (!trackId) return;
+    if (photoChosenTracks.length >= PHOTO_MAX_MUSIC_TRACKS) {
+      toast(`Chọn tối đa ${PHOTO_MAX_MUSIC_TRACKS} bài nhạc`, true);
+      return;
+    }
+    photoChosenTracks.push(trackId);
+    renderPhotoChosenTracks(hasOriginalMusic);
+  };
   const send = async (button, choice) => {
     button.disabled = true;
     try {
@@ -3507,7 +3545,7 @@ function renderPhotoChoiceCard(job) {
       toast("Độ dài video phải từ 0,25 đến 10 phút", true);
       return;
     }
-    send(event.currentTarget, { action: "video", minutes, music_track_id: select.value || null });
+    send(event.currentTarget, { action: "video", minutes, music_track_ids: [...photoChosenTracks] });
   };
 }
 

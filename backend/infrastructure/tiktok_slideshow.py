@@ -180,6 +180,42 @@ def build_timed_slideshow_command(
     return command
 
 
+MAX_MUSIC_TRACKS = 10
+
+
+def build_audio_playlist_command(ffmpeg: str, tracks: Sequence[Path], output: Path) -> list[str]:
+    """ffmpeg command joining ``tracks`` one after another into ``output`` (AAC)."""
+    if not tracks:
+        raise ValueError("A playlist needs at least one track")
+    command = [ffmpeg, "-y", "-v", "error"]
+    for track in tracks:
+        command += ["-i", str(track)]
+    # Tracks differ in rate and layout; bring them to one format before concat.
+    parts = [
+        f"[{index}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
+        for index in range(len(tracks))
+    ]
+    inputs = "".join(f"[a{index}]" for index in range(len(tracks)))
+    parts.append(f"{inputs}concat=n={len(tracks)}:v=0:a=1[audio]")
+    command += [
+        "-filter_complex", ";".join(parts),
+        "-map", "[audio]", "-vn",
+        "-c:a", "aac", "-b:a", "192k",
+        str(output),
+    ]
+    return command
+
+
+def join_audio_tracks(ffmpeg: str, tracks: Sequence[Path], output: Path, *, timeout: float = 600) -> Path:
+    """Return one soundtrack playing ``tracks`` in order (the single track itself when only one)."""
+    if len(tracks) == 1:
+        return tracks[0]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(build_audio_playlist_command(ffmpeg, tracks, output), check=True, capture_output=True,
+                   timeout=timeout)
+    return output
+
+
 def render_timed_slideshow(
     ffmpeg: str,
     images: Sequence[Path],
