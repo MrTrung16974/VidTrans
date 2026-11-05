@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from domain.music_categories import guess_category, normalize_category, title_and_category
 from infrastructure.database import connect, prepare_target
 
 MUSIC_EXTENSIONS = {".mp3", ".m4a", ".aac", ".wav", ".ogg"}
@@ -87,6 +88,16 @@ class MusicLibraryStore:
                     created_by TEXT
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(music_tracks)").fetchall()}
+            if "category" not in columns:
+                db.execute("ALTER TABLE music_tracks ADD COLUMN category TEXT")
+            # Tracks uploaded before categories existed are filed by their title.
+            untitled = db.execute(
+                "SELECT track_id, title, file_name FROM music_tracks WHERE category IS NULL OR category = ''"
+            ).fetchall()
+            for row in untitled:
+                category = guess_category(f"{row['title']} {row['file_name']}")
+                db.execute("UPDATE music_tracks SET category = ? WHERE track_id = ?", (category, row["track_id"]))
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
@@ -119,7 +130,10 @@ class MusicLibraryStore:
             raise MusicTrackNotFound("Không tìm thấy bản nhạc")
         return self._row(row)
 
-    def create(self, *, title: str, file_name: str, data: bytes, created_by: str | None) -> dict[str, Any]:
+    def create(
+        self, *, title: str, file_name: str, data: bytes, created_by: str | None, category: str | None = None,
+    ) -> dict[str, Any]:
+        """Store one track. A blank title or category is taken from the file name."""
         extension = Path(file_name or "").suffix.lower()
         if extension not in MUSIC_EXTENSIONS:
             raise MusicLibraryError("Nhạc nền phải là mp3, m4a, aac, wav hoặc ogg")
@@ -127,7 +141,9 @@ class MusicLibraryStore:
             raise MusicLibraryError("File nhạc trống")
         if len(data) > MAX_MUSIC_BYTES:
             raise MusicLibraryError(f"File nhạc vượt quá {MAX_MUSIC_BYTES // (1024 * 1024)} MB")
-        title = " ".join((title or Path(file_name).stem).split())[:MAX_TITLE_CHARS]
+        name_title, name_category = title_and_category(file_name)
+        title = " ".join((title or name_title).split())[:MAX_TITLE_CHARS]
+        category = normalize_category(category) if (category or "").strip() else name_category
         if not title:
             raise MusicLibraryError("Hãy đặt tên cho bản nhạc")
         with self._db() as db:
@@ -152,12 +168,13 @@ class MusicLibraryStore:
             "duration_seconds": round(duration, 2),
             "created_at": utc_now(),
             "created_by": created_by,
+            "category": category,
         }
         try:
             with self._db() as db:
                 db.execute(
                     "INSERT INTO music_tracks (track_id, title, file_name, extension, size_bytes,"
-                    " duration_seconds, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " duration_seconds, created_at, created_by, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     tuple(track.values()),
                 )
         except Exception:
@@ -165,13 +182,17 @@ class MusicLibraryStore:
             raise
         return track
 
-    def rename(self, track_id: str, title: str) -> dict[str, Any]:
-        title = " ".join((title or "").split())[:MAX_TITLE_CHARS]
-        if not title:
-            raise MusicLibraryError("Hãy đặt tên cho bản nhạc")
-        self.get(track_id)
+    def rename(self, track_id: str, title: str | None = None, category: str | None = None) -> dict[str, Any]:
+        """Change the title and/or the category; None leaves that field as it is."""
+        current = self.get(track_id)
+        if title is not None:
+            title = " ".join(title.split())[:MAX_TITLE_CHARS]
+            if not title:
+                raise MusicLibraryError("Hãy đặt tên cho bản nhạc")
+        new_category = normalize_category(category) if category is not None else current.get("category")
         with self._db() as db:
-            db.execute("UPDATE music_tracks SET title = ? WHERE track_id = ?", (title, track_id))
+            db.execute("UPDATE music_tracks SET title = ?, category = ? WHERE track_id = ?",
+                       (title if title is not None else current["title"], new_category, track_id))
         return self.get(track_id)
 
     def delete(self, track_id: str) -> dict[str, Any]:

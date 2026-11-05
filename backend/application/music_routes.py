@@ -2,8 +2,9 @@
 
     GET  /api/v1/music-tracks                         signed-in users
     GET  /api/v1/music-tracks/{id}/audio              signed-in users (preview)
-    POST /api/v1/admin/music-tracks                   admin, multipart title + file, audited
-    POST /api/v1/admin/music-tracks/{id}              admin, rename, audited
+    POST /api/v1/admin/music-tracks                   admin, multipart file (+ title, category), audited;
+                                                      blank title/category come from the file name
+    POST /api/v1/admin/music-tracks/{id}              admin, rename and/or recategorize, audited
     DELETE /api/v1/admin/music-tracks/{id}            admin, audited
 """
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
+from domain.music_categories import CATEGORIES, OTHER
 from infrastructure.music_library import (
     MAX_MUSIC_BYTES,
     MEDIA_TYPES,
@@ -37,6 +39,7 @@ def public_track(track: dict[str, Any]) -> dict[str, Any]:
     return {
         "track_id": track["track_id"],
         "title": track["title"],
+        "category": track.get("category") or OTHER,
         "duration_seconds": track["duration_seconds"],
         "size_bytes": track["size_bytes"],
         "extension": track["extension"],
@@ -57,7 +60,10 @@ def create_music_router(deps: MusicRouteDependencies) -> APIRouter:
     @router.get("/api/v1/music-tracks")
     def list_music_tracks(request: Request) -> JSONResponse:
         deps.current_account(request)
-        return JSONResponse({"items": [public_track(t) for t in deps.store.list()]}, headers=NO_STORE)
+        items = [public_track(t) for t in deps.store.list()]
+        # The built-in moods in their order, then any category an admin typed.
+        custom = sorted({item["category"] for item in items} - set(CATEGORIES))
+        return JSONResponse({"items": items, "categories": [*CATEGORIES[:-1], *custom, OTHER]}, headers=NO_STORE)
 
     @router.get("/api/v1/music-tracks/{track_id}/audio")
     def music_track_audio(request: Request, track_id: str) -> FileResponse:
@@ -77,12 +83,14 @@ def create_music_router(deps: MusicRouteDependencies) -> APIRouter:
         request: Request,
         file: UploadFile = File(...),
         title: str = Form("", max_length=200),
+        category: str = Form("", max_length=60),
     ) -> JSONResponse:
         actor = deps.require_admin(request)
         data = await file.read(MAX_MUSIC_BYTES + 1)
         try:
             track = deps.store.create(
                 title=title, file_name=file.filename or "", data=data, created_by=str(actor["user_id"]),
+                category=category,
             )
         except MusicLibraryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -91,16 +99,23 @@ def create_music_router(deps: MusicRouteDependencies) -> APIRouter:
             action="admin.music_track.create",
             resource_type="music_track",
             resource_id=track["track_id"],
-            metadata={"title": track["title"]},
+            metadata={"title": track["title"], "category": track["category"]},
         )
         return JSONResponse(public_track(track), status_code=201, headers=NO_STORE)
 
     @router.post("/api/v1/admin/music-tracks/{track_id}")
-    def rename_music_track(request: Request, track_id: str, title: str = Form(..., max_length=200)) -> JSONResponse:
+    def rename_music_track(
+        request: Request,
+        track_id: str,
+        title: str | None = Form(None, max_length=200),
+        category: str | None = Form(None, max_length=60),
+    ) -> JSONResponse:
         actor = deps.require_admin(request)
         lookup(track_id)
+        if title is None and category is None:
+            raise HTTPException(status_code=400, detail="Không có gì để đổi")
         try:
-            track = deps.store.rename(track_id, title)
+            track = deps.store.rename(track_id, title, category)
         except MusicLibraryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         deps.audit(
@@ -108,7 +123,7 @@ def create_music_router(deps: MusicRouteDependencies) -> APIRouter:
             action="admin.music_track.rename",
             resource_type="music_track",
             resource_id=track_id,
-            metadata={"title": track["title"]},
+            metadata={"title": track["title"], "category": track["category"]},
         )
         return JSONResponse(public_track(track), headers=NO_STORE)
 

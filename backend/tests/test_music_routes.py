@@ -88,6 +88,46 @@ class MusicRouteTests(unittest.TestCase):
         self.assertEqual(self.client.get(track["audio_url"]).status_code, 404)
         self.assertEqual(self.client.delete(f"/api/v1/admin/music-tracks/{track['track_id']}").status_code, 404)
 
+    def test_category_and_title_come_from_the_file_name(self) -> None:
+        cases = {
+            "[Buồn] Mưa rơi_(Official Audio) 320kbps.mp3": ("Mưa rơi", "Buồn / Cảm động"),
+            "Lofi Chill Beat for Study.mp3": ("Lofi Chill Beat for Study", "Lofi / Thư giãn"),
+            "nhac_hai_huoc_vui_nhon.mp3": ("nhac hai huoc vui nhon", "Hài hước / Vui nhộn"),
+            "Epic Battle Trailer Music (No Copyright).mp3": ("Epic Battle Trailer Music", "Hành động / Kịch tính"),
+            "古风 古筝 - 青花.mp3": ("古风 古筝 - 青花", "Cổ trang / Trung Hoa"),
+            "Bóng Ma Đêm Khuya.mp3": ("Bóng Ma Đêm Khuya", "Kinh dị / Hồi hộp"),
+            # Common words that only look like keywords once accents are gone ("mà", "hai").
+            "Mà em đâu biết.mp3": ("Mà em đâu biết", "Khác"),
+            "Hai mươi năm.mp3": ("Hai mươi năm", "Khác"),
+        }
+        for name, (title, category) in cases.items():
+            with self.subTest(name=name):
+                track = self.upload(name=name).json()
+                self.assertEqual((track["title"], track["category"]), (title, category))
+
+    def test_an_admin_category_wins_and_can_be_changed(self) -> None:
+        response = self.client.post("/api/v1/admin/music-tracks", data={"category": "edm"},
+                                    files={"file": ("Piano buồn.mp3", b"ID3audio", "audio/mpeg")})
+        track = response.json()
+        self.assertEqual(track["category"], "Sôi động / EDM")  # a known mood, matched loosely
+        changed = self.client.post(f"/api/v1/admin/music-tracks/{track['track_id']}", data={"category": "Nhạc thiếu nhi"})
+        self.assertEqual((changed.json()["title"], changed.json()["category"]), ("Piano buồn", "Nhạc thiếu nhi"))
+        listing = self.client.get("/api/v1/music-tracks").json()
+        self.assertEqual(listing["categories"][-2:], ["Nhạc thiếu nhi", "Khác"])
+        self.assertEqual(self.client.post(f"/api/v1/admin/music-tracks/{track['track_id']}").status_code, 400)
+
+    def test_tracks_from_before_categories_are_filed_by_title(self) -> None:
+        import sqlite3
+        root = Path(self.temp.name)
+        legacy = root / "legacy.sqlite3"
+        with sqlite3.connect(legacy) as db:
+            db.execute("CREATE TABLE music_tracks (track_id TEXT PRIMARY KEY, title TEXT NOT NULL, file_name TEXT NOT NULL,"
+                       " extension TEXT NOT NULL, size_bytes INTEGER NOT NULL, duration_seconds REAL NOT NULL,"
+                       " created_at TEXT NOT NULL, created_by TEXT)")
+            db.execute("INSERT INTO music_tracks VALUES ('t1', 'Sad piano', 'a.mp3', '.mp3', 1, 1, '2026-01-01', NULL)")
+        store = MusicLibraryStore(legacy, root / "music2", probe=fake_probe)
+        self.assertEqual(store.get("t1")["category"], "Buồn / Cảm động")
+
 
 if __name__ == "__main__":
     unittest.main()

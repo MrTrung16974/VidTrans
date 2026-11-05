@@ -2190,20 +2190,35 @@ function syncMusicPicker() {
   stopMusicPreview();
 }
 
+const MUSIC_EXTENSIONS = [".mp3", ".m4a", ".aac", ".wav", ".ogg"];
+const MUSIC_MAX_BYTES = 30 * 1024 * 1024;
+state.musicCategories = [];
+
+/** `<optgroup>` per category (in the server's order), each track as an option. */
+function musicTrackOptions(tracks, categories = state.musicCategories) {
+  const order = [...categories, ...tracks.map(track => track.category || "Khác")];
+  const groups = [...new Set(order)].map(category => [category, tracks.filter(track => (track.category || "Khác") === category)]);
+  return groups.filter(([, items]) => items.length).map(([category, items]) =>
+    `<optgroup label="${escapeHtml(category)}">${items.map(track =>
+      `<option value="${escapeHtml(track.track_id)}">${escapeHtml(track.title)} (${formatTrackLength(track.duration_seconds)})</option>`,
+    ).join("")}</optgroup>`,
+  ).join("");
+}
+
 async function loadMusicLibrary() {
   const select = $("#backgroundMusicId");
   if (!select) return;
   let items = [];
   try {
-    items = (await requestJson("/api/v1/music-tracks")).items || [];
+    const library = await requestJson("/api/v1/music-tracks");
+    items = library.items || [];
+    state.musicCategories = library.categories || [];
   } catch {
     // The picker still works with a user upload when the library is unavailable.
   }
   state.musicTracks = items;
   const current = select.value;
-  select.innerHTML = '<option value="">— Tự tải file nhạc của bạn —</option>' + items.map(track =>
-    `<option value="${escapeHtml(track.track_id)}">${escapeHtml(track.title)} (${formatTrackLength(track.duration_seconds)})</option>`,
-  ).join("");
+  select.innerHTML = '<option value="">— Tự tải file nhạc của bạn —</option>' + musicTrackOptions(items);
   if (items.some(track => track.track_id === current)) select.value = current;
   syncMusicPicker();
 }
@@ -2224,47 +2239,133 @@ async function loadAdminMusic() {
   if (!list) return;
   list.innerHTML = '<div class="empty-state"><strong>Đang tải thư viện nhạc…</strong></div>';
   try {
-    const items = (await requestJson("/api/v1/music-tracks")).items || [];
+    const library = await requestJson("/api/v1/music-tracks");
+    const items = library.items || [];
+    const categories = library.categories || [];
+    state.musicCategories = categories;
+    syncMusicCategorySelect(categories);
     if (!items.length) {
       list.innerHTML = '<div class="empty-state"><strong>Chưa có bản nhạc nào</strong><span>Tải nhạc lên để người dùng chọn khi lồng tiếng.</span></div>';
       return;
     }
-    list.innerHTML = items.map(track => `
-      <article class="admin-music-item" data-music-id="${escapeHtml(track.track_id)}" data-music-title="${escapeHtml(track.title)}">
+    const categoryOptions = current => [...new Set([...categories, current])].map(category =>
+      `<option value="${escapeHtml(category)}"${category === current ? " selected" : ""}>${escapeHtml(category)}</option>`,
+    ).join("") + '<option value="__new__">+ Thể loại mới…</option>';
+    const groups = categories.map(category => [category, items.filter(track => track.category === category)])
+      .filter(([, tracks]) => tracks.length);
+    list.innerHTML = groups.map(([category, tracks]) => `
+      <h4 class="admin-music-group">${escapeHtml(category)} <small>${tracks.length} bài</small></h4>
+      ${tracks.map(track => `
+      <article class="admin-music-item" data-music-id="${escapeHtml(track.track_id)}" data-music-title="${escapeHtml(track.title)}" data-music-category="${escapeHtml(track.category)}">
         <div class="admin-music-info">
           <strong>${escapeHtml(track.title)}</strong>
           <small>${formatTrackLength(track.duration_seconds)} · ${formatBytes(Number(track.size_bytes))} · ${escapeHtml(track.extension.replace(".", "").toUpperCase())} · ${escapeHtml(new Date(track.created_at).toLocaleString("vi-VN"))}</small>
         </div>
         <audio controls preload="none" src="${escapeHtml(track.audio_url)}"></audio>
         <div class="admin-music-actions">
+          <select class="admin-music-category" data-admin-music-category aria-label="Thể loại của ${escapeHtml(track.title)}">${categoryOptions(track.category)}</select>
           <button class="button secondary mini-btn" type="button" data-admin-rename-music>Đổi tên</button>
           <button class="button secondary mini-btn" type="button" data-admin-delete-music>Xoá</button>
         </div>
-      </article>`).join("");
+      </article>`).join("")}`).join("");
   } catch (err) {
     list.innerHTML = `<div class="empty-state error"><strong>${escapeHtml(err.message)}</strong></div>`;
   }
 }
 
 $("#refreshAdminMusic")?.addEventListener("click", loadAdminMusic);
+function syncMusicCategorySelect(categories) {
+  const select = $("#adminMusicCategory");
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">Tự phân loại theo tên file</option>' + categories.map(category =>
+    `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join("");
+  if (categories.includes(current)) select.value = current;
+}
+
+const isMusicFile = file => MUSIC_EXTENSIONS.some(extension => file.name.toLowerCase().endsWith(extension));
+
+// Many tracks at once: uploaded one after another (each up to 30 MB), every file
+// reporting its own result, so one bad file never stops the rest.
 $("#adminMusicUploadForm")?.addEventListener("submit", async event => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = $('button[type="submit"]', form);
-  const data = new FormData(form);
-  const file = data.get("file");
-  if (!(file instanceof File) || !file.name) return toast("Hãy chọn file nhạc", true);
-  if (file.size > 30 * 1024 * 1024) return toast("File nhạc vượt quá 30 MB", true);
+  const files = [...($("#adminMusicFiles").files || [])];
+  if (!files.length) return toast("Hãy chọn file nhạc", true);
+  const category = $("#adminMusicCategory").value;
+  const progress = $("#adminMusicUploadProgress");
+  progress.classList.remove("is-hidden");
+  progress.innerHTML = files.map((file, index) =>
+    `<li data-upload-index="${index}"><span>${escapeHtml(file.name)}</span><small>Đang chờ…</small></li>`).join("");
+  const mark = (index, text, kind) => {
+    const row = $(`[data-upload-index="${index}"]`, progress);
+    row.className = kind;
+    $("small", row).textContent = text;
+  };
   button.disabled = true;
+  let added = 0;
+  for (const [index, file] of files.entries()) {
+    if (!isMusicFile(file)) { mark(index, "Không phải mp3/m4a/aac/wav/ogg", "is-error"); continue; }
+    if (file.size > MUSIC_MAX_BYTES) { mark(index, "Vượt quá 30 MB", "is-error"); continue; }
+    mark(index, "Đang tải lên…", "is-active");
+    const data = new FormData();
+    data.set("file", file);
+    if (category) data.set("category", category);
+    try {
+      const track = await requestJson("/api/v1/admin/music-tracks", { method: "POST", body: data });
+      mark(index, `✓ ${track.title} · ${track.category}`, "is-done");
+      added += 1;
+    } catch (err) {
+      mark(index, err.message, "is-error");
+    }
+  }
+  button.disabled = false;
+  form.reset();
+  toast(added === files.length ? `Đã thêm ${added} bài vào thư viện` : `Đã thêm ${added}/${files.length} bài, xem các file lỗi bên dưới`, added !== files.length);
+  await Promise.all([loadAdminMusic(), loadMusicLibrary()]);
+});
+
+// Drop audio files anywhere on the upload form.
+(form => {
+  if (!form) return;
+  ["dragenter", "dragover"].forEach(type => form.addEventListener(type, event => {
+    event.preventDefault();
+    form.classList.add("is-dragging");
+  }));
+  ["dragleave", "drop"].forEach(type => form.addEventListener(type, () => form.classList.remove("is-dragging")));
+  form.addEventListener("drop", event => {
+    event.preventDefault();
+    const dropped = [...(event.dataTransfer?.files || [])].filter(isMusicFile);
+    if (!dropped.length) return toast("Chỉ nhận file mp3, m4a, aac, wav hoặc ogg", true);
+    const transfer = new DataTransfer();
+    dropped.forEach(file => transfer.items.add(file));
+    $("#adminMusicFiles").files = transfer.files;
+    toast(`Đã chọn ${dropped.length} bài — bấm Tải lên`);
+  });
+})($("#adminMusicUploadForm"));
+
+$("#adminMusicList")?.addEventListener("change", async event => {
+  const select = event.target.closest("[data-admin-music-category]");
+  const item = event.target.closest("[data-music-id]");
+  if (!select || !item) return;
+  let category = select.value;
+  if (category === "__new__") {
+    category = (prompt("Tên thể loại mới:") || "").trim();
+    if (!category) {
+      select.value = item.dataset.musicCategory;
+      return;
+    }
+  }
+  const body = new FormData();
+  body.set("category", category);
   try {
-    await requestJson("/api/v1/admin/music-tracks", { method: "POST", body: data });
-    form.reset();
-    toast("Đã thêm nhạc nền vào thư viện");
+    const track = await requestJson(`/api/v1/admin/music-tracks/${encodeURIComponent(item.dataset.musicId)}`, { method: "POST", body });
+    toast(`Đã chuyển “${track.title}” sang ${track.category}`);
     await Promise.all([loadAdminMusic(), loadMusicLibrary()]);
   } catch (err) {
+    select.value = item.dataset.musicCategory;
     toast(err.message, true);
-  } finally {
-    button.disabled = false;
   }
 });
 $("#adminMusicList")?.addEventListener("click", async event => {
@@ -3302,7 +3403,9 @@ let photoMusicTracks = null;
 async function photoMusicOptions(hasOriginalMusic) {
   if (photoMusicTracks === null) {
     try {
-      photoMusicTracks = (await requestJson("/api/v1/music-tracks")).items || [];
+      const library = await requestJson("/api/v1/music-tracks");
+      photoMusicTracks = library.items || [];
+      state.musicCategories = library.categories || state.musicCategories;
     } catch {
       photoMusicTracks = [];
     }
@@ -3310,9 +3413,7 @@ async function photoMusicOptions(hasOriginalMusic) {
   const original = hasOriginalMusic
     ? '<option value="">Nhạc gốc của bài đăng</option>'
     : '<option value="">Không có nhạc gốc (video im lặng)</option>';
-  return original + photoMusicTracks.map(track =>
-    `<option value="${escapeHtml(track.track_id)}">${escapeHtml(track.title)} (${formatTrackLength(track.duration_seconds)})</option>`,
-  ).join("");
+  return original + musicTrackOptions(photoMusicTracks);
 }
 
 function renderPhotoChoiceCard(job) {

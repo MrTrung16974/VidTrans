@@ -8821,6 +8821,23 @@ body.modal-open {
   box-shadow: 0 6px 20px rgba(234, 88, 12, 0.45);
 }
 
+.admin-music-upload select { height: 44px; border-radius: 12px; border: 1.5px solid #fdba74; background-color: #fff; font-size: .88rem; }
+.admin-music-upload.is-dragging { border-style: dashed; border-color: #ea580c; background: #ffedd5; }
+.admin-music-hint { margin: 10px 2px 0; font-size: .8rem; color: #64748b; line-height: 1.5; }
+.admin-music-hint code { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 6px; padding: 0 5px; color: #9a3412; }
+.admin-music-progress { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow-y: auto; }
+.admin-music-progress li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 12px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; font-size: .82rem; }
+.admin-music-progress li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.admin-music-progress li small { flex-shrink: 0; color: #64748b; max-width: 55%; text-align: right; }
+.admin-music-progress li.is-active { border-color: #fdba74; background: #fff7ed; }
+.admin-music-progress li.is-done { border-color: #bbf7d0; background: #f0fdf4; }
+.admin-music-progress li.is-done small { color: #15803d; }
+.admin-music-progress li.is-error { border-color: #fecaca; background: #fef2f2; }
+.admin-music-progress li.is-error small { color: #b91c1c; }
+.admin-music-group { margin: 10px 2px 0; font-size: .86rem; color: #9a3412; display: flex; align-items: baseline; gap: 8px; }
+.admin-music-group small { color: #94a3b8; font-weight: 600; }
+.admin-music-category { height: 32px; min-width: 150px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: .78rem; }
+
 #adminMusicList {
   display: grid;
   gap: 12px;

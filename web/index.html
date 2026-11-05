@@ -63,7 +63,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20261105-clips-ai" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20261105-music-batch" />
     <link rel="stylesheet" href="/assets/legal.css?v=20261104-saas-legal-v1" />
   </head>
   <body>
@@ -2127,17 +2127,19 @@
               <div class="admin-toolbar admin-jobs-toolbar">
                 <div class="admin-list-title">
                   <strong>Thư viện nhạc nền</strong>
-                  <small>Nhạc tải lên ở đây hiện cho mọi người dùng chọn khi lồng tiếng (chế độ Phụ đề + lồng tiếng + nhạc nền). MP3/M4A/AAC/WAV/OGG, tối đa 30 MB.</small>
+                  <small>Nhạc tải lên ở đây hiện cho mọi người dùng chọn khi lồng tiếng và khi tạo video từ bài đăng ảnh, xếp theo thể loại. MP3/M4A/AAC/WAV/OGG, tối đa 30 MB mỗi bài.</small>
                 </div>
                 <button id="refreshAdminMusic" class="button secondary" type="button" title="Làm mới">
                   <span class="refresh-symbol">↻</span> Làm mới
                 </button>
               </div>
               <form id="adminMusicUploadForm" class="admin-music-upload">
-                <label class="field"><span>Tên bản nhạc (để trống = tên file)</span><input name="title" type="text" maxlength="120" placeholder="Ví dụ: Lofi nhẹ nhàng" /></label>
-                <label class="field"><span>File nhạc</span><input name="file" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg,audio/*" required /></label>
+                <label class="field"><span>File nhạc — chọn hoặc kéo thả nhiều bài</span><input id="adminMusicFiles" name="file" type="file" accept=".mp3,.m4a,.aac,.wav,.ogg,audio/*" multiple required /></label>
+                <label class="field"><span>Thể loại</span><select id="adminMusicCategory" name="category"><option value="">Tự phân loại theo tên file</option></select></label>
                 <button class="button primary" type="submit">⬆ Tải lên</button>
               </form>
+              <p class="admin-music-hint">Tên bài lấy từ tên file (bỏ “_”, “(Official Audio)”, “320kbps”…). Thể loại tự đoán từ tên: buồn, lofi, hài, kinh dị, cổ trang, EDM… — hoặc đặt <code>[Buồn]</code> ở đầu tên file. Sửa lại được trong danh sách bên dưới.</p>
+              <ul id="adminMusicUploadProgress" class="admin-music-progress is-hidden"></ul>
               <div id="adminMusicList" class="admin-contact-list">
                 <div class="empty-state"><strong>Đang tải thư viện nhạc…</strong></div>
               </div>
@@ -3017,6 +3019,6 @@
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/js/app.js?v=20261105-clips-ai"></script>
+    <script type="module" src="/js/app.js?v=20261105-music-batch"></script>
   </body>
 </html>

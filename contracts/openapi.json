@@ -1750,15 +1750,31 @@
       },
       "Body_rename_music_track_api_v1_admin_music_tracks__track_id__post": {
         "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
           "title": {
-            "maxLength": 200,
-            "title": "Title",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           }
         },
-        "required": [
-          "title"
-        ],
         "title": "Body_rename_music_track_api_v1_admin_music_tracks__track_id__post",
         "type": "object"
       },
@@ -2023,6 +2039,12 @@
       },
       "Body_upload_music_track_api_v1_admin_music_tracks_post": {
         "properties": {
+          "category": {
+            "default": "",
+            "maxLength": 60,
+            "title": "Category",
+            "type": "string"
+          },
           "file": {
             "contentMediaType": "application/octet-stream",
             "title": "File",
@@ -5289,8 +5311,7 @@
                 "$ref": "#/components/schemas/Body_rename_music_track_api_v1_admin_music_tracks__track_id__post"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
