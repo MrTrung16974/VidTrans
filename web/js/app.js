@@ -2286,44 +2286,93 @@ function syncMusicCategorySelect(categories) {
 const isMusicFile = file => MUSIC_EXTENSIONS.some(extension => file.name.toLowerCase().endsWith(extension));
 
 // Many tracks at once: uploaded one after another (each up to 30 MB), every file
-// reporting its own result, so one bad file never stops the rest.
-$("#adminMusicUploadForm")?.addEventListener("submit", async event => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button = $('button[type="submit"]', form);
-  const files = [...($("#adminMusicFiles").files || [])];
-  if (!files.length) return toast("Hãy chọn file nhạc", true);
-  const category = $("#adminMusicCategory").value;
+// reporting its own result, so one bad file never stops the rest. Files that failed on
+// the way (network, server) stay in the queue to retry one by one or all together;
+// a wrong type or size cannot pass on a retry and gets no button.
+const musicUpload = { queue: [], category: "", running: false };
+
+function renderMusicUploadQueue() {
   const progress = $("#adminMusicUploadProgress");
-  progress.classList.remove("is-hidden");
-  progress.innerHTML = files.map((file, index) =>
-    `<li data-upload-index="${index}"><span>${escapeHtml(file.name)}</span><small>Đang chờ…</small></li>`).join("");
-  const mark = (index, text, kind) => {
-    const row = $(`[data-upload-index="${index}"]`, progress);
-    row.className = kind;
-    $("small", row).textContent = text;
-  };
-  button.disabled = true;
+  if (!progress) return;
+  const { queue, running } = musicUpload;
+  progress.classList.toggle("is-hidden", !queue.length);
+  const retriable = queue.filter(item => item.state === "error" && item.retriable).length;
+  const done = queue.filter(item => item.state === "done").length;
+  const header = queue.length ? `<li class="admin-music-progress-head"><span>${done}/${queue.length} bài đã thêm</span>${
+    retriable && !running ? `<button class="button secondary mini-btn" type="button" data-music-retry-all>↻ Thử lại tất cả (${retriable})</button>` : ""
+  }${!running ? '<button class="button secondary mini-btn cancel-btn" type="button" data-music-clear>Ẩn</button>' : ""}</li>` : "";
+  progress.innerHTML = header + queue.map((item, index) => `
+    <li class="is-${item.state}" data-upload-index="${index}">
+      <span>${escapeHtml(item.file.name)}</span>
+      <small>${escapeHtml(item.message)}</small>
+      ${item.state === "error" && item.retriable && !running
+        ? `<button class="button secondary mini-btn" type="button" data-music-retry="${index}">↻ Thử lại</button>` : ""}
+    </li>`).join("");
+}
+
+async function uploadMusicQueue(indexes) {
+  if (musicUpload.running) return;
+  musicUpload.running = true;
+  const submit = $('#adminMusicUploadForm button[type="submit"]');
+  if (submit) submit.disabled = true;
+  indexes.forEach(index => Object.assign(musicUpload.queue[index], { state: "waiting", message: "Đang chờ…" }));
+  renderMusicUploadQueue();
   let added = 0;
-  for (const [index, file] of files.entries()) {
-    if (!isMusicFile(file)) { mark(index, "Không phải mp3/m4a/aac/wav/ogg", "is-error"); continue; }
-    if (file.size > MUSIC_MAX_BYTES) { mark(index, "Vượt quá 30 MB", "is-error"); continue; }
-    mark(index, "Đang tải lên…", "is-active");
+  for (const index of indexes) {
+    const item = musicUpload.queue[index];
+    Object.assign(item, { state: "active", message: "Đang tải lên…" });
+    renderMusicUploadQueue();
     const data = new FormData();
-    data.set("file", file);
-    if (category) data.set("category", category);
+    data.set("file", item.file);
+    if (musicUpload.category) data.set("category", musicUpload.category);
     try {
       const track = await requestJson("/api/v1/admin/music-tracks", { method: "POST", body: data });
-      mark(index, `✓ ${track.title} · ${track.category}`, "is-done");
+      Object.assign(item, { state: "done", message: `✓ ${track.title} · ${track.category}` });
       added += 1;
     } catch (err) {
-      mark(index, err.message, "is-error");
+      // A refused file (bad audio, library full) fails again; a dropped connection may not.
+      Object.assign(item, { state: "error", message: err.message, retriable: true });
     }
+    renderMusicUploadQueue();
   }
-  button.disabled = false;
+  musicUpload.running = false;
+  if (submit) submit.disabled = false;
+  renderMusicUploadQueue();
+  const failed = indexes.length - added;
+  toast(failed ? `Đã thêm ${added}/${indexes.length} bài — bấm “Thử lại” cho các file lỗi` : `Đã thêm ${added} bài vào thư viện`, Boolean(failed));
+  if (added) await Promise.all([loadAdminMusic(), loadMusicLibrary()]);
+}
+
+$("#adminMusicUploadForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  if (musicUpload.running) return;
+  const form = event.currentTarget;
+  const files = [...($("#adminMusicFiles").files || [])];
+  if (!files.length) return toast("Hãy chọn file nhạc", true);
+  musicUpload.category = $("#adminMusicCategory").value;
+  musicUpload.queue = files.map(file => {
+    if (!isMusicFile(file)) return { file, state: "error", message: "Không phải mp3/m4a/aac/wav/ogg", retriable: false };
+    if (file.size > MUSIC_MAX_BYTES) return { file, state: "error", message: "Vượt quá 30 MB", retriable: false };
+    return { file, state: "waiting", message: "Đang chờ…", retriable: false };
+  });
   form.reset();
-  toast(added === files.length ? `Đã thêm ${added} bài vào thư viện` : `Đã thêm ${added}/${files.length} bài, xem các file lỗi bên dưới`, added !== files.length);
-  await Promise.all([loadAdminMusic(), loadMusicLibrary()]);
+  const valid = musicUpload.queue.flatMap((item, index) => (item.state === "waiting" ? [index] : []));
+  renderMusicUploadQueue();
+  if (valid.length) await uploadMusicQueue(valid);
+  else toast("Không có file nhạc hợp lệ để tải lên", true);
+});
+
+$("#adminMusicUploadProgress")?.addEventListener("click", event => {
+  if (event.target.closest("[data-music-clear]")) {
+    musicUpload.queue = [];
+    renderMusicUploadQueue();
+    return;
+  }
+  const one = event.target.closest("[data-music-retry]");
+  if (one) return uploadMusicQueue([Number(one.dataset.musicRetry)]);
+  if (event.target.closest("[data-music-retry-all]")) {
+    uploadMusicQueue(musicUpload.queue.flatMap((item, index) => (item.state === "error" && item.retriable ? [index] : [])));
+  }
 });
 
 // Drop audio files anywhere on the upload form.

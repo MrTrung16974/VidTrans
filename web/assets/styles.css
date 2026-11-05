@@ -8834,6 +8834,11 @@ body.modal-open {
 .admin-music-progress li.is-done small { color: #15803d; }
 .admin-music-progress li.is-error { border-color: #fecaca; background: #fef2f2; }
 .admin-music-progress li.is-error small { color: #b91c1c; }
+.admin-music-progress li { align-items: center; }
+.admin-music-progress li span { flex: 1 1 auto; }
+.admin-music-progress li .mini-btn { flex-shrink: 0; height: 26px; min-height: 26px; padding: 0 10px; }
+.admin-music-progress li.is-waiting small { color: #94a3b8; }
+.admin-music-progress .admin-music-progress-head { background: transparent; border: 0; padding: 2px 0; font-weight: 700; color: #334155; }
 .admin-music-group { margin: 10px 2px 0; font-size: .86rem; color: #9a3412; display: flex; align-items: baseline; gap: 8px; }
 .admin-music-group small { color: #94a3b8; font-weight: 600; }
 .admin-music-category { height: 32px; min-width: 150px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: .78rem; }
