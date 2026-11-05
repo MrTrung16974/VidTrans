@@ -40,6 +40,11 @@ def _json_default(value: Any) -> str:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
+# Largest page GET /api/v1/jobs returns; the endpoint clamps to the same value so its
+# page count and offsets match the rows actually returned.
+JOB_PAGE_MAX = 200
+
+
 class JobStore:
     """Small, process-safe JSON job repository backed by PostgreSQL.
 
@@ -436,8 +441,10 @@ class JobStore:
                 connection.execute(f"SELECT COUNT(*) FROM jobs{where}", values).fetchone()[0]
             )
             rows = connection.execute(
-                f"SELECT * FROM jobs{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                [*values, max(1, min(limit, 200)), max(0, offset)],
+                # job_id breaks ties: a batch creates many jobs in the same instant, and
+                # without a total order a job could show on two pages or on none.
+                f"SELECT * FROM jobs{where} ORDER BY created_at DESC, job_id DESC LIMIT ? OFFSET ?",
+                [*values, max(1, min(limit, JOB_PAGE_MAX)), max(0, offset)],
             ).fetchall()
         return [self._job_row(row) for row in rows], total
 

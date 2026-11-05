@@ -119,7 +119,8 @@ class JobServiceStatusHookTests(unittest.TestCase):
             service.update("j", progress=10)
             service.update("j", status="completed")
             service.retry("j")
-            self.assertEqual(calls, [("j", "completed"), ("j", "queued")])
+            # Creation is announced as a "created" event (the owner's in-app notice).
+            self.assertEqual(calls, [("j", "created"), ("j", "completed"), ("j", "queued")])
 
 
 def _rsa_credentials() -> dict:

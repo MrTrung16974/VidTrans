@@ -37,7 +37,25 @@ class JobListController extends AutoDisposeAsyncNotifier<JobList> {
     return _fetch();
   }
 
+  /// The page, size, filter and search a request was made for.
+  (int, int, String?, String) _view() => (
+        ref.read(jobPageProvider),
+        ref.read(jobPageSizeProvider),
+        ref.read(jobStatusFilterProvider),
+        ref.read(jobSearchProvider).trim(),
+      );
+
   Future<JobList> _fetch() async {
+    final list = await _fetchPage();
+    // The server moves a page past the end (jobs deleted) back to the last one; follow
+    // it, so tapping that page number again is not a no-op on a stale value.
+    if (list.page != ref.read(jobPageProvider)) {
+      Future.microtask(() => ref.read(jobPageProvider.notifier).state = list.page);
+    }
+    return list;
+  }
+
+  Future<JobList> _fetchPage() async {
     final page = ref.read(jobPageProvider);
     final list = await _repo.list(
       page: page,
@@ -70,7 +88,11 @@ class JobListController extends AutoDisposeAsyncNotifier<JobList> {
   }
 
   Future<void> refresh() async {
+    final view = _view();
     final next = await AsyncValue.guard(_fetch);
+    // The user moved to another page, size, filter or search meanwhile: that view is being
+    // built already, and this older result must not replace it.
+    if (view != _view()) return;
     // Keep showing the old list if a background reload fails.
     if (next.hasValue || state.valueOrNull == null) state = next;
   }

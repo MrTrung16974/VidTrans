@@ -433,4 +433,32 @@ class TikTokBrowserRouteTests(unittest.TestCase):
         publish.assert_called_once_with('a')
 
 
+    def test_shared_browser_is_staff_only(self):
+        app = FastAPI()
+        app.include_router(create_tiktok_browser_router(
+            self.manager, self.jobs, self.output,
+            staff_resolver=lambda request: request.headers.get('x-role') in {'owner', 'admin'},
+        ))
+        client = TestClient(app)
+        user = {'x-role': 'editor'}
+        with patch.object(self.manager, 'logout') as logout, patch.object(self.manager, 'open_studio') as open_studio, \
+                patch.object(self.manager, 'prepare') as prepare, patch.object(self.manager, 'publish') as publish:
+            self.assertEqual(client.delete('/api/v1/tiktok-browser/session', headers=user).status_code, 403)
+            self.assertEqual(client.post('/api/v1/tiktok-browser/open', headers=user).status_code, 403)
+            self.assertEqual(client.post('/api/v1/tiktok-browser/login', headers=user).status_code, 403)
+            self.assertEqual(client.post('/api/v1/jobs/good/tiktok-browser/prepare', headers=user,
+                                         data={'caption': 'c', 'reviewed': 'true'}).status_code, 403)
+            self.assertEqual(client.post('/api/v1/tiktok-browser/attempts/a/publish', headers=user,
+                                         data={'reviewed': 'true'}).status_code, 403)
+            logout.assert_not_called(); open_studio.assert_not_called(); prepare.assert_not_called(); publish.assert_not_called()
+            status = client.get('/api/v1/tiktok-browser/status', headers=user).json()
+            self.assertTrue(status['staff_only'])
+            self.assertIsNone(status['browser_url'])
+            # Drafts and caption help stay available: they do not touch the shared browser.
+            self.assertEqual(client.get('/api/v1/jobs/good/tiktok-draft', headers=user).status_code, 200)
+            admin = {'x-role': 'admin'}
+            self.assertEqual(client.delete('/api/v1/tiktok-browser/session', headers=admin).status_code, 200)
+            logout.assert_called_once()
+
+
 if __name__ == '__main__': unittest.main()

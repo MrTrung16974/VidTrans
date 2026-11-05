@@ -47,6 +47,8 @@ class JobService:
     def create(self, job_id: str, payload: Mapping[str, Any], *, owner_user_id: str = "__legacy__") -> dict[str, Any]:
         created = self._store.create(job_id, payload, owner_user_id=owner_user_id)
         self._changed(job_id)
+        # "created" is an event, not a stored status: the owner hears the video was accepted.
+        self._status_written(job_id, "created")
         return created
 
     def get(self, job_id: str) -> dict[str, Any] | None:

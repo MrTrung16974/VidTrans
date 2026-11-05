@@ -81,7 +81,7 @@ from infrastructure.payments import (
     PaymentOrderStore,
 )
 from infrastructure.job_events import ALL_JOBS, JobEventHub
-from infrastructure.job_store import JobNotFoundError, JobStateConflictError, JobStore
+from infrastructure.job_store import JOB_PAGE_MAX, JobNotFoundError, JobStateConflictError, JobStore
 from infrastructure.publishers.registry import PublisherRegistry
 from infrastructure.publishers.instagram import InstagramPublisher, InstagramPublisherConfig
 from infrastructure.publishers.tiktok import TikTokSocialPublisher
@@ -96,10 +96,13 @@ from infrastructure.comic_series import ComicSeriesStore
 from infrastructure.branding_store import BrandingStore
 from infrastructure.device_store import DeviceStore
 from infrastructure.contact_store import ContactMessageStore
+from infrastructure.job_report_store import JobReportStore
+from infrastructure.notification_hub import NotificationHub
 from infrastructure.push_notifications import FcmSender, JobPushNotifier, job_message
 from infrastructure.realtime import SOCKET_IO_PATH, RealtimeServer
 from application.device_routes import DeviceRouteDependencies, create_device_router
 from application.contact_routes import ContactRouteDependencies, create_contact_router
+from application.job_report_routes import JobReportRouteDependencies, create_job_report_router
 from application.music_routes import MusicRouteDependencies, create_music_router
 from infrastructure.music_library import MusicLibraryStore, MusicTrackNotFound, probe_audio_duration
 from domain.legal import SUPPORT_PHONE, TERMS_VERSION, support_email, terms_outdated
@@ -412,6 +415,9 @@ app.add_middleware(
 JOB_EVENTS = JobEventHub(lambda job_ids: job_change_snapshot(job_ids))
 DEVICE_STORE = DeviceStore(DATABASE_TARGET)
 CONTACT_MESSAGES = ContactMessageStore(DATABASE_TARGET)
+JOB_REPORTS = JobReportStore(DATABASE_TARGET)
+# Notifications for the web's job-events WebSocket (own job created; reports for staff).
+NOTIFICATIONS = NotificationHub()
 MUSIC_LIBRARY = MusicLibraryStore(
     DATABASE_TARGET,
     WORK_DIR / "music_library",
@@ -461,6 +467,16 @@ def notify_job_status(job_id: str, status: str) -> None:
     # statuses after the module has loaded.
     PUSH_NOTIFIER.on_status(job_id, status)
     REALTIME.on_status(job_id, status)
+    if status == "created" and NOTIFICATIONS.subscriber_count:
+        built = job_status_notification(job_id, status)
+        if built is not None:
+            NOTIFICATIONS.publish_to_user(*built)
+
+
+def notify_staff(payload: dict[str, Any]) -> None:
+    """A notification for every owner/admin account: web sockets and the apps."""
+    NOTIFICATIONS.publish_to_staff(payload)
+    REALTIME.notify_staff(payload)
 N8N_WORKFLOW_CONFIG = N8nWebhookConfig.from_env()
 WORKFLOW_EVENT_STORE = WorkflowEventStore(DATABASE_TARGET)
 WORKFLOW_EVENTS = WorkflowEventSink(WORKFLOW_EVENT_STORE)
@@ -646,6 +662,7 @@ app.include_router(create_tiktok_browser_router(
     owner_resolver=lambda request: str(current_account(request)["user_id"]),
     publisher_resolver=lambda request: tenant_tiktok_publisher(str(current_account(request)["user_id"])),
     can_manage_all_resolver=lambda request: str(current_account(request).get("role") or "") == "owner",
+    staff_resolver=lambda request: can_manage_all_jobs(current_account(request)),
 ), dependencies=require_paid_feature("social_publishing"))
 SOCIAL_PUBLISH_STORE = SocialPublishStore(DATABASE_TARGET)
 SIGNED_MEDIA_URLS = SignedMediaUrlService(
@@ -3413,7 +3430,9 @@ def repair_line_breaks(job_id: str, segments: list[dict[str, Any]], language: st
     ):
         return segments
     try:
-        fixer = GeminiContextTranslator(source_language=language, target_language=language, allow_same_language=True)
+        fixer = GeminiContextTranslator(
+            source_language=language, target_language=language, allow_same_language=True, timeout=120.0,
+        )
     except Exception as exc:
         logger.info("Line breaks are not repaired: %s", exc)
         return segments
@@ -3694,17 +3713,25 @@ def process_video(
         record_job_stage_cache(job_id, "translation", translation_cache_hit)
         if translation_cache_hit and not same_language:
             update_job(job_id, step_detail="Đã dùng lại bản dịch hợp lệ", progress=0.46)
-            if subtitle_source != "independent":
-                # Translations cached before the leak check may still carry Chinese names.
+        if not same_language and subtitle_source != "independent":
+            # An LLM batch can still copy a Chinese name into the line ("Khi tôi về thì琳达 đã chết"),
+            # and translations cached before this check may carry them too. Such lines are
+            # translated again alone (chosen provider first, then its backups).
+            try:
+                leak_translator = create_translation_provider(
+                    translation_provider, source_language=effective_source_language, target_language=target_language,
+                )
+            except Exception:
                 from infrastructure.vietnamese_translator import GoogleVietnameseTranslator
 
-                repaired = repair_leaked_translations(
-                    translated_segments,
-                    GoogleVietnameseTranslator(source_language=effective_source_language, target_language=target_language),
-                    source_language=effective_source_language,
+                leak_translator = GoogleVietnameseTranslator(
+                    source_language=effective_source_language, target_language=target_language,
                 )
-                if repaired:
-                    update_job(job_id, step_detail=f"Đã sửa {repaired} câu dịch còn sót chữ gốc")
+            repaired = repair_leaked_translations(
+                translated_segments, leak_translator, source_language=effective_source_language,
+            )
+            if repaired:
+                update_job(job_id, step_detail=f"Đã sửa {repaired} câu dịch còn sót chữ gốc")
         if mode in (2, 3) and target_language == "vi" and not same_language:
             fit_dubbing_translations(job_id, translated_segments, source_language=effective_source_language)
         translation_fallback_cues = sum(
@@ -5060,6 +5087,7 @@ async def prepare_cit_voice_previews() -> None:
 async def start_job_scheduler() -> None:
     await JOB_EVENTS.start()
     await REALTIME.start()
+    await NOTIFICATIONS.start()
     await SYSTEM_EVENTS.start()
     BROWSER_POWER_SWEEPER.start()
     apply_retention_policy()
@@ -5106,6 +5134,7 @@ async def start_job_scheduler() -> None:
 
 @app.on_event("shutdown")
 async def stop_job_scheduler() -> None:
+    await NOTIFICATIONS.stop()
     await REALTIME.stop()
     await JOB_EVENTS.stop()
     PUSH_NOTIFIER.shutdown()
@@ -5184,6 +5213,34 @@ def list_admin_accounts(
     )
 
 
+STAFF_ROLES = {"owner", "admin"}
+
+
+def ensure_can_manage_account(
+    actor: dict[str, Any], target: dict[str, Any] | None, *, role: str | None = None,
+    approval_status: str | None = None,
+) -> None:
+    """Admins manage ordinary accounts; only the owner hands out or touches staff roles.
+
+    ``target`` is None when an account is being created. The same rule as the
+    password reset: an admin may not create, promote, edit, lock or delete another
+    owner/admin, and may not change their own role or approval status.
+    """
+    if actor["role"] == "owner":
+        return
+    is_self = target is not None and target["user_id"] == actor["user_id"]
+    if target is not None and not is_self and target["role"] in STAFF_ROLES:
+        raise HTTPException(status_code=403, detail="Chỉ chủ sở hữu mới được thay đổi tài khoản quản trị viên")
+    if is_self:
+        if (role is not None and role != target["role"]) or (
+            approval_status is not None and approval_status != target["approval_status"]
+        ):
+            raise HTTPException(status_code=403, detail="Không thể tự đổi vai trò hoặc trạng thái tài khoản của chính mình")
+        return
+    if role in STAFF_ROLES:
+        raise HTTPException(status_code=403, detail="Chỉ chủ sở hữu mới được cấp quyền quản trị")
+
+
 @app.post("/api/v1/admin/accounts", status_code=201)
 def create_admin_account(
     request: Request,
@@ -5194,6 +5251,7 @@ def create_admin_account(
     plan: str = Form("free", max_length=32),
 ) -> JSONResponse:
     actor = require_roles(request, "owner", "admin")
+    ensure_can_manage_account(actor, None, role=role)
     try:
         account = ADMIN_ACCOUNTS.create(
             email=email, display_name=display_name, role=role, plan=plan,
@@ -5225,6 +5283,11 @@ def update_admin_account(
 ) -> JSONResponse:
     """``video_retention_days``: "default" follows the system policy, "0" never deletes."""
     actor = require_roles(request, "owner", "admin")
+    try:
+        target = ADMIN_ACCOUNTS.get(user_id)
+    except AdminAccountError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ensure_can_manage_account(actor, target, role=role, approval_status=approval_status)
     changes: dict[str, Any] = {}
     if video_retention_days is not None:
         changes["video_retention_days"] = (
@@ -5302,6 +5365,10 @@ def delete_admin_account_endpoint(request: Request, user_id: str) -> JSONRespons
     caller = require_roles(request, "owner", "admin")
     if user_id == caller["user_id"]:
         raise HTTPException(status_code=400, detail="Không thể tự xóa tài khoản của chính mình")
+    try:
+        ensure_can_manage_account(caller, ADMIN_ACCOUNTS.get(user_id))
+    except AdminAccountError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
         deleted = ADMIN_ACCOUNTS.delete(user_id)
     except AdminAccountError as exc:
@@ -6150,11 +6217,17 @@ def get_auth_status(request: Request) -> JSONResponse:
         if token and not malformed_header:
             try:
                 claims = AUTH_MANAGER.verify_token(token)
-                payload["authenticated"] = True
-                payload["username"] = claims["sub"]
-                payload["role"] = claims["role"]
-                payload["user_id"] = claims["user_id"]
-            except (AuthConfigurationError, InvalidTokenError):
+                # The token says who is signed in; what they may do is read from the account
+                # now, exactly like every protected route does. A role changed, a password reset
+                # or an account locked after the token was issued shows here at once, instead of
+                # the web keeping the old menus until the token expires.
+                account = ADMIN_ACCOUNTS.get(str(claims["user_id"]))
+                if account["approval_status"] == "approved" and not token_predates_password_change(claims, account):
+                    payload["authenticated"] = True
+                    payload["username"] = account.get("email") or claims["sub"]
+                    payload["role"] = account["role"]
+                    payload["user_id"] = account["user_id"]
+            except (AuthConfigurationError, InvalidTokenError, AdminAccountError, KeyError):
                 pass
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
@@ -7591,6 +7664,8 @@ def list_jobs_endpoint(
 ) -> JSONResponse:
     account = current_account(request)
     owner_scope = None if can_manage_all_jobs(account) else str(account["user_id"])
+    # The store returns at most JOB_PAGE_MAX rows; paging maths must use the same size.
+    limit = min(limit, JOB_PAGE_MAX)
     resolved_offset = (page - 1) * limit if page is not None else offset
     jobs, total = JOB_SERVICE.list_jobs(
         owner_user_id=owner_scope,
@@ -7712,9 +7787,11 @@ def websocket_auth_claims(websocket: HTTPConnection, token: str | None = None) -
         account = ADMIN_ACCOUNTS.get(str(claims["user_id"]))
     except (AuthConfigurationError, InvalidTokenError, AdminAccountError, KeyError):
         return None
-    if account["approval_status"] != "approved":
+    if account["approval_status"] != "approved" or token_predates_password_change(claims, account):
         return None
-    return claims
+    # Rooms (every account's job changes, staff notifications) follow the account's
+    # current role, not the role the token was issued with.
+    return {**claims, "user_id": account["user_id"], "role": account["role"]}
 
 
 def socket_io_auth_claims(scope: dict[str, Any], auth: dict[str, Any]) -> dict[str, Any] | None:
@@ -7731,7 +7808,8 @@ def socket_io_auth_claims(scope: dict[str, Any], auth: dict[str, Any]) -> dict[s
 def job_status_notification(job_id: str, status: str) -> tuple[str, dict[str, Any]] | None:
     job = JOB_SERVICE.get(job_id)
     owner = str((job or {}).get("owner_user_id") or "")
-    if not job or not owner or str(job.get("status")) != status:
+    # "created" is announced whatever status the new job already moved on to.
+    if not job or not owner or (status != "created" and str(job.get("status")) != status):
         return None
     title, body, data = job_message(job_id, status, job)
     return owner, {**data, "title": title, "body": body}
@@ -7762,18 +7840,25 @@ async def job_events_socket(websocket: WebSocket) -> None:
     await websocket.accept()
     expires_at = float(claims.get("exp") or 0)
     owner_user_id = str(claims.get("user_id") or _bootstrap_owner["user_id"])
+    staff = str(claims.get("role") or "") in {"owner", "admin"}
     queue = JOB_EVENTS.subscribe()
+    notifications = NOTIFICATIONS.subscribe(owner_user_id, staff=staff)
 
     async def read_until_closed() -> None:
         while True:
             await websocket.receive_text()
 
     reader = asyncio.create_task(read_until_closed())
+    notice: asyncio.Task[dict[str, Any]] | None = None
     try:
         await websocket.send_json({"type": "ready"})
         while True:
             getter = asyncio.create_task(queue.get())
-            done, _pending = await asyncio.wait({getter, reader}, timeout=25, return_when=asyncio.FIRST_COMPLETED)
+            if notice is None:
+                notice = asyncio.create_task(notifications.get())
+            done, _pending = await asyncio.wait(
+                {getter, reader, notice}, timeout=25, return_when=asyncio.FIRST_COMPLETED,
+            )
             if reader in done:
                 getter.cancel()
                 break
@@ -7781,6 +7866,9 @@ async def job_events_socket(websocket: WebSocket) -> None:
                 getter.cancel()
                 await websocket.close(code=4401)
                 break
+            if notice in done:
+                await websocket.send_json({"type": "notification", "notification": notice.result()})
+                notice = None
             if getter in done:
                 scoped = filter_job_event_for_user(
                     getter.result(), owner_user_id,
@@ -7789,14 +7877,18 @@ async def job_events_socket(websocket: WebSocket) -> None:
                 if scoped is not None:
                     await websocket.send_json(scoped)
             else:
-                # Keep proxies from closing an idle connection.
                 getter.cancel()
-                await websocket.send_json({"type": "ping"})
+                if not done:
+                    # Keep proxies from closing an idle connection.
+                    await websocket.send_json({"type": "ping"})
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         JOB_EVENTS.unsubscribe(queue)
+        NOTIFICATIONS.unsubscribe(notifications)
         reader.cancel()
+        if notice is not None:
+            notice.cancel()
 
 
 @app.websocket("/api/v1/admin/system/events")
@@ -8240,6 +8332,14 @@ app.include_router(create_music_router(MusicRouteDependencies(
     current_account=lambda request: current_account(request),
     require_admin=lambda request: require_roles(request, "owner", "admin"),
     audit=lambda **event: TENANT_GOVERNANCE.audit(**event),
+)))
+app.include_router(create_job_report_router(JobReportRouteDependencies(
+    store=JOB_REPORTS,
+    job_for_request=lambda request, job_id: job_for_request(request, job_id),
+    current_account=lambda request: current_account(request),
+    require_admin=lambda request: require_roles(request, "owner", "admin"),
+    audit=lambda **event: TENANT_GOVERNANCE.audit(**event),
+    notify_staff=lambda payload: notify_staff(payload),
 )))
 app.include_router(create_contact_router(ContactRouteDependencies(
     store=CONTACT_MESSAGES,

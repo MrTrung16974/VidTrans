@@ -3044,6 +3044,32 @@
         "title": "JobPage",
         "type": "object"
       },
+      "JobReportRequest": {
+        "properties": {
+          "category": {
+            "maxLength": 32,
+            "title": "Category",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Message",
+            "type": "string"
+          },
+          "video_time": {
+            "default": "",
+            "maxLength": 20,
+            "title": "Video Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category"
+        ],
+        "title": "JobReportRequest",
+        "type": "object"
+      },
       "LocationPatch": {
         "additionalProperties": false,
         "properties": {
@@ -4613,6 +4639,131 @@
         "summary": "Resolve Contact Message",
         "tags": [
           "contact"
+        ]
+      }
+    },
+    "/api/v1/admin/job-reports": {
+      "get": {
+        "operationId": "list_job_reports_api_v1_admin_job_reports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "new",
+              "maxLength": 16,
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Job Reports",
+        "tags": [
+          "job-reports"
+        ]
+      }
+    },
+    "/api/v1/admin/job-reports/{report_id}/resolve": {
+      "post": {
+        "operationId": "resolve_job_report_api_v1_admin_job_reports__report_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Resolve Job Report",
+        "tags": [
+          "job-reports"
         ]
       }
     },
@@ -9897,6 +10048,35 @@
         ]
       }
     },
+    "/api/v1/job-report-categories": {
+      "get": {
+        "operationId": "list_job_report_categories_api_v1_job_report_categories_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List Job Report Categories",
+        "tags": [
+          "job-reports"
+        ]
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "operationId": "list_jobs_endpoint_api_v1_jobs_get",
@@ -10332,6 +10512,66 @@
           }
         ],
         "summary": "Refresh Tiktok Publish Status"
+      }
+    },
+    "/api/v1/jobs/{job_id}/reports": {
+      "post": {
+        "operationId": "submit_job_report_api_v1_jobs__job_id__reports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Submit Job Report",
+        "tags": [
+          "job-reports"
+        ]
       }
     },
     "/api/v1/jobs/{job_id}/retry": {

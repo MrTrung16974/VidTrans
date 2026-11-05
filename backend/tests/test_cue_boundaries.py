@@ -52,6 +52,22 @@ class RepairCueBoundariesTests(unittest.TestCase):
         self.assertEqual(changed, 0)
         self.assertEqual([item["text"] for item in repaired], ["我没吐", "的真的"])
 
+    def test_one_altered_line_does_not_cost_the_other_repairs(self):
+        # Gemini dropped the 林 of line 2 (job 50272532); line 1's repair still applies.
+        segments = [
+            cue(0.0, 1.0, list("通缉")),
+            cue(1.0, 2.0, list("犯这番话点醒了林队林")),
+            cue(2.0, 3.0, list("海的东海市")),
+            cue(3.0, 4.0, list("四通八达")),
+        ]
+        fixer = StaticFixer(["通缉犯", "这番话点醒了林队", "海的东海市", "四通八达"])
+
+        repaired, _ = repair_cue_boundaries(segments, fixer)
+
+        self.assertEqual(
+            [item["text"] for item in repaired], ["通缉犯", "这番话点醒了林队", "林海的东海市", "四通八达"]
+        )
+
     def test_keeps_break_that_would_split_a_token(self):
         segments = [cue(0.0, 1.0, ["这个", "地方"]), cue(1.0, 2.0, ["很好", "看"])]
         fixer = StaticFixer(["这个地方很", "好看"])

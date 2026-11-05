@@ -60,6 +60,8 @@ class LinkedInPublisherTests(unittest.TestCase):
             PublishRequest(
                 video_path=self.video, caption="Bài LinkedIn",
                 options={"title": "Demo video"},
+                # Ignored: the server-wide token always posts as the configured owner.
+                account_id="urn:li:organization:someone-else",
             ),
             on_checkpoint=lambda media, post: checkpoints.append((media, post)),
             on_progress=lambda current, total: progress.append((current, total)),
@@ -77,6 +79,9 @@ class LinkedInPublisherTests(unittest.TestCase):
         post = next(call for call in self.api.calls if call[1] == "/rest/posts")
         self.assertEqual(json.loads(post[4])["content"]["media"]["id"], "urn:li:video:video-1")
         self.assertEqual(post[3]["Linkedin-Version"], "202609")
+        initialize = next(call for call in self.api.calls if call[2] == "action=initializeUpload")
+        self.assertEqual(json.loads(initialize[4])["initializeUploadRequest"]["owner"], "urn:li:person:owner-1")
+        self.assertEqual(json.loads(post[4])["author"], "urn:li:person:owner-1")
 
     def test_reconcile_reports_processing_video(self):
         self.api.video_status = "PROCESSING"

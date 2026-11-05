@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 MAX_SHIFT_TOKENS = 3
 # Lines further apart than this are separate utterances; their break is real.
 MAX_JOIN_GAP_SECONDS = 0.5
-BATCH_LINES = 40
+BATCH_LINES = 25
 
 
 class BoundaryFixer(Protocol):
@@ -74,8 +74,9 @@ def _apply_run(
     """Rebuild a run of joinable cues with the validated breaks of ``proposed``."""
 
     original = [_squash(_source(cue)) for cue in run]
+    joined = "".join(original)
     lines = [_squash(line) for line in proposed]
-    if len(lines) != len(run) or "".join(lines) != "".join(original) or not all(lines):
+    if len(lines) != len(run):
         return run, 0
     token_lists = [_tokens(cue) or [] for cue in run]
     flat_words: list[dict[str, Any]] = []
@@ -92,15 +93,26 @@ def _apply_run(
     for tokens in token_lists[:-1]:
         position += len(tokens)
         old_breaks.append(position)
+    # Each proposed line is checked where it starts: it must spell exactly the original
+    # characters from there. A line the model altered (a dropped or changed character)
+    # keeps its old break, and the next line is checked from that break, so one bad
+    # line costs only its own repair, not the whole batch's.
     new_breaks: list[int] = []
-    offset = 0
+    cursor = 0  # token index where the current line starts
     for line, old in zip(lines[:-1], old_breaks):
-        offset += len(line)
-        token = edge_index.get(offset)
-        # A break inside a recognised token, or one moved too far, keeps its place.
-        if token is None or abs(token - old) > MAX_SHIFT_TOKENS:
+        start = edges[cursor]
+        token = edge_index.get(start + len(line))
+        # A changed line, a break inside a recognised token, or one moved too far keeps its place.
+        if (
+            not line
+            or joined[start : start + len(line)] != line
+            or token is None
+            or abs(token - old) > MAX_SHIFT_TOKENS
+            or token <= cursor
+        ):
             token = old
         new_breaks.append(token)
+        cursor = token
     # Kept and moved breaks must still leave every line at least one token.
     bounds = [0, *new_breaks, len(flat_words)]
     if any(right <= left for left, right in zip(bounds, bounds[1:])):

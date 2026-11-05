@@ -169,7 +169,7 @@ def user_prompt(
 
 
 GLOSSARY_MAX_TERMS = 40
-GLOSSARY_MAX_TRANSCRIPT_CHARS = 12000
+GLOSSARY_MAX_TRANSCRIPT_CHARS = 8000
 
 
 def glossary_system_prompt(source_language: str, target_language: str, sample: str = "") -> str:

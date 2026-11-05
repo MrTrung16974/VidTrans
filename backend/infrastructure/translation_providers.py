@@ -234,6 +234,9 @@ _GEMINI_TRANSIENT_CODES = frozenset({500, 502, 503, 504})
 _GEMINI_TRANSIENT_RETRY_SECONDS = 3.0
 
 
+GLOSSARY_TIMEOUT_SECONDS = 180.0
+
+
 class GeminiContextTranslator:
     supports_markers = False
     accepts_durations = True
@@ -343,10 +346,15 @@ class GeminiContextTranslator:
         """Build the video's glossary (names, brands, misheard spellings) from all its lines."""
         if not lines:
             return self.glossary
-        text = self._generate(
-            glossary_system_prompt(self.source_language, self.target_language, "".join(lines)),
-            glossary_user_prompt(lines),
-        )
+        # One reply covering the whole video takes longer than a batch of lines.
+        timeout, self.timeout = self.timeout, max(self.timeout, GLOSSARY_TIMEOUT_SECONDS)
+        try:
+            text = self._generate(
+                glossary_system_prompt(self.source_language, self.target_language, "".join(lines)),
+                glossary_user_prompt(lines),
+            )
+        finally:
+            self.timeout = timeout
         self.glossary = parse_glossary(text)
         return self.glossary
 

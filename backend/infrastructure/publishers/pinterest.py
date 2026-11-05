@@ -80,7 +80,9 @@ class PinterestPublisher:
     def publish(self, request, *, on_checkpoint, on_progress=None):
         self._require_configured()
         options = dict(request.options)
-        board_id = str(options.get("board_id") or self.config.default_board_id).strip()
+        # One server-wide token: every Pin goes to the configured board, never to a board
+        # the caller names.
+        board_id = str(self.config.default_board_id).strip()
         cover_image_url = str(options.get("cover_image_url") or "").strip()
         if not board_id:
             raise PinterestConfigurationError("Hãy chọn Pinterest board")

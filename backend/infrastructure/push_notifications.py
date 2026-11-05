@@ -135,7 +135,9 @@ def _fcm_error_code(raw: str, status: int) -> str | None:
 
 def job_message(job_id: str, status: str, job: dict[str, Any]) -> tuple[str, str, dict[str, str]]:
     name = str(job.get("filename") or job.get("title") or job.get("source_url") or "Video của bạn")
-    if status == "completed":
+    if status == "created":
+        title, body = "Đã tạo video", f"{name} đã được tạo và đang chờ xử lý."
+    elif status == "completed":
         title, body = "Đã xử lý xong", f"{name} đã sẵn sàng."
     else:
         title, body = "Xử lý thất bại", f"{name} gặp lỗi. Mở app để xem chi tiết hoặc chạy lại."

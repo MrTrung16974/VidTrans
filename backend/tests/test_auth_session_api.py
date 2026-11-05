@@ -145,6 +145,41 @@ class AuthSessionApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
+    def account_form(self, account, **changes):
+        form = {key: account[key] for key in ("display_name", "role", "approval_status", "plan", "payment_status")}
+        return {**form, **changes}
+
+    def test_admin_cannot_grant_or_touch_staff_roles(self) -> None:
+        other_admin = self.accounts.create(
+            email="admin2@test.local", display_name="Admin 2", role="admin",
+            approval_status="approved", password_hash=hash_password(PASSWORD, iterations=100_000),
+        )
+        self.login(self.client, "admin@test.local", remember=False)
+        me, editor = self.admin["user_id"], self.editor["user_id"]
+        post = lambda path, data: self.client.post(path, data=data, headers=CSRF)  # noqa: E731
+        # Promote self or someone else to owner/admin.
+        self.assertEqual(post(f"/api/v1/admin/accounts/{me}", self.account_form(self.admin, role="owner")).status_code, 403)
+        self.assertEqual(post(f"/api/v1/admin/accounts/{editor}", self.account_form(self.editor, role="admin")).status_code, 403)
+        created = post("/api/v1/admin/accounts", {
+            "email": "new-owner@test.local", "display_name": "X", "password": "LongEnoughPass!1", "role": "owner",
+        })
+        self.assertEqual(created.status_code, 403)
+        # Lock or delete another admin.
+        self.assertEqual(post(f"/api/v1/admin/accounts/{other_admin['user_id']}",
+                              self.account_form(other_admin, approval_status="suspended")).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/v1/admin/accounts/{other_admin['user_id']}", headers=CSRF).status_code, 403)
+        self.assertEqual(self.accounts.get(other_admin["user_id"])["approval_status"], "approved")
+        # Ordinary accounts stay manageable.
+        allowed = post(f"/api/v1/admin/accounts/{editor}", self.account_form(self.editor, role="viewer"))
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        self.assertEqual(post(f"/api/v1/admin/accounts/{me}", self.account_form(self.admin, display_name="Admin A")).status_code, 200)
+        # The owner may grant staff roles.
+        owner_client = TestClient(main.app)
+        self.login(owner_client, "owner", remember=False)
+        promoted = owner_client.post(f"/api/v1/admin/accounts/{editor}",
+                                     data=self.account_form(self.accounts.get(editor), role="admin"), headers=CSRF)
+        self.assertEqual(promoted.status_code, 200, promoted.text)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -158,6 +193,25 @@ class GuestTrialApiTests(AuthSessionApiTests):
         fast_hash = patch.object(main, "hash_password", lambda value: hash_password(value, iterations=100_000))
         fast_hash.start()
         self.patches.append(fast_hash)
+
+    def test_status_follows_the_account_not_the_token(self) -> None:
+        self.assertEqual(self.login(self.client, "admin@test.local", remember=False).status_code, 200)
+        self.assertEqual(self.client.get("/api/v1/auth/status").json()["role"], "admin")
+        # Demoted after signing in: the web must drop the admin menus at once.
+        self.accounts.update(self.admin["user_id"], role="viewer")
+        status = self.client.get("/api/v1/auth/status").json()
+        self.assertEqual((status["authenticated"], status["role"]), (True, "viewer"))
+        self.accounts.update(self.admin["user_id"], approval_status="rejected")
+        self.assertFalse(self.client.get("/api/v1/auth/status").json()["authenticated"])
+
+    def test_socket_claims_carry_the_current_role(self) -> None:
+        token = self.login(self.client, "admin@test.local", remember=False).json()["access_token"]
+        self.accounts.update(self.admin["user_id"], role="editor")
+        connection = type("Connection", (), {"headers": {}, "cookies": {}})()
+        claims = main.websocket_auth_claims(connection, token)
+        self.assertEqual(claims["role"], "editor")
+        self.accounts.update(self.admin["user_id"], approval_status="rejected")
+        self.assertIsNone(main.websocket_auth_claims(connection, token))
 
     def test_guest_gets_random_trial_account_and_session(self) -> None:
         response = self.client.post("/api/v1/auth/guest")

@@ -47,7 +47,26 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
     $('#tiktokPublishButton').disabled = !reviewed || status?.attempt?.state !== 'awaiting_review';
   }
 
+  // The TikTok Web browser is shared and signed in to the operator's account: only
+  // owner/admin may use it. Other accounts publish with their own TikTok connection.
+  let staffOnly = false;
+  function hideSharedBrowser() {
+    staffOnly = true;
+    clearTimeout(timer);
+    document.querySelectorAll('[data-platform-target="tiktok-studio"], [data-platform-panel="tiktok-studio"]').forEach(element => {
+      element.hidden = true;
+      element.classList.add('is-hidden');
+    });
+    if (currentPlatform === 'tiktok-studio') switchPlatform('tiktok-api');
+  }
+
   function render(result) {
+    if (result.staff_only) {
+      status = result;
+      hideSharedBrowser();
+      controls();
+      return;
+    }
     status = result;
     $('#tiktokBrowserStatus').textContent = result.message;
     $('#tiktokSetupStatus').textContent = result.available ? 'Trình duyệt sẵn sàng. Duyệt video tại khu vực Đăng TikTok.' : 'Kết nối tài khoản tại khu vực Đăng TikTok sau khi trình duyệt sẵn sàng.';
@@ -107,7 +126,7 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
 
   function scheduleStatusRefresh() {
     clearTimeout(timer);
-    if (locked || location.hash !== '#tiktok') return;
+    if (locked || staffOnly || location.hash !== '#tiktok') return;
     const delay = busyStates.has(status?.attempt?.state) ? 3000 : 8000;
     timer = setTimeout(async () => { await refresh(); scheduleStatusRefresh(); }, delay);
   }

@@ -79,7 +79,9 @@ class LinkedInPublisher:
 
     def publish(self, request, *, on_checkpoint, on_progress=None):
         self._require_configured()
-        owner = str(request.account_id or self.config.owner_urn).strip()
+        # One server-wide token: every post goes to the configured organisation/member,
+        # never to a URN the caller names (any other org the token can reach).
+        owner = str(self.config.owner_urn).strip()
         size = request.video_path.stat().st_size
         initialized, _ = self._api_json("POST", "/videos?action=initializeUpload", {
             "initializeUploadRequest": {

@@ -65,6 +65,8 @@ class PinterestPublisherTests(unittest.TestCase):
                     "title": "Tiêu đề",
                     "cover_image_url": "https://cdn.example.test/cover.jpg",
                     "link": "https://example.test/article",
+                    # Ignored: the server-wide token always posts to the configured board.
+                    "board_id": "someone-elses-board",
                 },
             ),
             on_checkpoint=lambda media, post: checkpoints.append((media, post)),

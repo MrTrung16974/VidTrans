@@ -14,8 +14,21 @@ from infrastructure.tiktok_publisher import TikTokPublisher, TikTokPublisherErro
 
 def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir: Path,
                                  publisher: TikTokPublisher | None = None, owner_resolver=None,
-                                 publisher_resolver=None, can_manage_all_resolver=None) -> APIRouter:
+                                 publisher_resolver=None, can_manage_all_resolver=None,
+                                 staff_resolver=None) -> APIRouter:
+    """``staff_resolver(request)`` is True for owner/admin accounts.
+
+    The TikTok Web browser is one Chromium profile shared by the whole server and signed
+    in to the operator's TikTok account, so only staff may drive it: open it, sign in or
+    out, and prepare or publish posts through it. Other accounts publish with their own
+    TikTok connection (``tiktok-upload-draft`` and the social-publish API).
+    """
     router = APIRouter(prefix="/api/v1", tags=["TikTok Browser"])
+    staff_resolver = staff_resolver or (lambda _request: True)
+
+    def require_staff(request: Request) -> None:
+        if not staff_resolver(request):
+            raise HTTPException(403, "Trình duyệt TikTok dùng chung chỉ dành cho quản trị viên")
     output_dir = output_dir.resolve()
     enforce_ownership = owner_resolver is not None
     owner_resolver = owner_resolver or (lambda _request: "__legacy__")
@@ -63,31 +76,44 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
             raise HTTPException(404, "Không tìm thấy lượt chuẩn bị")
         return attempt
 
+    def staff_only_status() -> dict:
+        # No browser URL or session details for accounts that may not use it.
+        return {"available": False, "staff_only": True, "logged_in": False, "attempt": None,
+                "browser_url": None, "message": "Trình duyệt TikTok dùng chung chỉ dành cho quản trị viên."}
+
     @router.get("/tiktok-browser/status")
     def status(request: Request):
+        if not staff_resolver(request):
+            return staff_only_status()
         return scoped_status(request)
 
     @router.post("/tiktok-browser/check")
     def check(request: Request):
+        if not staff_resolver(request):
+            return staff_only_status()
         return scoped_status(request, refresh=True)
 
     @router.post("/tiktok-browser/open")
-    def open_studio():
+    def open_studio(request: Request):
+        require_staff(request)
         return call(manager.open_studio)
 
     @router.post("/tiktok-browser/login")
-    def restart_login(method: str = "default"):
+    def restart_login(request: Request, method: str = "default"):
         """Navigate to TikTok login page.
         method: default | qr
         """
+        require_staff(request)
         return call(lambda: manager.restart_login(method=method))
 
     @router.delete("/tiktok-browser/session")
-    def logout():
+    def logout(request: Request):
+        require_staff(request)
         return call(manager.logout)
 
     @router.post("/tiktok-browser/attempts/{attempt_id}/resolve")
     def resolve(request: Request, attempt_id: str, reviewed: bool = Form(...)):
+        require_staff(request)
         if not reviewed:
             raise HTTPException(422, "Cần kiểm tra bài trong TikTok Studio trước khi kết thúc")
         owned_active_attempt(request, attempt_id)
@@ -95,6 +121,7 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
 
     @router.post("/tiktok-browser/attempts/{attempt_id}/publish")
     def publish(request: Request, attempt_id: str, reviewed: bool = Form(...)):
+        require_staff(request)
         if not reviewed:
             raise HTTPException(422, "Hãy kiểm tra video, caption và quyền riêng tư trước khi đăng")
         owned_active_attempt(request, attempt_id)
@@ -147,6 +174,7 @@ def create_tiktok_browser_router(manager: TikTokBrowserManager, jobs, output_dir
 
     @router.post("/jobs/{job_id}/tiktok-browser/prepare", status_code=202)
     def prepare(request: Request, job_id: str, caption: str = Form(..., min_length=1, max_length=2200), reviewed: bool = Form(...)):
+        require_staff(request)
         if not reviewed:
             raise HTTPException(422, "Hãy duyệt video, nội dung và tài khoản trước khi tải lên")
         _, video = ready_job(request, job_id)

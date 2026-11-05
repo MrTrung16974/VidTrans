@@ -32,8 +32,9 @@ class JobsPagination extends StatelessWidget {
   Widget build(BuildContext context) {
     final page = list.page;
     final totalPages = list.totalPages < 1 ? 1 : list.totalPages;
-    final start = list.startIndex + 1;
-    final end = list.startIndex + list.jobs.length;
+    // An empty page (everything on it just deleted) must not read "11 – 10".
+    final start = list.jobs.isEmpty ? 0 : list.startIndex + 1;
+    final end = list.jobs.isEmpty ? 0 : list.startIndex + list.jobs.length;
 
     return StudioCard(
       padding: const EdgeInsets.all(12),

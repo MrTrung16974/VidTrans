@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 
 SOCKET_IO_PATH = "/api/v1/socket.io"
 JOBS_ALL_ROOM = "jobs:all"
-NOTIFIED_STATUSES = {"completed", "failed"}
+# Owner and admin accounts: notifications meant for the staff (problem reports).
+STAFF_ROOM = "staff"
+# "created" is the owner's own new job; the others are its outcome.
+NOTIFIED_STATUSES = {"created", "completed", "failed"}
 RESYNC = {"type": "jobs", "resync": True, "items": [], "removed": []}
 
 # (scope, auth payload) -> token claims, or None to refuse the connection.
@@ -41,7 +44,9 @@ class RealtimeServer:
     Events sent to clients (on Socket.IO's own ``connect``, reload the job list
     once: changes may have been missed while disconnected):
     - ``jobs``: the change sets built by :class:`JobEventHub`, scoped to the account.
-    - ``notification``: a job finished or failed (``type: job_status``).
+    - ``notification``: the account's own job was created, finished or failed
+      (``type: job_status``); for owner/admin accounts also a user's problem report
+      about a video (``type: job_report``).
     - ``auth_expired``: the access token expired; refresh it and connect again.
 
     Only the WebSocket transport is enabled: long-polling would be plain HTTP
@@ -95,6 +100,8 @@ class RealtimeServer:
         await self.sio.enter_room(sid, user_room(user_id))
         staff = str(claims.get("role") or "") in {"owner", "admin"}
         await self.sio.enter_room(sid, JOBS_ALL_ROOM if staff else user_jobs_room(user_id))
+        if staff:
+            await self.sio.enter_room(sid, STAFF_ROOM)
         if claims.get("exp"):
             self._expires_at[sid] = float(claims["exp"])
         self._connected.add(sid)
@@ -154,6 +161,22 @@ class RealtimeServer:
             asyncio.run_coroutine_threadsafe(self._notify(job_id, status), loop)
         except RuntimeError:  # loop shutting down
             pass
+
+    def notify_staff(self, payload: dict[str, Any]) -> None:
+        """Send a notification to every connected owner/admin; safe from any thread."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self._emit_staff(dict(payload)), loop)
+        except RuntimeError:  # loop shutting down
+            pass
+
+    async def _emit_staff(self, payload: dict[str, Any]) -> None:
+        try:
+            await self.sio.emit("notification", payload, room=STAFF_ROOM)
+        except Exception:
+            logger.exception("Staff notification failed")
 
     async def _notify(self, job_id: str, status: str) -> None:
         try:

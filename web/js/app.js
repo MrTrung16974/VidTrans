@@ -1,6 +1,6 @@
-import { createTikTokWorkspace } from "./tiktok.js?v=20261025-youtube-title-vi";
+import { createTikTokWorkspace } from "./tiktok.js?v=20261105-staff-browser";
 import { resolveDouyinFrameUrl, resolveSourceBrowserFrameUrl } from "./browser-frame.js?v=20261104-shared-source";
-import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261104-resume";
+import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events.js?v=20261105-notifications";
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261104-plan-hide";
 import { createBrandingWorkspace } from "./branding.js?v=20261031-apply-logo";
@@ -139,9 +139,21 @@ function beginApiActionLoading(silent = false) {
   };
 }
 
+const JOB_PAGE_SIZES = [10, 20, 50, 100];
+
+// A blocked localStorage (private mode) or an old/unknown value must not break the page.
+function storedJobsPageSize() {
+  try {
+    const size = parseInt(localStorage.getItem("vidtrans_jobs_page_size") || "10", 10);
+    return JOB_PAGE_SIZES.includes(size) ? size : 10;
+  } catch {
+    return 10;
+  }
+}
+
 const state = {
   files: [], links: [], invalidLinks: [], blockedPlatforms: new Set(), jobs: [], pendingUploads: [], selectedJobIds: new Set(), pollTimer: null, searchTimer: null,
-  jobsPage: 1, jobsPageSize: parseInt(localStorage.getItem("vidtrans_jobs_page_size") || "10", 10),
+  jobsPage: 1, jobsPageSize: storedJobsPageSize(),
   tiktokAuth: null, appStarted: false,
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false, sessionRefreshTimer: null,
   sourceBrowserPlatform: "douyin", sourceBrowsers: {},
@@ -1374,6 +1386,7 @@ function showView() {
   if (view === "admin" && state.appStarted) {
     loadAdminAccounts();
     refreshAdminContactBadge();
+    refreshAdminReportsBadge();
   }
   syncAdminSystemEvents();
   if (view === "billing" && state.appStarted) loadBilling();
@@ -2050,6 +2063,94 @@ function renderAdminContact(messages) {
   }).join("");
 }
 
+// ---- Problem reports users send about a processed video ----
+
+function setAdminReportsBadge(count) {
+  const badge = $("#adminReportsBadge");
+  if (!badge) return;
+  badge.textContent = String(count);
+  badge.classList.toggle("is-zero", !count);
+}
+
+async function refreshAdminReportsBadge() {
+  if (!["owner", "admin"].includes(state.auth.role)) return;
+  try {
+    const data = await requestJson("/api/v1/admin/job-reports?status=new&limit=1");
+    setAdminReportsBadge(data.new_count || 0);
+  } catch {
+    // The badge is a hint; the tab itself reports errors.
+  }
+}
+
+async function loadAdminReports() {
+  const list = $("#adminReportsList");
+  if (!list) return;
+  list.innerHTML = '<div class="empty-state"><strong>Đang tải báo lỗi…</strong></div>';
+  try {
+    const params = new URLSearchParams({ limit: "100", status: $("#adminReportsFilter")?.value ?? "new" });
+    const data = await requestJson(`/api/v1/admin/job-reports?${params}`);
+    setAdminReportsBadge(data.new_count || 0);
+    renderAdminReports(data.items || []);
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state error"><strong>${escapeHtml(err.message)}</strong></div>`;
+  }
+}
+
+function renderAdminReports(reports) {
+  const list = $("#adminReportsList");
+  if (!list) return;
+  if (!reports.length) {
+    list.innerHTML = '<div class="empty-state"><strong>Không có báo lỗi nào</strong></div>';
+    return;
+  }
+  list.innerHTML = reports.map(item => {
+    const createdAt = item.created_at ? new Date(item.created_at).toLocaleString("vi-VN") : "—";
+    const resolved = item.status === "resolved";
+    const reporter = item.reporter_email || item.reporter_user_id;
+    return `
+      <article class="admin-contact-item${resolved ? " is-resolved" : ""}" data-report-id="${escapeHtml(item.report_id)}">
+        <header>
+          <div>
+            <strong>${escapeHtml(item.job_title || item.job_id)}</strong>
+            <span class="badge ${resolved ? "badge-success" : "badge-warning"}">${resolved ? "Đã xử lý" : "Mới"}</span>
+            <span class="admin-contact-topic">${escapeHtml(item.category_label)}</span>
+          </div>
+          <small>${escapeHtml(createdAt)}</small>
+        </header>
+        <p class="admin-contact-meta">
+          ${escapeHtml(reporter)} · Job #${escapeHtml(String(item.job_id).slice(0, 8).toUpperCase())}
+          ${item.video_time ? ` · tại ${escapeHtml(item.video_time)}` : ""}
+        </p>
+        ${item.message ? `<p class="admin-contact-body">${escapeHtml(item.message)}</p>` : ""}
+        <div class="admin-report-actions">
+          <button class="button secondary mini-btn" type="button" data-admin-open-report-job="${escapeHtml(item.job_id)}">Mở job</button>
+          ${resolved ? "" : `<button class="button secondary mini-btn" type="button" data-admin-resolve-report>Đánh dấu đã xử lý</button>`}
+        </div>
+      </article>`;
+  }).join("");
+}
+
+function openJobReportDialog(job) {
+  const dialog = $("#jobReportDialog");
+  if (!dialog || !job) return;
+  dialog.dataset.jobId = job.job_id;
+  $("#jobReportTarget").textContent = job.filename || job.title || job.source_url || `Job #${job.job_id.slice(0, 8).toUpperCase()}`;
+  $("#jobReportForm").reset();
+  try {
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  } catch {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function closeJobReportDialog() {
+  const dialog = $("#jobReportDialog");
+  if (!dialog) return;
+  try { if (dialog.open && typeof dialog.close === "function") dialog.close(); } catch {}
+  dialog.removeAttribute("open");
+}
+
 // ---- Background-music library (admin uploads, users pick it for dubbing) ----
 
 function formatTrackLength(seconds) {
@@ -2649,6 +2750,8 @@ async function executeSubmitBatch(formData) {
 async function submitBatch(event) {
   event?.preventDefault?.();
   requestJobNotificationPermission();
+  // This tab already says the jobs were created; the live "created" notice is for other tabs/devices.
+  state.lastJobSubmitAt = Date.now();
   renderSourceLinks();
   const sourceText = $("#sourceLinks")?.value?.trim() || "";
   if (!state.files.length && !state.links.length) {
@@ -3017,6 +3120,7 @@ const jobEvents = createJobEvents({
     loadJobs();
     comicWorkspace.refreshLive();
   },
+  onNotification: handleLiveNotification,
   onChanges(message) {
     const { jobs, reload } = applyJobChanges(state.jobs, message, { statusFilter: $("#statusFilter").value });
     state.jobs = jobs;
@@ -3171,6 +3275,54 @@ function announceJobOutcome(job) {
   }
 }
 
+function systemNotification(title, body, tag, onClick) {
+  if (!document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  try {
+    const notification = new Notification(title, { body, tag, icon: "/assets/vidtrans-mark.svg" });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+      onClick?.();
+    };
+  } catch {
+    // Some browsers only allow notifications from a service worker.
+  }
+}
+
+// New jobs of this account arrive one notice each; a batch of 50 becomes one toast.
+const pendingCreatedJobs = [];
+let createdJobsTimer = null;
+
+function announceCreatedJobs() {
+  createdJobsTimer = null;
+  const jobs = pendingCreatedJobs.splice(0);
+  if (!jobs.length) return;
+  const title = "Đã tạo video";
+  const body = jobs.length === 1 ? jobs[0].body : `${jobs.length} video đã được tạo và đang chờ xử lý.`;
+  toast(`${title}: ${body}`);
+  systemNotification(title, body, `created:${jobs[0].job_id}`, () => openJobDetailModal(jobs[0].job_id));
+}
+
+function handleLiveNotification(notice) {
+  if (!notice || !state.appStarted) return;
+  if (notice.type === "job_status" && notice.status === "created") {
+    // Created from this tab moments ago: its own toast already said so.
+    if (Date.now() - (state.lastJobSubmitAt || 0) < 15000) return;
+    pendingCreatedJobs.push(notice);
+    if (!createdJobsTimer) createdJobsTimer = setTimeout(announceCreatedJobs, 1200);
+    return;
+  }
+  if (notice.type === "job_report" && ["owner", "admin"].includes(state.auth.role)) {
+    toast(`${notice.title}: ${notice.body}`, true);
+    systemNotification(notice.title, notice.body, `report:${notice.report_id}`, () => {
+      if (location.hash !== "#admin") location.hash = "#admin";
+      setTimeout(() => $('[data-admin-subtab="reports"]')?.click(), 0);
+    });
+    refreshAdminReportsBadge();
+    if (!$("#adminSubtabReports")?.classList.contains("is-hidden")) loadAdminReports();
+  }
+}
+
 // Ask once, from the click that submits work, so the browser shows the prompt.
 function requestJobNotificationPermission() {
   if (typeof Notification === "undefined" || Notification.permission !== "default") return;
@@ -3211,9 +3363,19 @@ async function loadJobs() {
     if (response.status === 401) lockApplication();
     if (!response.ok) throw new Error("Không tải được danh sách job");
     const data = await response.json();
+    // The user moved to another page, page size, filter or search while this request ran:
+    // its rows belong to the old view, and writing its page number back would undo the
+    // click. A reload for the current view is queued instead.
+    const stale = state.jobsPage !== page || (state.jobsPageSize || 10) !== pageSize
+      || $("#statusFilter").value !== status || $("#jobSearch").value.trim() !== search;
+    if (stale) {
+      state.jobsReloadQueued = true;
+      return;
+    }
     state.jobs = data.items || [];
     trackJobOutcomes(state.jobs);
     state.jobsTotal = Number(data.total ?? state.jobs.length);
+    // The server moves a page past the end (jobs deleted) back to the last one.
     if (data.page) state.jobsPage = Number(data.page);
     if (data.counts) state.jobStatusCounts = data.counts;
     const visibleIds = new Set(state.jobs.map(job => job.job_id));
@@ -3337,6 +3499,8 @@ function renderJobDetailModal(job, { preserveMedia = false } = {}) {
   const title = job.filename || job.source_url || `Tiến trình #${job.job_id.slice(0, 8)}`;
   if ($("#jobDetailTitle")) $("#jobDetailTitle").textContent = title;
   if ($("#jobDetailCode")) $("#jobDetailCode").textContent = `Job #${job.job_id.slice(0, 8).toUpperCase()}`;
+  // A finished (or failed) video can be reported to the admins.
+  $("#jobDetailReport")?.classList.toggle("is-hidden", !["completed", "failed"].includes(job.status));
 
   const statusPill = $("#jobDetailStatusPill");
   if (statusPill) {
@@ -4216,6 +4380,9 @@ $$("[data-admin-subtab]").forEach(tabBtn => {
     } else if (tabName === "contact") {
       $("#adminSubtabContact")?.classList.remove("is-hidden");
       loadAdminContact();
+    } else if (tabName === "reports") {
+      $("#adminSubtabReports")?.classList.remove("is-hidden");
+      loadAdminReports();
     } else if (tabName === "music") {
       $("#adminSubtabMusic")?.classList.remove("is-hidden");
       loadAdminMusic();
@@ -4257,6 +4424,60 @@ $("#adminJobsList")?.addEventListener("click", async event => {
   }
 });
 $("#refreshAdminBilling")?.addEventListener("click", loadAdminBilling);
+$("#refreshAdminReports")?.addEventListener("click", loadAdminReports);
+$("#adminReportsFilter")?.addEventListener("change", loadAdminReports);
+$("#adminReportsList")?.addEventListener("click", async event => {
+  const open = event.target.closest("[data-admin-open-report-job]");
+  if (open) {
+    openJobDetailModal(open.dataset.adminOpenReportJob);
+    return;
+  }
+  const button = event.target.closest("[data-admin-resolve-report]");
+  if (!button) return;
+  const reportId = encodeURIComponent(button.closest("[data-report-id]").dataset.reportId);
+  button.disabled = true;
+  try {
+    await requestJson(`/api/v1/admin/job-reports/${reportId}/resolve`, { method: "POST" });
+    toast("Đã đánh dấu báo lỗi là đã xử lý");
+    await loadAdminReports();
+  } catch (err) {
+    toast(err.message, true);
+    button.disabled = false;
+  }
+});
+$("#jobDetailReport")?.addEventListener("click", () => {
+  const job = state.jobs.find(item => item.job_id === activeDetailJobId) || { job_id: activeDetailJobId };
+  if (job.job_id) openJobReportDialog(job);
+});
+$("#jobReportCancel")?.addEventListener("click", closeJobReportDialog);
+$("#jobReportForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const dialog = $("#jobReportDialog");
+  const jobId = dialog?.dataset.jobId;
+  if (!jobId) return;
+  const category = $("#jobReportCategory").value;
+  const message = $("#jobReportMessage").value.trim();
+  if (category === "other" && message.length < 5) {
+    toast("Hãy mô tả lỗi bạn gặp", true);
+    $("#jobReportMessage").focus();
+    return;
+  }
+  const submit = $("#jobReportSubmit");
+  submit.disabled = true;
+  try {
+    const data = await requestJson(`/api/v1/jobs/${encodeURIComponent(jobId)}/reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category, message, video_time: $("#jobReportTime").value.trim() }),
+    });
+    closeJobReportDialog();
+    toast(data.message || "Đã gửi báo lỗi");
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    submit.disabled = false;
+  }
+});
 $("#refreshAdminContact")?.addEventListener("click", loadAdminContact);
 $("#adminContactFilter")?.addEventListener("change", loadAdminContact);
 $("#adminContactList")?.addEventListener("click", async event => {
