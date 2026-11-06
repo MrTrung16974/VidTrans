@@ -1078,9 +1078,11 @@ function syncMobileQuickBar() {
   const quickSubmitText = $("#mobileQuickSubmitText");
   if (quickSubmitText) {
     if (mode === "4") {
-      quickSubmitText.textContent = count > 0 ? `Tải ngay (${count})` : "Tải ngay";
+      quickSubmitText.textContent = "Tải ngay";
     } else {
-      quickSubmitText.textContent = count > 0 ? `Bắt đầu (${count})` : "Bắt đầu";
+      // The count already lives in the badge on the left, matching the
+      // compact bar design used by both the web and native app.
+      quickSubmitText.textContent = "Bắt đầu";
     }
   }
   const desktopSubmitSpan = $("#submitButton span");

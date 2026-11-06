@@ -64,12 +64,14 @@ void main() {
           isNull,
           reason: 'before choosing download-only',
         );
-        // Quick-bar label matches the web: "Bắt đầu" until a source is added.
-        expect(find.text('Bắt đầu'), findsOneWidget);
-
         final element = tester.element(find.byType(TranslateScreen));
         final container = ProviderScope.containerOf(element);
         final form = container.read(translateFormProvider.notifier);
+        const quickBarKey = Key('translate-quick-submit-bar');
+
+        // The floating bar must not cover the source picker without a source.
+        expect(find.byKey(quickBarKey), findsNothing);
+
         form.updateConfig(
           container.read(translateFormProvider).config.copyWith(mode: 4),
         );
@@ -92,4 +94,52 @@ void main() {
       },
     );
   }
+
+  testWidgets('quick submit bar follows valid sources', (tester) async {
+    tester.view.physicalSize = const Size(1236, 2400);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(_Session.new),
+          jobListProvider.overrideWith(_NoJobs.new),
+          brandingSettingsProvider.overrideWith(_Branding.new),
+          translationProvidersProvider.overrideWith((ref) async => const []),
+          ttsProvidersProvider.overrideWith((ref) async => const []),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: const TranslateScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    const quickBarKey = Key('translate-quick-submit-bar');
+    expect(find.byKey(quickBarKey), findsNothing);
+
+    final element = tester.element(find.byType(TranslateScreen));
+    final container = ProviderScope.containerOf(element);
+    final form = container.read(translateFormProvider.notifier);
+    form.setLinks('https://www.youtube.com/watch?v=abcdefghijk');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(quickBarKey), findsOneWidget);
+    expect(find.text('Bắt đầu'), findsOneWidget);
+
+    form.clearLinks();
+    await tester.pumpAndSettle();
+    expect(find.byKey(quickBarKey), findsNothing);
+
+    form.addFiles(const [
+      PickedMedia(path: '/tmp/source.mp4', name: 'source.mp4'),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.byKey(quickBarKey), findsOneWidget);
+
+    form.clearFiles();
+    await tester.pumpAndSettle();
+    expect(find.byKey(quickBarKey), findsNothing);
+  });
 }

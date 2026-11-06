@@ -5948,6 +5948,12 @@ body.modal-open {
   display: none;
 }
 
+/* `display:flex` inside the mobile media query must never override the
+   source-gated hidden state set by syncMobileQuickBar(). */
+.mobile-quick-submit-bar[hidden] {
+  display: none !important;
+}
+
 /* Responsive adjustments */
 @media(min-width: 1025px) and (max-width: 1180px) {
   #createView .workflow-grid { grid-template-columns: minmax(0, 1fr) 290px; gap: 18px; }

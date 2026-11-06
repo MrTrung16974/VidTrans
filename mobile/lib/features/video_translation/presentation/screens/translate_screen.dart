@@ -1100,50 +1100,62 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    '1A · TỪ THIẾT BỊ',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.55,
-                      color: AppColors.brandDark,
+                  const Expanded(
+                    child: Text(
+                      '1A · TỪ THIẾT BỊ',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.55,
+                        color: AppColors.brandDark,
+                      ),
                     ),
                   ),
-                  if (state.files.isNotEmpty)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '${state.files.length} file đã chọn',
-                          style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.teal,
-                          ),
-                        ),
-                        if (state.files.length > 1) ...[
-                          const SizedBox(width: 8),
-                          InkWell(
-                            onTap: _form.clearFiles,
-                            borderRadius: BorderRadius.circular(6),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 2,
-                              ),
-                              child: Text(
-                                'Xóa hết',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
-                                  color: AppColors.redDark,
-                                ),
+                  if (state.files.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              '${state.files.length} file đã chọn',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.teal,
                               ),
                             ),
                           ),
+                          if (state.files.length > 1) ...[
+                            const SizedBox(width: 8),
+                            InkWell(
+                              onTap: _form.clearFiles,
+                              borderRadius: BorderRadius.circular(6),
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 2,
+                                ),
+                                child: Text(
+                                  'Xóa hết',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.redDark,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
+                  ],
                 ],
               ),
               const SizedBox(height: 12),
@@ -2253,6 +2265,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         : '${_langName(config.sourceLanguage)} → ${_langName(config.targetLanguage)}';
 
     return Material(
+      key: const Key('translate-quick-submit-bar'),
       color: Colors.transparent,
       child: Container(
         decoration: BoxDecoration(
@@ -2406,14 +2419,9 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  // Same labels as syncMobileQuickBar() in web/js/app.js.
-                                  config.downloadOnly
-                                      ? (state.sourceCount > 0
-                                            ? 'Tải ngay (${state.sourceCount})'
-                                            : 'Tải ngay')
-                                      : (state.sourceCount > 0
-                                            ? 'Bắt đầu (${state.sourceCount})'
-                                            : 'Bắt đầu'),
+                                  // The source count is already shown in the
+                                  // badge on the left, just like the web bar.
+                                  config.downloadOnly ? 'Tải ngay' : 'Bắt đầu',
                                   maxLines: 1,
                                   style: const TextStyle(
                                     color: Colors.white,
