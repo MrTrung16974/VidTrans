@@ -789,27 +789,27 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 KeyedSubtree(key: _submitCardKey, child: _submitCard(state)),
               ],
             ),
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              left: 0,
-              right: 0,
-              bottom: keyboardOpen ? 6.0 : studioDockClearance(context),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: keyboardOpen ? 10 : 14,
-                    ),
-                    child: _quickSubmitBar(
-                      state,
-                      compact: keyboardOpen,
+            // Like the web quick-submit bar, only show this floating summary
+            // after a video file or a valid source link has been added.
+            if (state.sourceCount > 0)
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                left: 0,
+                right: 0,
+                bottom: keyboardOpen ? 6.0 : studioDockClearance(context),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: keyboardOpen ? 10 : 14,
+                      ),
+                      child: _quickSubmitBar(state, compact: keyboardOpen),
                     ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),

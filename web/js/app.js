@@ -1055,7 +1055,12 @@ function syncMobileQuickBar() {
   const mode = $("#mode")?.value || "1";
   const bar = $("#mobileQuickSubmitBar");
   if (bar) {
-    bar.classList.toggle("is-active", count > 0);
+    // Keep the mobile summary/submit bar out of the source picker until the
+    // user has actually added a link or uploaded a video.  `hidden` avoids a
+    // visible flash while the page and its responsive styles initialise.
+    const hasSources = count > 0;
+    bar.hidden = !hasSources;
+    bar.classList.toggle("is-active", hasSources);
   }
   const badge = $("#mobileQuickCountBadge");
   if (badge) {
