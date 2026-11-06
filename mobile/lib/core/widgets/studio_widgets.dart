@@ -816,6 +816,7 @@ bool isStudioKeyboardOpen(BuildContext context) {
 
 /// Top-level root tab routes where the floating bottom dock in [HomeShell] is visible.
 const studioRootTabPaths = <String>{
+  '/',
   '/translate',
   '/comic',
   '/jobs',
@@ -835,19 +836,20 @@ bool isStudioRootTabPath(String? path) {
 /// Returns true only when [context] is currently on one of the 5 top-level
 /// root tab paths (`/translate`, `/comic`, `/jobs`, `/social`, `/profile`).
 bool isStudioRootTabRoute(BuildContext context) {
+  try {
+    final path = GoRouterState.of(context).uri.path;
+    if (isStudioRootTabPath(path)) return true;
+  } catch (_) {
+    final router = GoRouter.maybeOf(context);
+    if (router != null && isStudioRootTabPath(router.state.uri.path)) {
+      return true;
+    }
+  }
   final modal = ModalRoute.of(context);
   if (modal != null && !modal.isFirst) {
     return false;
   }
-  try {
-    return isStudioRootTabPath(GoRouterState.of(context).uri.path);
-  } catch (_) {
-    final router = GoRouter.maybeOf(context);
-    if (router != null) {
-      return isStudioRootTabPath(router.state.uri.path);
-    }
-    return false;
-  }
+  return true;
 }
 
 /// Height of the floating dock area at the bottom of [HomeShell], including

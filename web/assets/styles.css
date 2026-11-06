@@ -10963,13 +10963,35 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
 }
 .voice-inactive-notice {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
   padding: 14px 18px;
   border-radius: 14px;
   border: 1.5px dashed rgba(234, 88, 12, 0.38);
   background: linear-gradient(135deg, rgba(255, 247, 237, 0.9), rgba(254, 243, 199, 0.45));
+}
+.voice-inactive-notice .notice-icon {
+  font-size: 1.3rem;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+.voice-inactive-notice .notice-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.voice-inactive-notice .notice-copy strong {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.35;
+  color: #9a3412;
+}
+.voice-inactive-notice .notice-copy p {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #7c2d12;
 }
 .voice-inactive-notice .notice-actions {
   display: flex;
@@ -10996,6 +11018,7 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 .create-logo-quick-icon {
   display: inline-flex;
@@ -11017,10 +11040,12 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
   font-size: 0.86rem;
   font-weight: 800;
   color: var(--ink, #0f172a);
+  line-height: 1.35;
 }
 .create-logo-quick-copy small {
   font-size: 0.75rem;
   color: var(--muted, #64748b);
+  line-height: 1.35;
 }
 .create-logo-quick-actions {
   display: flex;
@@ -11036,6 +11061,7 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
   font-weight: 700;
   color: var(--ink-soft, #334155);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .subtitle-preview-toolbar {
@@ -11104,7 +11130,7 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
   left: 14px;
   right: 14px;
   bottom: 18px;
-  z-index: 4;
+  z-index: 6;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -11125,24 +11151,29 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
   right: 10px;
   top: 68%;
   height: 28%;
-  z-index: 5;
+  z-index: 4;
   border: 1.5px dashed rgba(45, 212, 191, 0.85);
   border-radius: 10px;
-  background: rgba(15, 118, 110, 0.16);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: rgba(15, 118, 110, 0.12);
   pointer-events: none;
 }
 .ocr-roi-zone-label {
-  font-size: 0.66rem;
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 5;
+  font-size: 0.62rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: rgba(204, 251, 241, 0.9);
-  background: rgba(15, 23, 42, 0.55);
-  padding: 2px 8px;
-  border-radius: 999px;
+  color: #ccfbf1;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(94, 234, 212, 0.45);
+  padding: 2px 7px;
+  border-radius: 6px;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  line-height: 1.2;
 }
 .ocr-roi-handle {
   position: absolute;
@@ -11159,6 +11190,7 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
   font-weight: 800;
   white-space: nowrap;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
+  z-index: 7;
 }
 .ocr-roi-handle.top {
   top: -11px;
@@ -11174,7 +11206,7 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
 
 .preview-logo-badge {
   position: absolute;
-  z-index: 6;
+  z-index: 8;
   padding: 4px 9px;
   border-radius: 7px;
   background: rgba(234, 88, 12, 0.88);
@@ -11420,6 +11452,122 @@ html[data-theme="dark"] .theme-toggle-btn .theme-icon-moon {
   background: var(--surface-muted, #f8fafc);
 }
 
+/* 9.5 Responsive Adaptations for Studio Cards & Controls (<= 720px, <= 480px, <= 380px) */
+@media (max-width: 720px) {
+  /* Mode 1 Collapsed Notice Mobile Stacking */
+  .voice-inactive-notice {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .voice-inactive-notice .notice-copy {
+    width: 100%;
+  }
+  .voice-inactive-notice .notice-actions {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(234, 88, 12, 0.25);
+  }
+  .voice-inactive-notice .notice-actions .button {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+  }
+
+  /* Inline Channel Logo Quick Card Mobile Stacking */
+  .create-logo-quick-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .create-logo-quick-info {
+    width: 100%;
+  }
+  .create-logo-quick-actions {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(226, 232, 240, 0.9);
+  }
+
+  /* Photo Post Detection Notice */
+  .source-links-summary {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .photo-post-detect-copy {
+    width: 100%;
+    min-width: 0;
+  }
+  .photo-post-preset-pills {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+  }
+  .photo-preset-btn {
+    flex: 1;
+    text-align: center;
+  }
+
+  /* Unified Channel Bar */
+  .tiktok-connection-hub.unified-channel-status-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .unified-channel-pills {
+    justify-content: flex-start;
+  }
+}
+
+@media (min-width: 480px) and (max-width: 720px) {
+  .voice-inactive-notice .notice-actions {
+    flex-direction: row;
+  }
+  .voice-inactive-notice .notice-actions .button {
+    flex: 1;
+  }
+}
+
+@media (max-width: 380px) {
+  .create-logo-quick-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .create-logo-quick-actions .button {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+  }
+  .subtitle-preview-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .aspect-ratio-pills {
+    width: 100%;
+    display: flex;
+  }
+  .aspect-pill-btn {
+    flex: 1;
+    text-align: center;
+  }
+  .ocr-roi-readout {
+    align-self: center;
+  }
+}
+
 /* 10. Comprehensive Dark Studio Theme (html[data-theme="dark"]) */
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -11520,8 +11668,22 @@ html[data-theme="dark"] .source-links-summary {
   background: rgba(249, 115, 22, 0.12);
   border-color: rgba(249, 115, 22, 0.35);
 }
-html[data-theme="dark"] .photo-post-detect-text strong,
-html[data-theme="dark"] .photo-post-detect-text small {
+html[data-theme="dark"] .voice-inactive-notice .notice-copy strong,
+html[data-theme="dark"] .photo-post-detect-text strong {
   color: #fed7aa;
+}
+html[data-theme="dark"] .voice-inactive-notice .notice-copy p,
+html[data-theme="dark"] .photo-post-detect-text small {
+  color: #fdba74;
+}
+html[data-theme="dark"] .voice-inactive-notice .notice-actions {
+  border-top-color: rgba(249, 115, 22, 0.25);
+}
+html[data-theme="dark"] .create-logo-quick-actions {
+  border-top-color: #334155;
+}
+html[data-theme="dark"] .ocr-roi-readout {
+  background: rgba(20, 184, 166, 0.2);
+  color: #2dd4bf;
 }
 

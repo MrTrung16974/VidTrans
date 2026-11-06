@@ -35,6 +35,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
   late final AppLifecycleListener _lifecycle;
   int _activeStep = 1;
   bool _atBottomSubmit = false;
+  bool _scrollCheckScheduled = false;
   List<String> _clipboardLinks = const [];
   String? _dismissedClipboardRaw;
 
@@ -52,19 +53,31 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final state = ref.read(translateFormProvider);
     _links = TextEditingController(text: state.linksText);
     _batchName = TextEditingController(text: state.config.batchName);
-    _scrollController.addListener(_onScroll);
+    _scrollController.addListener(_scheduleScrollCheck);
     _lifecycle = AppLifecycleListener(onResume: _checkClipboard);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkClipboard());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkClipboard();
+      _onScroll();
+    });
   }
 
   @override
   void dispose() {
     _lifecycle.dispose();
-    _scrollController.removeListener(_onScroll);
+    _scrollController.removeListener(_scheduleScrollCheck);
     _scrollController.dispose();
     _links.dispose();
     _batchName.dispose();
     super.dispose();
+  }
+
+  void _scheduleScrollCheck() {
+    if (_scrollCheckScheduled) return;
+    _scrollCheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollCheckScheduled = false;
+      _onScroll();
+    });
   }
 
   void _onScroll() {
@@ -92,7 +105,23 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       if (box is RenderBox && box.hasSize) {
         final dy = box.localToGlobal(Offset.zero).dy;
         final screenHeight = MediaQuery.sizeOf(context).height;
-        submitVisible = dy < screenHeight - 100;
+        final visibleTop = dy.clamp(0.0, screenHeight);
+        final visibleBottom = (dy + box.size.height).clamp(0.0, screenHeight);
+        final visibleHeight = (visibleBottom - visibleTop).clamp(
+          0.0,
+          box.size.height,
+        );
+        // Matches the web IntersectionObserver threshold: once at least 15%
+        // of the real submit card is visible, the duplicate floating bar goes.
+        submitVisible =
+            box.size.height > 0 && visibleHeight / box.size.height >= 0.15;
+      }
+    }
+    // Also treat scrolled within 100px of max bottom extent as at bottom
+    if (!submitVisible && _scrollController.hasClients) {
+      final pos = _scrollController.position;
+      if (pos.maxScrollExtent > 0 && pos.pixels >= pos.maxScrollExtent - 100) {
+        submitVisible = true;
       }
     }
     if (nextStep != _activeStep || submitVisible != _atBottomSubmit) {
@@ -702,6 +731,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final translation = ref.watch(translationProvidersProvider).valueOrNull;
     final tts = ref.watch(ttsProvidersProvider).valueOrNull;
     _reconcile(config, translation, tts);
+    // Source/config changes can move the submit card without a scroll event.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
 
     // Single unified sticky submit bar at the bottom of the studio.
     // When the soft keyboard is open, the dock in HomeShell is hidden, so the
@@ -718,6 +749,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         child: Stack(
           children: [
             ListView(
+              key: const Key('translate-form-list'),
               controller: _scrollController,
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: EdgeInsets.fromLTRB(
@@ -786,14 +818,14 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                   _ocrSection(config),
                 ],
                 const SizedBox(height: 4),
-                KeyedSubtree(key: _submitCardKey, child: _submitCard(state)),
+                _submitCard(state),
               ],
             ),
-            // Like the web quick-submit bar, only show this floating summary
-            // after a video file or a valid source link has been added.
-            if (state.sourceCount > 0)
+            // Same as web: show only with a source, and hide when the real
+            // submit card at the end of the form has entered the viewport.
+            if (state.sourceCount > 0 && !_atBottomSubmit)
               AnimatedPositioned(
-                duration: const Duration(milliseconds: 180),
+                duration: const Duration(milliseconds: 240),
                 curve: Curves.easeOutCubic,
                 left: 0,
                 right: 0,
@@ -2495,6 +2527,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         : 'Không chèn logo';
 
     return StudioCard(
+      key: _submitCardKey,
       topAccentColor: AppColors.brand,
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -2503,11 +2536,13 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
         children: [
           Row(
             children: [
-              const StudioEyebrow(
-                label: 'TÓM TẮT CẤU HÌNH BATCH',
-                icon: Icons.fact_check_outlined,
+              const Expanded(
+                child: StudioEyebrow(
+                  label: 'TÓM TẮT CẤU HÌNH BATCH',
+                  icon: Icons.fact_check_outlined,
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               Text(
                 '${state.sourceCount}/50 nguồn',
                 style: const TextStyle(
@@ -2586,6 +2621,18 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               ),
             ),
           ],
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: StudioGradientButton(
+              key: const Key('translate-submit-card-button'),
+              onPressed: _submit,
+              icon: Icons.arrow_forward_rounded,
+              label: config.downloadOnly
+                  ? 'Bắt đầu tải (${state.sourceCount} video)'
+                  : 'Bắt đầu xử lý (${state.sourceCount} video)',
+            ),
+          ),
         ],
       ),
     );

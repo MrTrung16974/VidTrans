@@ -128,6 +128,21 @@ void main() {
     expect(find.byKey(quickBarKey), findsOneWidget);
     expect(find.text('Bắt đầu'), findsOneWidget);
 
+    const submitCardButtonKey = Key('translate-submit-card-button');
+    const formListKey = Key('translate-form-list');
+    final list = tester.widget<ListView>(find.byKey(formListKey));
+    for (var i = 0; i < 12; i++) {
+      list.controller!.jumpTo(list.controller!.position.maxScrollExtent);
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+    expect(find.byKey(submitCardButtonKey), findsOneWidget);
+    expect(find.byKey(quickBarKey), findsNothing);
+
+    list.controller!.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(find.byKey(quickBarKey), findsOneWidget);
+
     form.clearLinks();
     await tester.pumpAndSettle();
     expect(find.byKey(quickBarKey), findsNothing);
