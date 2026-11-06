@@ -348,7 +348,9 @@ class TikTokBrowserRouteTests(unittest.TestCase):
                      'pending': {'status': 'processing', 'output_video': 'video.mp4'},
                      'unsafe': {'status': 'completed', 'output_video': '../secret'}}
         app = FastAPI()
-        app.include_router(create_tiktok_browser_router(self.manager, self.jobs, self.output))
+        app.include_router(create_tiktok_browser_router(
+            self.manager, self.jobs, self.output, caption_llm_resolver=lambda: []
+        ))
         self.client = TestClient(app)
 
     def tearDown(self): self.tmp.cleanup()
@@ -383,8 +385,21 @@ class TikTokBrowserRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('#kientri', response.json()['caption'])
         self.assertNotIn('#dulich', response.json()['caption'])
+        self.assertTrue(response.json()['fallback'])
+        self.assertEqual(len(response.json()['variants']), 1)
         self.assertEqual((self.output / 'post.json').read_bytes(), original)
         self.assertIsNone(self.manager.active_attempt())
+
+    def test_caption_suggestion_rejects_unknown_tone(self):
+        translation = self.output / 'translation.json'
+        translation.write_text(json.dumps({'segments': [
+            {'text': 'Kiên trì giúp bạn tiến gần hơn tới mục tiêu.'},
+        ]}))
+        self.jobs['good']['translation_file'] = translation.name
+
+        response = self.client.post('/api/v1/jobs/good/tiktok-caption?tone=salesy')
+
+        self.assertEqual(response.status_code, 422)
 
     def test_caption_suggestion_rejects_missing_or_unreliable_translation(self):
         self.assertEqual(self.client.post('/api/v1/jobs/good/tiktok-caption').status_code, 422)

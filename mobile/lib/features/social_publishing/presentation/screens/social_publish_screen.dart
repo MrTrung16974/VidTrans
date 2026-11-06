@@ -14,6 +14,7 @@ import '../../../../core/widgets/studio_widgets.dart';
 import '../../data/social_repository.dart';
 import '../../domain/social_models.dart';
 import '../providers/social_providers.dart';
+import '../widgets/caption_suggestions_card.dart';
 import '../widgets/social_widgets.dart';
 
 /// Publish one finished video: caption, platform, account, mode, then follow
@@ -56,7 +57,9 @@ class _PublishForm extends ConsumerStatefulWidget {
 
 class _PublishFormState extends ConsumerState<_PublishForm> {
   late final _caption = TextEditingController(text: widget.draft.caption);
-  late final _youtubeTitle = TextEditingController(text: widget.draft.youtubeTitle);
+  late final _youtubeTitle = TextEditingController(
+    text: widget.draft.youtubeTitle,
+  );
   SocialPlatform _platform = SocialPlatform.tiktok;
   String? _accountKey;
   String _mode = PublishMode.directNow;
@@ -66,6 +69,9 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
   bool _reviewed = false;
   bool _submitting = false;
   bool _suggesting = false;
+  String _captionTone = 'auto';
+  CaptionSuggestions? _suggestions;
+  int _selectedSuggestion = 0;
 
   /// One key per publish intent: kept when the user retries after a network
   /// error, replaced as soon as anything in the form changes (like the web).
@@ -102,8 +108,15 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
     setState(() => _suggesting = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final caption = await ref.read(socialRepositoryProvider).suggestCaption(_jobId);
-      if (caption.isNotEmpty) _changed(() => _caption.text = caption);
+      final suggestions = await ref
+          .read(socialRepositoryProvider)
+          .suggestCaptions(_jobId, tone: _captionTone);
+      if (suggestions.variants.isNotEmpty && mounted) {
+        setState(() {
+          _suggestions = suggestions;
+          _selectedSuggestion = 0;
+        });
+      }
     } catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
     } finally {
@@ -121,9 +134,20 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
       initialDate: initial,
     );
     if (date == null || !mounted) return;
-    final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(initial));
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
     if (time == null) return;
-    _changed(() => _scheduledFor = DateTime(date.year, date.month, date.day, time.hour, time.minute));
+    _changed(
+      () => _scheduledFor = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
+      ),
+    );
   }
 
   Future<void> _publish(SocialAuthStatus auth) async {
@@ -150,15 +174,20 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
         _reviewed = false;
         _idempotencyKey = null;
       });
-      messenger.showSnackBar(SnackBar(
-        content: Text(_mode == PublishMode.scheduleLocal
-            ? 'Đã lưu lịch đăng ${_platform.name}'
-            : 'Đang gửi video lên ${_platform.name}'),
-      ));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            _mode == PublishMode.scheduleLocal
+                ? 'Đã lưu lịch đăng ${_platform.name}'
+                : 'Đang gửi video lên ${_platform.name}',
+          ),
+        ),
+      );
     } catch (error) {
       // A rejected request (4xx except 409) will not succeed with the same key.
       final status = error is ApiException ? error.statusCode : null;
-      if (status != null && status < 500 && status != 409) _idempotencyKey = null;
+      if (status != null && status < 500 && status != 409)
+        _idempotencyKey = null;
       messenger.showSnackBar(SnackBar(content: Text(errorMessage(error))));
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -177,7 +206,10 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
   void _schedulePolling(List<PublishAttempt> attempts) {
     final inFlight = attempts.any((attempt) => attempt.isInFlight);
     if (inFlight && _poll == null) {
-      _poll = Timer.periodic(const Duration(seconds: 5), (_) => ref.invalidate(publishAttemptsProvider(_jobId)));
+      _poll = Timer.periodic(
+        const Duration(seconds: 5),
+        (_) => ref.invalidate(publishAttemptsProvider(_jobId)),
+      );
     } else if (!inFlight && _poll != null) {
       _poll!.cancel();
       _poll = null;
@@ -189,7 +221,10 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
     final auth = ref.watch(socialAuthProvider(_platform));
     final attempts = ref.watch(publishAttemptsProvider(_jobId));
     final readOnly = ref.watch(sessionProvider).valueOrNull?.isReadOnly ?? true;
-    ref.listen(publishAttemptsProvider(_jobId), (_, next) => _schedulePolling(next.valueOrNull ?? const []));
+    ref.listen(
+      publishAttemptsProvider(_jobId),
+      (_, next) => _schedulePolling(next.valueOrNull ?? const []),
+    );
 
     final status = auth.valueOrNull;
     final account = _account(status);
@@ -277,19 +312,65 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
               ),
               if (!readOnly) ...[
                 const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: _suggesting ? null : _suggestCaption,
-                    icon: _suggesting
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.auto_awesome_rounded, size: 18),
-                    label: const Text('Gợi ý caption từ bản dịch'),
-                  ),
+                Wrap(
+                  spacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    DropdownButton<String>(
+                      value: _captionTone,
+                      underline: const SizedBox.shrink(),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'auto',
+                          child: Text('AI tự chọn'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'natural',
+                          child: Text('Tự nhiên'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'curious',
+                          child: Text('Gợi tò mò'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'emotional',
+                          child: Text('Cảm xúc'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'expert',
+                          child: Text('Có chiều sâu'),
+                        ),
+                      ],
+                      onChanged: _suggesting
+                          ? null
+                          : (value) =>
+                                setState(() => _captionTone = value ?? 'auto'),
+                    ),
+                    TextButton.icon(
+                      onPressed: _suggesting ? null : _suggestCaption,
+                      icon: _suggesting
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.auto_awesome_rounded, size: 18),
+                      label: const Text('Tạo caption & tag'),
+                    ),
+                  ],
                 ),
+                if (_suggestions case final suggestions?) ...[
+                  const SizedBox(height: 10),
+                  CaptionSuggestionsCard(
+                    suggestions: suggestions,
+                    selectedIndex: _selectedSuggestion,
+                    onSelect: (index) =>
+                        setState(() => _selectedSuggestion = index),
+                    onApply: () => _changed(
+                      () => _caption.text =
+                          suggestions.variants[_selectedSuggestion].caption,
+                    ),
+                  ),
+                ],
               ],
             ],
           ),
@@ -362,8 +443,9 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
                       )
                     : DropdownButtonFormField<String>(
                         initialValue: account?.key,
-                        decoration:
-                            const InputDecoration(labelText: 'Tài khoản'),
+                        decoration: const InputDecoration(
+                          labelText: 'Tài khoản',
+                        ),
                         items: [
                           for (final item in status.accounts)
                             DropdownMenuItem(
@@ -429,14 +511,16 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
                   enabled: !readOnly,
                   maxLength: 100,
                   onChanged: (_) => _changed(() {}),
-                  decoration:
-                      const InputDecoration(labelText: 'Tiêu đề YouTube'),
+                  decoration: const InputDecoration(
+                    labelText: 'Tiêu đề YouTube',
+                  ),
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
                   initialValue: _youtubePrivacy,
-                  decoration:
-                      const InputDecoration(labelText: 'Chế độ hiển thị'),
+                  decoration: const InputDecoration(
+                    labelText: 'Chế độ hiển thị',
+                  ),
                   items: [
                     for (final entry in youtubePrivacyLabels.entries)
                       DropdownMenuItem(
@@ -487,8 +571,8 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
                   label: _mode == PublishMode.scheduleLocal
                       ? 'Đặt lịch ${_platform.name}'
                       : _mode == PublishMode.draft
-                          ? 'Gửi bản nháp ${_platform.name}'
-                          : 'Đăng lên ${_platform.name}',
+                      ? 'Gửi bản nháp ${_platform.name}'
+                      : 'Đăng lên ${_platform.name}',
                 ),
               ],
             ],
@@ -505,7 +589,8 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
                 stepNumber: 3,
                 icon: Icons.history_rounded,
                 title: 'Các lần đăng của video này',
-                subtitle: 'Lịch sử đẩy bài và trạng thái xuất bản trên các kênh',
+                subtitle:
+                    'Lịch sử đẩy bài và trạng thái xuất bản trên các kênh',
               ),
               const SizedBox(height: 12),
               attempts.when(
@@ -563,7 +648,11 @@ class _AttemptTile extends ConsumerWidget {
   final PublishAttempt attempt;
   final String jobId;
 
-  Future<void> _run(BuildContext context, WidgetRef ref, Future<void> Function() action) async {
+  Future<void> _run(
+    BuildContext context,
+    WidgetRef ref,
+    Future<void> Function() action,
+  ) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
       await action();
@@ -577,12 +666,13 @@ class _AttemptTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final platform = attempt.platform;
     final repo = ref.read(socialRepositoryProvider);
-    final detail = attempt.errorMessage ??
+    final detail =
+        attempt.errorMessage ??
         (attempt.status == 'SCHEDULED_LOCAL' && attempt.scheduledFor != null
             ? 'VidTrans sẽ đăng lúc ${DateFormat('HH:mm dd/MM/yyyy').format(attempt.scheduledFor!)}'
             : attempt.status == 'UPLOADING' && attempt.percent != null
-                ? 'Đang gửi · ${attempt.percent}%'
-                : null);
+            ? 'Đang gửi · ${attempt.percent}%'
+            : null);
 
     return StudioCard(
       margin: const EdgeInsets.only(bottom: 10),
@@ -594,34 +684,56 @@ class _AttemptTile extends ConsumerWidget {
             children: [
               if (platform != null) PlatformAvatar(platform, size: 28),
               const SizedBox(width: 10),
-              Expanded(child: Text(platform?.name ?? attempt.platformCode, style: Theme.of(context).textTheme.titleSmall)),
-              StudioStatusPill(label: attempt.label, tone: attemptTone(attempt), compact: true),
+              Expanded(
+                child: Text(
+                  platform?.name ?? attempt.platformCode,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              StudioStatusPill(
+                label: attempt.label,
+                tone: attemptTone(attempt),
+                compact: true,
+              ),
             ],
           ),
           if (detail != null) ...[
             const SizedBox(height: 6),
-            Text(detail, style: TextStyle(color: attempt.status == 'FAILED' ? AppColors.redDark : AppColors.muted)),
+            Text(
+              detail,
+              style: TextStyle(
+                color: attempt.status == 'FAILED'
+                    ? AppColors.redDark
+                    : AppColors.muted,
+              ),
+            ),
           ],
           if (attempt.isInFlight) ...[
             const SizedBox(height: 8),
-            LinearProgressIndicator(value: attempt.percent == null ? null : attempt.percent! / 100),
+            LinearProgressIndicator(
+              value: attempt.percent == null ? null : attempt.percent! / 100,
+            ),
           ],
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               if (attempt.createdAt != null)
                 Expanded(
-                  child: Text(DateFormat('dd/MM HH:mm').format(attempt.createdAt!),
-                      style: Theme.of(context).textTheme.bodySmall),
+                  child: Text(
+                    DateFormat('dd/MM HH:mm').format(attempt.createdAt!),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ),
               if (attempt.isActive)
                 TextButton(
-                  onPressed: () => _run(context, ref, () => repo.refresh(attempt)),
+                  onPressed: () =>
+                      _run(context, ref, () => repo.refresh(attempt)),
                   child: const Text('Làm mới'),
                 ),
               if (attempt.canCancel)
                 TextButton(
-                  onPressed: () => _run(context, ref, () => repo.cancel(attempt.id)),
+                  onPressed: () =>
+                      _run(context, ref, () => repo.cancel(attempt.id)),
                   child: const Text('Hủy lịch'),
                 ),
             ],

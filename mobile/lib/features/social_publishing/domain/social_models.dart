@@ -47,7 +47,11 @@ class SocialPlatform {
     name: 'TikTok',
     icon: Icons.music_note_rounded,
     color: Color(0xFF111827),
-    modes: [PublishMode.directNow, PublishMode.scheduleLocal, PublishMode.draft],
+    modes: [
+      PublishMode.directNow,
+      PublishMode.scheduleLocal,
+      PublishMode.draft,
+    ],
     requiresConnection: false,
   );
   static const instagram = SocialPlatform(
@@ -101,14 +105,19 @@ const youtubePrivacyLabels = {
 };
 
 class SocialAccount {
-  const SocialAccount({required this.accountId, this.connectionId, required this.name});
+  const SocialAccount({
+    required this.accountId,
+    this.connectionId,
+    required this.name,
+  });
 
   final String accountId;
   final String? connectionId;
   final String name;
 
   /// Value identifying the account in a picker.
-  String get key => (connectionId?.isNotEmpty ?? false) ? connectionId! : accountId;
+  String get key =>
+      (connectionId?.isNotEmpty ?? false) ? connectionId! : accountId;
 
   factory SocialAccount.fromJson(Map<String, dynamic> json) {
     final accountId = (json['account_id'] ?? json['open_id'] ?? '').toString();
@@ -116,8 +125,11 @@ class SocialAccount {
     final connectionId = json['connection_id']?.toString().trim();
     return SocialAccount(
       accountId: accountId,
-      connectionId: (connectionId == null || connectionId.isEmpty) ? null : connectionId,
-      name: (json['name'] as String?) ??
+      connectionId: (connectionId == null || connectionId.isEmpty)
+          ? null
+          : connectionId,
+      name:
+          (json['name'] as String?) ??
           (json['display_name'] as String?) ??
           (username != null ? '@$username' : null) ??
           (json['open_id'] as String?) ??
@@ -149,18 +161,21 @@ class SocialAuthStatus {
   /// Account picked by default, like the web select.
   SocialAccount? get defaultAccount {
     for (final account in accounts) {
-      if (account.connectionId != null && account.connectionId == connectionId) return account;
+      if (account.connectionId != null && account.connectionId == connectionId)
+        return account;
       if (account.accountId == accountId) return account;
     }
     return accounts.isEmpty ? null : accounts.first;
   }
 
-  factory SocialAuthStatus.fromJson(Map<String, dynamic> json) => SocialAuthStatus(
+  factory SocialAuthStatus.fromJson(Map<String, dynamic> json) =>
+      SocialAuthStatus(
         configured: json['configured'] == true,
         connected: json['connected'] == true,
         accounts: [
           for (final item in (json['accounts'] as List? ?? const []))
-            if (item is Map) SocialAccount.fromJson(Map<String, dynamic>.from(item)),
+            if (item is Map)
+              SocialAccount.fromJson(Map<String, dynamic>.from(item)),
         ],
         canDirectPublish: json['can_direct_publish'] as bool?,
         connectionId: json['connection_id'] as String?,
@@ -185,12 +200,73 @@ class SocialDraft {
   final String? videoUrl;
 
   factory SocialDraft.fromJson(Map<String, dynamic> json) => SocialDraft(
-        jobId: json['job_id'].toString(),
-        filename: json['filename'] as String? ?? '',
-        caption: json['caption'] as String? ?? '',
-        youtubeTitle: json['youtube_title'] as String? ?? '',
-        videoUrl: json['video_url'] as String?,
+    jobId: json['job_id'].toString(),
+    filename: json['filename'] as String? ?? '',
+    caption: json['caption'] as String? ?? '',
+    youtubeTitle: json['youtube_title'] as String? ?? '',
+    videoUrl: json['video_url'] as String?,
+  );
+}
+
+/// One grounded AI/local caption option returned by the suggestion preview API.
+class CaptionVariant {
+  const CaptionVariant({
+    required this.caption,
+    required this.tone,
+    required this.hashtags,
+    this.reason = '',
+  });
+
+  final String caption;
+  final String tone;
+  final List<String> hashtags;
+  final String reason;
+
+  factory CaptionVariant.fromJson(Map<String, dynamic> json) => CaptionVariant(
+    caption: json['caption'] as String? ?? '',
+    tone: json['tone'] as String? ?? 'ai',
+    hashtags: [
+      for (final tag in (json['hashtags'] as List? ?? const []))
+        if (tag is String && tag.trim().isNotEmpty) tag.trim(),
+    ],
+    reason: json['reason'] as String? ?? '',
+  );
+}
+
+/// Backward-compatible preview response: older servers only return `caption`.
+class CaptionSuggestions {
+  const CaptionSuggestions({
+    required this.variants,
+    required this.generator,
+    required this.fallback,
+  });
+
+  final List<CaptionVariant> variants;
+  final String generator;
+  final bool fallback;
+
+  factory CaptionSuggestions.fromJson(Map<String, dynamic> json) {
+    final variants = [
+      for (final item in (json['variants'] as List? ?? const []))
+        if (item is Map)
+          CaptionVariant.fromJson(Map<String, dynamic>.from(item)),
+    ].where((item) => item.caption.isNotEmpty).toList();
+    if (variants.isEmpty &&
+        (json['caption'] as String? ?? '').trim().isNotEmpty) {
+      variants.add(
+        CaptionVariant(
+          caption: (json['caption'] as String).trim(),
+          tone: json['fallback'] == true ? 'local' : 'gợi ý',
+          hashtags: const [],
+        ),
       );
+    }
+    return CaptionSuggestions(
+      variants: variants,
+      generator: json['generator'] as String? ?? 'local-extractive-v4',
+      fallback: json['fallback'] == true,
+    );
+  }
 }
 
 /// One publish request and its progress on the platform.
@@ -205,9 +281,12 @@ class PublishAttempt {
   String get status => raw['status'] as String? ?? 'READY';
   String? get mode => raw['mode'] as String?;
   String? get errorMessage => raw['error_message'] as String?;
-  bool get hasRemote => raw['remote_media_id'] != null || raw['remote_post_id'] != null;
-  DateTime? get scheduledFor => DateTime.tryParse(raw['scheduled_for']?.toString() ?? '')?.toLocal();
-  DateTime? get createdAt => DateTime.tryParse(raw['created_at']?.toString() ?? '')?.toLocal();
+  bool get hasRemote =>
+      raw['remote_media_id'] != null || raw['remote_post_id'] != null;
+  DateTime? get scheduledFor =>
+      DateTime.tryParse(raw['scheduled_for']?.toString() ?? '')?.toLocal();
+  DateTime? get createdAt =>
+      DateTime.tryParse(raw['created_at']?.toString() ?? '')?.toLocal();
 
   int? get percent {
     final detail = raw['status_detail'];
@@ -224,7 +303,13 @@ class PublishAttempt {
   String get label => statusLabels[status] ?? status;
 
   static const activeStatuses = {
-    'READY', 'SCHEDULED_LOCAL', 'CLAIMED', 'UPLOADING', 'PROCESSING_REMOTE', 'SUBMITTING', 'NEEDS_RECONCILIATION',
+    'READY',
+    'SCHEDULED_LOCAL',
+    'CLAIMED',
+    'UPLOADING',
+    'PROCESSING_REMOTE',
+    'SUBMITTING',
+    'NEEDS_RECONCILIATION',
   };
 
   static const statusLabels = {
@@ -241,7 +326,8 @@ class PublishAttempt {
     'NEEDS_RECONCILIATION': 'Cần đối soát',
   };
 
-  factory PublishAttempt.fromJson(Map<String, dynamic> json) => PublishAttempt(json);
+  factory PublishAttempt.fromJson(Map<String, dynamic> json) =>
+      PublishAttempt(json);
 }
 
 /// Body of `POST /api/v1/jobs/{job_id}/social-publishes`, built the way the
@@ -260,7 +346,11 @@ Map<String, dynamic> buildPublishPayload({
 }) {
   final options = switch (platform.code) {
     'TIKTOK' => {'privacy_level': tiktokPrivacy},
-    'YOUTUBE' => {'title': youtubeTitle.trim(), 'privacy': youtubePrivacy, 'category_id': '22'},
+    'YOUTUBE' => {
+      'title': youtubeTitle.trim(),
+      'privacy': youtubePrivacy,
+      'category_id': '22',
+    },
     _ => <String, dynamic>{},
   };
   return {
@@ -271,7 +361,9 @@ Map<String, dynamic> buildPublishPayload({
     'options': options,
     'reviewed': true,
     'idempotency_key': idempotencyKey,
-    'scheduled_for': mode == PublishMode.scheduleLocal ? scheduledFor?.toUtc().toIso8601String() : null,
+    'scheduled_for': mode == PublishMode.scheduleLocal
+        ? scheduledFor?.toUtc().toIso8601String()
+        : null,
     if (account?.connectionId != null)
       'connection_id': account!.connectionId
     else if (account != null)
@@ -292,17 +384,24 @@ String? publishBlocker({
   DateTime? now,
 }) {
   if (auth == null) return 'Đang tải trạng thái kết nối';
-  if (!auth.configured) return '${platform.name} chưa được cấu hình trên máy chủ';
-  if (!auth.connected || account == null) return 'Hãy kết nối tài khoản ${platform.name}';
-  if (platform.code == 'TIKTOK' && mode != PublishMode.draft && auth.canDirectPublish == false) {
+  if (!auth.configured)
+    return '${platform.name} chưa được cấu hình trên máy chủ';
+  if (!auth.connected || account == null)
+    return 'Hãy kết nối tài khoản ${platform.name}';
+  if (platform.code == 'TIKTOK' &&
+      mode != PublishMode.draft &&
+      auth.canDirectPublish == false) {
     return 'Kết nối TikTok chưa có quyền đăng video, hãy kết nối lại';
   }
   if (caption.length > 2200) return 'Nội dung dài quá 2.200 ký tự';
-  if (platform.code == 'INSTAGRAM' && caption.trim().isEmpty) return 'Instagram cần có nội dung bài đăng';
-  if (platform.code == 'YOUTUBE' && youtubeTitle.trim().isEmpty) return 'Nhập tiêu đề YouTube';
+  if (platform.code == 'INSTAGRAM' && caption.trim().isEmpty)
+    return 'Instagram cần có nội dung bài đăng';
+  if (platform.code == 'YOUTUBE' && youtubeTitle.trim().isEmpty)
+    return 'Nhập tiêu đề YouTube';
   if (mode == PublishMode.scheduleLocal) {
     if (scheduledFor == null) return 'Chọn thời gian đăng';
-    if (!scheduledFor.isAfter(now ?? DateTime.now())) return 'Thời gian hẹn phải ở tương lai';
+    if (!scheduledFor.isAfter(now ?? DateTime.now()))
+      return 'Thời gian hẹn phải ở tương lai';
   }
   if (!reviewed) return 'Hãy xác nhận đã xem lại video và nội dung';
   return null;

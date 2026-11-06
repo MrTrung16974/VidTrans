@@ -77,6 +77,11 @@ class FrontendStaticTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("chắc chắn muốn tải lại", javascript)
         self.assertIn("resolvedBrowserUrl || lastBrowserUrl", javascript)
         self.assertIn('class="tiktok-repost-button"', html)
+        for element_id in ("tiktokCaptionTone", "tiktokCaptionVariants", "tiktokCaptionSuggestionSource"):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("result.variants", javascript)
+        self.assertIn("Tạo bởi ${result.generator}", javascript)
+        self.assertIn("caption-variant-tab", javascript)
 
     async def test_source_links_include_youtube_and_facebook(self):
         frontend = Path(__file__).resolve().parents[2] / "web"

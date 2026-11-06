@@ -5,7 +5,7 @@ import { unconfiguredStatus, unconfiguredTitle } from "./connection-copy.js?v=20
 export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = () => null, canManageAllVideos = () => false }) {
   const $ = selector => document.querySelector(selector);
   let status = null, apiStatus = null, draft = null, timer = null, apiTimer = null, refreshing = false, loading = false, submitting = false;
-  let suggestion = null, suggesting = false;
+  let suggestion = null, suggestions = [], suggesting = false;
   let requestVersion = 0, locked = false, attemptId = null, activeJobId = null;
   let publishAttempt = null, publishTimer = null, publishSubmitting = false, publishKey = null;
   const edits = new Map();
@@ -202,6 +202,7 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
     if (draft) edits.set(draft.job_id, $('#tiktokCaption').value);
     const version = ++requestVersion;
     suggestion = null;
+    suggestions = [];
     $('#tiktokCaptionSuggestion').classList.add('is-hidden');
     loading = true;
     $('#tiktokReviewConsent').checked = false;
@@ -446,10 +447,33 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
     suggesting = true; controls();
     $('#tiktokSuggestCaption').textContent = 'Đang gợi ý…';
     try {
-      const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}/tiktok-caption`, { method: 'POST' });
+      const tone = $('#tiktokCaptionTone').value || 'auto';
+      const result = await requestJson(`/api/v1/jobs/${encodeURIComponent(draft.job_id)}/tiktok-caption?tone=${encodeURIComponent(tone)}`, { method: 'POST' });
       if (locked || version !== requestVersion) return;
-      suggestion = result.caption;
-      $('#tiktokCaptionSuggestionText').textContent = suggestion;
+      suggestions = Array.isArray(result.variants) && result.variants.length
+        ? result.variants
+        : [{ caption: result.caption, tone: result.fallback ? 'local' : 'ai', reason: '' }];
+      suggestion = suggestions[0].caption;
+      const tabs = $('#tiktokCaptionVariants');
+      tabs.replaceChildren();
+      const selectSuggestion = (item, button) => {
+        suggestion = item.caption;
+        $('#tiktokCaptionSuggestionText').textContent = suggestion;
+        tabs.querySelectorAll('button').forEach(candidate => candidate.classList.toggle('is-active', candidate === button));
+      };
+      suggestions.forEach((item, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'caption-variant-tab';
+        button.textContent = `${index + 1}. ${item.tone || 'Gợi ý'}`;
+        button.title = item.reason || '';
+        button.addEventListener('click', () => selectSuggestion(item, button));
+        tabs.append(button);
+        if (index === 0) selectSuggestion(item, button);
+      });
+      $('#tiktokCaptionSuggestionSource').textContent = result.fallback
+        ? 'Bản local dự phòng'
+        : `Tạo bởi ${result.generator}`;
       $('#tiktokCaptionSuggestion').classList.remove('is-hidden');
     } catch (error) { if (!locked && version === requestVersion) toast(error.message, true); }
     finally { suggesting = false; $('#tiktokSuggestCaption').textContent = '✦ Gợi ý caption'; controls(); }

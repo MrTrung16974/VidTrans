@@ -65,6 +65,22 @@ class AudioDurationIntegrationTests(unittest.TestCase):
         self.assertIn("overlay=120:500", value)
         self.assertNotIn("ih*0.32", value)
 
+    def test_localized_blur_filter_aligns_odd_ocr_box_for_yuv420(self) -> None:
+        value = add_localized_subtitle_blur(
+            "subtitles=sample.ass",
+            [{
+                "start": 0.0,
+                "end": 1.0,
+                "subtitle_layout": {
+                    "mask_original": True,
+                    "mask": {"x": 411, "y": 1006, "width": 1077, "height": 36},
+                },
+            }],
+            {"background_style": "blurred_bottom", "background_color_css": "#000000"},
+        )
+        self.assertIn("crop=1078:36:410:1006", value)
+        self.assertIn("overlay=410:1006", value)
+
     def test_post_pitch_shift_keeps_clip_duration(self) -> None:
         self.assertEqual(build_pitch_shift_filter(1.0), "")
         with tempfile.TemporaryDirectory(prefix="vidtrans-pitch-") as directory:

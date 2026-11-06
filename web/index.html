@@ -1284,6 +1284,16 @@
                   <textarea id="tiktokCaption" rows="6" maxlength="2200" placeholder="Viết nội dung thu hút, thêm hashtag #viral #trend cho video của bạn…" aria-describedby="tiktokCaptionCount"></textarea>
                   
                   <div class="tiktok-caption-meta">
+                    <label class="caption-tone-control" for="tiktokCaptionTone">
+                      <span>Phong cách</span>
+                      <select id="tiktokCaptionTone">
+                        <option value="auto">AI tự chọn</option>
+                        <option value="natural">Tự nhiên</option>
+                        <option value="curious">Gợi tò mò</option>
+                        <option value="emotional">Cảm xúc</option>
+                        <option value="expert">Có chiều sâu</option>
+                      </select>
+                    </label>
                     <button id="tiktokSuggestCaption" type="button" class="ai-suggest-btn">
                       <span class="sparkle-icon">✦</span> Gợi ý caption bằng AI
                     </button>
@@ -1295,8 +1305,10 @@
                   <div id="tiktokCaptionSuggestion" class="tiktok-caption-suggestion is-hidden" aria-live="polite">
                     <div class="suggestion-header">
                       <span class="suggestion-icon">💡</span>
-                      <strong>Gợi ý từ bản dịch AI</strong>
+                      <strong>Gợi ý caption</strong>
+                      <span id="tiktokCaptionSuggestionSource" class="suggestion-source"></span>
                     </div>
+                    <div id="tiktokCaptionVariants" class="caption-variant-tabs" aria-label="Các phương án caption"></div>
                     <p id="tiktokCaptionSuggestionText"></p>
                     <small>Đọc lại để bảo đảm chuẩn ý và đúng văn phong trước khi áp dụng.</small>
                     <div class="suggestion-actions">

@@ -2656,6 +2656,16 @@ def add_localized_subtitle_blur(
         height = max(2, int(round(float(mask.get("height", 0)))))
         x = max(0, int(round(float(mask.get("x", 0)))))
         y = max(0, int(round(float(mask.get("y", 0)))))
+        # The source is normally yuv420p, whose chroma planes require each
+        # crop coordinate and size to be even.  OCR boxes are pixel-precise
+        # and can be odd (for example 1077px wide at x=411), which makes
+        # boxblur fail with an otherwise opaque "Invalid argument" error.
+        right = x + width
+        bottom = y + height
+        x -= x % 2
+        y -= y % 2
+        width = max(2, (right + 1) // 2 * 2 - x)
+        height = max(2, (bottom + 1) // 2 * 2 - y)
         start, end = subtitle_render_window(segments, index)
         regions.append((x, y, width, height, start, end))
     if not regions:
