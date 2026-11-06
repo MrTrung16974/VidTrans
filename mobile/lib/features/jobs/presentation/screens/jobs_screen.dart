@@ -56,15 +56,21 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
     super.dispose();
   }
 
-  void _startSelecting([Job? first]) => setState(() {
-    _selecting = true;
-    if (first != null) _selectedIds.add(first.id);
-  });
+  void _startSelecting([Job? first]) {
+    ref.read(isJobSelectingProvider.notifier).state = true;
+    setState(() {
+      _selecting = true;
+      if (first != null) _selectedIds.add(first.id);
+    });
+  }
 
-  void _stopSelecting() => setState(() {
-    _selecting = false;
-    _selectedIds.clear();
-  });
+  void _stopSelecting() {
+    ref.read(isJobSelectingProvider.notifier).state = false;
+    setState(() {
+      _selecting = false;
+      _selectedIds.clear();
+    });
+  }
 
   void _toggle(Job job) => setState(() {
     if (!_selectedIds.remove(job.id)) _selectedIds.add(job.id);
@@ -412,33 +418,65 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                       const SizedBox(height: 10),
                       SizedBox(
                         height: 36,
-                        child: ListView(
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            for (final status in JobsScreen._filters)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: ChoiceChip(
-                                  showCheckmark: false,
-                                  label: Text(
-                                    status == null
-                                        ? 'Tất cả'
-                                        : jobStatusLabels[status]!,
+                        child: ShaderMask(
+                          shaderCallback: (bounds) {
+                            return const LinearGradient(
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                              colors: [
+                                Colors.black,
+                                Colors.black,
+                                Colors.transparent,
+                              ],
+                              stops: [0.0, 0.92, 1.0],
+                            ).createShader(bounds);
+                          },
+                          blendMode: BlendMode.dstIn,
+                          child: ListView(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.only(right: 16),
+                            physics: const BouncingScrollPhysics(),
+                            children: [
+                              for (final status in JobsScreen._filters)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 6),
+                                  child: ChoiceChip(
+                                    showCheckmark: false,
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 2,
+                                    ),
+                                    label: Text(
+                                      status == null
+                                          ? 'Tất cả'
+                                          : status == 'paused'
+                                              ? 'Tạm dừng'
+                                              : status == 'completed'
+                                                  ? 'Hoàn tất'
+                                                  : jobStatusLabels[status]!,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: filter == status
+                                            ? FontWeight.w800
+                                            : FontWeight.w600,
+                                      ),
+                                    ),
+                                    selected: filter == status,
+                                    onSelected: (_) {
+                                      ref.read(jobPageProvider.notifier).state =
+                                          1;
+                                      ref
+                                              .read(
+                                                jobStatusFilterProvider.notifier,
+                                              )
+                                              .state =
+                                          status;
+                                    },
                                   ),
-                                  selected: filter == status,
-                                  onSelected: (_) {
-                                    ref.read(jobPageProvider.notifier).state =
-                                        1;
-                                    ref
-                                            .read(
-                                              jobStatusFilterProvider.notifier,
-                                            )
-                                            .state =
-                                        status;
-                                  },
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ],

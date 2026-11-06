@@ -9,6 +9,8 @@ import '../../../../core/config/env.dart';
 import '../../../../core/errors/api_exception.dart';
 import '../../../../core/widgets/studio_widgets.dart';
 import '../../../home/presentation/screens/home_shell.dart';
+import '../../../logo_branding/presentation/providers/branding_providers.dart';
+import '../../../logo_branding/presentation/widgets/auth_image.dart';
 import '../../data/profile_repository.dart';
 import '../providers/profile_providers.dart';
 import '../widgets/quota_card.dart';
@@ -58,6 +60,17 @@ class ProfileScreen extends ConsumerWidget {
     final billing = ref.watch(billingOverviewProvider);
     if (account == null) return const Scaffold(body: SizedBox.shrink());
 
+    final branding = ref.watch(brandingSettingsProvider).valueOrNull;
+    final logoPath = branding?.logo?.url;
+    final Widget avatarWidget = (logoPath != null && logoPath.isNotEmpty)
+        ? AuthImage(
+            logoPath,
+            width: 52,
+            height: 52,
+            fit: BoxFit.contain,
+          )
+        : const VidTransLogo(size: 52);
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: const StudioTopBar(),
@@ -94,22 +107,14 @@ class ProfileScreen extends ConsumerWidget {
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      gradient: AppColors.brandGradient,
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: AppColors.brandGlowShadow,
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      account.name.characters.first.toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 21,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      width: 52,
+                      height: 52,
+                      color: Colors.white,
+                      padding: const EdgeInsets.all(2),
+                      child: avatarWidget,
                     ),
                   ),
                   const SizedBox(width: 14),

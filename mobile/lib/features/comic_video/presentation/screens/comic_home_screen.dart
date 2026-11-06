@@ -20,11 +20,10 @@ class ComicHomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final readOnly = comicReadOnly(ref);
-    return DefaultTabController(
+    return const DefaultTabController(
       length: 2,
       child: Scaffold(
-        appBar: const StudioTopBar(
+        appBar: StudioTopBar(
           bottom: TabBar(
             tabs: [
               Tab(text: 'Truyện'),
@@ -32,24 +31,7 @@ class ComicHomeScreen extends ConsumerWidget {
             ],
           ),
         ),
-        floatingActionButton: readOnly
-            ? null
-            : Padding(
-                padding: EdgeInsets.only(bottom: studioDockClearance(context)),
-                child: FloatingActionButton.extended(
-                  onPressed: () => context.push('/comic/new'),
-                  backgroundColor: const Color(0xFFEA580C),
-                  foregroundColor: Colors.white,
-                  elevation: 6,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-                  icon: const Icon(Icons.add_rounded, size: 20),
-                  label: const Text(
-                    'Tạo truyện mới',
-                    style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: -0.1),
-                  ),
-                ),
-              ),
-        body: const TabBarView(children: [_SeriesTab(), _VideosTab()]),
+        body: TabBarView(children: [_SeriesTab(), _VideosTab()]),
       ),
     );
   }

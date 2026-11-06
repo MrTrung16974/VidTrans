@@ -120,7 +120,7 @@ export function createClipWorkspace({ requestJson, toast, escapeHtml }) {
     if (!source) return;
     const duration = source.duration || 1;
     const ticks = source.cues.map(cue => `<span class="clip-cue" style="left:${(cue.start / duration) * 100}%;width:${Math.max(0.15, ((cue.end - cue.start) / duration) * 100)}%"></span>`).join("");
-    const ranges = clips.map((clip, index) => `<span class="clip-range${clipError(clip) ? " is-invalid" : ""}" style="left:${(clip.start / duration) * 100}%;width:${((clip.end - clip.start) / duration) * 100}%" title="${escapeHtml(clip.title || `Phần ${index + 1}`)}">${index + 1}</span>`).join("");
+    const ranges = clips.map((clip, index) => `<span class="clip-range${clipError(clip) ? " is-invalid" : ""}" data-range-index="${index}" style="left:${(clip.start / duration) * 100}%;width:${((clip.end - clip.start) / duration) * 100}%" title="${escapeHtml(clip.title || `Phần ${index + 1}`)}"><span class="clip-range-handle start" data-handle="start" title="Kéo mốc bắt đầu"></span><span class="clip-range-label">${index + 1}</span><span class="clip-range-handle end" data-handle="end" title="Kéo mốc kết thúc"></span></span>`).join("");
     timeline.innerHTML = `${ticks}${ranges}<span class="clip-playhead" id="clipPlayhead"></span>`;
     syncPlayhead();
     list.innerHTML = clips.map((clip, index) => {
@@ -129,8 +129,12 @@ export function createClipWorkspace({ requestJson, toast, escapeHtml }) {
         <span class="clip-number">${index + 1}</span>
         <input class="clip-title" data-field="title" maxlength="120" value="${escapeHtml(clip.title)}" placeholder="Phần ${index + 1}" aria-label="Tiêu đề clip ${index + 1}" />
         <label class="clip-time clip-start">Từ <input data-field="start" inputmode="decimal" value="${formatClipTime(clip.start)}" />
+          <button type="button" class="button secondary mini-btn" data-action="start-minus" title="Lùi 0.5s">-0.5s</button>
+          <button type="button" class="button secondary mini-btn" data-action="start-plus" title="Tiến 0.5s">+0.5s</button>
           <button type="button" class="button secondary mini-btn" data-action="start-here" title="Lấy vị trí đang xem">⌖</button></label>
         <label class="clip-time clip-end">đến <input data-field="end" inputmode="decimal" value="${formatClipTime(clip.end)}" />
+          <button type="button" class="button secondary mini-btn" data-action="end-minus" title="Lùi 0.5s">-0.5s</button>
+          <button type="button" class="button secondary mini-btn" data-action="end-plus" title="Tiến 0.5s">+0.5s</button>
           <button type="button" class="button secondary mini-btn" data-action="end-here" title="Lấy vị trí đang xem">⌖</button></label>
         <select data-field="frame" aria-label="Khung hình clip ${index + 1}">
           ${frameOptions(clip.frame)}
@@ -242,6 +246,10 @@ export function createClipWorkspace({ requestJson, toast, escapeHtml }) {
     if (action === "remove") clips.splice(index, 1);
     if (action === "start-here") clip.start = video.currentTime;
     if (action === "end-here") clip.end = video.currentTime;
+    if (action === "start-minus") clip.start = Math.max(0, Number((clip.start - 0.5).toFixed(2)));
+    if (action === "start-plus") clip.start = Math.min(clip.end - 0.5, Number((clip.start + 0.5).toFixed(2)));
+    if (action === "end-minus") clip.end = Math.max(clip.start + 0.5, Number((clip.end - 0.5).toFixed(2)));
+    if (action === "end-plus") clip.end = Math.min(source.duration, Number((clip.end + 0.5).toFixed(2)));
     if (action === "preview") {
       video.currentTime = clip.start;
       previewEnd = clip.end;
@@ -322,8 +330,48 @@ export function createClipWorkspace({ requestJson, toast, escapeHtml }) {
   list.addEventListener("change", onRowInput);
   list.addEventListener("click", onRowClick);
   video.addEventListener("timeupdate", syncPlayhead);
+  let activeDrag = null;
+  timeline.addEventListener("pointerdown", event => {
+    const handle = event.target.closest("[data-handle]");
+    const range = event.target.closest("[data-range-index]");
+    if (handle && range) {
+      event.preventDefault();
+      event.stopPropagation();
+      activeDrag = {
+        index: Number(range.dataset.rangeIndex),
+        handle: handle.dataset.handle,
+      };
+      try { timeline.setPointerCapture(event.pointerId); } catch (_) {}
+    }
+  });
+  timeline.addEventListener("pointermove", event => {
+    if (!activeDrag || !source) return;
+    const box = timeline.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
+    const time = Number((ratio * source.duration).toFixed(2));
+    const clip = clips[activeDrag.index];
+    if (!clip) return;
+    if (activeDrag.handle === "start") {
+      clip.start = Math.max(0, Math.min(clip.end - 0.5, time));
+      video.currentTime = clip.start;
+    } else {
+      clip.end = Math.min(source.duration, Math.max(clip.start + 0.5, time));
+      video.currentTime = clip.end;
+    }
+    renderPlan();
+  });
+  const stopTimelineDrag = event => {
+    if (activeDrag) {
+      try { timeline.releasePointerCapture(event.pointerId); } catch (_) {}
+      activeDrag = null;
+    }
+  };
+  timeline.addEventListener("pointerup", stopTimelineDrag);
+  timeline.addEventListener("pointercancel", stopTimelineDrag);
+
   timeline.addEventListener("click", event => {
-    if (!source) return;
+    if (!source || activeDrag) return;
+    if (event.target.closest("[data-handle]")) return;
     const box = timeline.getBoundingClientRect();
     video.currentTime = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width)) * source.duration;
     previewEnd = null;

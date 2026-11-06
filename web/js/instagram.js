@@ -14,7 +14,7 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
   const selectedAccount = () => selectedOption()?.dataset.accountId || $('#instagramAccount').value || auth?.account_id || '';
   const selectedConnection = () => selectedOption()?.dataset.connectionId || auth?.connection_id || '';
 
-  function controls() {
+  function syncPublishGate() {
     const draft = getDraft(), caption = getCaption(), mode = $('#instagramPublishMode').value;
     const scheduleValid = mode !== 'SCHEDULE_LOCAL' || Boolean($('#instagramScheduleAt').value);
     $('#instagramScheduleField').classList.toggle('is-hidden', mode !== 'SCHEDULE_LOCAL');
@@ -24,6 +24,7 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
       || !$('#instagramReviewConsent').checked || ACTIVE_STATUSES.has(attempt?.status);
     $('#instagramCancel').classList.toggle('is-hidden', attempt?.status !== 'SCHEDULED_LOCAL');
   }
+  const controls = syncPublishGate;
 
   function renderAuth(result) {
     auth = result;
@@ -65,8 +66,9 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
     if (!attempt) return controls();
     $('#instagramPublishStatusTitle').textContent = STATUS_LABELS[attempt.status] || attempt.status;
     let message = attempt.error_message || '';
+    const pct = attempt.progress_percent ?? attempt.status_detail?.percent;
     if (!message && attempt.status === 'SCHEDULED_LOCAL') message = `VidTrans sẽ đăng lúc ${new Date(attempt.scheduled_for).toLocaleString('vi-VN')}.`;
-    if (!message && attempt.status === 'UPLOADING' && attempt.status_detail?.percent != null) message = `Đang gửi Reel · ${attempt.status_detail.percent}%`;
+    if (!message && attempt.status === 'UPLOADING' && pct != null) message = `Đang gửi Reel · ${pct}%`;
     if (!message && attempt.status === 'PROCESSING_REMOTE') message = 'Instagram đang tải và xử lý video từ máy chủ.';
     if (!message && attempt.status === 'PUBLISHED') message = 'Instagram đã xác nhận Reel được xuất bản.';
     $('#instagramPublishStatusMessage').textContent = message || 'Trạng thái sẽ tự cập nhật.';
@@ -135,11 +137,11 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
     }
     catch (error) { toast(error.message, true); }
   });
-  $('#instagramAccount').addEventListener('change', event => { key = null; $('#instagramReviewConsent').checked = false; refreshAuth(event.target.value); });
+  $('#instagramAccount').addEventListener('change', event => { key = null; refreshAuth(event.target.value); });
   for (const selector of ['#instagramPublishMode', '#instagramScheduleAt', '#instagramShareToFeed']) {
-    $(selector).addEventListener('change', () => { key = null; $('#instagramReviewConsent').checked = false; controls(); });
+    $(selector).addEventListener('change', () => { key = null; syncPublishGate(); });
   }
-  $('#instagramReviewConsent').addEventListener('change', controls);
+  $('#instagramReviewConsent').addEventListener('change', syncPublishGate);
   $('#instagramPublish').addEventListener('click', submit);
   $('#instagramCancel').addEventListener('click', async () => {
     if (attempt?.status !== 'SCHEDULED_LOCAL') return;
@@ -150,8 +152,8 @@ export function createInstagramWorkspace({ requestJson, toast, getDraft, getCapt
   return {
     enter() { active = true; refreshAuth(); loadAttempts(); },
     leave() { active = false; clearTimeout(timer); timer = null; },
-    setDraft() { key = null; attempt = null; $('#instagramReviewConsent').checked = false; loadAttempts(); controls(); },
-    changed() { key = null; $('#instagramReviewConsent').checked = false; controls(); },
-    lock() { active = false; clearTimeout(timer); timer = null; auth = null; attempt = null; key = null; controls(); },
+    setDraft() { key = null; attempt = null; $('#instagramReviewConsent').checked = false; loadAttempts(); syncPublishGate(); },
+    changed() { key = null; syncPublishGate(); },
+    lock() { active = false; clearTimeout(timer); timer = null; auth = null; attempt = null; key = null; syncPublishGate(); },
   };
 }

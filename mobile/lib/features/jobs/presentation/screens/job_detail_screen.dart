@@ -373,6 +373,81 @@ class _JobDetail extends ConsumerWidget {
             !readOnly &&
             (account?.canUsePhotoPosts ?? false))
           _PhotoPostChoiceCard(job: job),
+        if (!readOnly && (job.canPause || job.canResume || job.canCancel || job.canDownloadOnly || job.canRetry)) ...[
+          const SizedBox(height: 12),
+          StudioCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (job.canPause)
+                  FilledButton.tonalIcon(
+                    onPressed: () => _run(
+                      context,
+                      ref,
+                      () => repo.pause(job.id),
+                      'Đang tạm dừng tại điểm an toàn',
+                    ),
+                    icon: const Icon(Icons.pause_rounded, size: 18),
+                    label: const Text('Tạm dừng'),
+                  ),
+                if (job.canResume)
+                  FilledButton.icon(
+                    onPressed: () => _run(
+                      context,
+                      ref,
+                      () => repo.resume(job.id),
+                      'Đã đưa công việc trở lại hàng đợi',
+                    ),
+                    icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                    label: const Text('Tiếp tục'),
+                  ),
+                if (job.canRetry)
+                  FilledButton.tonalIcon(
+                    onPressed: () => _run(
+                      context,
+                      ref,
+                      () => repo.retry(job.id),
+                      'Đã đưa vào hàng đợi lại',
+                    ),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Chạy lại'),
+                  ),
+                if (job.canCancel)
+                  OutlinedButton.icon(
+                    onPressed: () => _run(
+                      context,
+                      ref,
+                      () => repo.cancel(job.id),
+                      'Đã gửi yêu cầu hủy',
+                    ),
+                    icon: const Icon(
+                      Icons.stop_circle_outlined,
+                      size: 18,
+                      color: AppColors.red,
+                    ),
+                    label: const Text(
+                      'Hủy công việc',
+                      style: TextStyle(color: AppColors.red),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.redBorder),
+                      backgroundColor: AppColors.redSoft,
+                    ),
+                  ),
+                if (job.canDownloadOnly)
+                  FilledButton.icon(
+                    onPressed: () => confirmDownloadOnly(context, ref, job),
+                    icon: const Icon(Icons.download_rounded, size: 18),
+                    label: const Text('Chỉ tải video (không lồng tiếng)'),
+                  ),
+              ],
+            ),
+          ),
+        ],
         JobDownloads(job: job),
         const SizedBox(height: 14),
         _JobInfoCard(job: job),

@@ -88,10 +88,10 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
     super.dispose();
   }
 
-  void _changed(VoidCallback update) {
+  void _changed(VoidCallback update, {bool resetReview = false}) {
     setState(() {
       update();
-      _reviewed = false;
+      if (resetReview) _reviewed = false;
       _idempotencyKey = null;
     });
   }
@@ -424,7 +424,7 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
                         if (!platform.modes.contains(_mode)) {
                           _mode = PublishMode.directNow;
                         }
-                      }),
+                      }, resetReview: true),
                     ),
                 ],
               ),
@@ -455,7 +455,10 @@ class _PublishFormState extends ConsumerState<_PublishForm> {
                         ],
                         onChanged: readOnly
                             ? null
-                            : (value) => _changed(() => _accountKey = value),
+                            : (value) => _changed(
+                                () => _accountKey = value,
+                                resetReview: true,
+                              ),
                       ),
               ),
               const SizedBox(height: 14),

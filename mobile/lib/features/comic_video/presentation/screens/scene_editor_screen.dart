@@ -382,21 +382,16 @@ class _SceneEditorState extends ConsumerState<_SceneEditor> {
               decoration: deco('Lời dẫn chuyện'),
             ),
             const SizedBox(height: 10),
-            TextField(
+            _DialogueListEditor(
               controller: _dialogue,
+              characters: storyboard.characters,
               enabled: canEdit,
-              minLines: 2,
-              maxLines: 6,
-              decoration: deco('Lời thoại — mỗi dòng id_nhân_vật: lời'),
             ),
             const SizedBox(height: 12),
-            TextField(
+            _CharacterChipsEditor(
               controller: _characters,
+              characters: storyboard.characters,
               enabled: canEdit,
-              decoration: deco(
-                'Nhân vật xuất hiện (id, cách nhau dấu phẩy)',
-                hint: storyboard.characters.map((c) => c.id).join(', '),
-              ),
             ),
             const SizedBox(height: 12),
             if (storyboard.locations.isNotEmpty) ...[
@@ -853,12 +848,10 @@ class _ShotSheetState extends ConsumerState<_ShotSheet> {
           decoration: deco('Lời dẫn'),
         ),
         gap,
-        TextField(
+        _DialogueListEditor(
           controller: _dialogue,
+          characters: widget.project.storyboard?.characters ?? const [],
           enabled: canEdit,
-          minLines: 1,
-          maxLines: 4,
-          decoration: deco('Lời thoại — id: lời'),
         ),
         gap,
         TextField(
@@ -882,7 +875,11 @@ class _ShotSheetState extends ConsumerState<_ShotSheet> {
               decoration: deco('Khung hình đầu (tiếng Anh)'),
             ),
             gap,
-            TextField(controller: _characters, enabled: canEdit, decoration: deco('Nhân vật (id, dấu phẩy)')),
+            _CharacterChipsEditor(
+              controller: _characters,
+              characters: widget.project.storyboard?.characters ?? const [],
+              enabled: canEdit,
+            ),
             gap,
             Row(children: [
               Expanded(
@@ -983,4 +980,339 @@ Future<List<String>?> _askTexts(BuildContext context, String title, List<(String
       ],
     ),
   );
+}
+
+class _CharacterChipsEditor extends StatefulWidget {
+  const _CharacterChipsEditor({
+    required this.controller,
+    required this.characters,
+    required this.enabled,
+  });
+
+  final TextEditingController controller;
+  final List<ComicCharacter> characters;
+  final bool enabled;
+
+  @override
+  State<_CharacterChipsEditor> createState() => _CharacterChipsEditorState();
+}
+
+class _CharacterChipsEditorState extends State<_CharacterChipsEditor> {
+  void _toggle(String id) {
+    final ids = splitIds(widget.controller.text);
+    if (ids.contains(id)) {
+      ids.remove(id);
+    } else {
+      ids.add(id);
+    }
+    setState(() {
+      widget.controller.text = ids.join(', ');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = splitIds(widget.controller.text).toSet();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Nhân vật xuất hiện trong cảnh',
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
+            color: AppColors.inkSoft,
+          ),
+        ),
+        if (widget.characters.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final c in widget.characters)
+                FilterChip(
+                  label: Text('${c.name} (${c.id})'),
+                  selected: selected.contains(c.id),
+                  onSelected: widget.enabled ? (_) => _toggle(c.id) : null,
+                  selectedColor: AppColors.brandSoft,
+                  checkmarkColor: AppColors.brandDark,
+                  labelStyle: TextStyle(
+                    fontSize: 12,
+                    fontWeight: selected.contains(c.id)
+                        ? FontWeight.w800
+                        : FontWeight.w600,
+                    color: selected.contains(c.id)
+                        ? AppColors.brandDark
+                        : AppColors.ink,
+                  ),
+                ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 8),
+        TextField(
+          controller: widget.controller,
+          enabled: widget.enabled,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            isDense: true,
+            labelText: 'ID nhân vật (cách nhau dấu phẩy)',
+            hintText: widget.characters.isNotEmpty
+                ? widget.characters.map((c) => c.id).join(', ')
+                : 'minh, lan',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DialogueRowDraft {
+  _DialogueRowDraft({required this.character, required String text})
+      : controller = TextEditingController(text: text);
+
+  String character;
+  final TextEditingController controller;
+
+  void dispose() => controller.dispose();
+}
+
+class _DialogueListEditor extends StatefulWidget {
+  const _DialogueListEditor({
+    required this.controller,
+    required this.characters,
+    required this.enabled,
+  });
+
+  final TextEditingController controller;
+  final List<ComicCharacter> characters;
+  final bool enabled;
+
+  @override
+  State<_DialogueListEditor> createState() => _DialogueListEditorState();
+}
+
+class _DialogueListEditorState extends State<_DialogueListEditor> {
+  final List<_DialogueRowDraft> _rows = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _parseInitial();
+  }
+
+  void _parseInitial() {
+    final raw = widget.controller.text.trim();
+    if (raw.isEmpty) return;
+    for (final line in raw.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      final idx = trimmed.indexOf(':');
+      if (idx >= 1) {
+        _rows.add(
+          _DialogueRowDraft(
+            character: trimmed.substring(0, idx).trim(),
+            text: trimmed.substring(idx + 1).trim(),
+          ),
+        );
+      } else {
+        final fallbackChar = widget.characters.firstOrNull?.id ?? 'char_1';
+        _rows.add(_DialogueRowDraft(character: fallbackChar, text: trimmed));
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final r in _rows) {
+      r.dispose();
+    }
+    super.dispose();
+  }
+
+  void _syncToController() {
+    final lines = <String>[];
+    for (final row in _rows) {
+      final charId = row.character.trim().isEmpty
+          ? (widget.characters.firstOrNull?.id ?? 'char_1')
+          : row.character.trim();
+      final text = row.controller.text.trim();
+      if (text.isNotEmpty) {
+        lines.add('$charId: $text');
+      }
+    }
+    widget.controller.text = lines.join('\n');
+  }
+
+  void _addRow() {
+    final defaultChar = widget.characters.firstOrNull?.id ?? 'char_1';
+    setState(() {
+      _rows.add(_DialogueRowDraft(character: defaultChar, text: ''));
+    });
+  }
+
+  void _removeRow(int index) {
+    setState(() {
+      final removed = _rows.removeAt(index);
+      removed.dispose();
+      _syncToController();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final knownChars = {
+      for (final c in widget.characters) c.id: '${c.name} (${c.id})',
+    };
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSubtle,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.chat_bubble_outline_rounded,
+                size: 16,
+                color: AppColors.brandDark,
+              ),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'Lời thoại theo nhân vật',
+                  style: TextStyle(
+                    fontSize: 12.8,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.ink,
+                  ),
+                ),
+              ),
+              if (widget.enabled)
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: _addRow,
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text(
+                    '+ Thêm lời thoại',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+                  ),
+                ),
+            ],
+          ),
+          if (_rows.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                'Chưa có lời thoại trong cảnh này. Bấm "+ Thêm lời thoại" để gán nhân vật nói.',
+                style: TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+            )
+          else
+            for (var i = 0; i < _rows.length; i++) ...[
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 132,
+                    child: knownChars.isNotEmpty
+                        ? DropdownButtonFormField<String>(
+                            key: ValueKey('dlg_char_${i}_${_rows[i].character}'),
+                            initialValue: knownChars.containsKey(_rows[i].character)
+                                ? _rows[i].character
+                                : null,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              labelText: 'Nhân vật',
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 9,
+                              ),
+                            ),
+                            items: [
+                              if (!knownChars.containsKey(_rows[i].character) &&
+                                  _rows[i].character.isNotEmpty)
+                                DropdownMenuItem(
+                                  value: _rows[i].character,
+                                  child: Text(
+                                    _rows[i].character,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                              for (final entry in knownChars.entries)
+                                DropdownMenuItem(
+                                  value: entry.key,
+                                  child: Text(
+                                    entry.value,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                            ],
+                            onChanged: widget.enabled
+                                ? (v) {
+                                    if (v == null) return;
+                                    setState(() => _rows[i].character = v);
+                                    _syncToController();
+                                  }
+                                : null,
+                          )
+                        : TextFormField(
+                            initialValue: _rows[i].character,
+                            enabled: widget.enabled,
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              labelText: 'ID nhân vật',
+                            ),
+                            onChanged: (v) {
+                              _rows[i].character = v;
+                              _syncToController();
+                            },
+                          ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _rows[i].controller,
+                      enabled: widget.enabled,
+                      minLines: 1,
+                      maxLines: 3,
+                      onChanged: (_) => _syncToController(),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: 'Câu thoại',
+                        hintText: 'Nhập lời nhân vật nói…',
+                      ),
+                    ),
+                  ),
+                  if (widget.enabled)
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Xóa dòng thoại',
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: AppColors.muted,
+                      ),
+                      onPressed: () => _removeRow(i),
+                    ),
+                ],
+              ),
+            ],
+        ],
+      ),
+    );
+  }
 }

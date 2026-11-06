@@ -29,7 +29,7 @@ function resolveActionTrigger(element) {
     const href = candidate.getAttribute("href") || "";
     if (href.startsWith("#") || candidate.hasAttribute("data-view-link")) return null;
   }
-  if (candidate.id === "userMenuButton" || candidate.id === "navToggle") return null;
+  if (candidate.id === "userMenuButton" || candidate.id === "themeToggleBtn") return null;
   return candidate;
 }
 
@@ -159,7 +159,8 @@ const state = {
   douyinBrowser: null, douyinBrowserPollTimer: null, douyinBrowserLoaded: false, sessionRefreshTimer: null,
   sourceBrowserPlatform: "douyin", sourceBrowsers: {},
   adminAccounts: [], adminAccountSummary: null, adminRetentionDefaultDays: null, adminSearchTimer: null,
-  billing: null, userLogoUrl: null,
+  billing: null, userLogoUrl: null, userLogoPosition: "top_right",
+  photoPostPreset: "slideshow", previewAspect: "9:16",
   auth: { enabled: false, configured: false, authenticated: false, username: null, role: "viewer", user_id: null },
 };
 const stepLabels = {
@@ -184,14 +185,233 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
 
-function toast(message, isError = false) {
+function toast(message, isError = false, options = {}) {
   const element = $("#toast");
-  element.textContent = message;
-  element.classList.toggle("error", isError);
-  element.classList.add("show");
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => element.classList.remove("show"), 3500);
+  if (element) {
+    element.textContent = message;
+    element.classList.toggle("error", isError);
+    element.classList.add("show");
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => element.classList.remove("show"), 3500);
+  }
+  const stack = $("#toastStack");
+  if (stack && message) {
+    const item = document.createElement("div");
+    item.className = `toast-item ${isError ? "is-error" : "is-success"}`;
+    const body = document.createElement("div");
+    body.className = "toast-item-body";
+    body.textContent = message;
+    item.appendChild(body);
+    if (options.actionLabel && typeof options.onAction === "function") {
+      const actionBtn = document.createElement("button");
+      actionBtn.type = "button";
+      actionBtn.className = "toast-item-action";
+      actionBtn.textContent = options.actionLabel;
+      actionBtn.addEventListener("click", () => {
+        options.onAction();
+        item.remove();
+      });
+      item.appendChild(actionBtn);
+    }
+    const progress = document.createElement("div");
+    progress.className = "toast-item-progress";
+    item.appendChild(progress);
+    stack.appendChild(item);
+    while (stack.children.length > 4) stack.firstElementChild?.remove();
+    setTimeout(() => item.remove(), options.duration || 3600);
+  }
 }
+
+function initStudioTheme() {
+  let saved = "light";
+  try {
+    saved = localStorage.getItem("vidtrans_theme") || "light";
+  } catch (_) {}
+  applyStudioTheme(saved === "dark" ? "dark" : "light", false);
+  $("#themeToggleBtn")?.addEventListener("click", () => {
+    const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    const next = current === "dark" ? "light" : "dark";
+    applyStudioTheme(next, true);
+  });
+}
+
+function applyStudioTheme(theme, persist = true) {
+  if (theme === "dark") {
+    document.documentElement.setAttribute("data-theme", "dark");
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
+  if (persist) {
+    try {
+      localStorage.setItem("vidtrans_theme", theme);
+    } catch (_) {}
+  }
+}
+
+initStudioTheme();
+
+let activeStudioModalResolve = null;
+
+function closeStudioPromptDialog(result = null) {
+  const dialog = $("#studioPromptDialog");
+  if (dialog) {
+    try {
+      if (dialog.open && typeof dialog.close === "function") dialog.close();
+    } catch (_) {}
+    dialog.removeAttribute("open");
+  }
+  if (activeStudioModalResolve) {
+    const resolve = activeStudioModalResolve;
+    activeStudioModalResolve = null;
+    resolve(result);
+  }
+}
+
+window.showStudioPrompt = function showStudioPrompt({
+  title = "Nhập thông tin",
+  subtitle = "",
+  kicker = "CẤU HÌNH STUDIO",
+  fields = null,
+  label = "Giá trị",
+  defaultValue = "",
+  placeholder = "",
+  submitLabel = "Xác nhận",
+  cancelLabel = "Hủy",
+} = {}) {
+  const dialog = $("#studioPromptDialog");
+  if (!dialog) {
+    const fallback = nativePrompt(title, defaultValue);
+    return Promise.resolve(fallback);
+  }
+  if (activeStudioModalResolve) closeStudioPromptDialog(null);
+  $("#studioPromptKicker").textContent = kicker;
+  $("#studioPromptTitle").textContent = title;
+  const subEl = $("#studioPromptSubtitle");
+  subEl.textContent = subtitle;
+  subEl.classList.toggle("is-hidden", !subtitle);
+  const msgEl = $("#studioPromptMessage");
+  msgEl.textContent = "";
+  msgEl.classList.add("is-hidden");
+  $("#studioPromptUtilityRow")?.classList.add("is-hidden");
+  const fieldsContainer = $("#studioPromptFields");
+  const normalizedFields = Array.isArray(fields) && fields.length
+    ? fields
+    : [{ name: "value", label, value: defaultValue, placeholder }];
+  fieldsContainer.innerHTML = normalizedFields.map((field, idx) => `
+    <label class="field">
+      <span>${escapeHtml(field.label || `Trường ${idx + 1}`)}</span>
+      ${field.type === "textarea"
+        ? `<textarea data-studio-field="${escapeHtml(field.name || String(idx))}" rows="${Number(field.rows) || 3}" placeholder="${escapeHtml(field.placeholder || "")}">${escapeHtml(field.value ?? "")}</textarea>`
+        : `<input type="${escapeHtml(field.type || "text")}" data-studio-field="${escapeHtml(field.name || String(idx))}" value="${escapeHtml(field.value ?? "")}" placeholder="${escapeHtml(field.placeholder || "")}" />`}
+    </label>
+  `).join("");
+  const cancelBtn = $("#studioPromptCancelBtn");
+  cancelBtn.textContent = cancelLabel;
+  cancelBtn.classList.remove("is-hidden");
+  $("#studioPromptSubmitBtn").textContent = submitLabel;
+  return new Promise(resolve => {
+    activeStudioModalResolve = resolve;
+    try {
+      dialog.showModal();
+    } catch (_) {
+      dialog.setAttribute("open", "");
+    }
+    const firstInput = fieldsContainer.querySelector("input, textarea");
+    if (firstInput) {
+      setTimeout(() => {
+        firstInput.focus();
+        if (typeof firstInput.select === "function") firstInput.select();
+      }, 20);
+    }
+  });
+};
+
+window.showStudioAlert = function showStudioAlert({
+  title = "Thông báo hệ thống",
+  subtitle = "",
+  kicker = "THÔNG BÁO STUDIO",
+  message = "",
+  copyText = "",
+  downloadFilename = "",
+  downloadText = "",
+  submitLabel = "Đã hiểu",
+} = {}) {
+  const dialog = $("#studioPromptDialog");
+  if (!dialog) {
+    window.alert(message || title);
+    return Promise.resolve(true);
+  }
+  if (activeStudioModalResolve) closeStudioPromptDialog(null);
+  $("#studioPromptKicker").textContent = kicker;
+  $("#studioPromptTitle").textContent = title;
+  const subEl = $("#studioPromptSubtitle");
+  subEl.textContent = subtitle;
+  subEl.classList.toggle("is-hidden", !subtitle);
+  const msgEl = $("#studioPromptMessage");
+  msgEl.textContent = message;
+  msgEl.classList.toggle("is-hidden", !message);
+  $("#studioPromptFields").innerHTML = "";
+  const utilityRow = $("#studioPromptUtilityRow");
+  const copyBtn = $("#studioPromptCopyBtn");
+  const downloadBtn = $("#studioPromptDownloadBtn");
+  const hasUtility = Boolean(copyText || downloadFilename);
+  utilityRow?.classList.toggle("is-hidden", !hasUtility);
+  if (copyBtn) {
+    copyBtn.classList.toggle("is-hidden", !copyText);
+    copyBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(copyText);
+        toast("Đã sao chép thông tin vào bộ nhớ tạm");
+      } catch (_) {
+        toast("Không thể sao chép tự động, vui lòng bôi đen văn bản", true);
+      }
+    };
+  }
+  if (downloadBtn) {
+    downloadBtn.classList.toggle("is-hidden", !downloadFilename);
+    downloadBtn.onclick = () => {
+      const blob = new Blob([downloadText || copyText || message], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      startBrowserDownload(url, downloadFilename || "vidtrans-info.txt");
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast(`Đã tải xuống ${downloadFilename}`);
+    };
+  }
+  $("#studioPromptCancelBtn")?.classList.add("is-hidden");
+  $("#studioPromptSubmitBtn").textContent = submitLabel;
+  return new Promise(resolve => {
+    activeStudioModalResolve = resolve;
+    try {
+      dialog.showModal();
+    } catch (_) {
+      dialog.setAttribute("open", "");
+    }
+  });
+};
+
+$("#studioPromptForm")?.addEventListener("submit", event => {
+  event.preventDefault();
+  const inputs = $$("[data-studio-field]", $("#studioPromptFields"));
+  if (!inputs.length) {
+    closeStudioPromptDialog(true);
+    return;
+  }
+  if (inputs.length === 1 && inputs[0].dataset.studioField === "value") {
+    closeStudioPromptDialog(inputs[0].value);
+    return;
+  }
+  const values = {};
+  inputs.forEach(input => {
+    values[input.dataset.studioField] = input.value;
+  });
+  closeStudioPromptDialog(values);
+});
+$("#studioPromptCancelBtn")?.addEventListener("click", () => closeStudioPromptDialog(null));
+$("#studioPromptCloseBtn")?.addEventListener("click", () => closeStudioPromptDialog(null));
+$("#studioPromptDialog")?.addEventListener("cancel", event => {
+  event.preventDefault();
+  closeStudioPromptDialog(null);
+});
 
 let pendingSessionRefresh = null;
 
@@ -395,7 +615,27 @@ function syncLogoOptions() {
     else if (input.disabled) input.checked = input.defaultChecked = true;
     input.disabled = !hasLogo;
   });
-  $$("[data-logo-hint]").forEach(hint => hint.classList.toggle("is-hidden", hasLogo));
+  const primaryLogoInput = document.querySelector('input[name="apply_logo"]');
+  const quickToggle = $("#createApplyLogoToggle");
+  if (quickToggle) {
+    quickToggle.disabled = !hasLogo;
+    quickToggle.checked = Boolean(hasLogo && primaryLogoInput?.checked);
+  }
+  const quickStatus = $("#createLogoQuickStatus");
+  if (quickStatus) {
+    quickStatus.textContent = hasLogo
+      ? (primaryLogoInput?.checked ? "Đang bật đóng dấu logo thương hiệu trên video xuất" : "Đã tải logo thương hiệu — bật công tắc để gắn vào video")
+      : "Chưa tải logo — tải logo ở trang Tài khoản & logo để dùng";
+  }
+  const previewBadge = $("#previewLogoBadge");
+  if (previewBadge) {
+    previewBadge.classList.toggle("is-hidden", !(hasLogo && primaryLogoInput?.checked));
+    previewBadge.dataset.position = state.userLogoPosition || "top_right";
+  }
+  $$("[data-logo-hint]").forEach(hint => {
+    if (hint.id === "createLogoQuickStatus") return;
+    hint.classList.toggle("is-hidden", hasLogo);
+  });
 }
 
 function updateUserAvatar(logoUrl = state.userLogoUrl) {
@@ -409,8 +649,8 @@ function updateUserAvatar(logoUrl = state.userLogoUrl) {
     avatar.classList.add("has-logo");
     avatar.innerHTML = `<img src="${escapeHtml(state.userLogoUrl)}" alt="Logo thương hiệu" />`;
   } else {
-    avatar.classList.remove("has-logo");
-    avatar.textContent = (state.auth.username || "U").charAt(0).toUpperCase();
+    avatar.classList.add("has-logo");
+    avatar.innerHTML = `<img src="/assets/vidtrans-mark.svg" alt="VidTrans" />`;
   }
 }
 
@@ -492,6 +732,7 @@ async function refreshUserBrandingAvatar() {
   if (state.auth.role === "viewer") return;
   try {
     const data = await requestJson("/api/v1/me/branding", { silent: true });
+    state.userLogoPosition = data?.logo?.position || "top_right";
     updateUserAvatar(data?.logo?.url || null);
   } catch (_) {}
 }
@@ -989,12 +1230,57 @@ function invalidSourceLinksMessage(invalid) {
   return `Link chưa có phương thức tải: ${first.link} — ${first.reason}${more}. Hãy xóa hoặc sửa link trước khi tiếp tục.`;
 }
 
+function isPhotoPostUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    if (path.includes("/photo/") || path.includes("/photos/") || path.includes("/note/") || path.includes("/slides/")) return true;
+    if (host.includes("xiaohongshu") || host === "xhslink.com") return true;
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+function analyzeSourceLinks(links = state.links) {
+  const photoLinks = (links || []).filter(isPhotoPostUrl);
+  return {
+    total: (links || []).length,
+    photoCount: photoLinks.length,
+    photoLinks,
+  };
+}
+
 function renderSourceLinks() {
   const rawValue = $("#sourceLinks").value;
   const { links, invalid } = classifySourceLinks(rawValue);
   state.links = links;
   state.invalidLinks = invalid;
   $("#clearLinksBtn")?.classList.toggle("is-hidden", !rawValue.trim());
+  const summaryEl = $("#sourceLinksSummary");
+  const analysis = analyzeSourceLinks(links);
+  if (summaryEl) {
+    if (analysis.photoCount > 0) {
+      summaryEl.classList.remove("is-hidden");
+      summaryEl.innerHTML = `
+        <div class="photo-post-detect-copy">
+          <span class="photo-post-detect-icon" aria-hidden="true">🖼️</span>
+          <div class="photo-post-detect-text">
+            <strong>Phát hiện ${analysis.photoCount} bài đăng ảnh (Photo Post) · Hỗ trợ AI Photo Slideshow Director &amp; Tải ZIP</strong>
+            <small>Bạn có thể dựng thành video ghép ảnh kèm giọng đọc/nhạc nền AI hoặc tải trọn bộ ảnh gốc (.ZIP).</small>
+          </div>
+        </div>
+        <div class="photo-post-preset-pills" role="group" aria-label="Chế độ xử lý bài đăng ảnh">
+          <button type="button" class="photo-preset-btn ${state.photoPostPreset !== "zip" ? "is-active" : ""}" data-photo-preset="slideshow">Tự động mở cấu hình Slideshow</button>
+          <button type="button" class="photo-preset-btn ${state.photoPostPreset === "zip" ? "is-active" : ""}" data-photo-preset="zip">Tải bộ ảnh ZIP</button>
+        </div>
+      `;
+    } else {
+      summaryEl.classList.add("is-hidden");
+      summaryEl.innerHTML = "";
+    }
+  }
   const invalidHtml = invalid.length
     ? `<div class="link-warning-note" role="alert">⛔ ${invalid.length} link không thể tải và sẽ chặn việc tạo batch:<ul>${invalid.map(item => `<li><strong>${escapeHtml(item.link)}</strong> — ${escapeHtml(item.reason)} <button class="button secondary mini-btn" type="button" data-link-remove="${escapeHtml(item.link)}" data-link-invalid="true" aria-label="Xóa liên kết ${escapeHtml(item.link)}">Xóa</button></li>`).join("")}</ul><small>${escapeHtml(SUPPORTED_LINK_FORMS_HINT)}</small></div>`
     : "";
@@ -1012,9 +1298,10 @@ function renderSourceLinks() {
       : (hostname.includes("youtube") || hostname === "youtu.be") ? "YT"
       : (hostname.includes("facebook") || hostname === "fb.com" || hostname === "fb.watch") ? "FB"
       : "TT";
+    const isPhoto = isPhotoPostUrl(link);
     return `<div class="file-item link-item">
       <span class="file-item-icon">${platform}</span>
-      <div><strong title="${escapeHtml(link)}">${escapeHtml(link)}</strong><small>Sẽ tải trong hàng đợi nền</small></div>
+      <div><strong title="${escapeHtml(link)}">${escapeHtml(link)}</strong><small>${isPhoto ? "🖼️ Bài đăng ảnh · Hỗ trợ AI Slideshow & tải ZIP" : "Sẽ tải trong hàng đợi nền"}</small></div>
       <button class="file-remove" type="button" data-link-remove="${escapeHtml(link)}" aria-label="Xóa liên kết ${escapeHtml(link)}">✕</button>
     </div>`;
   }).join("");
@@ -1115,13 +1402,49 @@ function updateFormSummary() {
   const voiceNotice = $("#mode1VoiceNotice");
   if (voiceNotice) voiceNotice.classList.toggle("is-hidden", voiceEnabled);
   const voiceCluster = $("#voiceAudioCluster");
-  if (voiceCluster) voiceCluster.classList.toggle("mode-sub-only", !voiceEnabled);
-  $("#subtitleStyle").value = JSON.stringify(subtitleStyle());
-  const preview = $(".subtitle-preview");
+  if (voiceCluster) {
+    voiceCluster.classList.toggle("mode-sub-only", !voiceEnabled);
+    const isMode1 = mode === "1";
+    voiceCluster.classList.toggle("is-collapsed-mode1", isMode1);
+    if (!isMode1) voiceCluster.classList.remove("is-expanded-manual");
+    const toggleBtn = $("#toggleMode1VoiceDetailsBtn");
+    if (toggleBtn) {
+      const expanded = voiceCluster.classList.contains("is-expanded-manual");
+      toggleBtn.textContent = expanded ? "Thu gọn cài đặt" : "Xem cài đặt ẩn";
+      toggleBtn.setAttribute("aria-expanded", String(expanded));
+    }
+  }
+  const stylePayload = subtitleStyle();
+  $("#subtitleStyle").value = JSON.stringify(stylePayload);
+  const preview = $("#subtitlePreview") || $(".subtitle-preview");
   preview.classList.remove("mode-replace", "mode-above", "mode-bottom");
   preview.classList.add(placement === "replace_original" ? "mode-replace" : placement === "above_original" ? "mode-above" : "mode-bottom");
-  $("#previewVietnamese").style.fontSize = $("#matchSourceSize").checked ? "17px" : "21px";
+  const minFont = Math.max(8, Math.min(100, Number($("#minFontSize")?.value) || 22));
+  const maxFont = Math.max(minFont, Math.min(200, Number($("#maxFontSize")?.value) || 72));
+  const posGap = Math.max(0, Math.min(300, Number($("#positionGap")?.value) || 14));
+  const computedPreviewFontPx = $("#matchSourceSize").checked
+    ? Math.round(13 + (minFont - 8) * 0.16)
+    : Math.round(14 + (maxFont - 12) * 0.14);
+  $("#previewVietnamese").style.fontSize = `${Math.max(12, Math.min(32, computedPreviewFontPx))}px`;
   $("#previewVietnamese").style.color = $("#subtitleTextColor").value;
+  const subtitleBox = $("#previewSubtitleBox");
+  if (subtitleBox) {
+    const baseBottom = placement === "above_original" ? 34 : placement === "bottom_safe" ? 24 : 14;
+    const scaledGap = Math.round(posGap * 0.35);
+    subtitleBox.style.bottom = `${Math.min(180, baseBottom + scaledGap)}px`;
+  }
+  const roiTopInput = document.querySelector('input[name="ocr_roi_top"]');
+  const roiBottomInput = document.querySelector('input[name="ocr_roi_bottom"]');
+  const roiBox = $("#previewOcrRoiBox");
+  if (roiBox && roiTopInput && roiBottomInput) {
+    const topVal = Math.max(0, Math.min(0.92, Number(roiTopInput.value) || 0.68));
+    const botVal = Math.max(topVal + 0.05, Math.min(1, Number(roiBottomInput.value) || 0.96));
+    roiBox.style.top = `${(topVal * 100).toFixed(1)}%`;
+    roiBox.style.height = `${((botVal - topVal) * 100).toFixed(1)}%`;
+    const readout = $("#previewOcrRoiReadout");
+    if (readout) readout.textContent = `OCR: ${Math.round(topVal * 100)}%–${Math.round(botVal * 100)}%`;
+  }
+  syncLogoOptions();
   const previewBackground = $("#subtitleBackgroundColor").value;
   const previewOpacity = 0.82;
   const backgroundStyle = $("#subtitleBackgroundStyle").value;
@@ -1404,7 +1727,6 @@ function showView() {
   syncAdminSystemEvents();
   if (view === "billing" && state.appStarted) loadBilling();
   $("#mainNavigation").classList.remove("open");
-  $("#navToggle").setAttribute("aria-expanded", "false");
   if (activeView !== view) {
     activeView = view;
     window.scrollTo(0, 0);
@@ -2401,7 +2723,15 @@ $("#adminMusicList")?.addEventListener("change", async event => {
   if (!select || !item) return;
   let category = select.value;
   if (category === "__new__") {
-    category = (prompt("Tên thể loại mới:") || "").trim();
+    const entered = await window.showStudioPrompt({
+      title: "Tạo thể loại nhạc mới",
+      subtitle: "Nhập tên thể loại để phân loại bản nhạc trong thư viện Studio.",
+      label: "Tên thể loại mới",
+      defaultValue: "",
+      placeholder: "Ví dụ: Cinematic, Lo-Fi, Healing...",
+      submitLabel: "Lưu thể loại",
+    });
+    category = (entered || "").trim();
     if (!category) {
       select.value = item.dataset.musicCategory;
       return;
@@ -2424,7 +2754,13 @@ $("#adminMusicList")?.addEventListener("click", async event => {
   const trackId = encodeURIComponent(item.dataset.musicId);
   try {
     if (event.target.closest("[data-admin-rename-music]")) {
-      const title = prompt("Tên mới cho bản nhạc:", item.dataset.musicTitle);
+      const title = await window.showStudioPrompt({
+        title: "Đổi tên bản nhạc",
+        subtitle: "Cập nhật tên hiển thị cho bản nhạc trong thư viện.",
+        label: "Tên mới cho bản nhạc",
+        defaultValue: item.dataset.musicTitle || "",
+        submitLabel: "Lưu tên mới",
+      });
       if (!title || !title.trim()) return;
       const body = new FormData();
       body.set("title", title.trim());
@@ -2966,17 +3302,27 @@ function jobActions(job) {
   let downloads = "";
   if (job.video_url) {
     const videoName = job.output_video || `${job.job_id}.mp4`;
-    downloads += `<button type="button" class="btn-job-action btn-download" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Tải video MP4 hoàn tất" aria-label="Tải video MP4 hoàn tất"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span translate="no">Video</span></button>`;
+    downloads += `<button type="button" class="btn-job-action btn-download has-badge primary-sub" data-download-url="${escapeHtml(job.video_url)}" data-download-name="${escapeHtml(videoName)}" title="Tải video MP4 hoàn tất" aria-label="Tải video MP4 hoàn tất"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span class="action-badge" translate="no">MP4</span><span>Video</span></button>`;
+  }
+  if (job.subtitle_url) {
+    const srtName = `${job.job_id}.srt`;
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download has-badge" data-download-url="${escapeHtml(job.subtitle_url)}" data-download-name="${escapeHtml(srtName)}" title="Tải phụ đề (SRT)" aria-label="Tải phụ đề (SRT)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg><span class="action-badge" translate="no">SRT</span><span>Phụ đề</span></button>`;
+  }
+  if (job.source_video_url) {
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download has-badge" data-download-url="${escapeHtml(job.source_video_url)}" data-download-name="${escapeHtml(`${job.job_id}_source.mp4`)}" title="Tải video gốc" aria-label="Tải video gốc"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span class="action-badge" translate="no">Gốc</span></button>`;
+  }
+  if (job.voice_audio_url) {
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download has-badge" data-download-url="${escapeHtml(job.voice_audio_url)}" data-download-name="${escapeHtml(`${job.job_id}_voice.mp3`)}" title="Tải file lồng tiếng (Voice)" aria-label="Tải file lồng tiếng (Voice)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path></svg><span class="action-badge" translate="no">Voice</span></button>`;
   }
   if (job.images_url) {
-    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.images_url)}" data-download-name="${escapeHtml(`${job.job_id}_images.zip`)}" title="Tải ảnh của bài đăng (ZIP)" aria-label="Tải ảnh của bài đăng (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg><span>Ảnh (ZIP)</span></button>`;
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip has-badge" data-download-url="${escapeHtml(job.images_url)}" data-download-name="${escapeHtml(`${job.job_id}_images.zip`)}" title="Tải ảnh của bài đăng (ZIP)" aria-label="Tải ảnh của bài đăng (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg><span class="action-badge" translate="no">ZIP</span><span>Ảnh (ZIP)</span></button>`;
   }
   if (awaitingChoice) {
     downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-photo-choice" data-action="detail" data-job="${escapeHtml(job.job_id)}" title="Chọn tải ảnh hoặc tạo video ghép ảnh" aria-label="Chọn tải ảnh hoặc tạo video ghép ảnh"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg><span>Chọn cách xử lý</span></button>`;
   }
   if (job.download_all_url) {
     const zipName = `${job.job_id}.artifacts.zip`;
-    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)" aria-label="Tải toàn bộ tài nguyên (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg><span translate="no">ZIP</span></button>`;
+    downloads += (downloads ? " " : "") + `<button type="button" class="btn-job-action btn-download btn-zip has-badge" data-download-url="${escapeHtml(job.download_all_url)}" data-download-name="${escapeHtml(zipName)}" title="Tải toàn bộ tài nguyên (ZIP)" aria-label="Tải toàn bộ tài nguyên (ZIP)"><svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg><span class="action-badge" translate="no">ZIP</span></button>`;
   }
   const pause = ["queued", "scheduled", "processing"].includes(job.status)
     ? `<button type="button" class="btn-job-action" data-action="pause" data-job="${job.job_id}" title="Tạm dừng tiến trình" aria-label="Tạm dừng tiến trình"><span>⏸</span><span>Tạm dừng</span></button>`
@@ -3002,6 +3348,7 @@ function jobActions(job) {
     : "";
   return detail + downloads + refreshTikTok + pause + resume + cancel + retry + remove + review;
 }
+const renderJobActions = jobActions;
 
 function eligibleJobs(action) {
   const selected = state.jobs.filter(job => state.selectedJobIds.has(job.job_id));
@@ -4585,7 +4932,17 @@ $("#authGuestButton").addEventListener("click", async event => {
       const { email, password } = payload.credentials;
       toast(`Đã kích hoạt gói dùng thử ${payload.quota_minutes} phút video`);
       // Shown once: the server keeps only the hash.
-      window.alert(`Tài khoản dùng thử của bạn (lưu lại để đăng nhập lần sau):\n\nEmail: ${email}\nMật khẩu: ${password}`);
+      const credentialText = `Tài khoản dùng thử của bạn (lưu lại để đăng nhập lần sau):\n\nEmail: ${email}\nMật khẩu: ${password}`;
+      await window.showStudioAlert({
+        kicker: "TÀI KHOẢN DÙNG THỬ MIỄN PHÍ",
+        title: "Lưu thông tin đăng nhập của bạn",
+        subtitle: "Mật khẩu chỉ hiển thị một lần duy nhất. Hãy sao chép hoặc tải file .txt về máy để đăng nhập lần sau.",
+        message: credentialText,
+        copyText: `Email: ${email}\nMật khẩu: ${password}`,
+        downloadFilename: `vidtrans-trial-${email.split("@")[0] || "account"}.txt`,
+        downloadText: `${credentialText}\n`,
+        submitLabel: "Tôi đã lưu thông tin",
+      });
     }
   } catch (error) {
     showAuthError(error);
@@ -4609,15 +4966,8 @@ $("#appLogoutButton").addEventListener("click", async () => {
     toast(error.message, true);
   }
 });
-$("#navToggle").addEventListener("click", () => {
-  $("#userMenu").classList.remove("open");
-  $("#userMenuButton").setAttribute("aria-expanded", "false");
-  const open = $("#mainNavigation").classList.toggle("open");
-  $("#navToggle").setAttribute("aria-expanded", String(open));
-});
 $("#userMenuButton").addEventListener("click", () => {
   $("#mainNavigation").classList.remove("open");
-  $("#navToggle").setAttribute("aria-expanded", "false");
   const open = $("#userMenu").classList.toggle("open");
   $("#userMenuButton").setAttribute("aria-expanded", String(open));
 });
@@ -4626,9 +4976,8 @@ document.addEventListener("click", event => {
     $("#userMenu").classList.remove("open");
     $("#userMenuButton").setAttribute("aria-expanded", "false");
   }
-  if (event.target.closest("#mainNavigation a") || (!$("#mainNavigation").contains(event.target) && !$("#navToggle").contains(event.target))) {
+  if (event.target.closest("#mainNavigation a") || !$("#mainNavigation").contains(event.target)) {
     $("#mainNavigation").classList.remove("open");
-    $("#navToggle").setAttribute("aria-expanded", "false");
   }
 });
 document.addEventListener("keydown", event => {
@@ -4636,7 +4985,6 @@ document.addEventListener("keydown", event => {
   $("#userMenu").classList.remove("open");
   $("#mainNavigation").classList.remove("open");
   $("#userMenuButton").setAttribute("aria-expanded", "false");
-  $("#navToggle").setAttribute("aria-expanded", "false");
 });
 $("#paymentForm").addEventListener("submit", createPayment);
 $("#paymentPlan").addEventListener("change", event => selectBillingPlan(event.target.value, { scroll: false }));
@@ -4846,8 +5194,107 @@ $("#douyinLogoutButton").addEventListener("click", async () => {
     toast("Đã xóa phiên đăng nhập Douyin");
   } catch (error) { toast(error.message, true); }
 });
-[$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), $("#translationProvider"), document.querySelector('[name="voice_mode"]')].forEach(element => element.addEventListener("change", updateFormSummary));
-[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundStyle")].forEach(element => element.addEventListener("change", updateFormSummary));
+[$("#mode"), $("#sourceLanguage"), $("#targetLanguage"), $("#subtitleSource"), $("#translationProvider"), document.querySelector('[name="voice_mode"]')].forEach(element => element?.addEventListener("change", updateFormSummary));
+[$("#placementMode"), $("#matchSourceSize"), $("#minFontSize"), $("#maxFontSize"), $("#positionGap"), $("#maskOriginal"), $("#subtitleTextColor"), $("#subtitleBackgroundColor"), $("#subtitleBackgroundStyle"), document.querySelector('input[name="ocr_roi_top"]'), document.querySelector('input[name="ocr_roi_bottom"]'), document.querySelector('input[name="apply_logo"]')].forEach(element => {
+  element?.addEventListener("change", updateFormSummary);
+  element?.addEventListener("input", updateFormSummary);
+});
+
+$("#toggleMode1VoiceDetailsBtn")?.addEventListener("click", () => {
+  const cluster = $("#voiceAudioCluster");
+  if (!cluster) return;
+  const expanded = cluster.classList.toggle("is-expanded-manual");
+  const btn = $("#toggleMode1VoiceDetailsBtn");
+  if (btn) {
+    btn.textContent = expanded ? "Thu gọn cài đặt" : "Xem cài đặt ẩn";
+    btn.setAttribute("aria-expanded", String(expanded));
+  }
+});
+
+$("#createApplyLogoToggle")?.addEventListener("change", event => {
+  const checked = event.target.checked;
+  $$('input[name="apply_logo"]').forEach(input => {
+    if (!input.disabled) input.checked = checked;
+  });
+  syncLogoOptions();
+});
+
+$("#openBrandingFromCreate")?.addEventListener("click", () => {
+  location.hash = "#account";
+});
+
+$("#sourceLinksSummary")?.addEventListener("click", event => {
+  const presetBtn = event.target.closest("[data-photo-preset]");
+  if (!presetBtn) return;
+  state.photoPostPreset = presetBtn.dataset.photoPreset;
+  renderSourceLinks();
+  toast(state.photoPostPreset === "zip"
+    ? "Đã chọn chế độ ưu tiên tải bộ ảnh gốc (.ZIP)"
+    : "Đã chọn chế độ mở cấu hình AI Photo Slideshow Director");
+});
+
+$$("[data-preview-aspect]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const aspect = btn.dataset.previewAspect || "9:16";
+    state.previewAspect = aspect;
+    $$("[data-preview-aspect]").forEach(item => {
+      const active = item === btn;
+      item.classList.toggle("is-active", active);
+      item.setAttribute("aria-pressed", String(active));
+    });
+    const preview = $("#subtitlePreview");
+    if (preview) preview.dataset.aspect = aspect;
+    const badge = $("#previewAspectBadge");
+    if (badge) badge.textContent = `${aspect} Live Preview`;
+  });
+});
+
+(function bindOcrRoiDragging() {
+  const preview = $("#subtitlePreview");
+  const topInput = document.querySelector('input[name="ocr_roi_top"]');
+  const bottomInput = document.querySelector('input[name="ocr_roi_bottom"]');
+  if (!preview || !topInput || !bottomInput) return;
+  let draggingHandle = null;
+  preview.addEventListener("pointerdown", event => {
+    const handle = event.target.closest("[data-roi-handle]");
+    if (!handle) return;
+    event.preventDefault();
+    draggingHandle = handle.dataset.roiHandle;
+    handle.setPointerCapture?.(event.pointerId);
+  });
+  preview.addEventListener("pointermove", event => {
+    if (!draggingHandle) return;
+    const rect = preview.getBoundingClientRect();
+    if (!rect.height) return;
+    const ratio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    const curTop = Number(topInput.value) || 0.68;
+    const curBot = Number(bottomInput.value) || 0.96;
+    if (draggingHandle === "top") {
+      topInput.value = Math.min(curBot - 0.06, Math.max(0, ratio)).toFixed(2);
+    } else {
+      bottomInput.value = Math.max(curTop + 0.06, Math.min(1, ratio)).toFixed(2);
+    }
+    updateFormSummary();
+  });
+  const stopDrag = () => { draggingHandle = null; };
+  preview.addEventListener("pointerup", stopDrag);
+  preview.addEventListener("pointercancel", stopDrag);
+})();
+
+$("#socialUnifiedChannelBar")?.addEventListener("click", event => {
+  const pill = event.target.closest("[data-channel-jump]");
+  if (!pill) return;
+  const target = pill.dataset.channelJump;
+  $$("[data-channel-jump]").forEach(btn => btn.classList.toggle("is-active", btn === pill));
+  const tabBtn = document.querySelector(`.platform-tab-btn[data-platform-target="${target}"]`);
+  if (tabBtn) tabBtn.click();
+});
+document.querySelector(".platform-tab-nav")?.addEventListener("click", event => {
+  const tabBtn = event.target.closest("[data-platform-target]");
+  if (!tabBtn) return;
+  const target = tabBtn.dataset.platformTarget;
+  $$("[data-channel-jump]").forEach(btn => btn.classList.toggle("is-active", btn.dataset.channelJump === target));
+});
 $("#refreshJobs").addEventListener("click", loadJobs);
 $("#refreshAdminAccounts").addEventListener("click", loadAdminAccounts);
 $("#adminApprovalFilter").addEventListener("change", loadAdminAccounts);
@@ -4956,7 +5403,15 @@ $("#adminJobsList")?.addEventListener("click", async event => {
     const jobId = viewBtn.dataset.adminViewJob;
     try {
       const job = await requestJson(`/api/v1/admin/jobs/${jobId}`);
-      alert(`[Audit Logged] Chi tiết tiến trình ${jobId}:\nNgười dùng: ${job.owner_email || job.owner_user_id}\nTrạng thái: ${job.status}\nTiến độ: ${Math.round((job.progress || 0) * 100)}%\nTạo lúc: ${job.created_at}`);
+      const auditSummary = `[Audit Logged] Chi tiết tiến trình ${jobId}:\nNgười dùng: ${job.owner_email || job.owner_user_id}\nTrạng thái: ${job.status}\nTiến độ: ${Math.round((job.progress || 0) * 100)}%\nTạo lúc: ${job.created_at}`;
+      await window.showStudioAlert({
+        kicker: "NHẬT KÝ KIỂM TOÁN · ADMIN AUDIT",
+        title: `Chi tiết tiến trình ${jobId}`,
+        subtitle: "Truy vấn đã được ghi vào nhật ký kiểm toán quản trị.",
+        message: auditSummary,
+        copyText: auditSummary,
+        submitLabel: "Đóng",
+      });
     } catch (err) { toast(err.message, true); }
   }
 });
@@ -5042,7 +5497,14 @@ $("#adminBillingList")?.addEventListener("click", async event => {
     if (!confirm(`Xác nhận đã nhận ${confirmBtn.dataset.amount} với nội dung "${confirmBtn.dataset.transfer}"?\nGói của khách sẽ được kích hoạt ngay.`)) return;
     request = { method: "POST" };
   } else {
-    const reason = prompt("Lý do từ chối đơn (ghi vào Audit):", "Không tìm thấy giao dịch trong sao kê");
+    const reason = await window.showStudioPrompt({
+      kicker: "ĐỐI SOÁT THANH TOÁN",
+      title: "Từ chối đơn thanh toán",
+      subtitle: "Lý do từ chối sẽ được lưu vào nhật ký Audit và hiển thị cho người dùng.",
+      label: "Lý do từ chối đơn (ghi vào Audit):",
+      defaultValue: "Không tìm thấy giao dịch trong sao kê",
+      submitLabel: "Xác nhận từ chối",
+    });
     if (reason === null) return;
     const formData = new FormData();
     formData.set("reason", reason.slice(0, 200));

@@ -1,5 +1,53 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+const kThemeModePrefsKey = 'vidtrans_theme_mode';
+
+/// Persisted theme mode (`vidtrans_theme_mode` in SharedPreferences).
+/// Defaults synchronously to [ThemeMode.light] so existing widget tests stay
+/// 100% compatible, while supporting instant switching to [ThemeMode.dark]
+/// or [ThemeMode.system].
+final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(
+  ThemeModeNotifier.new,
+);
+
+class ThemeModeNotifier extends Notifier<ThemeMode> {
+  @override
+  ThemeMode build() {
+    _loadFromPrefs();
+    return ThemeMode.light;
+  }
+
+  Future<void> _loadFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(kThemeModePrefsKey);
+      if (saved == null) return;
+      final parsed = switch (saved) {
+        'dark' => ThemeMode.dark,
+        'system' => ThemeMode.system,
+        _ => ThemeMode.light,
+      };
+      if (state != parsed) {
+        state = parsed;
+      }
+    } catch (_) {
+      // Ignore when SharedPreferences is not initialized in unit/widget tests.
+    }
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    state = mode;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(kThemeModePrefsKey, mode.name);
+    } catch (_) {
+      // Ignore in widget tests without SharedPreferences mock.
+    }
+  }
+}
 
 /// Design tokens and Material 3 theme matching the VidTrans Studio web app
 /// (`web/assets/styles.css`).
@@ -92,8 +140,12 @@ class AppColors {
   static const warningBg = amberSoft;
   static const warningBorder = amberBorder;
   static const darkBg = Color(0xFF090D16);
-  static const darkSurface = Color(0xFF111827);
+  static const darkSurface = Color(0xFF111C33);
+  static const darkSurfaceSoft = Color(0xFF1E293B);
+  static const darkLine = Color(0xFF1E293B);
+  static const darkLineStrong = Color(0xFF334155);
   static const darkText = Color(0xFFF8FAFC);
+  static const darkMuted = Color(0xFF94A3B8);
 
   static const studioHeroGradient = LinearGradient(
     begin: Alignment.topLeft,
@@ -164,12 +216,12 @@ class AppTheme {
   static ThemeData _build(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
     final bg = isDark ? const Color(0xFF0B1120) : AppColors.bg;
-    final surface = isDark ? const Color(0xFF111827) : AppColors.surface;
-    final surfaceSoft = isDark ? const Color(0xFF1E293B) : AppColors.surfaceSoft;
-    final ink = isDark ? const Color(0xFFF8FAFC) : AppColors.ink;
-    final muted = isDark ? const Color(0xFF94A3B8) : AppColors.muted;
-    final line = isDark ? const Color(0xFF1E293B) : AppColors.line;
-    final lineStrong = isDark ? const Color(0xFF334155) : AppColors.lineStrong;
+    final surface = isDark ? AppColors.darkSurface : AppColors.surface;
+    final surfaceSoft = isDark ? AppColors.darkSurfaceSoft : AppColors.surfaceSoft;
+    final ink = isDark ? AppColors.darkText : AppColors.ink;
+    final muted = isDark ? AppColors.darkMuted : AppColors.muted;
+    final line = isDark ? AppColors.darkLine : AppColors.line;
+    final lineStrong = isDark ? AppColors.darkLineStrong : AppColors.lineStrong;
 
     final baseScheme = ColorScheme.fromSeed(
       seedColor: AppColors.brand,

@@ -850,6 +850,12 @@ class _TimeRowState extends State<_TimeRow> {
     }
   }
 
+  void _nudge(double delta) {
+    final next = (widget.value + delta).clamp(0.0, double.infinity);
+    _controller.text = formatClipTime(next);
+    widget.onChanged(next);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -861,12 +867,47 @@ class _TimeRowState extends State<_TimeRow> {
             child: TextField(
               controller: _controller,
               focusNode: _focus,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: TextInputType.datetime,
               decoration: const InputDecoration(isDense: true),
               onSubmitted: (_) => _commit(),
             ),
           ),
+          const SizedBox(width: 4),
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => _nudge(-0.5),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceSubtle,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: const Text(
+                '-0.5s',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.inkSoft),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => _nudge(0.5),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceSubtle,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: const Text(
+                '+0.5s',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.inkSoft),
+              ),
+            ),
+          ),
           IconButton(
+            visualDensity: VisualDensity.compact,
             onPressed: widget.onHere,
             icon: const Icon(Icons.my_location_rounded, size: 20),
             tooltip: 'Lấy vị trí đang xem',
@@ -878,7 +919,7 @@ class _TimeRowState extends State<_TimeRow> {
 }
 
 /// The whole video as a bar: grey ticks are subtitle cues, orange blocks are clips
-/// (red when invalid), the dark line is the playhead. Tapping seeks.
+/// (red when invalid), the dark line is the playhead. Tapping or dragging scrubs.
 class ClipTimeline extends StatelessWidget {
   const ClipTimeline({
     super.key,
@@ -897,15 +938,21 @@ class ClipTimeline extends StatelessWidget {
   final bool Function(ClipDraft) isValid;
   final ValueChanged<double> onSeek;
 
+  void _seekAt(double dx, double maxWidth) {
+    if (maxWidth <= 0) return;
+    onSeek((dx / maxWidth).clamp(0.0, 1.0) * duration);
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) => GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTapDown: (details) =>
-            onSeek((details.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0) * duration),
+        onTapDown: (details) => _seekAt(details.localPosition.dx, constraints.maxWidth),
+        onHorizontalDragStart: (details) => _seekAt(details.localPosition.dx, constraints.maxWidth),
+        onHorizontalDragUpdate: (details) => _seekAt(details.localPosition.dx, constraints.maxWidth),
         child: CustomPaint(
-          size: Size(constraints.maxWidth, 30),
+          size: Size(constraints.maxWidth, 48),
           painter: _TimelinePainter(duration, cues, clips, position, isValid),
         ),
       ),
@@ -926,22 +973,22 @@ class _TimelinePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final total = duration <= 0 ? 1.0 : duration;
     double x(double seconds) => (seconds / total).clamp(0.0, 1.0) * size.width;
-    canvas.drawRRect(RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(8)),
+    canvas.drawRRect(RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(10)),
         Paint()..color = AppColors.surfaceMuted);
     final cuePaint = Paint()..color = AppColors.lineStrong;
     for (final cue in cues) {
       canvas.drawRRect(
-        RRect.fromLTRBR(x(cue.start), 4, x(cue.end).clamp(x(cue.start) + 1, size.width), 9, const Radius.circular(2)),
+        RRect.fromLTRBR(x(cue.start), 5, x(cue.end).clamp(x(cue.start) + 1, size.width), 11, const Radius.circular(2)),
         cuePaint,
       );
     }
     for (final (index, clip) in clips.indexed) {
-      final rect = RRect.fromLTRBR(x(clip.start), 12, x(clip.end), size.height - 3, const Radius.circular(5));
-      canvas.drawRRect(rect, Paint()..color = (isValid(clip) ? AppColors.brand : AppColors.danger).withValues(alpha: 0.8));
+      final rect = RRect.fromLTRBR(x(clip.start), 15, x(clip.end), size.height - 4, const Radius.circular(6));
+      canvas.drawRRect(rect, Paint()..color = (isValid(clip) ? AppColors.brand : AppColors.danger).withValues(alpha: 0.85));
       final label = TextPainter(
         text: TextSpan(
           text: '${index + 1}',
-          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
@@ -949,7 +996,9 @@ class _TimelinePainter extends CustomPainter {
         label.paint(canvas, Offset(rect.center.dx - label.width / 2, rect.center.dy - label.height / 2));
       }
     }
-    canvas.drawRect(Rect.fromLTWH(x(position) - 1, 0, 2, size.height), Paint()..color = AppColors.ink);
+    final playheadX = x(position);
+    canvas.drawRect(Rect.fromLTWH(playheadX - 1.2, 0, 2.4, size.height), Paint()..color = AppColors.ink);
+    canvas.drawCircle(Offset(playheadX, 5), 4.5, Paint()..color = AppColors.ink);
   }
 
   @override

@@ -52,18 +52,90 @@ void paintTranslatedImage(
 }
 
 class _TranslatedImagePainter extends CustomPainter {
-  const _TranslatedImagePainter(this.result, this.showOriginal);
+  const _TranslatedImagePainter(
+    this.result,
+    this.showOriginal, {
+    this.selectedRegionId,
+    this.showRegionBadges = true,
+  });
 
   final ImageTranslationResult result;
   final bool showOriginal;
+  final int? selectedRegionId;
+  final bool showRegionBadges;
 
   @override
-  void paint(Canvas canvas, Size size) =>
-      paintTranslatedImage(canvas, result, showOriginal: showOriginal);
+  void paint(Canvas canvas, Size size) {
+    paintTranslatedImage(canvas, result, showOriginal: showOriginal);
+    if (showOriginal) return;
+
+    final translated = result.regions.where((r) => r.translated).toList();
+    for (final (index, region) in translated.indexed) {
+      final box = region.paintBox ?? region.box;
+      final isSelected = selectedRegionId == region.id;
+      if (isSelected) {
+        final highlightPaint = Paint()
+          ..color = const Color(0xFFEA580C)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(2.0, result.size.width / 240);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            box.inflate(4),
+            Radius.circular(math.max(4.0, region.fontSize * 0.25)),
+          ),
+          highlightPaint,
+        );
+      }
+      if (showRegionBadges) {
+        final badgeScale = (result.size.width / 380).clamp(0.8, 3.0);
+        final badgeFontSize = 11.0 * badgeScale;
+        final badgePainter = TextPainter(
+          text: TextSpan(
+            text: '${index + 1}',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: badgeFontSize,
+              fontWeight: FontWeight.w800,
+              height: 1.0,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final padX = 5.0 * badgeScale;
+        final padY = 3.0 * badgeScale;
+        final bw = math.max(badgePainter.width + padX * 2, 18.0 * badgeScale);
+        final bh = badgePainter.height + padY * 2;
+        final bx = (box.left - bw * 0.35).clamp(0.0, size.width - bw);
+        final by = (box.top - bh * 0.55).clamp(0.0, size.height - bh);
+        final badgeRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(bx, by, bw, bh),
+          Radius.circular(bh / 2),
+        );
+        canvas.drawRRect(
+          badgeRect,
+          Paint()
+            ..color = isSelected
+                ? const Color(0xFFEA580C)
+                : const Color(0xCC0F172A),
+        );
+        badgePainter.paint(
+          canvas,
+          Offset(
+            bx + (bw - badgePainter.width) / 2,
+            by + (bh - badgePainter.height) / 2,
+          ),
+        );
+        badgePainter.dispose();
+      }
+    }
+  }
 
   @override
   bool shouldRepaint(covariant _TranslatedImagePainter old) =>
-      old.result != result || old.showOriginal != showOriginal;
+      old.result != result ||
+      old.showOriginal != showOriginal ||
+      old.selectedRegionId != selectedRegionId ||
+      old.showRegionBadges != showRegionBadges;
 }
 
 /// The result scaled to the available width, pixel coordinates preserved.
@@ -72,10 +144,16 @@ class TranslatedImageView extends StatelessWidget {
     super.key,
     required this.result,
     this.showOriginal = false,
+    this.selectedRegionId,
+    this.showRegionBadges = true,
+    this.onSelectRegion,
   });
 
   final ImageTranslationResult result;
   final bool showOriginal;
+  final int? selectedRegionId;
+  final bool showRegionBadges;
+  final ValueChanged<int>? onSelectRegion;
 
   @override
   Widget build(BuildContext context) {
@@ -83,8 +161,29 @@ class TranslatedImageView extends StatelessWidget {
       fit: BoxFit.contain,
       child: SizedBox.fromSize(
         size: result.size,
-        child: CustomPaint(
-          painter: _TranslatedImagePainter(result, showOriginal),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: onSelectRegion == null
+              ? null
+              : (details) {
+                  final pos = details.localPosition;
+                  for (final region in result.regions.reversed) {
+                    if (!region.translated) continue;
+                    final box = (region.paintBox ?? region.box).inflate(6);
+                    if (box.contains(pos)) {
+                      onSelectRegion!(region.id);
+                      return;
+                    }
+                  }
+                },
+          child: CustomPaint(
+            painter: _TranslatedImagePainter(
+              result,
+              showOriginal,
+              selectedRegionId: selectedRegionId,
+              showRegionBadges: showRegionBadges,
+            ),
+          ),
         ),
       ),
     );

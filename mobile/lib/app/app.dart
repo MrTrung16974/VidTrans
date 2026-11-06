@@ -9,6 +9,7 @@ import '../core/deeplink/deep_link_service.dart';
 import '../core/push/push_service.dart';
 import '../core/websocket/job_events.dart';
 import '../features/jobs/domain/job.dart';
+import '../features/social_publishing/presentation/providers/social_providers.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 
@@ -242,6 +243,9 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
       case JobLink(:final jobId):
         _openJob(jobId);
       case OAuthResult(:final platform, :final error):
+        if (error == null) {
+          ref.invalidate(socialAuthProvider);
+        }
         final name = platform.isEmpty
             ? platform
             : platform[0].toUpperCase() + platform.substring(1);
@@ -257,13 +261,14 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
 
   @override
   Widget build(BuildContext context) {
+    final themeMode = ref.watch(themeModeProvider);
     return MaterialApp.router(
       title: 'VidTrans Creator Studio',
       debugShowCheckedModeBanner: false,
       scaffoldMessengerKey: scaffoldMessengerKey,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.light,
+      themeMode: themeMode,
       routerConfig: ref.watch(routerProvider),
     );
   }

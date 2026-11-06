@@ -517,7 +517,7 @@ class _PaymentSheet extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             if (bank != null) ...[
-              if (bank.qrUrl.isNotEmpty)
+              if (bank.qrUrl.isNotEmpty) ...[
                 Center(
                   child: Container(
                     padding: const EdgeInsets.all(10),
@@ -534,6 +534,28 @@ class _PaymentSheet extends StatelessWidget {
                     ),
                   ),
                 ),
+                const SizedBox(height: 8),
+                Center(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      foregroundColor: AppColors.brand,
+                      side: const BorderSide(color: AppColors.brandBorder),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    ),
+                    onPressed: () {
+                      _copy(context, bank.qrUrl);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Đã sao chép liên kết mã QR VietQR — sẵn sàng mở trong app ngân hàng'),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.qr_code_2_rounded, size: 18),
+                    label: const Text('Sao chép mã VietQR để thanh toán'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               const Center(
                 child: Text(

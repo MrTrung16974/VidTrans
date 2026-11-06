@@ -927,7 +927,9 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
   function parseDialogue(value) {
     return value.split("\n").map(line => line.trim()).filter(Boolean).map(line => {
       const index = line.indexOf(":");
-      if (index < 1) throw new Error(`Dòng thoại "${line}" cần dạng id_nhân_vật: lời thoại`);
+      if (index < 1) {
+        return { character: "narrator", text: line };
+      }
       return { character: line.slice(0, index).trim(), text: line.slice(index + 1).trim() };
     });
   }
@@ -1189,9 +1191,25 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     }
     const op = event.target.closest("[data-series-op]")?.dataset.seriesOp;
     if (op === "rename") {
-      const title = prompt("Tên truyện:", currentSeries.title);
-      if (!title?.trim()) return;
-      const description = prompt("Giới thiệu truyện:", currentSeries.description || "") ?? currentSeries.description;
+      let title, description;
+      if (window.showStudioPrompt) {
+        const res = await window.showStudioPrompt({
+          title: "Đổi tên & Giới thiệu truyện",
+          subtitle: "Cập nhật thông tin cho bộ truyện nhiều tập này",
+          fields: [
+            { name: "title", label: "Tên truyện:", value: currentSeries.title, placeholder: "Nhập tên bộ truyện..." },
+            { name: "desc", label: "Giới thiệu truyện (tuỳ chọn):", type: "textarea", value: currentSeries.description || "", placeholder: "Tóm tắt bối cảnh..." }
+          ],
+          submitLabel: "Lưu thông tin"
+        });
+        if (!res || !res.title?.trim()) return;
+        title = res.title.trim();
+        description = res.desc ?? currentSeries.description;
+      } else {
+        title = prompt("Tên truyện:", currentSeries.title);
+        if (!title?.trim()) return;
+        description = prompt("Giới thiệu truyện:", currentSeries.description || "") ?? currentSeries.description;
+      }
       await seriesMutate(api(seriesPath, json("PATCH", { title, description })), "Đã cập nhật truyện");
     } else if (op === "delete") {
       await deleteSeries(currentSeries.series_id, currentSeries.title, (currentSeries.episode_list || []).length);
@@ -1364,9 +1382,25 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
       } else if (shotOp === "delete") {
         if (confirm(`Xóa shot ${label}?`)) await mutate(api(withSceneQuery(shotPath), { method: "DELETE" }), "Đã xóa shot");
       } else if (shotOp === "insert") {
-        const keyframe = prompt("Mô tả khung hình đầu của shot mới (tiếng Anh):");
-        if (!keyframe?.trim()) return;
-        const narration = prompt("Lời dẫn (có thể để trống):") || "";
+        let keyframe = "", narration = "";
+        if (window.showStudioPrompt) {
+          const res = await window.showStudioPrompt({
+            title: `Chèn Shot Mới (Sau Shot ${label})`,
+            subtitle: "Tạo khung hình chuyển động tiếp nối trong cảnh",
+            fields: [
+              { name: "keyframe", label: "Mô tả khung hình đầu (tiếng Anh):", type: "textarea", placeholder: "e.g. Medium close-up of protagonist..." },
+              { name: "narration", label: "Lời dẫn / thoại (có thể để trống):", placeholder: "Lời dẫn nếu có..." }
+            ],
+            submitLabel: "Chèn Shot"
+          });
+          if (!res || !res.keyframe?.trim()) return;
+          keyframe = res.keyframe.trim();
+          narration = res.narration || "";
+        } else {
+          keyframe = prompt("Mô tả khung hình đầu của shot mới (tiếng Anh):");
+          if (!keyframe?.trim()) return;
+          narration = prompt("Lời dẫn (có thể để trống):") || "";
+        }
         await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}/shots`), json("POST", { after: Number(shotIndex), keyframe_prompt: keyframe, narration })), "Đã chèn shot");
       }
       return;
@@ -1421,9 +1455,25 @@ export function createComicWorkspace({ requestJson, toast, escapeHtml }) {
     } else if (op === "clear-image") {
       await mutate(api(withSceneQuery(`/projects/${jobId}/scenes/${sceneIndex}/image`), { method: "DELETE" }), "Đã bỏ ảnh tải lên");
     } else if (op === "insert") {
-      const narration = prompt("Lời dẫn cho cảnh mới:");
-      if (!narration?.trim()) return;
-      const visual = prompt("Mô tả hình ảnh (tiếng Anh):", narration) || narration;
+      let narration = "", visual = "";
+      if (window.showStudioPrompt) {
+        const res = await window.showStudioPrompt({
+          title: `Chèn Cảnh Mới (Sau Cảnh ${sceneIndex})`,
+          subtitle: "Thêm cảnh truyện vào mạch phim",
+          fields: [
+            { name: "narration", label: "Lời dẫn cho cảnh mới:", type: "textarea", placeholder: "Lời dẫn truyện cho cảnh..." },
+            { name: "visual", label: "Mô tả hình ảnh (tiếng Anh, tuỳ chọn):", type: "textarea", placeholder: "Mô tả khung cảnh để AI vẽ..." }
+          ],
+          submitLabel: "Chèn Cảnh"
+        });
+        if (!res || !res.narration?.trim()) return;
+        narration = res.narration.trim();
+        visual = res.visual?.trim() || narration;
+      } else {
+        narration = prompt("Lời dẫn cho cảnh mới:");
+        if (!narration?.trim()) return;
+        visual = prompt("Mô tả hình ảnh (tiếng Anh):", narration) || narration;
+      }
       await mutate(api(withSceneQuery(`/projects/${jobId}/scenes`), json("POST", { after: Number(sceneIndex), narration, visual_prompt: visual })), "Đã chèn cảnh");
     }
   });

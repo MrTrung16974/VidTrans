@@ -703,14 +703,11 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
     final tts = ref.watch(ttsProvidersProvider).valueOrNull;
     _reconcile(config, translation, tts);
 
-    // The quick start bar mirrors the web UI: it only appears when the user
-    // has pasted valid links or added files (state.sourceCount > 0), and hides
-    // when scrolled down to the full submit card.
+    // Single unified sticky submit bar at the bottom of the studio.
     // When the soft keyboard is open, the dock in HomeShell is hidden, so the
     // bar docks snugly right above the keyboard (bottom: 6) instead of leaving
     // a large empty clearance (studioDockClearance ~108px) that obstructs inputs.
     final keyboardOpen = isStudioKeyboardOpen(context);
-    final showQuickBar = !_atBottomSubmit && state.sourceCount > 0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -728,10 +725,10 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 14,
                 14,
                 keyboardOpen
-                    ? (showQuickBar ? 68.0 : 18.0)
+                    ? 68.0
                     : studioDockBottomPadding(
                         context,
-                        extra: showQuickBar ? 82 : 24,
+                        extra: 82,
                       ),
               ),
               children: [
@@ -798,29 +795,16 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               left: 0,
               right: 0,
               bottom: keyboardOpen ? 6.0 : studioDockClearance(context),
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                offset: showQuickBar ? Offset.zero : const Offset(0, 1.0),
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOut,
-                  opacity: showQuickBar ? 1.0 : 0.0,
-                  child: IgnorePointer(
-                    ignoring: !showQuickBar,
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 420),
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: keyboardOpen ? 10 : 14,
-                          ),
-                          child: _quickSubmitBar(
-                            state,
-                            compact: keyboardOpen,
-                          ),
-                        ),
-                      ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: keyboardOpen ? 10 : 14,
+                    ),
+                    child: _quickSubmitBar(
+                      state,
+                      compact: keyboardOpen,
                     ),
                   ),
                 ),
@@ -1948,6 +1932,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
   Widget _subtitleStyleSection(TranslationConfig config) {
     final style = config.subtitle;
+    final enableOcr = config.ocrAllowed && config.subtitleSource != 'speech';
     void set(SubtitleStyle Function(SubtitleStyle) change) =>
         _update((c) => c.copyWith(subtitle: change(c.subtitle)));
     return FormSection(
@@ -1955,7 +1940,18 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
       title: 'Vị trí & Kiểu phụ đề',
       subtitle: 'Tùy chỉnh vị trí hiển thị, màu sắc và xem trước phụ đề',
       children: [
-        _SubtitlePreviewMonitor(style: style),
+        _SubtitlePreviewMonitor(
+          style: style,
+          enableOcr: enableOcr,
+          ocrRoiTop: config.ocrRoiTop,
+          ocrRoiBottom: config.ocrRoiBottom,
+          onOcrRoiChanged: (top, bottom) => _update(
+            (c) => c.copyWith(
+              ocrRoiTop: double.parse(top.toStringAsFixed(2)),
+              ocrRoiBottom: double.parse(bottom.toStringAsFixed(2)),
+            ),
+          ),
+        ),
         SelectField(
           label: 'Vị trí phụ đề',
           value: style.placementMode,
@@ -2473,12 +2469,22 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
 
   Widget _submitCard(TranslateFormState state) {
     final config = state.config;
+    final hasLogo =
+        ref.watch(brandingSettingsProvider).valueOrNull?.logo != null;
     final modeLabel = switch (config.mode) {
       1 => 'Phụ đề',
       2 => 'Phụ đề + Thuyết minh',
       4 => 'Chỉ tải video',
       _ => 'Phụ đề + Dub + Nhạc',
     };
+    final voiceSummary = config.downloadOnly
+        ? 'Giữ nguyên âm thanh gốc'
+        : config.hasVoice
+        ? '${config.ttsProvider.toUpperCase()} · ${config.speechRate.toStringAsFixed(2)}×'
+        : 'Giữ 100% âm thanh gốc';
+    final logoSummary = hasLogo && config.applyLogo
+        ? 'Đóng dấu tự động'
+        : 'Không chèn logo';
 
     return StudioCard(
       topAccentColor: AppColors.brand,
@@ -2490,8 +2496,8 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
           Row(
             children: [
               const StudioEyebrow(
-                label: 'SẴN SÀNG KHỞI CHẠY',
-                icon: Icons.rocket_launch_outlined,
+                label: 'TÓM TẮT CẤU HÌNH BATCH',
+                icon: Icons.fact_check_outlined,
               ),
               const Spacer(),
               Text(
@@ -2512,28 +2518,50 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AppColors.line),
             ),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: _SummaryItem(label: 'Chế độ', value: modeLabel),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _SummaryItem(label: 'Chế độ', value: modeLabel),
+                    ),
+                    Container(width: 1, height: 26, color: AppColors.line),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _SummaryItem(
+                        label: 'Ngôn ngữ',
+                        value: config.downloadOnly
+                            ? 'Giữ nguyên'
+                            : '${_langName(config.sourceLanguage)} → ${_langName(config.targetLanguage)}',
+                      ),
+                    ),
+                  ],
                 ),
-                Container(width: 1, height: 26, color: AppColors.line),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _SummaryItem(
-                    label: 'Ngôn ngữ',
-                    value: config.downloadOnly
-                        ? 'Giữ nguyên'
-                        : '${_langName(config.sourceLanguage)} → ${_langName(config.targetLanguage)}',
-                  ),
+                const Divider(height: 16, thickness: 0.7),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _SummaryItem(
+                        label: 'Giọng đọc / Âm thanh',
+                        value: voiceSummary,
+                      ),
+                    ),
+                    Container(width: 1, height: 26, color: AppColors.line),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _SummaryItem(
+                        label: 'Logo thương hiệu',
+                        value: logoSummary,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 14),
-          if (state.error != null)
+          if (state.error != null) ...[
+            const SizedBox(height: 12),
             Container(
-              margin: const EdgeInsets.only(bottom: 12),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
               decoration: BoxDecoration(
                 color: AppColors.redSoft,
@@ -2549,17 +2577,7 @@ class _TranslateScreenState extends ConsumerState<TranslateScreen> {
                 ),
               ),
             ),
-          StudioGradientButton(
-            onPressed: _submit,
-            icon: Icons.rocket_launch_rounded,
-            label: state.sourceCount > 0
-                ? (config.downloadOnly
-                      ? 'Tải batch (${state.sourceCount} video)'
-                      : 'Bắt đầu xử lý batch (${state.sourceCount} video)')
-                : (config.downloadOnly
-                      ? 'Bắt đầu tải video'
-                      : 'Bắt đầu xử lý batch'),
-          ),
+          ],
         ],
       ),
     );
@@ -2742,72 +2760,288 @@ class _SummaryItem extends StatelessWidget {
   }
 }
 
-class _SubtitlePreviewMonitor extends StatelessWidget {
-  const _SubtitlePreviewMonitor({required this.style});
+class _SubtitlePreviewMonitor extends StatefulWidget {
+  const _SubtitlePreviewMonitor({
+    required this.style,
+    this.enableOcr = false,
+    this.ocrRoiTop = 0.68,
+    this.ocrRoiBottom = 0.96,
+    this.onOcrRoiChanged,
+  });
 
   final SubtitleStyle style;
+  final bool enableOcr;
+  final double ocrRoiTop;
+  final double ocrRoiBottom;
+  final void Function(double top, double bottom)? onOcrRoiChanged;
+
+  @override
+  State<_SubtitlePreviewMonitor> createState() =>
+      _SubtitlePreviewMonitorState();
+}
+
+class _SubtitlePreviewMonitorState extends State<_SubtitlePreviewMonitor> {
+  bool _isVertical = true;
+
+  Widget _aspectRatioPill({
+    required String label,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.brand : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 12,
+              color: selected ? Colors.white : Colors.white70,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                color: selected ? Colors.white : Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final style = widget.style;
     final fg = ColorChoiceField.parse(style.textColor);
     final bg = ColorChoiceField.parse(style.backgroundColor);
+    final frameHeight = _isVertical ? 204.0 : 148.0;
+    final bottomOffset = (style.positionGap / 300.0 * 36.0).clamp(4.0, 42.0);
 
     return Container(
-      height: 124,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         gradient: AppColors.subtitlePreviewGradient,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFF334155)),
       ),
-      child: Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
             children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'XEM TRƯỚC · ${_isVertical ? '9:16 DỌC' : '16:9 NGANG'}',
+                      style: const TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white70,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${style.minFontSize}–${style.maxFontSize}px',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white60,
+                    ),
+                  ),
+                ],
+              ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                padding: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Text(
-                  'XEM TRƯỚC PHỤ ĐỀ · 16:9',
-                  style: TextStyle(
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white70,
-                    letterSpacing: 0.5,
+                  color: Colors.black.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.14),
                   ),
                 ),
-              ),
-              const Spacer(),
-              Text(
-                '${style.minFontSize}–${style.maxFontSize}px',
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white60,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _aspectRatioPill(
+                      label: '9:16 Dọc',
+                      icon: Icons.stay_current_portrait_rounded,
+                      selected: _isVertical,
+                      onTap: () => setState(() => _isVertical = true),
+                    ),
+                    _aspectRatioPill(
+                      label: '16:9 Ngang',
+                      icon: Icons.stay_current_landscape_rounded,
+                      selected: !_isVertical,
+                      onTap: () => setState(() => _isVertical = false),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: style.backgroundStyle == 'none'
-                    ? Colors.transparent
-                    : bg.withValues(alpha: 0.78),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'Xin chào! Đây là phụ đề tiếng Việt tự động',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: fg,
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w800,
+          const SizedBox(height: 10),
+          SizedBox(
+            height: frameHeight,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: _isVertical ? 9 / 16 : 16 / 9,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final h = constraints.maxHeight;
+                    final roiTopPx = (widget.ocrRoiTop.clamp(0.0, 0.95)) * h;
+                    final roiBottomPx =
+                        (widget.ocrRoiBottom.clamp(0.05, 1.0)) * h;
+                    final roiHeightPx = (roiBottomPx - roiTopPx).clamp(
+                      12.0,
+                      h,
+                    );
+
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(11),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.22),
+                          width: 1.2,
+                        ),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (widget.enableOcr)
+                            Positioned(
+                              left: 8,
+                              right: 8,
+                              top: roiTopPx,
+                              height: roiHeightPx,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.translucent,
+                                onVerticalDragUpdate:
+                                    widget.onOcrRoiChanged == null
+                                    ? null
+                                    : (details) {
+                                        final delta = details.delta.dy / h;
+                                        final isTopHalf =
+                                            details.localPosition.dy <
+                                            roiHeightPx / 2;
+                                        if (isTopHalf) {
+                                          final nextTop =
+                                              (widget.ocrRoiTop + delta).clamp(
+                                                0.0,
+                                                (widget.ocrRoiBottom - 0.05)
+                                                    .clamp(0.0, 0.95),
+                                              );
+                                          widget.onOcrRoiChanged!(
+                                            nextTop,
+                                            widget.ocrRoiBottom,
+                                          );
+                                        } else {
+                                          final nextBottom =
+                                              (widget.ocrRoiBottom + delta)
+                                                  .clamp(
+                                                    (widget.ocrRoiTop + 0.05)
+                                                        .clamp(0.05, 1.0),
+                                                    1.0,
+                                                  );
+                                          widget.onOcrRoiChanged!(
+                                            widget.ocrRoiTop,
+                                            nextBottom,
+                                          );
+                                        }
+                                      },
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: AppColors.teal.withValues(
+                                      alpha: 0.16,
+                                    ),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: AppColors.teal,
+                                      width: 1.4,
+                                    ),
+                                  ),
+                                  alignment: Alignment.topLeft,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  child: Text(
+                                    'VÙNG QUÉT OCR ${(widget.ocrRoiTop * 100).round()}%–${(widget.ocrRoiBottom * 100).round()}%',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: Color(0xFF5EEAD4),
+                                      letterSpacing: 0.3,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          Positioned(
+                            left: 8,
+                            right: 8,
+                            bottom: bottomOffset,
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: style.backgroundStyle == 'none'
+                                      ? Colors.transparent
+                                      : bg.withValues(alpha: 0.78),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  'Xin chào! Đây là phụ đề tiếng Việt tự động',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: fg,
+                                    fontSize: _isVertical ? 11.5 : 13.0,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.25,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
             ),

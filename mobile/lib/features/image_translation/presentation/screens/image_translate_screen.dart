@@ -64,6 +64,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
 
   TranslationStage? _stage;
   ImageTranslationResult? _result;
+  int? _selectedRegionId;
   bool _showOriginal = false;
   bool _sharing = false;
   String? _error;
@@ -371,7 +372,25 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
   void _setResult(ImageTranslationResult? result) {
     final previous = _result;
     _result = result;
-    previous?.dispose();
+    _selectedRegionId = null;
+    if (previous != null && !identical(previous.image, result?.image)) {
+      previous.dispose();
+    }
+  }
+
+  void _updateRegionTranslation(int regionId, String text) {
+    final current = _result;
+    if (current == null) return;
+    final updatedRegions = [
+      for (final r in current.regions)
+        if (r.id == regionId) r.copyWith(translation: text) else r,
+    ];
+    setState(() {
+      _result = ImageTranslationResult(
+        image: current.image,
+        regions: updatedRegions,
+      );
+    });
   }
 
   Future<void> _pick() async {
@@ -675,6 +694,9 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
           if (_floatingController.supported) ...[
             _floatingCard(),
             const SizedBox(height: 14),
+          ] else ...[
+            _unsupportedLiveCard(),
+            const SizedBox(height: 14),
           ],
           _settingsCard(account),
           const SizedBox(height: 14),
@@ -836,6 +858,67 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
       ),
     );
   }
+
+  Widget _unsupportedLiveCard() => StudioCard(
+    borderColor: AppColors.amberBorder,
+    backgroundColor: AppColors.amberSoft,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: AppColors.amberBorder),
+              ),
+              alignment: Alignment.center,
+              child: const Icon(
+                Icons.android_rounded,
+                color: AppColors.amberDark,
+                size: 21,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Dịch nổi trực tiếp chỉ hỗ trợ trên Android',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    'Tính năng nút nổi & đọc màn hình đa ứng dụng (MediaProjection overlay) là đặc quyền hệ điều hành Android. Trên thiết bị hiện tại, bạn hãy dùng chế độ Dịch ảnh chụp màn hình bên dưới.',
+                    style: TextStyle(
+                      fontSize: 12.2,
+                      color: AppColors.amberText,
+                      height: 1.38,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        FilledButton.tonalIcon(
+          onPressed: () => setState(() => _liveTab = false),
+          icon: const Icon(Icons.image_search_rounded, size: 18),
+          label: const Text('Chuyển sang Dịch Ảnh Chụp Màn Hình'),
+        ),
+      ],
+    ),
+  );
 
   Widget _floatingCard() => StudioCard(
     borderColor: _floating ? AppColors.brand : AppColors.line,
@@ -1069,6 +1152,11 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
                         child: TranslatedImageView(
                           result: result,
                           showOriginal: _showOriginal,
+                          selectedRegionId: _selectedRegionId,
+                          onSelectRegion: (id) => setState(
+                            () => _selectedRegionId =
+                                _selectedRegionId == id ? null : id,
+                          ),
                         ),
                       )
                     : Image.memory(_bytes!, fit: BoxFit.contain),
@@ -1079,7 +1167,7 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
             const Padding(
               padding: EdgeInsets.only(top: 8),
               child: Text(
-                'Giữ ngón tay trên ảnh để xem chữ gốc · chụm hai ngón để phóng to',
+                'Chạm vào khung chữ để chọn & sửa · Giữ ngón tay để xem ảnh gốc',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: AppColors.muted),
               ),
@@ -1179,6 +1267,8 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
+          key: ValueKey('regions_${_selectedRegionId != null}'),
+          initiallyExpanded: _selectedRegionId != null,
           tilePadding: EdgeInsets.zero,
           title: Text(
             'Đã dịch ${translated.length} đoạn',
@@ -1187,37 +1277,105 @@ class _ImageTranslateScreenState extends ConsumerState<ImageTranslateScreen> {
               color: AppColors.ink,
             ),
           ),
-          subtitle: result.overflowCount > 0
-              ? Text(
-                  '${result.overflowCount} đoạn dài hơn chữ gốc nên được nới rộng khung',
-                  style: const TextStyle(fontSize: 12, color: AppColors.muted),
-                )
-              : null,
+          subtitle: Text(
+            result.overflowCount > 0
+                ? '${result.overflowCount} đoạn dài hơn chữ gốc nên được nới rộng khung · chạm để sửa'
+                : 'Chạm vào số thứ tự trên ảnh hoặc bên dưới để đối chiếu và chỉnh sửa',
+            style: const TextStyle(fontSize: 12, color: AppColors.muted),
+          ),
           children: [
-            for (final region in translated)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SelectableText(
-                      region.sourceText,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.muted,
+            for (final (index, region) in translated.indexed)
+              Builder(
+                builder: (context) {
+                  final selected = _selectedRegionId == region.id;
+                  return GestureDetector(
+                    onTap: () => setState(
+                      () => _selectedRegionId = selected ? null : region.id,
+                    ),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? AppColors.brandTint
+                            : AppColors.surfaceSubtle,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: selected ? AppColors.brand : AppColors.line,
+                          width: selected ? 1.5 : 1.0,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: selected
+                                      ? AppColors.brand
+                                      : AppColors.ink,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  '#${index + 1}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: SelectableText(
+                                  region.sourceText,
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    color: AppColors.muted,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          TextFormField(
+                            key: ValueKey('region_edit_${region.id}'),
+                            initialValue: region.translation ?? '',
+                            minLines: 1,
+                            maxLines: 3,
+                            onTap: () {
+                              if (_selectedRegionId != region.id) {
+                                setState(() => _selectedRegionId = region.id);
+                              }
+                            },
+                            onChanged: (value) =>
+                                _updateRegionTranslation(region.id, value),
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.ink,
+                            ),
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              hintText: 'Bản dịch trên ảnh…',
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    SelectableText(
-                      region.translation!,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.ink,
-                      ),
-                    ),
-                  ],
-                ),
+                  );
+                },
               ),
           ],
         ),

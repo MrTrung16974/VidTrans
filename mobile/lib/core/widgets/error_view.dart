@@ -14,6 +14,11 @@ class ErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surfaceColor = isDark ? AppColors.darkSurface : AppColors.surface;
+    final titleColor = isDark ? AppColors.darkText : AppColors.ink;
+    final subtitleColor = isDark ? AppColors.darkMuted : AppColors.muted;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -21,9 +26,11 @@ class ErrorView extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 420),
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: AppColors.surface,
+            color: surfaceColor,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.redBorder),
+            border: Border.all(
+              color: isDark ? const Color(0xFF7F1D1D) : AppColors.redBorder,
+            ),
             boxShadow: AppColors.cardShadow,
           ),
           child: Column(
@@ -33,9 +40,11 @@ class ErrorView extends StatelessWidget {
                 width: 52,
                 height: 52,
                 decoration: BoxDecoration(
-                  color: AppColors.redSoft,
+                  color: isDark ? const Color(0xFF450A0A) : AppColors.redSoft,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.redBorder),
+                  border: Border.all(
+                    color: isDark ? const Color(0xFF7F1D1D) : AppColors.redBorder,
+                  ),
                 ),
                 alignment: Alignment.center,
                 child: const Icon(
@@ -45,21 +54,21 @@ class ErrorView extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 14),
-              const Text(
+              Text(
                 'Đã xảy ra sự cố kết nối',
                 style: TextStyle(
                   fontSize: 15.5,
                   fontWeight: FontWeight.w800,
-                  color: AppColors.ink,
+                  color: titleColor,
                 ),
               ),
               const SizedBox(height: 6),
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
-                  color: AppColors.muted,
+                  color: subtitleColor,
                   height: 1.4,
                 ),
               ),

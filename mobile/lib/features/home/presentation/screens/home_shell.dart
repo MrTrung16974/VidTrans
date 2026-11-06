@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,8 @@ import '../../../../core/auth/account.dart';
 import '../../../../core/auth/session_controller.dart';
 import '../../../../core/widgets/studio_widgets.dart';
 import '../../../jobs/presentation/providers/jobs_providers.dart';
+import '../../../logo_branding/presentation/providers/branding_providers.dart';
+import '../../../logo_branding/presentation/widgets/auth_image.dart';
 import '../../../profile/presentation/screens/billing_screen.dart';
 import '../../data/menu_repository.dart';
 import '../../domain/app_menu.dart';
@@ -72,16 +75,18 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       bottomInset + 2.0,
     );
     final keyboardOpen = isStudioKeyboardOpen(context);
+    final isSelectingJobs = ref.watch(isJobSelectingProvider);
+    final hideDock = keyboardOpen || isSelectingJobs;
 
     return Scaffold(
       // Let each branch screen's own Scaffold handle keyboard insets directly
       // so nested screens still receive MediaQuery.viewInsetsOf(context).bottom
       // and don't double-offset or misdetect keyboard state.
       resizeToAvoidBottomInset: false,
-      extendBody: !keyboardOpen,
+      extendBody: !hideDock,
       backgroundColor: AppColors.bg,
       body: shell,
-      bottomNavigationBar: keyboardOpen
+      bottomNavigationBar: hideDock
           ? null
           : Padding(
               padding: EdgeInsets.fromLTRB(
@@ -1538,7 +1543,7 @@ class _SystemArcPainter extends CustomPainter {
 }
 
 /// Circular studio avatar badge matching `#userAvatar` in the top-right of the screenshot.
-class _UserAvatarCircle extends StatelessWidget {
+class _UserAvatarCircle extends ConsumerWidget {
   const _UserAvatarCircle({required this.name, this.size = 36, this.onTap});
 
   final String name;
@@ -1546,15 +1551,17 @@ class _UserAvatarCircle extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) {
-    final trimmed = name.trim();
-    final initials = trimmed.isEmpty
-        ? 'VT'
-        : trimmed
-              .split(RegExp(r'\s+'))
-              .take(2)
-              .map((part) => part.characters.first.toUpperCase())
-              .join();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final branding = ref.watch(brandingSettingsProvider).valueOrNull;
+    final logoPath = branding?.logo?.url;
+    final Widget logoWidget = (logoPath != null && logoPath.isNotEmpty)
+        ? AuthImage(
+            logoPath,
+            width: size - 4,
+            height: size - 4,
+            fit: BoxFit.contain,
+          )
+        : VidTransLogo(size: size);
 
     final badge = Stack(
       clipBehavior: Clip.none,
@@ -1575,36 +1582,12 @@ class _UserAvatarCircle extends StatelessWidget {
               ),
             ],
           ),
-          child: Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const RadialGradient(
-                center: Alignment(-0.2, -0.3),
-                radius: 1.0,
-                colors: [
-                  Color(0xFFDC2626),
-                  Color(0xFF7F1D1D),
-                  Color(0xFF1E1B4B),
-                ],
-                stops: [0.0, 0.55, 1.0],
-              ),
-              border: Border.all(color: const Color(0xFFF59E0B), width: 1.3),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              initials,
-              style: TextStyle(
-                color: const Color(0xFFFEF08A),
-                fontSize: size * 0.32,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -0.3,
-                shadows: const [
-                  Shadow(
-                    color: Colors.black54,
-                    blurRadius: 3,
-                    offset: Offset(0, 1),
-                  ),
-                ],
+          child: ClipOval(
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(1.5),
+              child: ClipOval(
+                child: logoWidget,
               ),
             ),
           ),

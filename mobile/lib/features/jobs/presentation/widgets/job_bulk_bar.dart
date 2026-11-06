@@ -1,7 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../core/widgets/studio_widgets.dart';
 import '../../domain/bulk_actions.dart';
 import '../../domain/job.dart';
 
@@ -41,82 +42,169 @@ class JobBulkBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final allSelected = visibleCount > 0 && selected.length >= visibleCount;
     return Material(
-      color: AppColors.surface,
-      elevation: 8,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          // Extra bottom space so the floating HomeShell dock does not cover
-          // the bulk action buttons.
-          padding: EdgeInsets.fromLTRB(8, 6, 12, studioDockClearance(context)),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  IconButton(
-                    tooltip: 'Thoát chế độ chọn',
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: busy ? null : onClose,
-                  ),
-                  Expanded(
-                    child: Text(
-                      selected.isEmpty
-                          ? 'Chưa chọn job'
-                          : 'Đã chọn ${selected.length} tiến trình',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14,
-                        color: AppColors.ink,
+      color: Colors.transparent,
+      elevation: 0,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border.all(color: AppColors.line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1F0F172A),
+              blurRadius: 16,
+              offset: Offset(0, -4),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            // When selection mode is active, the floating dock is hidden,
+            // so JobBulkBar docks cleanly to the bottom with safe area padding.
+            padding: EdgeInsets.fromLTRB(
+              12,
+              10,
+              12,
+              math.max(12.0, MediaQuery.paddingOf(context).bottom + 6.0),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: 'Thoát chế độ chọn',
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: busy ? null : onClose,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: selected.isEmpty
+                                    ? AppColors.surfaceMuted
+                                    : AppColors.brandTint,
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: selected.isEmpty
+                                      ? AppColors.line
+                                      : AppColors.brandBorder,
+                                ),
+                              ),
+                              child: Text(
+                                selected.isEmpty
+                                    ? 'Chưa chọn job'
+                                    : 'Đã chọn ${selected.length} tiến trình',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13,
+                                  color: selected.isEmpty
+                                      ? AppColors.muted
+                                      : AppColors.brandDark,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  if (busy)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.4,
-                          color: AppColors.brand,
+                    if (busy)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 12),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            color: AppColors.brand,
+                          ),
+                        ),
+                      )
+                    else
+                      TextButton(
+                        onPressed: visibleCount == 0
+                            ? null
+                            : (allSelected ? onClear : onSelectAll),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          foregroundColor: AppColors.brand,
+                          textStyle: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        child: Text(
+                          allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả',
                         ),
                       ),
-                    )
-                  else
-                    TextButton(
-                      onPressed: visibleCount == 0
-                          ? null
-                          : (allSelected ? onClear : onSelectAll),
-                      child: Text(
-                        allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả',
-                      ),
-                    ),
-                ],
-              ),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  for (final action in BulkJobAction.values)
-                    SizedBox(
-                      width: 112,
+                  ],
+                ),
+                const SizedBox(height: 6),
+                // Row 1: State control buttons (Pause, Resume, Cancel) - 3 equal columns for all screen widths
+                Row(
+                  children: [
+                    Expanded(
                       child: _actionButton(
-                        action,
-                        action.eligible(selected).length,
+                        BulkJobAction.pause,
+                        BulkJobAction.pause.eligible(selected).length,
                       ),
                     ),
-                ],
-              ),
-            ],
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _actionButton(
+                        BulkJobAction.resume,
+                        BulkJobAction.resume.eligible(selected).length,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _actionButton(
+                        BulkJobAction.cancel,
+                        BulkJobAction.cancel.eligible(selected).length,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                // Row 2: Execution buttons (Retry, Delete) - 2 equal columns for all screen widths
+                Row(
+                  children: [
+                    Expanded(
+                      child: _actionButton(
+                        BulkJobAction.retry,
+                        BulkJobAction.retry.eligible(selected).length,
+                        accent: true,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _actionButton(
+                        BulkJobAction.delete,
+                        BulkJobAction.delete.eligible(selected).length,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _actionButton(BulkJobAction action, int count) {
+  Widget _actionButton(BulkJobAction action, int count, {bool accent = false}) {
     final destructive = action == BulkJobAction.delete;
     final onPressed = busy || count == 0 ? null : () => onAction(action);
     final label = Text(
@@ -124,17 +212,28 @@ class JobBulkBar extends StatelessWidget {
       maxLines: 1,
     );
     final style = OutlinedButton.styleFrom(
-      minimumSize: const Size(0, 40),
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      foregroundColor: destructive ? AppColors.redDark : null,
+      minimumSize: const Size(0, 38),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      foregroundColor: destructive
+          ? AppColors.redDark
+          : accent && onPressed != null
+              ? AppColors.brand
+              : null,
       side: destructive && onPressed != null
           ? const BorderSide(color: AppColors.redBorder)
-          : null,
+          : accent && onPressed != null
+              ? const BorderSide(color: AppColors.brandBorder, width: 1.2)
+              : null,
+      backgroundColor: accent && onPressed != null
+          ? AppColors.brandSoft
+          : destructive && onPressed != null
+              ? AppColors.redSoft
+              : null,
     );
     return OutlinedButton.icon(
       style: style,
       onPressed: onPressed,
-      icon: Icon(_icons[action], size: 17),
+      icon: Icon(_icons[action], size: 16),
       label: FittedBox(fit: BoxFit.scaleDown, child: label),
     );
   }

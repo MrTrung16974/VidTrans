@@ -61,6 +61,7 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
   LocalFile? _file;
   LocalFile? _music;
   BibleDraft? _bible;
+  List<Map<String, dynamic>> _importedEpisodes = const [];
   bool _busy = false;
   double? _upload;
 
@@ -330,7 +331,8 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
     });
     _idempotencyKey ??= const Uuid().v4();
     try {
-      final created = await ref.read(comicRepositoryProvider).createSeries(
+      final repo = ref.read(comicRepositoryProvider);
+      final created = await repo.createSeries(
             form.toFields(bible: bible?.toJsonString(), hasLogo: _hasLogoNow),
             file: _file,
             music: _music,
@@ -339,12 +341,39 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
               if (total > 0 && mounted) setState(() => _upload = sent / total);
             },
           );
+      final seriesId = created['series_id']?.toString();
+      var extraQueued = 0;
+      if (seriesId != null && seriesId.isNotEmpty && _importedEpisodes.length > 1) {
+        for (final (idx, ep) in _importedEpisodes.skip(1).indexed) {
+          final epNum = idx + 2;
+          final epText = ep['text']?.toString() ?? '';
+          if (epText.trim().isEmpty) continue;
+          final epTitle = ep['title']?.toString() ?? 'Tập $epNum';
+          final epForm = EpisodeForm(
+            seriesId: seriesId,
+            title: epTitle,
+            text: epText,
+            autoRender: form.autoRender,
+            applyLogo: form.applyLogo,
+          );
+          await repo.createProject(
+            epForm.toFields(hasLogo: _hasLogoNow),
+            music: _music,
+            idempotencyKey: '$_idempotencyKey-ep-$epNum',
+          );
+          extraQueued++;
+        }
+      }
       ref.invalidate(comicSeriesListProvider);
       ref.invalidate(comicProjectsProvider);
-      _snack(created['job_id'] != null
-          ? 'Đã tạo truyện và tập 1, hệ thống đang chia cảnh…'
-          : 'Đã tạo truyện — hãy thêm tập 1');
-      if (mounted) context.pushReplacement('/comic/series/${created['series_id']}');
+      if (extraQueued > 0) {
+        _snack('Đã tạo truyện và ${extraQueued + 1} tập tự động, hệ thống đang chia cảnh…');
+      } else {
+        _snack(created['job_id'] != null
+            ? 'Đã tạo truyện và tập 1, hệ thống đang chia cảnh…'
+            : 'Đã tạo truyện — hãy thêm tập 1');
+      }
+      if (mounted) context.pushReplacement('/comic/series/$seriesId');
     } catch (error) {
       _snack(errorMessage(error));
     } finally {
@@ -513,10 +542,50 @@ class _CreateStoryState extends ConsumerState<_CreateStory> {
                     }
                     form.text = episode1Text;
                     _textController.text = episode1Text;
+                    _importedEpisodes = episodes;
+                    if (episodes.isNotEmpty && form.episodeTitle.isEmpty) {
+                      form.episodeTitle = episodes.first['title']?.toString() ?? '';
+                    }
                   });
-                  _snack('Đã điền nội dung truyện từ Qidian thành công!');
+                  _snack(
+                    episodes.length > 1
+                        ? 'Đã tách thành ${episodes.length} tập sẽ được tạo tự động trong bộ truyện!'
+                        : 'Đã điền nội dung truyện từ Qidian thành công!',
+                  );
                 },
               ),
+              if (_importedEpisodes.length > 1)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.tealSoft,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.tealBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.library_books_rounded, size: 18, color: AppColors.tealDark),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Đã tách thành ${_importedEpisodes.length} tập sẽ được tạo tự động trong bộ truyện',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.tealDark,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Chỉ giữ tập 1',
+                        icon: const Icon(Icons.close_rounded, size: 16, color: AppColors.tealDark),
+                        onPressed: () => setState(() => _importedEpisodes = const []),
+                      ),
+                    ],
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: TextFormField(

@@ -422,8 +422,7 @@ export function createTikTokWorkspace({ requestJson, toast, getCurrentUserId = (
     }
   });
   $('#tiktokCaption').addEventListener('input', () => {
-    $('#tiktokReviewConsent').checked = false;
-    $('#tiktokStudioReviewConsent').checked = false;
+    publishKey = null;
     instagram.changed(); extraSocial.forEach(workspace => workspace.changed()); controls();
   });
   $('#tiktokPublishMode').addEventListener('change', updatePublishMode);

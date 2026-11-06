@@ -20,6 +20,11 @@ final jobPageProvider = StateProvider<int>((ref) => 1);
 const jobPageSizes = [10, 20, 50, 100];
 final jobPageSizeProvider = StateProvider<int>((ref) => 10);
 
+/// Tracks whether the user is actively in multi-job selection mode on JobsScreen
+/// so the parent navigation shell can smoothly hide the floating dock and give
+/// full vertical real-estate to the bulk action bar.
+final isJobSelectingProvider = StateProvider<bool>((ref) => false);
+
 final jobListProvider =
     AsyncNotifierProvider.autoDispose<JobListController, JobList>(
       JobListController.new,

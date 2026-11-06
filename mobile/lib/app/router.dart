@@ -56,46 +56,7 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(
         path: '/splash',
-        builder: (_, _) => const Scaffold(
-          backgroundColor: AppColors.bg,
-          body: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                VidTransLogo(size: 64),
-                SizedBox(height: 14),
-                Text(
-                  'VidTrans',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.ink,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'CREATOR STUDIO',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.muted,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                SizedBox(height: 24),
-                SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: AppColors.brand,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        builder: (_, _) => const _SplashScreen(),
       ),
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       // Opened from the account menu: full screen above the bottom navigation.
@@ -142,3 +103,66 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+class _SplashScreen extends StatelessWidget {
+  const _SplashScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B1120),
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.darkSurface,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: AppColors.darkLineStrong),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.brand.withValues(alpha: 0.25),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const VidTransLogo(size: 56),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'VidTrans',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: AppColors.darkText,
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 3),
+            const Text(
+              'CREATOR STUDIO',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppColors.darkMuted,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                color: AppColors.brand,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

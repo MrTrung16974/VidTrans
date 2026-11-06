@@ -105,21 +105,81 @@ class _SettingsFormState extends ConsumerState<_SettingsForm> {
 
   void _set(BrandingConfig config) => setState(() => _config = config);
 
+  bool _hasUnsavedChanges(BrandingConfig saved) {
+    final a = _config.toJson();
+    final b = saved.toJson();
+    for (final key in a.keys) {
+      if (a[key] != b[key]) return true;
+    }
+    return false;
+  }
+
+  Future<void> _saveConfig() async {
+    await _run(
+      'config',
+      () => _controller.saveConfig(_config),
+      'Đã lưu cấu hình logo',
+    );
+  }
+
+  Future<void> _confirmPop() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Chưa lưu thay đổi'),
+        content: const Text(
+          'Bạn có thay đổi cấu hình logo chưa lưu. Lưu trước khi thoát?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'stay'),
+            child: const Text('Ở lại'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'discard'),
+            child: const Text(
+              'Bỏ thay đổi',
+              style: TextStyle(color: AppColors.red),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, 'save'),
+            child: const Text('Lưu & thoát'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null || choice == 'stay') return;
+    if (choice == 'save') {
+      await _saveConfig();
+      if (!mounted) return;
+    }
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings =
         ref.watch(brandingSettingsProvider).valueOrNull ?? widget.settings;
     final readOnly = ref.watch(sessionProvider).valueOrNull?.isReadOnly ?? true;
     final enabled = !readOnly && _busy == null;
+    final dirty = !readOnly && _hasUnsavedChanges(settings.config);
 
-    return ListView(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        14,
-        16,
-        studioDockBottomPadding(context),
-      ),
-      children: [
+    return PopScope(
+      canPop: !dirty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmPop();
+      },
+      child: Stack(
+        children: [
+          ListView(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              14,
+              16,
+              studioDockBottomPadding(context, extra: dirty ? 86 : 20),
+            ),
+            children: [
         _ImageCard(
           title: 'Logo thương hiệu',
           image: settings.logo,
@@ -263,16 +323,10 @@ class _SettingsFormState extends ConsumerState<_SettingsForm> {
                     ? (value) => _set(_config.copyWith(coverMethod: value))
                     : null,
               ),
-              if (!readOnly) ...[
+              if (!readOnly && !dirty) ...[
                 const SizedBox(height: 16),
                 StudioGradientButton(
-                  onPressed: _busy == null
-                      ? () => _run(
-                            'config',
-                            () => _controller.saveConfig(_config),
-                            'Đã lưu cấu hình logo',
-                          )
-                      : null,
+                  onPressed: _busy == null ? _saveConfig : null,
                   isLoading: _busy == 'config',
                   icon: Icons.save_outlined,
                   label: 'Lưu cấu hình',
@@ -282,6 +336,68 @@ class _SettingsFormState extends ConsumerState<_SettingsForm> {
           ),
         ),
       ],
+    ),
+    if (dirty)
+      Positioned(
+        left: 14,
+        right: 14,
+        bottom: studioDockClearance(context),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.brandBorder, width: 1.4),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x240F172A),
+                blurRadius: 22,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.edit_notifications_rounded,
+                size: 18,
+                color: AppColors.brandDark,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Cấu hình logo đã thay đổi',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.ink,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: _busy == null
+                    ? () => setState(() => _config = settings.config)
+                    : null,
+                child: const Text('Hoàn tác'),
+              ),
+              const SizedBox(width: 6),
+              StudioGradientButton(
+                expanded: false,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                onPressed: _busy == null ? _saveConfig : null,
+                isLoading: _busy == 'config',
+                icon: Icons.save_outlined,
+                label: 'Lưu cấu hình',
+              ),
+            ],
+          ),
+        ),
+      ),
+      ],
+    ),
     );
   }
 }

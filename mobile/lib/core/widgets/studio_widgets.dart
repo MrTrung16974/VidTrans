@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_theme.dart';
 
@@ -126,6 +127,7 @@ class VidTransBrandTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -135,24 +137,24 @@ class VidTransBrandTitle extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
+            Text(
               'VidTrans',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
                 letterSpacing: -0.4,
-                color: AppColors.ink,
+                color: isDark ? AppColors.darkText : AppColors.ink,
                 height: 1.1,
               ),
             ),
             const SizedBox(height: 1),
             Text(
               subtitle,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.8,
-                color: AppColors.muted,
+                color: isDark ? AppColors.darkMuted : AppColors.muted,
                 height: 1.1,
               ),
             ),
@@ -453,7 +455,14 @@ class StudioCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final resolvedBg = color ?? backgroundColor;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final resolvedBg = color ??
+        (isDark && backgroundColor == AppColors.surface
+            ? AppColors.darkSurface
+            : backgroundColor);
+    final resolvedBorder = isDark && borderColor == AppColors.line
+        ? AppColors.darkLine
+        : borderColor;
     Widget content = Padding(padding: padding, child: child);
 
     if (topAccentColor != null && leftAccentColor == null) {
@@ -504,7 +513,7 @@ class StudioCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: resolvedBg,
         borderRadius: BorderRadius.circular(borderRadius),
-        border: Border.all(color: borderColor),
+        border: Border.all(color: resolvedBorder),
         boxShadow: AppColors.cardShadow,
       ),
       clipBehavior: Clip.antiAlias,
@@ -609,10 +618,12 @@ class StudioStepHeader extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16.5,
                   fontWeight: FontWeight.w800,
-                  color: AppColors.ink,
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? AppColors.darkText
+                      : AppColors.ink,
                   letterSpacing: -0.3,
                 ),
               ),
@@ -620,9 +631,11 @@ class StudioStepHeader extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   subtitle!,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12.8,
-                    color: AppColors.muted,
+                    color: Theme.of(context).brightness == Brightness.dark
+                        ? AppColors.darkMuted
+                        : AppColors.muted,
                     height: 1.4,
                   ),
                 ),
@@ -730,6 +743,7 @@ class StudioEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -737,9 +751,12 @@ class StudioEmptyState extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 420),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
           decoration: BoxDecoration(
-            color: AppColors.surface,
+            color: isDark ? AppColors.darkSurface : AppColors.surface,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: AppColors.lineStrong, width: 1.2),
+            border: Border.all(
+              color: isDark ? AppColors.darkLine : AppColors.lineStrong,
+              width: 1.2,
+            ),
             boxShadow: AppColors.cardShadow,
           ),
           child: Column(
@@ -760,10 +777,10 @@ class StudioEmptyState extends StatelessWidget {
               Text(
                 title,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w800,
-                  color: AppColors.ink,
+                  color: isDark ? AppColors.darkText : AppColors.ink,
                 ),
               ),
               if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -771,9 +788,9 @@ class StudioEmptyState extends StatelessWidget {
                 Text(
                   subtitle!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
-                    color: AppColors.muted,
+                    color: isDark ? AppColors.darkMuted : AppColors.muted,
                     height: 1.45,
                   ),
                 ),
@@ -797,13 +814,54 @@ bool isStudioKeyboardOpen(BuildContext context) {
   return view != null && view.viewInsets.bottom > 0;
 }
 
+/// Top-level root tab routes where the floating bottom dock in [HomeShell] is visible.
+const studioRootTabPaths = <String>{
+  '/translate',
+  '/comic',
+  '/jobs',
+  '/social',
+  '/profile',
+};
+
+/// Returns true when [path] is one of the 5 top-level root tab routes.
+bool isStudioRootTabPath(String? path) {
+  if (path == null || path.isEmpty) return false;
+  final normalized = path.length > 1 && path.endsWith('/')
+      ? path.substring(0, path.length - 1)
+      : path;
+  return studioRootTabPaths.contains(normalized);
+}
+
+/// Returns true only when [context] is currently on one of the 5 top-level
+/// root tab paths (`/translate`, `/comic`, `/jobs`, `/social`, `/profile`).
+bool isStudioRootTabRoute(BuildContext context) {
+  final modal = ModalRoute.of(context);
+  if (modal != null && !modal.isFirst) {
+    return false;
+  }
+  try {
+    return isStudioRootTabPath(GoRouterState.of(context).uri.path);
+  } catch (_) {
+    final router = GoRouter.maybeOf(context);
+    if (router != null) {
+      return isStudioRootTabPath(router.state.uri.path);
+    }
+    return false;
+  }
+}
+
 /// Height of the floating dock area at the bottom of [HomeShell], including
 /// the device's physical bottom safe area inset.
 /// When the soft keyboard is open, the floating dock is hidden so only a
 /// minimal breathing gap above the keyboard is needed.
+/// On sub-screens (non-root tab paths), the dock is hidden so only
+/// `MediaQuery.viewPaddingOf(context).bottom + 12.0` is returned.
 double studioDockClearance(BuildContext context) {
   if (isStudioKeyboardOpen(context)) {
     return 8.0;
+  }
+  if (!isStudioRootTabRoute(context)) {
+    return MediaQuery.viewPaddingOf(context).bottom + 12.0;
   }
   final viewBottom = MediaQuery.viewPaddingOf(context).bottom;
   final padBottom = MediaQuery.paddingOf(context).bottom;
@@ -851,19 +909,29 @@ class StudioMetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final effectiveAccent = isDark && accentColor == AppColors.ink
+        ? AppColors.darkText
+        : accentColor;
     final resolvedIconBg =
         iconBackgroundColor ??
         (accentColor == AppColors.ink
-            ? AppColors.surfaceMuted
-            : accentColor.withValues(alpha: 0.12));
+            ? (isDark ? AppColors.darkSurfaceSoft : AppColors.surfaceMuted)
+            : effectiveAccent.withValues(alpha: 0.12));
     final resolvedBorder = selected
-        ? (accentColor == AppColors.ink ? AppColors.brand : accentColor)
-        : borderColor;
+        ? (accentColor == AppColors.ink ? AppColors.brand : effectiveAccent)
+        : (isDark && borderColor == AppColors.line
+              ? AppColors.darkLine
+              : borderColor);
     final resolvedBg = selected && backgroundColor == AppColors.surface
-        ? (accentColor == AppColors.ink
-              ? AppColors.brandTint
-              : accentColor.withValues(alpha: 0.08))
-        : backgroundColor;
+        ? (isDark
+              ? AppColors.brand.withValues(alpha: 0.14)
+              : (accentColor == AppColors.ink
+                    ? AppColors.brandTint
+                    : accentColor.withValues(alpha: 0.08)))
+        : (isDark && backgroundColor == AppColors.surface
+              ? AppColors.darkSurface
+              : backgroundColor);
 
     final content = AnimatedContainer(
       duration: const Duration(milliseconds: 180),
@@ -889,7 +957,9 @@ class StudioMetricCard extends StatelessWidget {
                     fontSize: 10.5,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.45,
-                    color: selected ? accentColor : AppColors.muted,
+                    color: selected
+                        ? effectiveAccent
+                        : (isDark ? AppColors.darkMuted : AppColors.muted),
                   ),
                 ),
               ),
@@ -903,7 +973,7 @@ class StudioMetricCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   alignment: Alignment.center,
-                  child: Icon(icon, size: 14, color: accentColor),
+                  child: Icon(icon, size: 14, color: effectiveAccent),
                 ),
               ],
             ],
@@ -914,7 +984,7 @@ class StudioMetricCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w900,
-              color: accentColor,
+              color: effectiveAccent,
               letterSpacing: -0.6,
               height: 1.08,
             ),
@@ -925,10 +995,10 @@ class StudioMetricCard extends StatelessWidget {
               subtitle!,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w500,
-                color: AppColors.muted,
+                color: isDark ? AppColors.darkMuted : AppColors.muted,
               ),
             ),
           ],
@@ -977,14 +1047,18 @@ class StudioPageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final isCompact = screenWidth < 360;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
       padding: EdgeInsets.all(isCompact ? 14 : 16),
       decoration: BoxDecoration(
-        gradient: AppColors.studioHeroGradient,
+        gradient: isDark ? null : AppColors.studioHeroGradient,
+        color: isDark ? AppColors.darkSurface : null,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: AppColors.brandBorder.withValues(alpha: 0.85),
+          color: isDark
+              ? AppColors.darkLine
+              : AppColors.brandBorder.withValues(alpha: 0.85),
         ),
         boxShadow: AppColors.cardShadow,
       ),
@@ -1056,10 +1130,10 @@ class StudioPageHeader extends StatelessWidget {
                 if (eyebrowNote != null)
                   Text(
                     eyebrowNote!,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.muted,
+                      color: isDark ? AppColors.darkMuted : AppColors.muted,
                     ),
                   ),
               ],
@@ -1071,7 +1145,7 @@ class StudioPageHeader extends StatelessWidget {
             style: TextStyle(
               fontSize: isCompact ? 18.5 : 20.5,
               fontWeight: FontWeight.w900,
-              color: AppColors.ink,
+              color: isDark ? AppColors.darkText : AppColors.ink,
               letterSpacing: -0.5,
               height: 1.2,
             ),
@@ -1082,7 +1156,7 @@ class StudioPageHeader extends StatelessWidget {
               subtitle!,
               style: TextStyle(
                 fontSize: isCompact ? 12.5 : 13,
-                color: AppColors.muted,
+                color: isDark ? AppColors.darkMuted : AppColors.muted,
                 height: 1.45,
               ),
             ),
@@ -1129,8 +1203,9 @@ class StudioSubBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final canPop = Navigator.of(context).canPop();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Material(
-      color: Colors.white,
+      color: isDark ? AppColors.darkSurface : Colors.white,
       child: SafeArea(
         bottom: false,
         child: Column(
@@ -1150,15 +1225,19 @@ class StudioSubBar extends StatelessWidget implements PreferredSizeWidget {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: AppColors.surfaceSoft,
+                            color: isDark
+                                ? AppColors.darkSurfaceSoft
+                                : AppColors.surfaceSoft,
                             borderRadius: BorderRadius.circular(11),
-                            border: Border.all(color: AppColors.line),
+                            border: Border.all(
+                              color: isDark ? AppColors.darkLine : AppColors.line,
+                            ),
                           ),
                           alignment: Alignment.center,
-                          child: const Icon(
+                          child: Icon(
                             Icons.arrow_back_ios_new_rounded,
                             size: 16,
-                            color: AppColors.ink,
+                            color: isDark ? AppColors.darkText : AppColors.ink,
                           ),
                         ),
                       ),
@@ -1176,11 +1255,11 @@ class StudioSubBar extends StatelessWidget implements PreferredSizeWidget {
                             title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 16.5,
                               fontWeight: FontWeight.w800,
                               letterSpacing: -0.35,
-                              color: AppColors.ink,
+                              color: isDark ? AppColors.darkText : AppColors.ink,
                               height: 1.15,
                             ),
                           ),
@@ -1190,10 +1269,12 @@ class StudioSubBar extends StatelessWidget implements PreferredSizeWidget {
                               subtitle!,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11.5,
                                 fontWeight: FontWeight.w600,
-                                color: AppColors.muted,
+                                color: isDark
+                                    ? AppColors.darkMuted
+                                    : AppColors.muted,
                                 height: 1.1,
                               ),
                             ),
@@ -1251,15 +1332,22 @@ class StudioDashedBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final resolvedBorder = isDark && borderColor == const Color(0xFFCBD5E1)
+        ? AppColors.darkLine
+        : borderColor;
+    final resolvedBg = isDark && backgroundColor == const Color(0xFFFCFDFE)
+        ? AppColors.darkSurface
+        : backgroundColor;
     final inner = CustomPaint(
       foregroundPainter: _DashedRRectPainter(
-        color: borderColor,
+        color: resolvedBorder,
         radius: borderRadius,
       ),
       child: Container(
         padding: padding,
         decoration: BoxDecoration(
-          color: backgroundColor,
+          color: resolvedBg,
           borderRadius: BorderRadius.circular(borderRadius),
         ),
         child: child,
