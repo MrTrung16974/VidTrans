@@ -1,7 +1,7 @@
 // Firebase Cloud Messaging for the web: the browser registers its FCM token at
 // /api/v1/me/devices (platform "web") so job outcomes reach it even when no
-// VidTrans tab is open. /firebase-messaging-sw.js draws those pushes; while a tab
-// is on screen the job socket toasts them instead.
+// VidTrans tab is open. /firebase-messaging-sw.js draws background pushes and
+// Firebase onMessage draws foreground pushes.
 //
 // The Firebase web config is public by design (it identifies the project, it is
 // not a secret). Keep it in sync with FIREBASE_CONFIG in /firebase-messaging-sw.js.
@@ -27,6 +27,7 @@ const DEVICE_KEY = "vidtrans.webpush.device_id";
 
 let messagingPromise = null;
 let registered = false;
+let foregroundListener = false;
 
 function storage(action, value) {
   try {
@@ -83,6 +84,20 @@ export async function enableWebPush(requestJson) {
     if (VAPID_KEY) options.vapidKey = VAPID_KEY;
     const token = await ready.fcm.getToken(ready.instance, options);
     if (!token) return false;
+    if (!foregroundListener) {
+      foregroundListener = true;
+      ready.fcm.onMessage(ready.instance, payload => {
+        const data = payload.data || {};
+        if (!data.title) return;
+        ready.registration.showNotification(data.title, {
+          body: data.body || "",
+          tag: data.job_id ? `${data.job_id}:${data.status || ""}` : undefined,
+          icon: "/assets/vidtrans-mark.svg",
+          badge: "/assets/vidtrans-mark.svg",
+          data,
+        });
+      });
+    }
     const device = await requestJson("/api/v1/me/devices", {
       method: "POST",
       silent: true,

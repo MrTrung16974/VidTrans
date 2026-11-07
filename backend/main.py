@@ -108,8 +108,7 @@ from infrastructure.branding_store import BrandingStore
 from infrastructure.device_store import DeviceStore
 from infrastructure.contact_store import ContactMessageStore
 from infrastructure.job_report_store import JobReportStore
-from infrastructure.notification_hub import NotificationHub
-from infrastructure.push_notifications import FcmSender, JobPushNotifier, job_message
+from infrastructure.push_notifications import FcmSender, JobPushNotifier
 from infrastructure.realtime import SOCKET_IO_PATH, RealtimeServer
 from application.device_routes import DeviceRouteDependencies, create_device_router
 from application.contact_routes import ContactRouteDependencies, create_contact_router
@@ -439,8 +438,6 @@ JOB_EVENTS = JobEventHub(lambda job_ids: job_change_snapshot(job_ids))
 DEVICE_STORE = DeviceStore(DATABASE_TARGET)
 CONTACT_MESSAGES = ContactMessageStore(DATABASE_TARGET)
 JOB_REPORTS = JobReportStore(DATABASE_TARGET)
-# Notifications for the web's job-events WebSocket (own job created; reports for staff).
-NOTIFICATIONS = NotificationHub()
 MUSIC_LIBRARY = MusicLibraryStore(
     DATABASE_TARGET,
     WORK_DIR / "music_library",
@@ -486,20 +483,17 @@ JOB_SERVICE = JobService(
 
 
 def notify_job_status(job_id: str, status: str) -> None:
-    # REALTIME is created with the job routes below; worker threads only write
-    # statuses after the module has loaded.
     PUSH_NOTIFIER.on_status(job_id, status)
-    REALTIME.on_status(job_id, status)
-    if status == "created" and NOTIFICATIONS.subscriber_count:
-        built = job_status_notification(job_id, status)
-        if built is not None:
-            NOTIFICATIONS.publish_to_user(*built)
 
 
 def notify_staff(payload: dict[str, Any]) -> None:
-    """A notification for every owner/admin account: web sockets and the apps."""
-    NOTIFICATIONS.publish_to_staff(payload)
-    REALTIME.notify_staff(payload)
+    """Deliver staff-facing notifications through Firebase on app and web."""
+    staff_ids = [
+        str(account["user_id"])
+        for account in ADMIN_ACCOUNTS.list(status="approved")
+        if account.get("role") in {"owner", "admin"}
+    ]
+    PUSH_NOTIFIER.notify_users(staff_ids, payload)
 N8N_WORKFLOW_CONFIG = N8nWebhookConfig.from_env()
 WORKFLOW_EVENT_STORE = WorkflowEventStore(DATABASE_TARGET)
 WORKFLOW_EVENTS = WorkflowEventSink(WORKFLOW_EVENT_STORE)
@@ -5345,7 +5339,6 @@ async def prepare_cit_voice_previews() -> None:
 async def start_job_scheduler() -> None:
     await JOB_EVENTS.start()
     await REALTIME.start()
-    await NOTIFICATIONS.start()
     await SYSTEM_EVENTS.start()
     BROWSER_POWER_SWEEPER.start()
     apply_retention_policy()
@@ -5392,7 +5385,6 @@ async def start_job_scheduler() -> None:
 
 @app.on_event("shutdown")
 async def stop_job_scheduler() -> None:
-    await NOTIFICATIONS.stop()
     await REALTIME.stop()
     await JOB_EVENTS.stop()
     PUSH_NOTIFIER.shutdown()
@@ -8065,23 +8057,12 @@ def socket_io_auth_claims(scope: dict[str, Any], auth: dict[str, Any]) -> dict[s
     return claims
 
 
-def job_status_notification(job_id: str, status: str) -> tuple[str, dict[str, Any]] | None:
-    job = JOB_SERVICE.get(job_id)
-    owner = str((job or {}).get("owner_user_id") or "")
-    # "created" is announced whatever status the new job already moved on to.
-    if not job or not owner or (status != "created" and str(job.get("status")) != status):
-        return None
-    title, body, data = job_message(job_id, status, job)
-    return owner, {**data, "title": title, "body": body}
-
-
 REALTIME = RealtimeServer(
     JOB_EVENTS,
     authenticate=socket_io_auth_claims,
     scope_message=lambda message, owner, allow_all: filter_job_event_for_user(message, owner, allow_all=allow_all),
-    build_notification=job_status_notification,
 )
-# Socket.IO (job progress + notifications). Under /api/ so the existing proxies
+# Socket.IO job progress. Under /api/ so the existing proxies
 # forward it with the WebSocket upgrade headers.
 app.mount(SOCKET_IO_PATH, REALTIME.asgi_app)
 
@@ -8102,22 +8083,18 @@ async def job_events_socket(websocket: WebSocket) -> None:
     owner_user_id = str(claims.get("user_id") or _bootstrap_owner["user_id"])
     staff = str(claims.get("role") or "") in {"owner", "admin"}
     queue = JOB_EVENTS.subscribe()
-    notifications = NOTIFICATIONS.subscribe(owner_user_id, staff=staff)
 
     async def read_until_closed() -> None:
         while True:
             await websocket.receive_text()
 
     reader = asyncio.create_task(read_until_closed())
-    notice: asyncio.Task[dict[str, Any]] | None = None
     try:
         await websocket.send_json({"type": "ready"})
         while True:
             getter = asyncio.create_task(queue.get())
-            if notice is None:
-                notice = asyncio.create_task(notifications.get())
             done, _pending = await asyncio.wait(
-                {getter, reader, notice}, timeout=25, return_when=asyncio.FIRST_COMPLETED,
+                {getter, reader}, timeout=25, return_when=asyncio.FIRST_COMPLETED,
             )
             if reader in done:
                 getter.cancel()
@@ -8126,9 +8103,6 @@ async def job_events_socket(websocket: WebSocket) -> None:
                 getter.cancel()
                 await websocket.close(code=4401)
                 break
-            if notice in done:
-                await websocket.send_json({"type": "notification", "notification": notice.result()})
-                notice = None
             if getter in done:
                 scoped = filter_job_event_for_user(
                     getter.result(), owner_user_id,
@@ -8145,10 +8119,7 @@ async def job_events_socket(websocket: WebSocket) -> None:
         pass
     finally:
         JOB_EVENTS.unsubscribe(queue)
-        NOTIFICATIONS.unsubscribe(notifications)
         reader.cancel()
-        if notice is not None:
-            notice.cancel()
 
 
 @app.websocket("/api/v1/admin/system/events")

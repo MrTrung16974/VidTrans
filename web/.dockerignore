@@ -3,6 +3,7 @@
 !docker/
 !index.html
 !googlefffecc69420e3aa8.html
+!firebase-messaging-sw.js
 !assets/
 !js/
 !pages/

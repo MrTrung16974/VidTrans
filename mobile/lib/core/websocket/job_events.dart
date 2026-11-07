@@ -37,38 +37,13 @@ class JobChanges {
       );
 }
 
-/// `notification` event: a job finished or failed (same content as the FCM push).
-class JobNotification {
-  const JobNotification({required this.jobId, required this.status, this.errorCode, this.title, this.body});
-
-  final String jobId;
-  final String status;
-  final String? errorCode;
-  final String? title;
-  final String? body;
-
-  static JobNotification? fromJson(Object? json) {
-    if (json is! Map || json['type'] != 'job_status') return null;
-    final jobId = json['job_id']?.toString() ?? '';
-    if (jobId.isEmpty) return null;
-    return JobNotification(
-      jobId: jobId,
-      status: json['status']?.toString() ?? '',
-      errorCode: json['error_code']?.toString(),
-      title: json['title'] as String?,
-      body: json['body'] as String?,
-    );
-  }
-}
-
 final jobEventsProvider = Provider<JobEventsService>((ref) {
   final service = JobEventsService(ref.watch(apiClientProvider));
   ref.onDispose(service.dispose);
   return service;
 });
 
-/// Socket.IO connection to `/api/v1/socket.io`: job progress (`jobs`) and
-/// in-app notifications (`notification`). Closed while the app is in the
+/// Socket.IO connection to `/api/v1/socket.io` for job progress (`jobs`). Closed while the app is in the
 /// background (FCM covers that); every reconnect emits a resync because REST
 /// stays the source of truth for job state.
 ///
@@ -86,7 +61,6 @@ class JobEventsService {
 
   final ApiClient _api;
   final _controller = StreamController<JobChanges>.broadcast();
-  final _notifications = StreamController<JobNotification>.broadcast();
   late final AppLifecycleListener _lifecycle;
 
   io.Socket? _socket;
@@ -100,11 +74,6 @@ class JobEventsService {
   Stream<JobChanges> get changes {
     connect();
     return _controller.stream;
-  }
-
-  Stream<JobNotification> get notifications {
-    connect();
-    return _notifications.stream;
   }
 
   /// Connects when signed in; a no-op while connected or without tokens.
@@ -131,10 +100,6 @@ class JobEventsService {
       ..onConnect((_) => _onConnected())
       ..on('jobs', (data) {
         if (data is Map) _controller.add(JobChanges.fromJson(Map<String, dynamic>.from(data)));
-      })
-      ..on('notification', (data) {
-        final notification = JobNotification.fromJson(data);
-        if (notification != null) _notifications.add(notification);
       })
       ..on('auth_expired', (_) => _authExpired = true)
       ..onConnectError((error) => _onClosed(socket, unauthorized: _isUnauthorized(error)))
@@ -199,6 +164,5 @@ class JobEventsService {
     disconnect();
     _lifecycle.dispose();
     _controller.close();
-    _notifications.close();
   }
 }

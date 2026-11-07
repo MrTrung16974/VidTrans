@@ -1,9 +1,9 @@
-"""Push "job finished" to the owner's phones and browsers through FCM HTTP v1.
+"""Push job lifecycle notifications to the owner's phones and browsers through FCM HTTP v1.
 
 Phones (android/ios) get a ``notification`` message the OS shows by itself. Browsers
 (web) get a data-only message: ``web/firebase-messaging-sw.js`` draws it, so the
 click can open the job and nothing is shown while a VidTrans tab is on screen
-(that tab already toasts it from the job socket).
+(the Firebase page listener displays it instead).
 
 Configured with ``VIDTRANS_FCM_CREDENTIALS_FILE`` (a Firebase service-account
 JSON). Without it every call is a no-op. Sending happens on a small background
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 # "awaiting_input": a photo post waits for the owner to choose what to make of it.
-NOTIFIED_STATUSES = {"completed", "failed", "awaiting_input"}
+NOTIFIED_STATUSES = {"created", "processing", "completed", "failed", "awaiting_input"}
 # Errors after which a token will never work again.
 DEAD_TOKEN_ERRORS = {"UNREGISTERED", "NOT_FOUND"}
 # A job that failed for lack of speech: the app offers to just download the source.
@@ -154,6 +154,8 @@ def job_message(job_id: str, status: str, job: dict[str, Any]) -> tuple[str, str
     name = str(job.get("filename") or job.get("title") or job.get("source_url") or "Video của bạn")
     if status == "created":
         title, body = "Đã tạo video", f"{name} đã được tạo và đang chờ xử lý."
+    elif status == "processing":
+        title, body = "Bắt đầu xử lý", f"{name} đang được xử lý."
     elif status == "completed":
         title, body = "Đã xử lý xong", f"{name} đã sẵn sàng."
     elif status == "awaiting_input":
@@ -172,10 +174,10 @@ def job_message(job_id: str, status: str, job: dict[str, Any]) -> tuple[str, str
 
 
 class JobPushNotifier:
-    """Listens to job status writes; pushes each job outcome once per attempt."""
+    """Listens to job status writes; pushes each lifecycle milestone once per attempt."""
 
     def __init__(self, devices: DeviceStore, sender: FcmSender | None,
-                 get_job: Callable[[str], dict[str, Any] | None], *, workers: int = 2) -> None:
+                 get_job: Callable[[str], dict[str, Any] | None], *, workers: int = 1) -> None:
         self._devices = devices
         self._sender = sender
         self._get_job = get_job
@@ -207,7 +209,9 @@ class JobPushNotifier:
             return 0
         job = self._get_job(job_id)
         owner = str((job or {}).get("owner_user_id") or "")
-        if not job or not owner or str(job.get("status")) != status:
+        if not job or not owner or (
+            status not in {"created", "processing"} and str(job.get("status")) != status
+        ):
             return 0
         targets = self._devices.targets_for_user(owner)
         if not targets or not self._devices.claim_delivery(job_id, status):
@@ -225,6 +229,36 @@ class JobPushNotifier:
                     logger.warning("FCM push for job %s failed: %s", job_id, exc)
             except (OSError, ValueError) as exc:
                 logger.warning("FCM push for job %s failed: %s", job_id, exc)
+        return sent
+
+    def notify_users(self, user_ids: list[str], payload: dict[str, Any]) -> None:
+        """Queue one Firebase notification for an arbitrary app event."""
+        if self._pool is not None:
+            self._pool.submit(self._safely, self._deliver_users, user_ids, dict(payload))
+
+    def _deliver_users(self, user_ids: list[str], payload: dict[str, Any]) -> int:
+        if self._sender is None:
+            return 0
+        title = str(payload.get("title") or "VidTrans")
+        body = str(payload.get("body") or "")
+        data = {str(key): str(value) for key, value in payload.items() if value is not None}
+        delivery_id = str(payload.get("report_id") or payload.get("notification_id") or "")
+        status = str(payload.get("type") or "notification")
+        if delivery_id and not self._devices.claim_delivery(f"notification:{delivery_id}", status):
+            return 0
+        sent = 0
+        for user_id in user_ids:
+            for token, platform in self._devices.targets_for_user(user_id):
+                try:
+                    self._sender.send(token, title=title, body=body, data=data, platform=platform)
+                    sent += 1
+                except FcmError as exc:
+                    if exc.error_code in DEAD_TOKEN_ERRORS:
+                        self._devices.delete_token(token)
+                    else:
+                        logger.warning("FCM notification %s failed: %s", delivery_id, exc)
+                except (OSError, ValueError) as exc:
+                    logger.warning("FCM notification %s failed: %s", delivery_id, exc)
         return sent
 
     def shutdown(self) -> None:

@@ -524,7 +524,6 @@ function lockApplication(message = "Phiên đăng nhập đã hết hạn. Hãy 
   // Never leave the previous account's data rendered behind the login gate.
   // This also prevents a brief stale-data flash when another user signs in.
   state.jobs = [];
-  seenJobStatuses.clear();
   state.pendingUploads = [];
   state.selectedJobIds.clear();
   state.files = [];
@@ -3694,11 +3693,9 @@ const jobEvents = createJobEvents({
     loadJobs();
     comicWorkspace.refreshLive();
   },
-  onNotification: handleLiveNotification,
   onChanges(message) {
     const { jobs, reload } = applyJobChanges(state.jobs, message, { statusFilter: $("#statusFilter").value });
     state.jobs = jobs;
-    trackJobOutcomes(message.items || []);
     scheduleJobRender();
     if (reload) scheduleJobsReload();
     comicWorkspace.onJobChanges(message);
@@ -3810,28 +3807,6 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pageshow", event => { if (event.persisted) resumeLiveJobs(); });
 window.addEventListener("online", resumeLiveJobs);
-
-// Job outcome notifications: a toast on the page, plus a system notification
-// while the tab is in the background (from Firebase web push when this browser
-// is registered, otherwise from the page). Only a change this page saw happen is
-// announced (last known status not final -> completed/failed), so opening the
-// app never replays old results.
-// "awaiting_input": a photo post waits for the owner to choose what to make of it.
-const FINAL_JOB_STATUSES = new Set(["completed", "failed", "awaiting_input"]);
-const seenJobStatuses = new Map();
-
-function trackJobOutcomes(items) {
-  for (const job of items) {
-    if (!job?.job_id) continue;
-    const previous = seenJobStatuses.get(job.job_id);
-    seenJobStatuses.set(job.job_id, job.status);
-    if (!previous || previous === job.status || FINAL_JOB_STATUSES.has(previous)) continue;
-    if (!FINAL_JOB_STATUSES.has(job.status)) continue;
-    // Admins receive every account's jobs; announce only their own.
-    if (job.owner_user_id && state.auth.user_id && job.owner_user_id !== state.auth.user_id) continue;
-    announceJobOutcome(job);
-  }
-}
 
 // A job that failed for lack of speech can still hand back its source (mode 4).
 const NO_SPEECH_ERROR = "no_speech";
@@ -4123,74 +4098,6 @@ async function requestDownloadOnly(jobIds) {
   return started;
 }
 
-function announceJobOutcome(job) {
-  const name = job.filename || job.title || job.source_url || "Video của bạn";
-  const succeeded = job.status === "completed";
-  const noSpeech = isNoSpeechJob(job);
-  const awaitingChoice = job.status === "awaiting_input";
-  const title = succeeded ? "Đã xử lý xong" : awaitingChoice ? "Bài đăng ảnh: chọn cách xử lý"
-    : noSpeech ? "Video không có lời để dịch" : "Xử lý thất bại";
-  const body = succeeded
-    ? `${name} đã sẵn sàng.`
-    : awaitingChoice
-      ? `${name} là bài đăng ${job.photo_post?.image_count || ""} ảnh. Mở job để chọn tải ảnh về hoặc tạo video ghép ảnh có nhạc.`
-    : noSpeech
-      ? `${name} chỉ có nhạc nên không tạo được phụ đề hay lồng tiếng. Mở job để chọn chỉ tải video gốc về.`
-      : `${name} gặp lỗi. Mở job để xem chi tiết hoặc chạy lại.`;
-  toast(`${title}: ${body}`, !succeeded && !awaitingChoice);
-  // Registered for web push: the service worker shows this outcome (same text, same tag).
-  if (webPushActive()) return;
-  systemNotification(title, body, `${job.job_id}:${job.status}`, () => openJobDetailModal(job.job_id));
-}
-
-function systemNotification(title, body, tag, onClick) {
-  if (!document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  try {
-    const notification = new Notification(title, { body, tag, icon: "/assets/vidtrans-mark.svg" });
-    notification.onclick = () => {
-      window.focus();
-      notification.close();
-      onClick?.();
-    };
-  } catch {
-    // Some browsers only allow notifications from a service worker.
-  }
-}
-
-// New jobs of this account arrive one notice each; a batch of 50 becomes one toast.
-const pendingCreatedJobs = [];
-let createdJobsTimer = null;
-
-function announceCreatedJobs() {
-  createdJobsTimer = null;
-  const jobs = pendingCreatedJobs.splice(0);
-  if (!jobs.length) return;
-  const title = "Đã tạo video";
-  const body = jobs.length === 1 ? jobs[0].body : `${jobs.length} video đã được tạo và đang chờ xử lý.`;
-  toast(`${title}: ${body}`);
-  systemNotification(title, body, `created:${jobs[0].job_id}`, () => openJobDetailModal(jobs[0].job_id));
-}
-
-function handleLiveNotification(notice) {
-  if (!notice || !state.appStarted) return;
-  if (notice.type === "job_status" && notice.status === "created") {
-    // Created from this tab moments ago: its own toast already said so.
-    if (Date.now() - (state.lastJobSubmitAt || 0) < 15000) return;
-    pendingCreatedJobs.push(notice);
-    if (!createdJobsTimer) createdJobsTimer = setTimeout(announceCreatedJobs, 1200);
-    return;
-  }
-  if (notice.type === "job_report" && ["owner", "admin"].includes(state.auth.role)) {
-    toast(`${notice.title}: ${notice.body}`, true);
-    systemNotification(notice.title, notice.body, `report:${notice.report_id}`, () => {
-      if (location.hash !== "#admin") location.hash = "#admin";
-      setTimeout(() => $('[data-admin-subtab="reports"]')?.click(), 0);
-    });
-    refreshAdminReportsBadge();
-    if (!$("#adminSubtabReports")?.classList.contains("is-hidden")) loadAdminReports();
-  }
-}
-
 // Ask once, from the click that submits work, so the browser shows the prompt;
 // once granted, this browser is registered for Firebase web pushes.
 function requestJobNotificationPermission() {
@@ -4238,7 +4145,6 @@ async function loadJobs() {
       return;
     }
     state.jobs = data.items || [];
-    trackJobOutcomes(state.jobs);
     state.jobsTotal = Number(data.total ?? state.jobs.length);
     // The server moves a page past the end (jobs deleted) back to the last one.
     if (data.page) state.jobsPage = Number(data.page);

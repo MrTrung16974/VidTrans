@@ -1,14 +1,14 @@
-"""Socket.IO endpoint: authentication, per-account job progress and notifications."""
+"""Socket.IO endpoint: authentication and per-account job progress."""
 import asyncio
 import json
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
 import main
 from infrastructure.job_events import JobEventHub
-from infrastructure.realtime import JOBS_ALL_ROOM, RealtimeServer, user_jobs_room, user_room
+from infrastructure.realtime import JOBS_ALL_ROOM, RealtimeServer, user_jobs_room
 from tests import test_auth_session_api
 from tests.test_auth_session_api import PASSWORD
 
@@ -67,7 +67,6 @@ class RealtimeRoutingTests(unittest.TestCase):
             authenticate=lambda scope, auth: None,
             scope_message=lambda message, owner, allow_all: main.filter_job_event_for_user(
                 message, owner, allow_all=allow_all),
-            build_notification=lambda job_id, status: ("user-a", {"type": "job_status", "job_id": job_id}),
         )
         self.emit = AsyncMock()
         self.server.sio.emit = self.emit
@@ -95,33 +94,6 @@ class RealtimeRoutingTests(unittest.TestCase):
         self.emit.assert_awaited_once()
         self.assertIsNone(self.emit.call_args.kwargs.get("room"))
         self.assertTrue(self.emit.call_args.args[1]["resync"])
-
-    def test_finished_job_notifies_the_owner_room(self) -> None:
-        async def scenario() -> None:
-            await self.server.start()
-            try:
-                await asyncio.to_thread(self.server.on_status, "j1", "processing")
-                await asyncio.to_thread(self.server.on_status, "j1", "completed")
-                await asyncio.sleep(0.05)
-            finally:
-                await self.server.stop()
-
-        asyncio.run(scenario())
-
-        self.emit.assert_awaited_once_with(
-            "notification", {"type": "job_status", "job_id": "j1"}, room=user_room("user-a"))
-
-    def test_notification_payload_matches_the_push_message(self) -> None:
-        service = Mock()
-        service.get.return_value = {"status": "failed", "owner_user_id": "user-a", "filename": "clip.mp4"}
-        with patch.object(main, "JOB_SERVICE", service):
-            owner, payload = main.job_status_notification("j1", "failed")
-            self.assertIsNone(main.job_status_notification("j1", "completed"))  # status moved on
-        self.assertEqual(owner, "user-a")
-        self.assertEqual(payload["status"], "failed")
-        self.assertEqual(payload["title"], "Xử lý thất bại")
-        self.assertIn("clip.mp4", payload["body"])
-
 
 if __name__ == "__main__":
     unittest.main()

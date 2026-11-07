@@ -12,7 +12,7 @@ import '../api/api_client.dart';
 import '../api/providers.dart';
 import 'firebase_config.dart';
 
-/// A job push (`data: {type: job_status, job_id, status, error_code?}`).
+/// A Firebase job-related push (`job_status` or a staff `job_report`).
 class JobPush {
   const JobPush({required this.jobId, required this.status, this.errorCode, this.title, this.body});
 
@@ -27,10 +27,10 @@ class JobPush {
   static JobPush? fromMessage(RemoteMessage message) {
     final data = message.data;
     final jobId = data['job_id']?.toString();
-    if (data['type'] != 'job_status' || jobId == null || jobId.isEmpty) return null;
+    if (!const {'job_status', 'job_report'}.contains(data['type']) || jobId == null || jobId.isEmpty) return null;
     return JobPush(
       jobId: jobId,
-      status: data['status']?.toString() ?? '',
+      status: data['status']?.toString() ?? data['type'].toString(),
       errorCode: data['error_code']?.toString(),
       title: message.notification?.title,
       body: message.notification?.body,

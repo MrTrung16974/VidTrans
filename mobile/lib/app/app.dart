@@ -42,11 +42,6 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
           )))
       ..add(push.foreground.listen((p) => _showJobOutcome(p.jobId, p.status, p.title, p.body,
           askDownloadOnly: p.errorCode == noSpeechErrorCode)))
-      ..add(jobEvents.notifications.listen(
-            (n) => _showJobOutcome(n.jobId, n.status, n.title, n.body,
-                askDownloadOnly: n.errorCode == noSpeechErrorCode),
-          ))
-      ..add(jobEvents.changes.listen(_onJobChanges))
       ..add(ref.read(deepLinkServiceProvider).links.listen(_onDeepLink));
     // Listen first: initialize() replays the push that launched the app.
     unawaited(push.initialize());
@@ -75,25 +70,6 @@ class _VidTransAppState extends ConsumerState<VidTransApp> {
 
   void _openJob(String jobId, {bool askDownloadOnly = false}) =>
       ref.read(routerProvider).push(askDownloadOnly ? '/jobs/$jobId?ask=download-only' : '/jobs/$jobId');
-
-  void _onJobChanges(JobChanges changes) {
-    for (final item in changes.items) {
-      final status = item['status'] as String?;
-      final jobId = item['job_id']?.toString() ?? item['id']?.toString();
-      if (status == 'completed' && jobId != null) {
-        final title = item['filename'] as String? ??
-            item['source_url'] as String? ??
-            item['title'] as String? ??
-            'Video';
-        _showJobOutcome(
-          jobId,
-          'completed', // `status ==` does not promote String? to String.
-          'Xử lý video thành công! 🎉',
-          '"$title" đã hoàn tất. Bấm để xem và tải video.',
-        );
-      }
-    }
-  }
 
   void _showJobOutcome(String jobId, String status, String? title, String? body,
       {bool askDownloadOnly = false}) {

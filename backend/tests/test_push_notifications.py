@@ -1,4 +1,4 @@
-"""Mobile devices and job push notifications: one push per job outcome and attempt."""
+"""Mobile/web Firebase notifications: one push per job milestone and attempt."""
 import io
 import json
 import tempfile
@@ -94,6 +94,13 @@ class JobPushNotifierTests(unittest.TestCase):
         self.service.update("job-1", status="completed")
         self.assertEqual(self.notifier.deliver("job-1", "completed"), 1)
 
+    def test_pushes_created_and_processing_milestones_once(self) -> None:
+        self.assertEqual(self.notifier.deliver("job-1", "created"), 1)
+        self.service.update("job-1", status="processing")
+        self.assertEqual(self.notifier.deliver("job-1", "processing"), 1)
+        self.assertEqual(self.notifier.deliver("job-1", "processing"), 0)
+        self.assertEqual([data["status"] for _, data in self.sender.sent], ["created", "processing"])
+
     def test_skips_stale_status_and_other_users(self) -> None:
         self.devices.register("u2", "other-phone", "ios")
         self.service.update("job-1", status="processing")
@@ -148,7 +155,7 @@ class JobServiceStatusHookTests(unittest.TestCase):
             service.update("j", progress=10)
             service.update("j", status="completed")
             service.retry("j")
-            # Creation is announced as a "created" event (the owner's in-app notice).
+            # Creation is announced as a "created" Firebase milestone.
             self.assertEqual(calls, [("j", "created"), ("j", "completed"), ("j", "queued")])
 
 

@@ -54,13 +54,10 @@ export function createJobEvents({ onChanges, ...options }) {
   return createLiveEvents({ ...options, path: "/api/v1/jobs/events", messageType: "jobs", onMessage: onChanges });
 }
 
-// The server also sends {type: "notification", notification} on the job socket:
-// the account's own new job, and (owner/admin) a user's problem report.
-
 // One server-push socket with reconnect backoff; `poll` keeps the page fresh
 // over HTTP every `fallbackPollMs` only while the socket is down.
 export function createLiveEvents({
-  path, messageType, onMessage, onNotification = () => {}, onReconnected = () => {}, poll, isActive,
+  path, messageType, onMessage, onReconnected = () => {}, poll, isActive,
   fallbackPollMs = FALLBACK_POLL_MS,
   staleSocketMs = STALE_SOCKET_MS, now = () => Date.now(),
 }) {
@@ -139,8 +136,6 @@ export function createLiveEvents({
         onReconnected();
       } else if (message.type === messageType) {
         onMessage(message);
-      } else if (message.type === "notification" && message.notification) {
-        onNotification(message.notification);
       }
     };
     current.onclose = () => {

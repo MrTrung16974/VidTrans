@@ -27,7 +27,7 @@ self.addEventListener("activate", event => event.waitUntil(self.clients.claim())
 messaging.onBackgroundMessage(async payload => {
   const data = payload.data || {};
   if (!data.title) return;
-  // A VidTrans tab on screen already toasts this from the job socket.
+  // A visible VidTrans tab receives this through Firebase onMessage.
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   if (windows.some(client => client.visibilityState === "visible")) return;
   await self.registration.showNotification(data.title, {

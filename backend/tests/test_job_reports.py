@@ -1,6 +1,5 @@
-"""Problem reports about a video, the admin inbox, and in-app notifications."""
+"""Problem reports about a video and the admin inbox."""
 
-import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,7 +10,6 @@ from fastapi.testclient import TestClient
 from application.job_report_routes import JobReportRouteDependencies, create_job_report_router
 from application.job_service import JobService
 from infrastructure.job_report_store import JobReportError, JobReportStore
-from infrastructure.notification_hub import NotificationHub
 from infrastructure.push_notifications import job_message
 
 
@@ -121,33 +119,6 @@ class JobReportRouteTests(unittest.TestCase):
         self.assertEqual(resolved.json()["status"], "resolved")
         self.assertEqual(self.audits[0]["action"], "admin.job_report.resolve")
         self.assertEqual(self.client.post("/api/v1/admin/job-reports/missing/resolve").status_code, 404)
-
-
-class NotificationHubTests(unittest.TestCase):
-    def test_user_and_staff_delivery(self) -> None:
-        async def scenario():
-            hub = NotificationHub()
-            await hub.start()
-            owner = hub.subscribe("u1", staff=False)
-            other = hub.subscribe("u2", staff=False)
-            admin = hub.subscribe("a1", staff=True)
-            hub.publish_to_user("u1", {"type": "job_status", "status": "created"})
-            hub.publish_to_staff({"type": "job_report"})
-            await asyncio.sleep(0)
-            got = lambda queue: [queue.get_nowait()["type"] for _ in range(queue.qsize())]  # noqa: E731
-            result = (got(owner), got(other), got(admin))
-            hub.unsubscribe(owner)
-            self.assertEqual(hub.subscriber_count, 2)
-            await hub.stop()
-            return result
-
-        owner, other, admin = asyncio.run(scenario())
-        self.assertEqual(owner, ["job_status"])
-        self.assertEqual(other, [])
-        self.assertEqual(admin, ["job_report"])
-
-    def test_publish_before_start_is_ignored(self) -> None:
-        NotificationHub().publish_to_staff({"type": "job_report"})
 
 
 class CreatedNotificationTests(unittest.TestCase):
