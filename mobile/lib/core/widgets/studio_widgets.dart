@@ -838,11 +838,13 @@ bool isStudioRootTabPath(String? path) {
 bool isStudioRootTabRoute(BuildContext context) {
   try {
     final path = GoRouterState.of(context).uri.path;
-    if (isStudioRootTabPath(path)) return true;
+    return isStudioRootTabPath(path);
   } catch (_) {
     final router = GoRouter.maybeOf(context);
-    if (router != null && isStudioRootTabPath(router.state.uri.path)) {
-      return true;
+    if (router != null) {
+      try {
+        return isStudioRootTabPath(router.state.uri.path);
+      } catch (_) {}
     }
   }
   final modal = ModalRoute.of(context);

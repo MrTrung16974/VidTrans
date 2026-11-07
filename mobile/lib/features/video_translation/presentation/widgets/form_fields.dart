@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/widgets/studio_widgets.dart';
@@ -69,8 +70,9 @@ class FormSection extends StatelessWidget {
   ];
 }
 
-/// Dropdown bound to an outside value. Options in [disabled] are shown with
-/// their reason and cannot be picked, like disabled `<option>`s on the web.
+/// Mobile-optimized bottom sheet picker bound to an outside value.
+/// Displays options in a full-width bottom sheet so long voice and model
+/// names are never truncated, with search filtering for lists with >= 6 items.
 class SelectField extends StatelessWidget {
   const SelectField({
     super.key,
@@ -93,40 +95,326 @@ class SelectField extends StatelessWidget {
   final String? helper;
   final bool enabled;
 
+  void _showSelectSheet(BuildContext context) {
+    FocusScope.of(context).unfocus();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _SelectOptionsSheet(
+        title: label,
+        value: value,
+        options: options,
+        disabled: disabled,
+        onSelected: (val) {
+          Navigator.of(context).pop();
+          onChanged(val);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final known = options.any((o) => o.value == value);
-    return DropdownButtonFormField<String>(
-      // Rebuild when the value changes from outside (restored settings...).
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final selectedOption = options.where((o) => o.value == value).firstOrNull;
+    final displayLabel = selectedOption != null
+        ? (disabled[selectedOption.value]?.isNotEmpty ?? false
+            ? '${selectedOption.label} — ${disabled[selectedOption.value]}'
+            : selectedOption.label)
+        : (value.isNotEmpty ? value : 'Chọn $label');
+
+    return InkWell(
       key: ValueKey('$label:$value:${disabled.length}'),
-      initialValue: known ? value : null,
-      isExpanded: true,
-      dropdownColor: AppColors.surface,
+      onTap: enabled && options.isNotEmpty ? () => _showSelectSheet(context) : null,
       borderRadius: BorderRadius.circular(12),
-      decoration: InputDecoration(
-        labelText: label,
-        helperText: helper,
-        helperMaxLines: 3,
-      ),
-      items: [
-        for (final option in options)
-          DropdownMenuItem(
-            value: option.value,
-            enabled: !disabled.containsKey(option.value),
-            child: Text(
-              disabled[option.value]?.isNotEmpty ?? false
-                  ? '${option.label} — ${disabled[option.value]}'
-                  : option.label,
-              overflow: TextOverflow.ellipsis,
-              style: disabled.containsKey(option.value)
-                  ? TextStyle(color: Theme.of(context).disabledColor)
-                  : null,
-            ),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          helperText: helper,
+          helperMaxLines: 3,
+          suffixIcon: Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: enabled && options.isNotEmpty
+                ? (isDark ? AppColors.darkMuted : AppColors.muted)
+                : theme.disabledColor,
+            size: 22,
           ),
-      ],
-      onChanged: enabled
-          ? (next) => next == null ? null : onChanged(next)
-          : null,
+        ),
+        isEmpty: false,
+        child: Text(
+          displayLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: enabled && options.isNotEmpty
+                ? (selectedOption != null
+                    ? (isDark ? AppColors.darkText : AppColors.ink)
+                    : (isDark ? AppColors.darkMuted : AppColors.mutedLight))
+                : theme.disabledColor,
+            fontWeight: selectedOption != null ? FontWeight.w600 : FontWeight.w400,
+            fontSize: 14,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SelectOptionsSheet extends StatefulWidget {
+  const _SelectOptionsSheet({
+    required this.title,
+    required this.value,
+    required this.options,
+    required this.disabled,
+    required this.onSelected,
+  });
+
+  final String title;
+  final String value;
+  final List<Option> options;
+  final Map<String, String> disabled;
+  final ValueChanged<String> onSelected;
+
+  @override
+  State<_SelectOptionsSheet> createState() => _SelectOptionsSheetState();
+}
+
+class _SelectOptionsSheetState extends State<_SelectOptionsSheet> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+
+    final filtered = _query.trim().isEmpty
+        ? widget.options
+        : widget.options.where((o) {
+            final q = _query.trim().toLowerCase();
+            return o.label.toLowerCase().contains(q) ||
+                o.value.toLowerCase().contains(q);
+          }).toList();
+
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.75,
+      ),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkSurface : AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        border: Border(
+          top: BorderSide(color: isDark ? AppColors.darkLine : AppColors.line),
+          left: BorderSide(color: isDark ? AppColors.darkLine : AppColors.line),
+          right: BorderSide(color: isDark ? AppColors.darkLine : AppColors.line),
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black26,
+            blurRadius: 20,
+            offset: Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: isDark ? AppColors.darkLineStrong : AppColors.lineStrong,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      style: TextStyle(
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w800,
+                        color: isDark ? AppColors.darkText : AppColors.ink,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    color: isDark ? AppColors.darkMuted : AppColors.muted,
+                    onPressed: () => Navigator.of(context).pop(),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  ),
+                ],
+              ),
+            ),
+            if (widget.options.length >= 6) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Tìm kiếm ${widget.title.toLowerCase()}...',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                    suffixIcon: _query.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear_rounded, size: 18),
+                            onPressed: () => setState(() => _query = ''),
+                          )
+                        : null,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    filled: true,
+                    fillColor: isDark
+                        ? AppColors.darkSurfaceSoft
+                        : AppColors.surfaceSoft,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(
+                        color: isDark ? AppColors.darkLine : AppColors.line,
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(
+                        color: isDark ? AppColors.darkLine : AppColors.line,
+                      ),
+                    ),
+                  ),
+                  onChanged: (val) => setState(() => _query = val),
+                ),
+              ),
+            ],
+            const Divider(height: 1, thickness: 1),
+            Flexible(
+              child: filtered.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 32),
+                      child: Center(
+                        child: Text(
+                          'Không có lựa chọn phù hợp',
+                          style: TextStyle(
+                            color: isDark ? AppColors.darkMuted : AppColors.muted,
+                            fontSize: 13.5,
+                          ),
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: EdgeInsets.fromLTRB(12, 8, 12, bottomInset + 12),
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 4),
+                      itemBuilder: (context, i) {
+                        final option = filtered[i];
+                        final isSelected = option.value == widget.value;
+                        final disabledReason = widget.disabled[option.value];
+                        final isDisabled = disabledReason != null;
+
+                        return Material(
+                          color: isSelected
+                              ? (isDark
+                                  ? AppColors.brand.withValues(alpha: 0.18)
+                                  : AppColors.brandSoft)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: isDisabled
+                                ? null
+                                : () {
+                                    HapticFeedback.selectionClick();
+                                    widget.onSelected(option.value);
+                                  },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 11,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isSelected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.radio_button_unchecked_rounded,
+                                    size: 20,
+                                    color: isSelected
+                                        ? AppColors.brand
+                                        : (isDisabled
+                                            ? (isDark
+                                                ? AppColors.darkLineStrong
+                                                : AppColors.lineStrong)
+                                            : (isDark
+                                                ? AppColors.darkMuted
+                                                : AppColors.mutedLight)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          option.label,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: isSelected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                            color: isDisabled
+                                                ? (isDark
+                                                    ? AppColors.darkMuted
+                                                    : theme.disabledColor)
+                                                : (isSelected
+                                                    ? AppColors.brand
+                                                    : (isDark
+                                                        ? AppColors.darkText
+                                                        : AppColors.ink)),
+                                            height: 1.3,
+                                          ),
+                                        ),
+                                        if (disabledReason != null &&
+                                            disabledReason.isNotEmpty) ...[
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            disabledReason,
+                                            style: TextStyle(
+                                              fontSize: 11.5,
+                                              color: isDark
+                                                  ? AppColors.redSoft
+                                                  : AppColors.red,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

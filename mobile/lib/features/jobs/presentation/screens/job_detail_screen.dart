@@ -154,7 +154,7 @@ class _JobDetail extends ConsumerWidget {
         16,
         16,
         16,
-        studioDockBottomPadding(context),
+        studioDockBottomPadding(context, extra: 44),
       ),
       children: [
         StudioCard(
@@ -478,7 +478,8 @@ class _JobDetail extends ConsumerWidget {
               label: const Text('Tiếp tục'),
             ),
           ],
-          if (job.canCancel)
+          if (job.canCancel) ...[
+            if (job.canPause || job.canResume) const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: () => _run(
                 context,
@@ -499,6 +500,7 @@ class _JobDetail extends ConsumerWidget {
                 backgroundColor: AppColors.redSoft,
               ),
             ),
+          ],
           if (job.canDownloadOnly) ...[
             const SizedBox(height: 10),
             FilledButton.icon(

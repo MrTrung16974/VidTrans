@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/auth/account.dart';
@@ -53,6 +54,20 @@ class ProfileScreen extends ConsumerWidget {
     context,
   ).push(MaterialPageRoute<void>(builder: (_) => const BillingScreen()));
 
+  Future<void> _openDataDeletion(BuildContext context) async {
+    final url = Uri.parse('https://vidtrans.cloud/data-deletion');
+    try {
+      if (await launchUrl(url, mode: LaunchMode.externalApplication)) return;
+    } catch (_) {
+      // Show the same actionable message when the device has no browser.
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không mở được trang xoá dữ liệu')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(sessionProvider).valueOrNull;
@@ -63,12 +78,7 @@ class ProfileScreen extends ConsumerWidget {
     final branding = ref.watch(brandingSettingsProvider).valueOrNull;
     final logoPath = branding?.logo?.url;
     final Widget avatarWidget = (logoPath != null && logoPath.isNotEmpty)
-        ? AuthImage(
-            logoPath,
-            width: 52,
-            height: 52,
-            fit: BoxFit.contain,
-          )
+        ? AuthImage(logoPath, width: 52, height: 52, fit: BoxFit.contain)
         : const VidTransLogo(size: 52);
 
     return Scaffold(
@@ -97,7 +107,8 @@ class ProfileScreen extends ConsumerWidget {
               actions: [
                 StudioStatusPill(
                   status: 'active',
-                  label: (_roleLabels[account.role] ?? account.role).toUpperCase(),
+                  label: (_roleLabels[account.role] ?? account.role)
+                      .toUpperCase(),
                   compact: true,
                 ),
               ],
@@ -203,9 +214,24 @@ class ProfileScreen extends ConsumerWidget {
                       color: AppColors.teal,
                     ),
                     title: const Text('Logo & cấu hình chèn logo'),
-                    subtitle: const Text('Chọn "Chèn logo" khi tạo video dịch hoặc video truyện'),
+                    subtitle: const Text(
+                      'Chọn "Chèn logo" khi tạo video dịch hoặc video truyện',
+                    ),
                     trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: () => context.push('/branding'),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: AppColors.red,
+                    ),
+                    title: const Text('Xoá tài khoản và dữ liệu'),
+                    subtitle: const Text(
+                      'Xem cách yêu cầu xoá tài khoản hoặc dữ liệu',
+                    ),
+                    trailing: const Icon(Icons.open_in_new_rounded),
+                    onTap: () => _openDataDeletion(context),
                   ),
                 ],
               ),

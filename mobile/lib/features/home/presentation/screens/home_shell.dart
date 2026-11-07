@@ -22,9 +22,14 @@ import '../../domain/app_menu.dart';
 /// `web/assets/styles.css` (`@media (max-width: 1024px) .nav-tabs`) and
 /// the mobile `vidtrans.cloud/#create` studio layout.
 class HomeShell extends ConsumerStatefulWidget {
-  const HomeShell({super.key, required this.shell});
+  const HomeShell({
+    super.key,
+    required this.shell,
+    this.location,
+  });
 
   final StatefulNavigationShell shell;
+  final String? location;
 
   @override
   ConsumerState<HomeShell> createState() => _HomeShellState();
@@ -74,9 +79,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       isCompactHeight ? 6.0 : 10.0,
       bottomInset + 2.0,
     );
+    final currentPath = widget.location ??
+        (GoRouter.maybeOf(context)?.state.uri.path ?? '');
+    final isRootTab = isStudioRootTabPath(currentPath);
     final keyboardOpen = isStudioKeyboardOpen(context);
     final isSelectingJobs = ref.watch(isJobSelectingProvider);
-    final hideDock = keyboardOpen || isSelectingJobs;
+    final hideDock = keyboardOpen || isSelectingJobs || !isRootTab;
 
     return Scaffold(
       // Let each branch screen's own Scaffold handle keyboard insets directly

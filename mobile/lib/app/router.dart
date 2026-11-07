@@ -63,7 +63,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ...brandingRoutes,
       ...clipSplitRoutes,
       StatefulShellRoute.indexedStack(
-        builder: (_, _, shell) => HomeShell(shell: shell),
+        builder: (context, state, shell) => HomeShell(
+          shell: shell,
+          location: state.uri.path,
+        ),
         branches: [
           StatefulShellBranch(routes: translationRoutes),
           StatefulShellBranch(routes: comicRoutes),
