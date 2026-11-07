@@ -105,7 +105,7 @@ class RealtimeServer:
                 try:
                     await self.publish_jobs(message)
                 except Exception:
-            logger.exception("Cannot publish job changes")
+                    logger.exception("Cannot publish job changes")
         finally:
             self._hub.unsubscribe(queue)
 
