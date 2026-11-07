@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:background_downloader/background_downloader.dart';
 import 'package:dio/dio.dart' show CancelToken, FormData, MultipartFile;
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
@@ -37,18 +38,56 @@ class BackgroundUploader {
   BackgroundUploader(
     this._api, [
     FileDownloader? downloader,
-    this.startTimeout = const Duration(seconds: 10),
+    this.startTimeout = const Duration(seconds: 25),
   ]) : _downloader = downloader ?? FileDownloader();
 
   final ApiClient _api;
   final FileDownloader _downloader;
+  static bool _notificationsConfigured = false;
 
-  /// How long the OS queue may hold a task before it starts. WorkManager only
-  /// runs it on a network Android has validated as having Internet, so on a
-  /// company/captive Wi-Fi (or a dev server reached through `adb reverse`)
-  /// the task would wait forever without an error. Past this delay the task is
-  /// cancelled and the file is sent directly from the app instead.
+  /// How long the OS queue may hold a task before it starts while the app is
+  /// in the foreground. WorkManager only runs it on a network Android has
+  /// validated as having Internet, so on a company/captive Wi-Fi (or a dev
+  /// server reached through `adb reverse`) the task would wait forever without
+  /// an error. Past this delay (only while in foreground) the task is cancelled
+  /// and the file is sent directly from the app instead.
   final Duration startTimeout;
+
+  void _ensureNotificationsConfigured() {
+    if (_notificationsConfigured) return;
+    _notificationsConfigured = true;
+    try {
+      _downloader.configureNotificationForGroup(
+        FileDownloader.defaultGroup,
+        running: const TaskNotification(
+          'Đang xử lý {displayName}',
+          'Đang chạy nền · {progress}',
+        ),
+        complete: const TaskNotification(
+          'Hoàn tất {displayName}',
+          'Tác vụ nền đã hoàn thành',
+        ),
+        error: const TaskNotification(
+          'Tác vụ nền thất bại',
+          'Không thể hoàn tất {displayName}',
+        ),
+        paused: const TaskNotification(
+          'Đã tạm dừng {displayName}',
+          'Mở lại ứng dụng để tiếp tục',
+        ),
+        progressBar: true,
+      );
+    } catch (_) {}
+  }
+
+  static bool _isAppBackgrounded() {
+    try {
+      final state = WidgetsBinding.instance.lifecycleState;
+      return state != null && state != AppLifecycleState.resumed;
+    } catch (_) {
+      return false;
+    }
+  }
 
   Future<Map<String, dynamic>> upload(
     String path, {
@@ -107,6 +146,7 @@ class BackgroundUploader {
     void Function(double progress)? onProgress,
     CancelToken? cancelToken,
   ) async {
+    _ensureNotificationsConfigured();
     final task = MultiUploadTask(
       url: _api.resolve(path).toString(),
       files: [for (final file in files) (file.field, file.path)],
@@ -118,14 +158,17 @@ class BackgroundUploader {
       },
       httpRequestMethod: 'POST',
       updates: Updates.statusAndProgress,
-      retries: 2,
+      retries: 3,
       displayName: 'VidTrans',
     );
     cancelToken?.whenCancel.then((_) => _downloader.cancelTaskWithId(task.taskId));
     var started = false;
     var stalled = false;
     final watchdog = Timer(startTimeout, () {
-      if (started) return;
+      // Never cancel the OS background upload task if the user minimized the
+      // app: Dio fallback cannot run in background, whereas WorkManager /
+      // URLSession will finish the upload.
+      if (started || _isAppBackgrounded()) return;
       stalled = true;
       _downloader.cancelTaskWithId(task.taskId);
     });

@@ -104,12 +104,33 @@ class _EditorState extends ConsumerState<_Editor> {
     final comic = ComicJobInfo.of(project.job);
     final name = '${comic.episodeTitle().isEmpty ? jobId : comic.episodeTitle()}.$extension';
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(SnackBar(content: Text('Đang tải $name…')));
+    messenger.showSnackBar(SnackBar(content: Text('Đang tải ngầm $name…')));
     await runComicAction(context, () async {
-      final downloader = ref.read(artifactDownloaderProvider);
-      final file = await downloader.download(path, fileName: name);
+      final controller = ref.read(artifactDownloadControllerProvider.notifier);
+      final file = await controller.startDownload(
+        url: path,
+        fileName: name,
+        label: name,
+        jobTitle: comic.episodeTitle(),
+      );
       messenger.hideCurrentSnackBar();
-      await downloader.share(file);
+      if (file == null) return;
+      final isForeground =
+          WidgetsBinding.instance.lifecycleState == null ||
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+      if (mounted && isForeground) {
+        await controller.shareFile(file.path);
+      } else {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Đã tải xong $name vào thiết bị'),
+            action: SnackBarAction(
+              label: 'Chia sẻ',
+              onPressed: () => controller.shareFile(file.path),
+            ),
+          ),
+        );
+      }
     });
   }
 

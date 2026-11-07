@@ -1,12 +1,15 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
-    <!-- Android 13+: job finished notifications. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Android 13+: job finished & background download notifications. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Floating screen translator: button over other apps + one-frame capture
          while the user keeps it switched on (ScreenTranslatorService). -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <application
         android:label="VidTrans"
         android:name="${applicationName}"
@@ -45,6 +48,10 @@
             android:name=".screentranslator.ScreenTranslatorService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
         <!-- Accessibility mode (AccessibilityTranslatorService) is disabled:
              Play Protect's fraud protection blocks sideloaded APKs that declare
              an accessibility service. To bring it back, re-add the <service>

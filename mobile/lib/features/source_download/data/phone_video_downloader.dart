@@ -69,8 +69,8 @@ abstract class PhoneVideoDownloader {
 class WebViewVideoDownloader implements PhoneVideoDownloader {
   WebViewVideoDownloader([FileDownloader? downloader]) : _downloader = downloader ?? FileDownloader();
 
-  static const _pageTimeout = Duration(seconds: 25);
-  static const _pollInterval = Duration(milliseconds: 800);
+  static const _pageTimeout = Duration(seconds: 15);
+  static const _pollInterval = Duration(milliseconds: 650);
 
   /// A smaller "video" is an error page or a placeholder.
   static const _minVideoBytes = 32 * 1024;
@@ -100,6 +100,7 @@ class WebViewVideoDownloader implements PhoneVideoDownloader {
       updates: Updates.statusAndProgress,
       retries: 2,
       allowPause: true,
+      displayName: name,
     );
     cancelToken?.whenCancel.then((_) => _downloader.cancelTaskWithId(task.taskId));
     final result = await _downloader.download(task, onProgress: (progress) {

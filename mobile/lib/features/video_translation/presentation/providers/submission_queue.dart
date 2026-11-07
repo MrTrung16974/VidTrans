@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
@@ -85,6 +86,10 @@ class _Task {
   /// Links already downloaded on the phone, reused by a retry.
   final Map<String, PickedMedia> phoneDownloads = {};
   CancelToken? cancelToken;
+
+  /// Cancels only the in-app WebView phone extraction when the app goes to
+  /// background so remaining links are handed straight to the server.
+  CancelToken? phoneCancelToken;
   bool cancelled = false;
   Completer<CreatedBatch?> done = Completer();
 }
@@ -99,11 +104,59 @@ final submissionQueueProvider =
 class SubmissionQueue extends Notifier<List<PendingSubmission>> {
   final Map<String, _Task> _tasks = {};
   bool _running = false;
+  bool _forceBackgroundHandoff = false;
+  AppLifecycleListener? _lifecycleListener;
 
   TranslationRepository get _repo => ref.read(translationRepositoryProvider);
 
   @override
-  List<PendingSubmission> build() => const [];
+  List<PendingSubmission> build() {
+    _attachLifecycleListener();
+    ref.onDispose(() {
+      _lifecycleListener?.dispose();
+      _lifecycleListener = null;
+    });
+    return const [];
+  }
+
+  void _attachLifecycleListener() {
+    if (_lifecycleListener != null) return;
+    try {
+      // Only attach if WidgetsBinding has been initialized (skipped in pure Dart tests).
+      WidgetsBinding.instance;
+      _lifecycleListener = AppLifecycleListener(
+        onResume: () => _forceBackgroundHandoff = false,
+        onHide: onAppBackgrounded,
+        onPause: onAppBackgrounded,
+        onDetach: onAppBackgrounded,
+      );
+    } catch (_) {}
+  }
+
+  bool get _isAppInBackground {
+    if (_forceBackgroundHandoff) return true;
+    try {
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      return lifecycle == AppLifecycleState.paused ||
+          lifecycle == AppLifecycleState.hidden ||
+          lifecycle == AppLifecycleState.detached;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Called when the user minimizes/exits the app: immediately aborts any
+  /// slow in-app WebView extraction so remaining links are sent straight to
+  /// the server before the OS suspends the Dart isolate.
+  void onAppBackgrounded() {
+    _forceBackgroundHandoff = true;
+    for (final task in _tasks.values) {
+      final token = task.phoneCancelToken;
+      if (token != null && !token.isCancelled) {
+        token.cancel('background_handoff');
+      }
+    }
+  }
 
   /// Queues the batch and returns a future of its result (null when it failed
   /// or was cancelled; the reason stays on the pending item).
@@ -230,8 +283,9 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
           if (s.id != id) s,
       ];
       // Refresh in place when the list is open; it loads fresh otherwise.
-      if (ref.exists(jobListProvider))
+      if (ref.exists(jobListProvider)) {
         unawaited(ref.read(jobListProvider.notifier).refresh());
+      }
       task.done.complete(batch);
     } catch (error) {
       final uploadFinished = phase == SubmissionPhase.creating;
@@ -267,11 +321,18 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
   }
 
   /// Downloads the links the server's policy assigns to the phone, one at a
-  /// time with a short pause, like a person would. Returns the links left for
-  /// the server: those it downloads itself, and those the phone could not get.
+  /// time with a short pause, like a person would. If the app is minimized to
+  /// the background, WebView extraction is skipped/aborted immediately so the
+  /// server downloads the links instead of stalling in the background.
   Future<List<String>> _downloadOnPhone(String id, _Task task) async {
     final links = task.request.links;
     if (links.isEmpty) return const [];
+    if (_isAppInBackground) {
+      return [
+        for (final link in links)
+          if (!task.phoneDownloads.containsKey(link)) link,
+      ];
+    }
     final policy = await ref.read(downloadPolicyRepositoryProvider).load();
     final downloader = ref.read(phoneVideoDownloaderProvider);
     final pending = [
@@ -280,9 +341,11 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
           link,
     ];
     for (final (index, link) in pending.indexed) {
-      if (task.cancelled) break;
-      if (index > 0)
-        await Future<void>.delayed(const Duration(milliseconds: 1500));
+      if (task.cancelled || _isAppInBackground) break;
+      if (index > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+      }
+      if (task.cancelled || _isAppInBackground) break;
       _update(
         id,
         (s) => s.copyWith(
@@ -291,10 +354,15 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
               '${socialPlatformOf(link) ?? 'Video'} ${index + 1}/${pending.length}',
         ),
       );
+      final linkToken = CancelToken();
+      task.phoneCancelToken = linkToken;
+      task.cancelToken?.whenCancel.then((_) {
+        if (!linkToken.isCancelled) linkToken.cancel();
+      });
       try {
         final video = await downloader.download(
           link,
-          cancelToken: task.cancelToken,
+          cancelToken: linkToken,
           onProgress: (progress) =>
               _update(id, (s) => s.copyWith(progress: progress)),
         );
@@ -306,6 +374,11 @@ class SubmissionQueue extends Notifier<List<PendingSubmission>> {
         );
       } on PhoneDownloadException {
         // Left for the server, which tries it with its own downloader.
+        if (_isAppInBackground) break;
+      } finally {
+        if (identical(task.phoneCancelToken, linkToken)) {
+          task.phoneCancelToken = null;
+        }
       }
     }
     return [

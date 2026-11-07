@@ -182,4 +182,17 @@ void main() {
     expect(await done, isNotNull);
     expect(container.read(submissionQueueProvider), isEmpty);
   });
+
+  test('minimizing the app hands links straight to the server instead of stalling on phone WebView', () async {
+    final downloader = _FakeDownloader(dir);
+    final container = containerWith(downloader);
+    container.read(submissionQueueProvider.notifier).onAppBackgrounded();
+    final form = container.read(translateFormProvider.notifier)..setLinks('$_tiktok\n$_douyin');
+
+    expect(await form.submit()!, isNotNull);
+
+    expect(downloader.calls, isEmpty);
+    expect(repo.batches.single.files, isEmpty);
+    expect(repo.batches.single.links, '$_tiktok\n$_douyin');
+  });
 }
