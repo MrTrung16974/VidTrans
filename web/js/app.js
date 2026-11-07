@@ -6,6 +6,7 @@ import { createComicWorkspace } from "./comic.js?v=20261105-novel-ui-polish";
 import { createClipWorkspace } from "./clips.js?v=20261105-clips-ai";
 import { createBrandingWorkspace } from "./branding.js?v=20261107-vietnamese-errors";
 import { createAccessConfig } from "./access-config.js?v=20261104-plan-minutes";
+import { disableWebPush, enableWebPush, onWebPushOpen, webPushActive } from "./web-push.js?v=20261107-fcm";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -814,7 +815,24 @@ async function startProtectedApplication() {
   // #admin fell back to another view while the hash stayed put; clicking the same
   // link then fires no hashchange. Re-render now that the role is known.
   showView();
+  // Permission granted earlier: (re)register this browser for job pushes silently.
+  if (typeof Notification !== "undefined" && Notification.permission === "granted") enableWebPush(requestJson);
+  openJobFromUrl();
 }
+
+// A web push clicked with no VidTrans tab open lands on /?job=<id>#jobs.
+function openJobFromUrl() {
+  const url = new URL(location.href);
+  const jobId = url.searchParams.get("job");
+  if (!jobId) return;
+  url.searchParams.delete("job");
+  history.replaceState(null, "", url.pathname + url.search + url.hash);
+  openJobDetailModal(jobId);
+}
+
+onWebPushOpen(jobId => {
+  if (state.appStarted) openJobDetailModal(jobId);
+});
 
 // Which source platforms the plan allows; links from the others are flagged as they are pasted.
 async function loadDownloadPolicy() {
@@ -3794,7 +3812,8 @@ window.addEventListener("pageshow", event => { if (event.persisted) resumeLiveJo
 window.addEventListener("online", resumeLiveJobs);
 
 // Job outcome notifications: a toast on the page, plus a system notification
-// while the tab is in the background. Only a change this page saw happen is
+// while the tab is in the background (from Firebase web push when this browser
+// is registered, otherwise from the page). Only a change this page saw happen is
 // announced (last known status not final -> completed/failed), so opening the
 // app never replays old results.
 // "awaiting_input": a photo post waits for the owner to choose what to make of it.
@@ -4119,17 +4138,9 @@ function announceJobOutcome(job) {
       ? `${name} chỉ có nhạc nên không tạo được phụ đề hay lồng tiếng. Mở job để chọn chỉ tải video gốc về.`
       : `${name} gặp lỗi. Mở job để xem chi tiết hoặc chạy lại.`;
   toast(`${title}: ${body}`, !succeeded && !awaitingChoice);
-  if (!document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  try {
-    const notification = new Notification(title, { body, tag: `${job.job_id}:${job.status}`, icon: "/assets/vidtrans-mark.svg" });
-    notification.onclick = () => {
-      window.focus();
-      notification.close();
-      openJobDetailModal(job.job_id);
-    };
-  } catch {
-    // Some browsers only allow notifications from a service worker.
-  }
+  // Registered for web push: the service worker shows this outcome (same text, same tag).
+  if (webPushActive()) return;
+  systemNotification(title, body, `${job.job_id}:${job.status}`, () => openJobDetailModal(job.job_id));
 }
 
 function systemNotification(title, body, tag, onClick) {
@@ -4180,14 +4191,11 @@ function handleLiveNotification(notice) {
   }
 }
 
-// Ask once, from the click that submits work, so the browser shows the prompt.
+// Ask once, from the click that submits work, so the browser shows the prompt;
+// once granted, this browser is registered for Firebase web pushes.
 function requestJobNotificationPermission() {
-  if (typeof Notification === "undefined" || Notification.permission !== "default") return;
-  try {
-    Notification.requestPermission().catch(() => {});
-  } catch {
-    // Older Safari: callback-only API.
-  }
+  if (typeof Notification === "undefined" || Notification.permission === "denied" || webPushActive()) return;
+  enableWebPush(requestJson);
 }
 
 async function loadJobs() {
@@ -4974,6 +4982,8 @@ $("#appLogoutButton").addEventListener("click", async () => {
     return;
   }
   try {
+    // While the session still authorises it: stop pushing this account's jobs here.
+    await disableWebPush(requestJson);
     await requestJson("/api/v1/auth/session", { method: "DELETE" });
     $("#authPassword").value = "";
     lockApplication("Đã đăng xuất. Nhập tài khoản quản trị để tiếp tục.", false);

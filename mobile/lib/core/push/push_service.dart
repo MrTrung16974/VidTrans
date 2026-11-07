@@ -45,8 +45,8 @@ final pushServiceProvider = Provider<PushService>((ref) {
 });
 
 /// Firebase Cloud Messaging: registers this phone with `/api/v1/me/devices`
-/// while signed in and reports pushes. Without Firebase config (see
-/// [FirebaseConfig]) every method is a no-op.
+/// while signed in and reports pushes. Without Firebase config for the
+/// platform (see [FirebaseConfig]) every method is a no-op.
 class PushService {
   PushService(this._api);
 
@@ -68,13 +68,13 @@ class PushService {
   Future<bool> initialize() => _initializing ??= _initialize();
 
   Future<bool> _initialize() async {
-    final options = FirebaseConfig.current;
-    if (options == null) {
-      debugPrint('Push disabled: FIREBASE_* dart-defines are not set');
+    if (!FirebaseConfig.available) {
+      debugPrint('Push disabled: no google-services.json / FIREBASE_* dart-defines for this platform');
       return false;
     }
     try {
-      if (Firebase.apps.isEmpty) await Firebase.initializeApp(options: options);
+      // Android without dart-defines reads google-services.json (FirebaseConfig).
+      if (Firebase.apps.isEmpty) await Firebase.initializeApp(options: FirebaseConfig.current);
       final messaging = FirebaseMessaging.instance;
       _subscriptions
         ..add(FirebaseMessaging.onMessageOpenedApp.listen(_onOpened))

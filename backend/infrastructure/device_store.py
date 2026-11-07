@@ -1,4 +1,4 @@
-"""Mobile devices that receive push notifications, and the pushes already sent.
+"""Phones and browsers that receive push notifications, and the pushes already sent.
 
 ``user_devices`` holds one row per FCM token: a token moves to whoever signed in
 last on that phone. ``push_deliveries`` remembers which job outcome was already
@@ -15,7 +15,7 @@ from typing import Any, Iterator
 
 from infrastructure.database import connect, prepare_target
 
-PLATFORMS = {"android", "ios"}
+PLATFORMS = {"android", "ios", "web"}
 # Keeps a forgotten phone list from growing without bound.
 MAX_DEVICES_PER_USER = 20
 
@@ -82,7 +82,7 @@ class DeviceStore:
         if not user_id or not token:
             raise DeviceError("Thiếu người dùng hoặc token thiết bị")
         if platform not in PLATFORMS:
-            raise DeviceError("platform phải là android hoặc ios")
+            raise DeviceError("platform phải là android, ios hoặc web")
         now = utc_now()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -120,6 +120,12 @@ class DeviceStore:
         with self._db() as db:
             rows = db.execute("SELECT token FROM user_devices WHERE user_id=?", (str(user_id),)).fetchall()
         return [str(row["token"]) for row in rows]
+
+    def targets_for_user(self, user_id: str) -> list[tuple[str, str]]:
+        """(token, platform) pairs: web tokens get a different FCM message shape."""
+        with self._db() as db:
+            rows = db.execute("SELECT token, platform FROM user_devices WHERE user_id=?", (str(user_id),)).fetchall()
+        return [(str(row["token"]), str(row["platform"])) for row in rows]
 
     def delete(self, user_id: str, device_id: str) -> bool:
         with self._db() as db:

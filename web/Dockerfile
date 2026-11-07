@@ -9,7 +9,7 @@ ENV VIDTRANS_API_UPSTREAM=http://vidtrans:8000 \
 COPY docker/default.conf.template /etc/nginx/templates/default.conf.template
 COPY docker/40-vidtrans-seo.sh /docker-entrypoint.d/40-vidtrans-seo.sh
 COPY docker/robots.txt /usr/share/nginx/html/robots.txt
-COPY index.html googlefffecc69420e3aa8.html /usr/share/nginx/html/
+COPY index.html googlefffecc69420e3aa8.html firebase-messaging-sw.js /usr/share/nginx/html/
 COPY assets /usr/share/nginx/html/assets
 COPY js /usr/share/nginx/html/js
 COPY pages /usr/share/nginx/html/pages

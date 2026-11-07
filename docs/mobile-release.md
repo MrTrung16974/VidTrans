@@ -8,10 +8,12 @@ build iOS không ký).
 
 ### Firebase (push)
 
-1. Tạo project ở <https://console.firebase.google.com>, thêm app Android `cloud.vidtrans.app` và app
-   iOS `cloud.vidtrans.app`. Không cần tải `google-services.json` / `GoogleService-Info.plist`: app
-   đọc cấu hình từ `--dart-define`.
-2. Ghi lại các giá trị (Project settings → General):
+1. Project Firebase: `vistrans-e0fbc`. Android đọc cấu hình từ `mobile/android/app/google-services.json`
+   (plugin Gradle `com.google.gms.google-services`), không cần dart-define. Web dùng cấu hình trong
+   `web/js/web-push.js` + `web/firebase-messaging-sw.js` (Web Push qua FCM, xem `docs/mobile-api.md`).
+   iOS chưa có `GoogleService-Info.plist` nên vẫn dùng `--dart-define` bên dưới (dart-define, nếu có,
+   cũng ghi đè google-services.json trên Android).
+2. iOS / ghi đè: ghi lại các giá trị (Project settings → General):
 
    | dart-define | Lấy từ |
    | --- | --- |

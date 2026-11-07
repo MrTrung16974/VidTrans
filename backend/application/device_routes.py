@@ -1,7 +1,7 @@
-"""Mobile push registration.
+"""Push registration for the apps (Android, iOS) and the web (FCM Web Push).
 
     /api/v1/me/devices         GET (list), POST (register or refresh an FCM token)
-    /api/v1/me/devices/{id}    DELETE (sign-out on that phone)
+    /api/v1/me/devices/{id}    DELETE (sign-out on that phone or browser)
 
 Rows are scoped to the signed-in account. Viewers may register too: a push is
 not a change to business data.
@@ -30,7 +30,7 @@ class DeviceRouteDependencies:
 class DeviceRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str = Field(min_length=1, max_length=4096, description="FCM registration token")
-    platform: Literal["android", "ios"]
+    platform: Literal["android", "ios", "web"]
     app_version: str | None = Field(default=None, max_length=64)
 
 

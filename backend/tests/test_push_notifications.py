@@ -13,7 +13,7 @@ import main
 from application.job_service import JobService
 from infrastructure.device_store import MAX_DEVICES_PER_USER, DeviceError, DeviceStore
 from infrastructure.job_store import SQLiteJobStore
-from infrastructure.push_notifications import FcmError, FcmSender, JobPushNotifier
+from infrastructure.push_notifications import FcmError, FcmSender, JobPushNotifier, build_message
 from tests.test_logo_branding import account
 
 
@@ -22,8 +22,10 @@ class FakeSender:
         self.sent: list[tuple[str, dict]] = []
         self.titles: list[tuple[str, str]] = []
         self.dead = dead or set()
+        self.platforms: list[tuple[str, str]] = []
 
-    def send(self, token, *, title, body, data):
+    def send(self, token, *, title, body, data, platform="android"):
+        self.platforms.append((token, platform))
         if token in self.dead:
             raise FcmError("gone", error_code="UNREGISTERED")
         self.sent.append((token, data))
@@ -53,7 +55,9 @@ class DeviceStoreTests(unittest.TestCase):
 
     def test_rejects_unknown_platform_and_caps_devices(self) -> None:
         with self.assertRaises(DeviceError):
-            self.store.register("u1", "tok", "web")
+            self.store.register("u1", "tok", "windows")
+        self.assertEqual(self.store.register("u1", "browser", "web")["platform"], "web")
+        self.store.delete_token("browser")
         for index in range(MAX_DEVICES_PER_USER + 3):
             self.store.register("u1", f"tok-{index}", "android")
         self.assertEqual(len(self.store.list_for_user("u1")), MAX_DEVICES_PER_USER)
@@ -113,6 +117,19 @@ class JobPushNotifierTests(unittest.TestCase):
         self.service.update("job-1", status="completed")
         self.assertEqual(self.notifier.deliver("job-1", "completed"), 1)
         self.assertEqual(self.devices.tokens_for_user("u1"), ["phone"])
+
+    def test_browsers_get_a_data_only_web_push(self) -> None:
+        self.devices.register("u1", "browser", "web")
+        self.service.update("job-1", status="completed")
+        self.assertEqual(self.notifier.deliver("job-1", "completed"), 2)
+        self.assertEqual(sorted(self.sender.platforms), [("browser", "web"), ("phone", "android")])
+        data = {"type": "job_status", "job_id": "job-1", "status": "completed"}
+        web = build_message("browser", title="T", body="B", data=data, platform="web")
+        self.assertNotIn("notification", web)
+        self.assertEqual(web["data"], {**data, "title": "T", "body": "B"})
+        phone = build_message("phone", title="T", body="B", data=data, platform="android")
+        self.assertEqual(phone["notification"], {"title": "T", "body": "B"})
+        self.assertEqual(phone["data"], data)
 
     def test_without_credentials_nothing_happens(self) -> None:
         disabled = JobPushNotifier(self.devices, None, lambda job_id: self.service.get(job_id))
@@ -214,7 +231,7 @@ class DeviceApiTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/v1/me/devices/{device['device_id']}").status_code, 204)
 
     def test_validates_platform(self) -> None:
-        response = self.client.post("/api/v1/me/devices", json={"token": "fcm-1", "platform": "web"})
+        response = self.client.post("/api/v1/me/devices", json={"token": "fcm-1", "platform": "windows"})
         self.assertEqual(response.status_code, 422)
 
 

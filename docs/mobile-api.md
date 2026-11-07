@@ -337,13 +337,18 @@ Server gửi push qua Firebase Cloud Messaging (HTTP v1) khi job chuyển sang `
    {"token": "<FCM token>", "platform": "android", "app_version": "1.0.0"}
    ```
 
+   `platform`: `android`, `ios` hoặc `web`. Web (`web/js/web-push.js`) đăng ký khi trình duyệt đã cho
+   phép thông báo; push gửi tới token `web` là data-only (`data` có thêm `title`, `body`) và
+   `web/firebase-messaging-sw.js` tự hiển thị, bấm vào mở `/?job=<job_id>#jobs`. Khi đang có tab
+   VidTrans trên màn hình thì service worker không hiện gì (tab đã toast qua WebSocket).
+
    Trả `{device_id, platform, app_version, created_at, updated_at, push_enabled}`. Gọi lại với cùng
    token chỉ cập nhật bản ghi cũ; token đăng nhập tài khoản khác sẽ chuyển sang tài khoản đó.
    `push_enabled: false` nghĩa là server chưa cấu hình FCM. Tài khoản `viewer` cũng được đăng ký.
 2. Khi đăng xuất: `DELETE /api/v1/me/devices/{device_id}` (trước khi xoá token đăng nhập).
    `GET /api/v1/me/devices` liệt kê thiết bị của tài khoản.
 3. Nội dung push: `notification` {title, body} và `data`
-   `{"type": "job_status", "job_id": "...", "status": "completed" | "failed"}`. Bấm vào thông báo thì
+   `{"type": "job_status", "job_id": "...", "status": "completed" | "failed" | "awaiting_input"}`. Bấm vào thông báo thì
    mở `/jobs/{job_id}`.
 
 Mỗi kết quả của một lần chạy chỉ được gửi một lần: worker khởi động lại ghi lại `completed` không gửi

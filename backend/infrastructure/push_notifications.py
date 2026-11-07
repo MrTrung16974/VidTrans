@@ -1,4 +1,9 @@
-"""Push "job finished" to the owner's phones through FCM HTTP v1.
+"""Push "job finished" to the owner's phones and browsers through FCM HTTP v1.
+
+Phones (android/ios) get a ``notification`` message the OS shows by itself. Browsers
+(web) get a data-only message: ``web/firebase-messaging-sw.js`` draws it, so the
+click can open the job and nothing is shown while a VidTrans tab is on screen
+(that tab already toasts it from the job socket).
 
 Configured with ``VIDTRANS_FCM_CREDENTIALS_FILE`` (a Firebase service-account
 JSON). Without it every call is a no-op. Sending happens on a small background
@@ -101,16 +106,8 @@ class FcmSender:
             self._expires_at = now + float(payload.get("expires_in", 3600))
             return self._access_token
 
-    def send(self, token: str, *, title: str, body: str, data: dict[str, str]) -> None:
-        message = {
-            "message": {
-                "token": token,
-                "notification": {"title": title, "body": body},
-                "data": data,
-                "android": {"priority": "high"},
-                "apns": {"payload": {"aps": {"sound": "default"}}},
-            }
-        }
+    def send(self, token: str, *, title: str, body: str, data: dict[str, str], platform: str = "android") -> None:
+        message = {"message": build_message(token, title=title, body=body, data=data, platform=platform)}
         request = urllib.request.Request(
             f"https://fcm.googleapis.com/v1/projects/{self.project_id}/messages:send",
             data=json.dumps(message).encode("utf-8"),
@@ -123,6 +120,23 @@ class FcmSender:
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", "replace")
             raise FcmError(f"FCM {exc.code}: {raw[:300]}", error_code=_fcm_error_code(raw, exc.code)) from exc
+
+
+def build_message(token: str, *, title: str, body: str, data: dict[str, str], platform: str) -> dict[str, Any]:
+    if platform == "web":
+        return {
+            "token": token,
+            "data": {**data, "title": title, "body": body},
+            # A finished job is still worth showing the next time the browser comes online.
+            "webpush": {"headers": {"Urgency": "high", "TTL": "86400"}},
+        }
+    return {
+        "token": token,
+        "notification": {"title": title, "body": body},
+        "data": data,
+        "android": {"priority": "high", "notification": {"tag": f"{data.get('job_id', '')}:{data.get('status', '')}"}},
+        "apns": {"payload": {"aps": {"sound": "default"}}},
+    }
 
 
 def _fcm_error_code(raw: str, status: int) -> str | None:
@@ -195,14 +209,14 @@ class JobPushNotifier:
         owner = str((job or {}).get("owner_user_id") or "")
         if not job or not owner or str(job.get("status")) != status:
             return 0
-        tokens = self._devices.tokens_for_user(owner)
-        if not tokens or not self._devices.claim_delivery(job_id, status):
+        targets = self._devices.targets_for_user(owner)
+        if not targets or not self._devices.claim_delivery(job_id, status):
             return 0
         title, body, data = job_message(job_id, status, job)
         sent = 0
-        for token in tokens:
+        for token, platform in targets:
             try:
-                self._sender.send(token, title=title, body=body, data=data)
+                self._sender.send(token, title=title, body=body, data=data, platform=platform)
                 sent += 1
             except FcmError as exc:
                 if exc.error_code in DEAD_TOKEN_ERRORS:

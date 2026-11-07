@@ -59,7 +59,8 @@ void main() {
     });
   });
 
-  test('push stays off without FIREBASE_* dart-defines', () {
+  test('without FIREBASE_* dart-defines only the bundled config file enables push', () {
     expect(FirebaseConfig.current, isNull);
+    expect(FirebaseConfig.available, FirebaseConfig.hasNativeConfig);
   });
 }

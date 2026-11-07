@@ -2697,7 +2697,8 @@
           "platform": {
             "enum": [
               "android",
-              "ios"
+              "ios",
+              "web"
             ],
             "title": "Platform",
             "type": "string"
@@ -2987,7 +2988,7 @@
                 "type": "null"
               }
             ],
-            "description": "queued, scheduled, processing, cancelling, completed, failed or cancelled.",
+            "description": "queued, scheduled, processing, pausing, paused, cancelling, completed, failed or cancelled.",
             "title": "Status"
           },
           "step": {
@@ -3303,6 +3304,36 @@
         "title": "NovelImportRequest",
         "type": "object"
       },
+      "PhotoPostAiPlanRequest": {
+        "properties": {
+          "keep_original_order": {
+            "default": false,
+            "title": "Keep Original Order",
+            "type": "boolean"
+          },
+          "preferred_style": {
+            "default": "auto",
+            "maxLength": 32,
+            "title": "Preferred Style",
+            "type": "string"
+          },
+          "target_minutes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 10.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Minutes"
+          }
+        },
+        "title": "PhotoPostAiPlanRequest",
+        "type": "object"
+      },
       "PhotoPostChoice": {
         "description": "What to make of a photo post: its images as a zip, or a slideshow of ``minutes``.",
         "properties": {
@@ -3371,36 +3402,6 @@
           "action"
         ],
         "title": "PhotoPostChoice",
-        "type": "object"
-      },
-      "PhotoPostAiPlanRequest": {
-        "properties": {
-          "target_minutes": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0.0,
-                "maximum": 10.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Minutes"
-          },
-          "keep_original_order": {
-            "default": false,
-            "title": "Keep Original Order",
-            "type": "boolean"
-          },
-          "preferred_style": {
-            "default": "auto",
-            "maxLength": 32,
-            "title": "Preferred Style",
-            "type": "string"
-          }
-        },
-        "title": "PhotoPostAiPlanRequest",
         "type": "object"
       },
       "PlanQuotaUpdate": {
@@ -11056,6 +11057,55 @@
         "summary": "Download Only Job Endpoint"
       }
     },
+    "/api/v1/jobs/{job_id}/pause": {
+      "post": {
+        "operationId": "pause_job_endpoint_api_v1_jobs__job_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Pause Job Endpoint"
+      }
+    },
     "/api/v1/jobs/{job_id}/photo-post": {
       "post": {
         "operationId": "choose_photo_post_endpoint_api_v1_jobs__job_id__photo_post_post",
@@ -11328,6 +11378,55 @@
         ]
       }
     },
+    "/api/v1/jobs/{job_id}/resume": {
+      "post": {
+        "operationId": "resume_paused_job_endpoint_api_v1_jobs__job_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "admin"
+            ]
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Resume Paused Job Endpoint"
+      }
+    },
     "/api/v1/jobs/{job_id}/retry": {
       "post": {
         "operationId": "retry_job_endpoint_api_v1_jobs__job_id__retry_post",
@@ -11555,6 +11654,16 @@
             "required": true,
             "schema": {
               "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tone",
+            "required": false,
+            "schema": {
+              "default": "auto",
+              "title": "Tone",
               "type": "string"
             }
           }
