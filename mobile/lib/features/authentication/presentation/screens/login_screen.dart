@@ -454,16 +454,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ),
     };
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final hPad = maxW < 360 ? 16.0 : 20.0;
     final vPadTop = compact ? 15.0 : 18.0;
     final vPadBottom = compact ? 14.0 : 16.0;
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.98),
+        color: isDark
+            ? const Color(0xFF131C2E).withValues(alpha: 0.96)
+            : Colors.white.withValues(alpha: 0.98),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: Colors.white.withValues(alpha: 0.85),
+          color: isDark
+              ? const Color(0xFF283548)
+              : Colors.white.withValues(alpha: 0.85),
           width: 1.2,
         ),
         boxShadow: const [
@@ -527,25 +532,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: AppColors.greenSoft,
+                            color: isDark
+                                ? AppColors.green.withValues(alpha: 0.15)
+                                : AppColors.greenSoft,
                             borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: AppColors.greenBorder),
+                            border: Border.all(
+                              color: isDark
+                                  ? AppColors.green.withValues(alpha: 0.38)
+                                  : AppColors.greenBorder,
+                            ),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.circle,
                                 size: 6,
                                 color: AppColors.green,
                               ),
-                              SizedBox(width: 4),
+                              const SizedBox(width: 4),
                               Text(
                                 'Online',
                                 style: TextStyle(
                                   fontSize: 10.5,
                                   fontWeight: FontWeight.w700,
-                                  color: AppColors.greenText,
+                                  color: isDark
+                                      ? const Color(0xFF34D399)
+                                      : AppColors.greenText,
                                 ),
                               ),
                             ],
@@ -559,7 +572,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       style: TextStyle(
                         fontSize: compact ? 20.5 : 22.5,
                         fontWeight: FontWeight.w900,
-                        color: AppColors.ink,
+                        color: isDark ? AppColors.darkText : AppColors.ink,
                         letterSpacing: -0.55,
                         height: 1.15,
                       ),
@@ -571,7 +584,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: compact ? 12.2 : 12.8,
-                        color: AppColors.muted,
+                        color: isDark ? AppColors.darkMuted : AppColors.muted,
                         height: 1.38,
                       ),
                     ),
@@ -588,9 +601,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           vertical: 8,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.tealSoft,
+                          color: isDark
+                              ? AppColors.teal.withValues(alpha: 0.15)
+                              : AppColors.tealSoft,
                           borderRadius: BorderRadius.circular(11),
-                          border: Border.all(color: AppColors.tealBorder),
+                          border: Border.all(
+                            color: isDark
+                                ? AppColors.teal.withValues(alpha: 0.38)
+                                : AppColors.tealBorder,
+                          ),
                         ),
                         child: Row(
                           children: [
@@ -603,8 +622,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             Expanded(
                               child: Text(
                                 _infoMessage!,
-                                style: const TextStyle(
-                                  color: AppColors.tealText,
+                                style: TextStyle(
+                                  color: isDark
+                                      ? const Color(0xFF5EEAD4)
+                                      : AppColors.tealText,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -636,9 +657,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           vertical: 8,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.redSoft,
+                          color: isDark
+                              ? AppColors.red.withValues(alpha: 0.15)
+                              : AppColors.redSoft,
                           borderRadius: BorderRadius.circular(11),
-                          border: Border.all(color: AppColors.redBorder),
+                          border: Border.all(
+                            color: isDark
+                                ? AppColors.red.withValues(alpha: 0.38)
+                                : AppColors.redBorder,
+                          ),
                         ),
                         child: Row(
                           children: [
@@ -653,8 +680,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 _error!,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: AppColors.redText,
+                                style: TextStyle(
+                                  color: isDark
+                                      ? const Color(0xFFFCA5A5)
+                                      : AppColors.redText,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -704,19 +733,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           vertical: 7,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
+                          color: isDark
+                              ? const Color(0xFF0F172A)
+                              : const Color(0xFFF8FAFC),
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                          border: Border.all(
+                            color: isDark
+                                ? const Color(0xFF1E293B)
+                                : const Color(0xFFE2E8F0),
+                          ),
                         ),
-                        child: const Row(
+                        child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
                               Icons.shield_outlined,
                               size: 13,
-                              color: AppColors.muted,
+                              color: isDark
+                                  ? AppColors.darkMuted
+                                  : AppColors.muted,
                             ),
-                            SizedBox(width: 5),
+                            const SizedBox(width: 5),
                             Flexible(
                               child: Text(
                                 'OAuth2 Password + JWT · Phiên đăng nhập bảo mật',
@@ -726,7 +763,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
-                                  color: AppColors.muted,
+                                  color: isDark
+                                      ? AppColors.darkMuted
+                                      : AppColors.muted,
                                 ),
                               ),
                             ),
@@ -745,13 +784,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Widget _buildModeSegmentedControl({required bool compact}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final isLogin = _mode == _AuthMode.login;
     return Container(
       padding: const EdgeInsets.all(3.5),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
+        color: isDark ? const Color(0xFF0B1120) : const Color(0xFFF1F5F9),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(
+          color: isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0),
+        ),
       ),
       child: Row(
         children: [
@@ -856,7 +898,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       ),
                       const SizedBox(width: 7),
-                      const Flexible(
+                      Flexible(
                         child: Text(
                           'Ghi nhớ đăng nhập',
                           maxLines: 1,
@@ -864,7 +906,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w600,
-                            color: AppColors.inkSoft,
+                            color: Theme.of(context).brightness ==
+                                    Brightness.dark
+                                ? const Color(0xFFCBD5E1)
+                                : AppColors.inkSoft,
                           ),
                         ),
                       ),
@@ -884,12 +929,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: const Text(
+            child: Text(
               'Quên mật khẩu?',
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700,
-                color: AppColors.brandDark,
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? const Color(0xFFFB923C)
+                    : AppColors.brandDark,
               ),
             ),
           ),
@@ -1113,6 +1160,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     required bool compact,
     required bool ultraCompact,
   }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return OutlinedButton.icon(
       onPressed: _submitting ? null : _startGuestTrial,
       style: OutlinedButton.styleFrom(
@@ -1121,9 +1169,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           horizontal: 14,
           vertical: compact ? 9 : 11,
         ),
-        foregroundColor: AppColors.brandDark,
-        backgroundColor: AppColors.brandSoft,
-        side: const BorderSide(color: AppColors.brandBorder),
+        foregroundColor: isDark ? const Color(0xFFFED7AA) : AppColors.brandDark,
+        backgroundColor: isDark
+            ? AppColors.brand.withValues(alpha: 0.16)
+            : AppColors.brandSoft,
+        side: BorderSide(
+          color: isDark
+              ? AppColors.brand.withValues(alpha: 0.45)
+              : AppColors.brandBorder,
+        ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       icon: const Icon(Icons.bolt_rounded, size: 18),
@@ -1136,6 +1190,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Widget _buildBottomModeLinks() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final linkColor = isDark ? const Color(0xFFFB923C) : AppColors.brandDark;
+    final mutedColor = isDark ? AppColors.darkMuted : AppColors.muted;
     final compactStyle = TextButton.styleFrom(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       minimumSize: Size.zero,
@@ -1147,12 +1204,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         child: TextButton(
           style: compactStyle,
           onPressed: _submitting ? null : () => _switchMode(_AuthMode.register),
-          child: const Text(
+          child: Text(
             'Chưa có tài khoản? Đăng ký Free',
             style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w800,
-              color: AppColors.brandDark,
+              color: linkColor,
             ),
           ),
         ),
@@ -1161,12 +1218,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         child: TextButton(
           style: compactStyle,
           onPressed: _submitting ? null : () => _switchMode(_AuthMode.login),
-          child: const Text(
+          child: Text(
             'Đã có tài khoản? Đăng nhập ngay',
             style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w800,
-              color: AppColors.brandDark,
+              color: linkColor,
             ),
           ),
         ),
@@ -1175,13 +1232,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         child: TextButton.icon(
           style: compactStyle,
           onPressed: _submitting ? null : () => _switchMode(_AuthMode.login),
-          icon: const Icon(Icons.arrow_back_rounded, size: 15),
-          label: const Text(
+          icon: Icon(Icons.arrow_back_rounded, size: 15, color: linkColor),
+          label: Text(
             'Quay lại đăng nhập',
             style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w800,
-              color: AppColors.brandDark,
+              color: linkColor,
             ),
           ),
         ),
@@ -1192,28 +1249,28 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           TextButton(
             style: compactStyle,
             onPressed: _submitting ? null : _resendResetCode,
-            child: const Text(
+            child: Text(
               'Gửi lại mã',
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w800,
-                color: AppColors.brandDark,
+                color: linkColor,
               ),
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
-            child: Text('·', style: TextStyle(color: AppColors.muted)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text('·', style: TextStyle(color: mutedColor)),
           ),
           TextButton(
             style: compactStyle,
             onPressed: _submitting ? null : () => _switchMode(_AuthMode.login),
-            child: const Text(
+            child: Text(
               'Quay lại đăng nhập',
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700,
-                color: AppColors.muted,
+                color: mutedColor,
               ),
             ),
           ),
@@ -1303,6 +1360,7 @@ class _SegmentTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -1311,8 +1369,13 @@ class _SegmentTab extends StatelessWidget {
         curve: Curves.easeOutCubic,
         padding: EdgeInsets.symmetric(vertical: compact ? 7 : 8),
         decoration: BoxDecoration(
-          color: selected ? Colors.white : Colors.transparent,
+          color: selected
+              ? (isDark ? const Color(0xFF1E293B) : Colors.white)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(9),
+          border: selected && isDark
+              ? Border.all(color: AppColors.brand.withValues(alpha: 0.45))
+              : null,
           boxShadow: selected
               ? const [
                   BoxShadow(
@@ -1329,7 +1392,9 @@ class _SegmentTab extends StatelessWidget {
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-            color: selected ? AppColors.brandDark : AppColors.muted,
+            color: selected
+                ? (isDark ? const Color(0xFFFB923C) : AppColors.brandDark)
+                : (isDark ? AppColors.darkMuted : AppColors.muted),
           ),
         ),
       ),

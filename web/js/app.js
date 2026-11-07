@@ -4,7 +4,7 @@ import { applyJobChanges, createJobEvents, createLiveEvents } from "./job-events
 import { createPlatformAppsSettings } from "./platform-apps.js?v=20261018-1";
 import { createComicWorkspace } from "./comic.js?v=20261105-novel-ui-polish";
 import { createClipWorkspace } from "./clips.js?v=20261105-clips-ai";
-import { createBrandingWorkspace } from "./branding.js?v=20261031-apply-logo";
+import { createBrandingWorkspace } from "./branding.js?v=20261107-vietnamese-errors";
 import { createAccessConfig } from "./access-config.js?v=20261104-plan-minutes";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -185,15 +185,23 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
 
-function toast(message, isError = false, options = {}) {
-  const element = $("#toast");
-  if (element) {
-    element.textContent = message;
-    element.classList.toggle("error", isError);
-    element.classList.add("show");
-    clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => element.classList.remove("show"), 3500);
+function userFacingMessage(message) {
+  const text = String(message ?? "").trim();
+  if (!text) return "Thao tác chưa hoàn tất. Vui lòng thử lại.";
+  if (/branding is not defined/i.test(text)) {
+    return "Không thể tải cấu hình logo. Vui lòng tải lại trang rồi thử lại.";
   }
+  if (/failed to fetch|networkerror|network request failed|load failed/i.test(text)) {
+    return "Không thể kết nối đến máy chủ. Hãy kiểm tra mạng rồi thử lại.";
+  }
+  if (/\b(referenceerror|typeerror|syntaxerror)\b|is not defined|cannot read propert(?:y|ies)/i.test(text)) {
+    return "Đã xảy ra lỗi kỹ thuật. Vui lòng tải lại trang rồi thử lại. Nếu lỗi vẫn tiếp diễn, hãy liên hệ hỗ trợ.";
+  }
+  return text;
+}
+
+function toast(message, isError = false, options = {}) {
+  message = userFacingMessage(message);
   const stack = $("#toastStack");
   if (stack && message) {
     const item = document.createElement("div");

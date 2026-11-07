@@ -5,6 +5,10 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogo
   const $$ = selector => [...document.querySelectorAll(selector)];
   const form = $("#brandingForm");
   let active = false;
+  // The latest branding payload drives both the form and the live preview.
+  // Keep it inside this workspace so opening the Account page never depends
+  // on an undeclared global variable.
+  let branding = null;
 
   function percentFields(config) {
     return { ...config, opacity: Math.round(config.opacity * 100) };
@@ -63,6 +67,7 @@ export function createBrandingWorkspace({ requestJson, toast, escapeHtml, onLogo
   }
 
   function renderBranding(data) {
+    branding = data;
     const config = percentFields(data.config);
     for (const [name, value] of Object.entries(config)) {
       const field = form.elements[name];
